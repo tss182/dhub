@@ -8,6 +8,7 @@ interface WorkbenchState {
   isBottomPanelOpen: boolean;
   isSearchEverywhereOpen: boolean;
   isConnectionDialogOpen: boolean;
+  editingConnectionId: string | null;
 
   openTab: (tab: WorkbenchTab) => void;
   closeTab: (tabId: string) => void;
@@ -16,7 +17,7 @@ interface WorkbenchState {
   setActiveBottomTab: (tab: 'result' | 'output' | 'history' | 'explain') => void;
   toggleBottomPanel: () => void;
   setSearchEverywhereOpen: (open: boolean) => void;
-  setConnectionDialogOpen: (open: boolean) => void;
+  setConnectionDialogOpen: (open: boolean, editingId?: string | null) => void;
 }
 
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
@@ -28,7 +29,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       connectionId: '',
       database: '',
       schema: '',
-      content: `-- DHub DataGrip-grade Query Console\n-- Shortcut: Ctrl+Enter (Run at cursor), Shift+Shift (Search Everywhere)\n\nSELECT 1 as id, 'Welcome to DHub' as message;\n`,
+      content: `-- DHub DataGrip-grade Query Console\n-- Shortcut: Ctrl+Enter (Run at cursor), Ctrl+P / Cmd+P (Search Everywhere)\n\nSELECT 1 as id, 'Welcome to DHub' as message;\n`,
     },
   ],
   activeTabId: 'default-console',
@@ -36,6 +37,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   isBottomPanelOpen: true,
   isSearchEverywhereOpen: false,
   isConnectionDialogOpen: false,
+  editingConnectionId: null,
 
   openTab: (tab) => {
     const existing = get().tabs.find((t) => t.id === tab.id);
@@ -74,7 +76,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   setSearchEverywhereOpen: (isSearchEverywhereOpen) =>
     set({ isSearchEverywhereOpen }),
 
-  setConnectionDialogOpen: (isConnectionDialogOpen) =>
-    set({ isConnectionDialogOpen }),
+  setConnectionDialogOpen: (isConnectionDialogOpen, editingConnectionId = null) =>
+    set({ isConnectionDialogOpen, editingConnectionId }),
 }));
 

@@ -49,9 +49,7 @@ func (m *MySQLDriver) ListDatabases(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err == nil {
-			if name != "information_schema" && name != "mysql" && name != "performance_schema" && name != "sys" {
-				dbs = append(dbs, name)
-			}
+			dbs = append(dbs, name)
 		}
 	}
 	return dbs, nil
@@ -143,8 +141,18 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 		strings.HasPrefix(strings.ToUpper(cleanSQL), "DESCRIBE") ||
 		strings.HasPrefix(strings.ToUpper(cleanSQL), "EXPLAIN")
 
+	conn, err := m.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if req.Database != "" && req.Database != "main" {
+		_, _ = conn.ExecContext(ctx, fmt.Sprintf("USE `%s`", req.Database))
+	}
+
 	if !isSelect {
-		res, err := m.db.ExecContext(ctx, cleanSQL)
+		res, err := conn.ExecContext(ctx, cleanSQL)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +166,7 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 		}, nil
 	}
 
-	rows, err := m.db.QueryContext(ctx, cleanSQL)
+	rows, err := conn.QueryContext(ctx, cleanSQL)
 	if err != nil {
 		return nil, err
 	}
