@@ -90,6 +90,7 @@ export interface StatementResult {
     "rows": (any[] | null)[] | null;
     "rowsAffected": number;
     "elapsedMs": number;
+    "hasMore": boolean;
     "error"?: string;
 }
 

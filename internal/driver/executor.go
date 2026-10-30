@@ -30,7 +30,11 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 
 	limit := req.Limit
 	if limit <= 0 {
-		limit = 500
+		limit = 100
+	}
+	offset := req.Offset
+	if offset < 0 {
+		offset = 0
 	}
 
 	var allResults []StatementResult
@@ -62,16 +66,29 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 				}
 			}
 
+			values := make([]any, len(columns))
+			valuePtrs := make([]any, len(columns))
+			for vIdx := range values {
+				valuePtrs[vIdx] = &values[vIdx]
+			}
+
 			var resultRows [][]any
+			skipped := 0
+			hasMore := false
+
 			for rows.Next() {
+				if skipped < offset {
+					if err := rows.Scan(valuePtrs...); err == nil {
+						skipped++
+					}
+					continue
+				}
+
 				if len(resultRows) >= limit {
+					hasMore = true
 					break
 				}
-				values := make([]any, len(columns))
-				valuePtrs := make([]any, len(columns))
-				for vIdx := range values {
-					valuePtrs[vIdx] = &values[vIdx]
-				}
+
 				if err := rows.Scan(valuePtrs...); err != nil {
 					continue
 				}
@@ -95,6 +112,7 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 				Rows:         resultRows,
 				RowsAffected: int64(len(resultRows)),
 				ElapsedMs:    stmtElapsed,
+				HasMore:      hasMore,
 			}
 			allResults = append(allResults, stmtRes)
 			lastResultWithRows = &stmtRes
@@ -132,11 +150,12 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 	if lastResultWithRows != nil {
 		defCols = lastResultWithRows.Columns
 		defRows = lastResultWithRows.Rows
-		defHasMore = len(defRows) >= limit
+		defHasMore = lastResultWithRows.HasMore
 	} else if len(allResults) > 0 {
 		last := allResults[len(allResults)-1]
 		defCols = last.Columns
 		defRows = last.Rows
+		defHasMore = last.HasMore
 	}
 
 	return &QueryResult{
