@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=dhub
+Exec=dhub
+Icon=dhub
+Categories=Development;
+Terminal=false
+Keywords=wails
+Version=1.0
+StartupNotify=false

@@ -1,0 +1,186 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	"dhub/internal/config"
+	_ "modernc.org/sqlite"
+)
+
+type LocalStore struct {
+	db *sql.DB
+}
+
+func NewLocalStore() (*LocalStore, error) {
+	dbPath, err := config.GetDBPath()
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open sqlite store: %w", err)
+	}
+
+	// Optimize for single-desktop local database
+	db.SetMaxOpenConns(1)
+
+	s := &LocalStore{db: db}
+	if err := s.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	return s, nil
+}
+
+func (s *LocalStore) Close() error {
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
+}
+
+func (s *LocalStore) DB() *sql.DB {
+	return s.db
+}
+
+func (s *LocalStore) migrate() error {
+	queries := []string{
+		`PRAGMA journal_mode=WAL;`,
+		`PRAGMA synchronous=NORMAL;`,
+		`PRAGMA foreign_keys=ON;`,
+
+		`CREATE TABLE IF NOT EXISTS connection_folders (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL,
+			parent_id   TEXT REFERENCES connection_folders(id) ON DELETE CASCADE,
+			sort_order  INTEGER NOT NULL DEFAULT 0,
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS connections (
+			id              TEXT PRIMARY KEY,
+			folder_id       TEXT REFERENCES connection_folders(id) ON DELETE SET NULL,
+			name            TEXT NOT NULL,
+			driver          TEXT NOT NULL,
+			color_tag       TEXT NOT NULL DEFAULT '#3b82f6',
+			is_read_only     INTEGER NOT NULL DEFAULT 0,
+			tx_mode         TEXT NOT NULL DEFAULT 'auto',
+			host            TEXT NOT NULL DEFAULT 'localhost',
+			port            INTEGER NOT NULL DEFAULT 5432,
+			username        TEXT NOT NULL DEFAULT '',
+			database_name   TEXT NOT NULL DEFAULT '',
+			file_path       TEXT NOT NULL DEFAULT '',
+			ssl_mode        TEXT NOT NULL DEFAULT 'disable',
+			ssl_ca_path     TEXT NOT NULL DEFAULT '',
+			ssl_cert_path   TEXT NOT NULL DEFAULT '',
+			ssl_key_path    TEXT NOT NULL DEFAULT '',
+			ssh_enabled     INTEGER NOT NULL DEFAULT 0,
+			ssh_host        TEXT NOT NULL DEFAULT '',
+			ssh_port        INTEGER NOT NULL DEFAULT 22,
+			ssh_user        TEXT NOT NULL DEFAULT '',
+			ssh_auth_type   TEXT NOT NULL DEFAULT 'key',
+			ssh_key_path    TEXT NOT NULL DEFAULT '',
+			options_json    TEXT NOT NULL DEFAULT '{}',
+			sort_order      INTEGER NOT NULL DEFAULT 0,
+			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS worksheets (
+			id              TEXT PRIMARY KEY,
+			connection_id   TEXT REFERENCES connections(id) ON DELETE CASCADE,
+			title           TEXT NOT NULL,
+			content         TEXT NOT NULL DEFAULT '',
+			target_database TEXT NOT NULL DEFAULT '',
+			target_schema   TEXT NOT NULL DEFAULT '',
+			is_pinned       INTEGER NOT NULL DEFAULT 0,
+			cursor_line     INTEGER NOT NULL DEFAULT 1,
+			cursor_col      INTEGER NOT NULL DEFAULT 1,
+			sort_order      INTEGER NOT NULL DEFAULT 0,
+			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS query_history (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			connection_id   TEXT NOT NULL,
+			database_name   TEXT NOT NULL DEFAULT '',
+			schema_name     TEXT NOT NULL DEFAULT '',
+			sql_text        TEXT NOT NULL,
+			duration_ms     INTEGER NOT NULL DEFAULT 0,
+			rows_affected   INTEGER NOT NULL DEFAULT 0,
+			status          TEXT NOT NULL,
+			error_message   TEXT NOT NULL DEFAULT '',
+			executed_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_query_history_conn_time ON query_history(connection_id, executed_at DESC);`,
+
+		`CREATE TABLE IF NOT EXISTS schema_cache (
+			connection_id     TEXT NOT NULL,
+			database_name     TEXT NOT NULL,
+			schema_name       TEXT NOT NULL,
+			object_type       TEXT NOT NULL,
+			object_name       TEXT NOT NULL,
+			columns_json      TEXT NOT NULL DEFAULT '[]',
+			indexes_json      TEXT NOT NULL DEFAULT '[]',
+			foreign_keys_json TEXT NOT NULL DEFAULT '[]',
+			row_estimate      INTEGER NOT NULL DEFAULT 0,
+			synced_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (connection_id, database_name, schema_name, object_type, object_name)
+		);`,
+	}
+
+	for _, q := range queries {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migration query failed: %w (SQL: %s)", err, q)
+		}
+	}
+	return nil
+}
+
+type QueryHistoryEntry struct {
+	ID           int64     `json:"id"`
+	ConnectionID string    `json:"connectionId"`
+	DatabaseName string    `json:"databaseName"`
+	SchemaName   string    `json:"schemaName"`
+	SQLText      string    `json:"sqlText"`
+	DurationMs   int64     `json:"durationMs"`
+	RowsAffected int64     `json:"rowsAffected"`
+	Status       string    `json:"status"`
+	ErrorMessage string    `json:"errorMessage"`
+	ExecutedAt   time.Time `json:"executedAt"`
+}
+
+func (s *LocalStore) RecordQueryHistory(entry QueryHistoryEntry) error {
+	query := `INSERT INTO query_history (connection_id, database_name, schema_name, sql_text, duration_ms, rows_affected, status, error_message, executed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+	_, err := s.db.Exec(query, entry.ConnectionID, entry.DatabaseName, entry.SchemaName, entry.SQLText, entry.DurationMs, entry.RowsAffected, entry.Status, entry.ErrorMessage)
+	return err
+}
+
+func (s *LocalStore) GetRecentHistory(connectionID string, limit int) ([]QueryHistoryEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `SELECT id, connection_id, database_name, schema_name, sql_text, duration_ms, rows_affected, status, error_message, executed_at
+		FROM query_history WHERE connection_id = ? ORDER BY executed_at DESC LIMIT ?`
+	rows, err := s.db.Query(query, connectionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []QueryHistoryEntry
+	for rows.Next() {
+		var e QueryHistoryEntry
+		if err := rows.Scan(&e.ID, &e.ConnectionID, &e.DatabaseName, &e.SchemaName, &e.SQLText, &e.DurationMs, &e.RowsAffected, &e.Status, &e.ErrorMessage, &e.ExecutedAt); err != nil {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+

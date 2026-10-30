@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%" fill="none">
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="dhub-primary-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="50%" stop-color="#3B82F6" />
+      <stop offset="100%" stop-color="#8B5CF6" />
+    </linearGradient>
+
+    <linearGradient id="dhub-platter-top" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+
+    <linearGradient id="dhub-platter-mid" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#60A5FA" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+
+    <linearGradient id="dhub-platter-bot" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#A78BFA" />
+      <stop offset="100%" stop-color="#6D28D9" />
+    </linearGradient>
+
+    <linearGradient id="dhub-core-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22D3EE" />
+      <stop offset="100%" stop-color="#3B82F6" />
+    </linearGradient>
+
+    <!-- Glow filters -->
+    <filter id="dhub-core-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="glow" />
+      <feMerge>
+        <feMergeNode in="glow" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Left Hub Backbone / Bus -->
+  <rect x="14" y="16" width="12" height="68" rx="6" fill="url(#dhub-primary-grad)" />
+
+  <!-- Top Database Platter Arc -->
+  <path d="M 26 16 
+           L 56 16 
+           C 74 16, 86 24, 86 34 
+           C 86 44, 74 48, 56 48 
+           L 26 48 
+           Z" 
+        fill="url(#dhub-platter-top)" />
+  <path d="M 26 16 L 56 16 C 74 16, 86 24, 86 34" stroke="#BAE6FD" stroke-width="1.5" stroke-linecap="round" opacity="0.8" />
+
+  <!-- Middle Database Platter Arc (Nexus Ring) -->
+  <path d="M 26 38 
+           L 62 38 
+           C 82 38, 92 44, 92 50 
+           C 92 56, 82 62, 62 62 
+           L 26 62 
+           Z" 
+        fill="url(#dhub-platter-mid)" />
+  <path d="M 26 38 L 62 38 C 82 38, 92 44, 92 50" stroke="#DBEAFE" stroke-width="1.5" stroke-linecap="round" opacity="0.7" />
+
+  <!-- Bottom Database Platter Arc -->
+  <path d="M 26 52 
+           L 56 52 
+           C 74 52, 86 56, 86 66 
+           C 86 76, 74 84, 56 84 
+           L 26 84 
+           Z" 
+        fill="url(#dhub-platter-bot)" />
+  <path d="M 26 52 L 56 52 C 74 52, 86 56, 86 66" stroke="#DDD6FE" stroke-width="1.5" stroke-linecap="round" opacity="0.7" />
+
+  <!-- Negative Space 'D' Counter Hole -->
+  <ellipse cx="48" cy="50" rx="14" ry="12" fill="#121317" />
+
+  <!-- Central Hub Nexus Core -->
+  <circle cx="48" cy="50" r="7.5" fill="url(#dhub-core-grad)" filter="url(#dhub-core-glow)" />
+  <circle cx="48" cy="50" r="3" fill="#FFFFFF" />
+
+  <!-- Hub Connection Rays -->
+  <line x1="48" y1="38" x2="48" y2="28" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" />
+  <circle cx="48" cy="27" r="2" fill="#FFFFFF" />
+
+  <line x1="48" y1="62" x2="48" y2="72" stroke="#A78BFA" stroke-width="2" stroke-linecap="round" />
+  <circle cx="48" cy="73" r="2" fill="#FFFFFF" />
+
+  <!-- Data Bus Node Dots on Left Spine -->
+  <circle cx="20" cy="28" r="2" fill="#FFFFFF" opacity="0.9" />
+  <circle cx="20" cy="50" r="2.5" fill="#FFFFFF" />
+  <circle cx="20" cy="72" r="2" fill="#FFFFFF" opacity="0.9" />
+</svg>
