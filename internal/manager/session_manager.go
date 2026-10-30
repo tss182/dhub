@@ -187,8 +187,8 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		u.RawQuery = q.Encode()
 		return postgres.NewPostgresDriver(u.String())
 	case "mysql":
-		// user:password@tcp(host:port)/dbname?parseTime=true
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+		// user:password@tcp(host:port)/dbname?parseTime=true&multiStatements=true
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&multiStatements=true",
 			cfg.Username, cfg.Password, host, port, cfg.DatabaseName)
 		return mysql.NewMySQLDriver(dsn)
 	default:

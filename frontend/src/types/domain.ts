@@ -67,14 +67,25 @@ export interface TableStructure {
   ddl: string;
 }
 
+export interface StatementResult {
+  sql: string;
+  columns: ColumnMeta[];
+  rows: any[][];
+  rowsAffected: number;
+  elapsedMs: number;
+  error?: string;
+}
+
 export interface QueryResult {
   executionId: string;
+  sql?: string;
   columns: ColumnMeta[];
   rows: any[][];
   rowsAffected: number;
   elapsedMs: number;
   hasMore: boolean;
   error?: string;
+  results?: StatementResult[];
 }
 
 export interface Worksheet {

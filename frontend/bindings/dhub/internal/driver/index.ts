@@ -9,5 +9,6 @@ export type {
     QueryRequest,
     QueryResult,
     RowChange,
+    StatementResult,
     TableStructure
 } from "./models.js";

@@ -106,7 +106,9 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
       }
     }
 
-    const targetDb = dbs.length > 0 ? dbs[0] : conn.databaseName || (conn.driver === 'sqlite' ? 'main' : 'default');
+    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+    const nonSystemDb = dbs.find((d) => !systemDbs.includes(d.toLowerCase()));
+    const targetDb = conn.databaseName || nonSystemDb || (dbs.length > 0 ? dbs[0] : (conn.driver === 'sqlite' ? 'main' : 'default'));
     const targetSchema = conn.driver === 'postgres' ? 'public' : targetDb;
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
@@ -183,11 +185,6 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
 
   const filterLower = filterText.toLowerCase().trim();
 
-  // Find unassigned consoles (no connectionId or connection not found)
-  const unassignedConsoles = consoles.filter(
-    (c) => !c.connectionId || !connections.some((conn) => conn.id === c.connectionId)
-  );
-
   return (
     <div className="flex h-full flex-col bg-[#191a20] text-xs select-none relative">
       {/* Panel Header */}
@@ -209,7 +206,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
               if (activeConn) {
                 handleCreateForConnection(activeConn);
               } else {
-                createConsole('', 'main', 'main');
+                alert('Silakan pilih atau tambahkan koneksi di Database Explorer terlebih dahulu.');
               }
             }}
             className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
@@ -395,72 +392,6 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
               </div>
             );
           })
-        )}
-
-        {/* Unassigned / Other Consoles (if any) */}
-        {unassignedConsoles.length > 0 && (
-          <div className="rounded bg-[#14151a]/40 border border-[#272932]/70 overflow-hidden">
-            <div className="flex items-center justify-between px-2 py-1.5 bg-[#191a20] text-zinc-400 text-[11px] font-semibold uppercase">
-              <span>General Consoles</span>
-              <span className="font-mono">{unassignedConsoles.length}</span>
-            </div>
-            <div className="p-1 space-y-1 bg-[#121317]/50">
-              {unassignedConsoles.map((record) => {
-                const isTabActive = activeTabId === record.id;
-                const isTabOpen = tabs.some((t) => t.id === record.id);
-                return (
-                  <div
-                    key={record.id}
-                    onClick={() => handleOpenConsole(record)}
-                    onContextMenu={(e) => handleConsoleContextMenu(e, record)}
-                    className={`group flex flex-col p-2 rounded cursor-pointer border transition-colors ${
-                      isTabActive
-                        ? 'bg-[#22242c] border-blue-500/60 text-white'
-                        : 'bg-[#191a20]/80 border-transparent hover:bg-[#22242c]/50 text-zinc-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <FileCode
-                          className={`h-3.5 w-3.5 shrink-0 ${
-                            isTabActive ? 'text-blue-400' : 'text-zinc-400'
-                          }`}
-                        />
-                        <span className="font-medium truncate text-xs">{record.title}</span>
-                        {isTabOpen && (
-                          <span
-                            className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0"
-                            title="Tab is open"
-                          />
-                        )}
-                      </div>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRename(record.id, record.title);
-                          }}
-                          className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
-                          title="Rename"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => handleDelete(record.id, record.title, e)}
-                          className="p-1 rounded text-zinc-400 hover:text-rose-400 hover:bg-[#2d303b]"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         )}
       </div>
 

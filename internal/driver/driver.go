@@ -69,18 +69,28 @@ type QueryRequest struct {
 	Offset       int    `json:"offset"`
 }
 
-type QueryResult struct {
-	ExecutionID  string       `json:"executionId"`
+type StatementResult struct {
+	SQL          string       `json:"sql"`
 	Columns      []ColumnMeta `json:"columns"`
 	Rows         [][]any      `json:"rows"`
 	RowsAffected int64        `json:"rowsAffected"`
 	ElapsedMs    int64        `json:"elapsedMs"`
-	HasMore      bool         `json:"hasMore"`
-	IsEditable   bool         `json:"isEditable"`
-	SourceSchema string       `json:"sourceSchema"`
-	SourceTable  string       `json:"sourceTable"`
-	PrimaryKeys  []string     `json:"primaryKeys"`
 	Error        string       `json:"error,omitempty"`
+}
+
+type QueryResult struct {
+	ExecutionID  string            `json:"executionId"`
+	Columns      []ColumnMeta      `json:"columns"`
+	Rows         [][]any           `json:"rows"`
+	RowsAffected int64             `json:"rowsAffected"`
+	ElapsedMs    int64             `json:"elapsedMs"`
+	HasMore      bool              `json:"hasMore"`
+	IsEditable   bool              `json:"isEditable"`
+	SourceSchema string            `json:"sourceSchema"`
+	SourceTable  string            `json:"sourceTable"`
+	PrimaryKeys  []string          `json:"primaryKeys"`
+	Error        string            `json:"error,omitempty"`
+	Results      []StatementResult `json:"results,omitempty"`
 }
 
 type RowChange struct {

@@ -37,6 +37,8 @@ export function App() {
     isBottomPanelOpen,
     isRightPanelOpen,
     consoles,
+    hasLoadedConsoles,
+    loadConsoles,
     openTab,
     closeTab,
     closeTabsMatching,
@@ -61,9 +63,11 @@ export function App() {
     connections,
     treeDatabases,
     setTreeDatabases,
+    setActiveConnection,
   } = useConnectionStore();
   const [isRunning, setIsRunning] = useState(false);
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
+  const [activeResultIndex, setActiveResultIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState('Ready');
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
 
@@ -286,6 +290,11 @@ export function App() {
     }
   }, [activeTabId, tabRefreshTrigger[activeTabId || '']]);
 
+  // Load saved consoles from SQLite on startup
+  useEffect(() => {
+    loadConsoles();
+  }, [loadConsoles]);
+
   // Pre-load databases for connections so console dropdowns are always populated
   useEffect(() => {
     connections.forEach((c) => {
@@ -301,15 +310,41 @@ export function App() {
     });
   }, [connections]);
 
-  const handleExecuteQuery = async (sql: string) => {
-    const targetConnId = activeTab?.connectionId || activeConnectionId;
+  // Synchronize active connection & database in explorer when switching tabs
+  useEffect(() => {
+    if (activeTab && activeTab.connectionId) {
+      setActiveConnection(
+        activeTab.connectionId,
+        activeTab.database || '',
+        activeTab.schema || ''
+      );
+    }
+  }, [activeTab?.id, activeTab?.database, activeTab?.schema, activeTab?.connectionId]);
+
+  const handleExecuteQuery = async (sql: string, explicitDb?: string) => {
+    const currentTab = useWorkbenchStore
+      .getState()
+      .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
+    const targetConnId = currentTab?.connectionId || useConnectionStore.getState().activeConnectionId;
     if (!targetConnId) {
       alert('Please select or add a connection in Database Explorer first!');
       return;
     }
-    const conn = connections.find((c) => c.id === targetConnId);
-    const targetDb = activeTab?.database || conn?.databaseName || activeDatabase || 'main';
-    const targetSchema = activeTab?.schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
+    const currentConns = useConnectionStore.getState().connections;
+    const conn = currentConns.find((c) => c.id === targetConnId);
+
+    // explicitDb has top priority, then tab's database, then activeDatabase, then conn.databaseName
+    const targetDb =
+      explicitDb ||
+      currentTab?.database ||
+      useConnectionStore.getState().activeDatabase ||
+      conn?.databaseName ||
+      (conn?.driver === 'sqlite' ? 'main' : '');
+
+    const targetSchema =
+      currentTab?.schema ||
+      useConnectionStore.getState().activeSchema ||
+      (conn?.driver === 'postgres' ? 'public' : targetDb);
 
     setIsRunning(true);
     setStatusMessage(`Executing query on [${conn?.name || 'db'}] / [${targetDb}]...`);
@@ -326,9 +361,17 @@ export function App() {
       } as any);
 
       setQueryResult(res as any);
-      setStatusMessage(
-        `[${targetDb}] Completed in ${res?.elapsedMs || 0}ms (${res?.rowsAffected || res?.rows?.length || 0} rows)`
-      );
+      setActiveResultIndex(0);
+      const stmtCount = (res as any)?.results?.length || 1;
+      if (stmtCount > 1) {
+        setStatusMessage(
+          `[${targetDb}] Executed ${stmtCount} statements in ${res?.elapsedMs || 0}ms`
+        );
+      } else {
+        setStatusMessage(
+          `[${targetDb}] Completed in ${res?.elapsedMs || 0}ms (${res?.rowsAffected || res?.rows?.length || 0} rows)`
+        );
+      }
       setActiveBottomTab('result');
     } catch (e: any) {
       setStatusMessage(`[${targetDb}] Error: ${e?.message || String(e)}`);
@@ -502,8 +545,7 @@ export function App() {
               <div className="flex-1 min-h-0">
                 <SqlWorksheet
                   sql={activeTab.content || ''}
-                  connectionId={activeTab.connectionId || activeConnectionId || ''}
-                  connections={connections}
+                  connection={connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))}
                   database={
                     activeTab.database ||
                     connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))?.databaseName ||
@@ -521,23 +563,17 @@ export function App() {
                   onExecute={handleExecuteQuery}
                   onCancel={() => setIsRunning(false)}
                   onDatabaseChange={(newDb) => {
-                    const connId = activeTab.connectionId || activeConnectionId || '';
+                    const currentTab = useWorkbenchStore
+                      .getState()
+                      .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
+                    const connId = currentTab?.connectionId || activeConnectionId || '';
                     const conn = connections.find((c) => c.id === connId);
                     const targetSchema = conn?.driver === 'postgres' ? 'public' : newDb;
-                    updateTabDatabase(activeTab.id, newDb, targetSchema);
-                  }}
-                  onConnectionChange={(newConnId) => {
-                    const conn = connections.find((c) => c.id === newConnId);
-                    const defaultDb = conn?.databaseName || treeDatabases[newConnId]?.[0] || 'main';
-                    const defaultSchema = conn?.driver === 'postgres' ? 'public' : defaultDb;
-                    updateTabConnection(activeTab.id, newConnId, defaultDb, defaultSchema);
-                    if (!treeDatabases[newConnId]) {
-                      SchemaService.GetDatabases(newConnId)
-                        .then((dbs) => {
-                          if (dbs) setTreeDatabases(newConnId, dbs);
-                        })
-                        .catch(() => {});
+                    if (currentTab) {
+                      updateTabDatabase(currentTab.id, newDb, targetSchema);
                     }
+                    setActiveConnection(connId, newDb, targetSchema);
+                    setStatusMessage(`Switched database to [${newDb}] for [${conn?.name || 'connection'}]`);
                   }}
                 />
               </div>
@@ -597,20 +633,46 @@ export function App() {
               <div className="h-64 border-t border-[#272932] flex flex-col bg-[#191a20]">
                 {/* Services Bar */}
                 <div className="flex h-8 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => setActiveBottomTab('result')}
-                      className={`text-xs pb-1 border-b-2 font-medium cursor-pointer ${
-                        activeBottomTab === 'result'
-                          ? 'border-blue-500 text-white'
-                          : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                      }`}
-                    >
-                      Query Result
-                    </button>
+                  <div className="flex items-center gap-2 overflow-x-auto">
+                    {queryResult?.results && queryResult.results.length > 1 ? (
+                      queryResult.results.map((res: any, idx: number) => {
+                        const isSelected = activeBottomTab === 'result' && activeResultIndex === idx;
+                        const hasCols = res.columns && res.columns.length > 0;
+                        const label = hasCols
+                          ? `Result ${idx + 1} (${res.rows?.length || 0})`
+                          : `Result ${idx + 1} (${res.rowsAffected || 0} aff)`;
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setActiveBottomTab('result');
+                              setActiveResultIndex(idx);
+                            }}
+                            className={`text-xs pb-1 border-b-2 font-medium cursor-pointer transition-colors whitespace-nowrap ${
+                              isSelected
+                                ? 'border-blue-500 text-white font-semibold'
+                                : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <button
+                        onClick={() => setActiveBottomTab('result')}
+                        className={`text-xs pb-1 border-b-2 font-medium cursor-pointer ${
+                          activeBottomTab === 'result'
+                            ? 'border-blue-500 text-white'
+                            : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                        }`}
+                      >
+                        Query Result
+                      </button>
+                    )}
                     <button
                       onClick={() => setActiveBottomTab('output')}
-                      className={`text-xs pb-1 border-b-2 font-medium cursor-pointer ${
+                      className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
                         activeBottomTab === 'output'
                           ? 'border-blue-500 text-white'
                           : 'border-transparent text-zinc-500 hover:text-zinc-300'
@@ -621,7 +683,7 @@ export function App() {
                   </div>
                   <button
                     onClick={toggleBottomPanel}
-                    className="text-zinc-500 hover:text-zinc-300 text-xs cursor-pointer"
+                    className="text-zinc-500 hover:text-zinc-300 text-xs cursor-pointer ml-2"
                   >
                     Minimize
                   </button>
@@ -631,26 +693,72 @@ export function App() {
                 <div className="flex-1 min-h-0 overflow-auto p-2">
                   {activeBottomTab === 'result' ? (
                     queryResult?.error ? (
-                      <div className="p-4 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40">
+                      <div className="p-4 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40 whitespace-pre-wrap">
                         {queryResult.error}
                       </div>
-                    ) : (
-                      <DataGrid
-                        tabId="bottom-result"
-                        columns={queryResult?.columns || []}
-                        rows={queryResult?.rows || []}
-                        onSubmitChanges={handleSubmitChanges}
-                        onPreviewChanges={handlePreviewChanges}
-                      />
-                    )
+                    ) : (() => {
+                      const currentRes =
+                        queryResult?.results && queryResult.results[activeResultIndex]
+                          ? queryResult.results[activeResultIndex]
+                          : queryResult;
+                      const hasCols = currentRes?.columns && currentRes.columns.length > 0;
+
+                      if (!hasCols) {
+                        return (
+                          <div className="flex h-full flex-col items-center justify-center p-6 text-zinc-400 font-mono text-xs select-none">
+                            <CheckCircle className="h-6 w-6 text-emerald-400 mb-2" />
+                            <span className="font-semibold text-zinc-200">Statement executed successfully</span>
+                            <span className="text-zinc-500 mt-1">
+                              {currentRes?.rowsAffected ?? 0} rows affected ({currentRes?.elapsedMs ?? 0}ms)
+                            </span>
+                            {(currentRes as any)?.sql && (
+                              <div className="mt-3 px-3 py-1.5 rounded bg-[#121317] border border-[#272932] text-zinc-400 text-[11px] max-w-xl truncate">
+                                {(currentRes as any).sql}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <DataGrid
+                          key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
+                          tabId={`bottom-result-${activeResultIndex}`}
+                          columns={currentRes.columns || []}
+                          rows={currentRes.rows || []}
+                          onSubmitChanges={handleSubmitChanges}
+                          onPreviewChanges={handlePreviewChanges}
+                        />
+                      );
+                    })()
                   ) : (
-                    <div className="p-3 font-mono text-xs text-zinc-400 space-y-1">
+                    <div className="p-3 font-mono text-xs text-zinc-400 space-y-2">
                       <div>[{new Date().toLocaleTimeString()}] Status: {statusMessage}</div>
-                      {queryResult && (
+                      {queryResult?.results && queryResult.results.length > 1 ? (
+                        <div className="space-y-1.5 border-t border-[#272932] pt-2">
+                          <div className="text-zinc-300 font-semibold">
+                            Executed {queryResult.results.length} statements ({queryResult.elapsedMs}ms total):
+                          </div>
+                          {queryResult.results.map((res: any, idx: number) => (
+                            <div key={idx} className="p-2 rounded bg-[#14151a] border border-[#272932] text-[11px]">
+                              <div className="flex items-center justify-between text-zinc-300">
+                                <span className="font-semibold text-blue-400">Statement #{idx + 1}</span>
+                                <span className="text-zinc-500">{res.elapsedMs}ms</span>
+                              </div>
+                              <div className="text-zinc-400 truncate mt-0.5">{res.sql}</div>
+                              <div className="text-zinc-500 text-[10px] mt-0.5">
+                                {res.columns && res.columns.length > 0
+                                  ? `${res.rows?.length || 0} rows returned`
+                                  : `${res.rowsAffected || 0} rows affected`}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : queryResult ? (
                         <div>
                           [{new Date().toLocaleTimeString()}] Rows returned: {queryResult.rows?.length || 0} (took {queryResult.elapsedMs}ms)
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   )}
                 </div>

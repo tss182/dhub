@@ -72,6 +72,7 @@ export interface QueryResult {
     "sourceTable": string;
     "primaryKeys": string[] | null;
     "error"?: string;
+    "results"?: StatementResult[] | null;
 }
 
 export interface RowChange {
@@ -81,6 +82,15 @@ export interface RowChange {
     "type": string;
     "primaryKey": { [_ in string]?: any } | null;
     "changes": { [_ in string]?: any } | null;
+}
+
+export interface StatementResult {
+    "sql": string;
+    "columns": ColumnMeta[] | null;
+    "rows": (any[] | null)[] | null;
+    "rowsAffected": number;
+    "elapsedMs": number;
+    "error"?: string;
 }
 
 export interface TableStructure {
