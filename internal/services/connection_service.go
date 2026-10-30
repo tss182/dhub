@@ -33,6 +33,9 @@ func (s *ConnectionService) GetConnection(id string) (*store.ConnectionConfig, e
 }
 
 func (s *ConnectionService) SaveConnection(cfg store.ConnectionConfig) (string, error) {
+	if cfg.ID != "" {
+		s.sessions.Disconnect(cfg.ID)
+	}
 	id, err := s.store.SaveConnection(context.Background(), cfg)
 	if err != nil {
 		return "", err

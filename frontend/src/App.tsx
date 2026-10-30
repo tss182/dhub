@@ -21,9 +21,10 @@ import {
   CheckCircle,
   Clock,
   Layers,
-  ChevronDown
+  ChevronDown,
+  RefreshCw,
 } from 'lucide-react';
-import { QueryResult } from './types/domain';
+import { QueryResult, ColumnMeta, WorkbenchTab } from './types/domain';
 
 export function App() {
   const {
@@ -47,12 +48,37 @@ export function App() {
   const [statusMessage, setStatusMessage] = useState('Ready');
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
 
+  // Tab-specific table data store
+  const [tableDataByTab, setTableDataByTab] = useState<
+    Record<
+      string,
+      {
+        columns: ColumnMeta[];
+        rows: any[][];
+        primaryKeys: string[];
+        isLoading: boolean;
+        error: string | null;
+      }
+    >
+  >({});
+
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
-  // Global Keyboard shortcuts: Double Shift for Search Everywhere, Ctrl+Enter to Run
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+  const searchShortcutLabel = isMac ? '⌘P' : 'Ctrl+P';
+
+  // Global Keyboard shortcuts: Ctrl+P / Cmd+P for Search Everywhere, Double Shift as secondary
   useEffect(() => {
     let lastShiftPress = 0;
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Primary shortcut: Ctrl+P on Linux/Windows, Cmd+P on macOS
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        setSearchEverywhereOpen(true);
+        return;
+      }
+
+      // Secondary shortcut: Double Shift
       if (e.key === 'Shift') {
         const now = Date.now();
         if (now - lastShiftPress < 350) {
@@ -66,6 +92,102 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  const loadTableData = async (tab: WorkbenchTab) => {
+    const connId = tab.connectionId || activeConnectionId;
+    if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
+
+    setTableDataByTab((prev) => ({
+      ...prev,
+      [tab.id]: {
+        columns: prev[tab.id]?.columns || [],
+        rows: prev[tab.id]?.rows || [],
+        primaryKeys: prev[tab.id]?.primaryKeys || [],
+        isLoading: true,
+        error: null,
+      },
+    }));
+
+    try {
+      const conn = connections.find((c) => c.id === connId);
+      const isMySQL = conn?.driver === 'mysql';
+      const targetDb = tab.database || conn?.databaseName || 'main';
+      const targetSchema = tab.schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
+
+      // 1. Fetch table structure for primary keys
+      let primaryKeys: string[] = [];
+      try {
+        const structure = await SchemaService.GetTableStructure(
+          connId,
+          targetDb,
+          targetSchema,
+          tab.table
+        );
+        if (structure && structure.primaryKeys) {
+          primaryKeys = structure.primaryKeys;
+        }
+      } catch (structErr) {
+        console.warn('Could not fetch structure for table:', structErr);
+      }
+
+      // 2. Query table data
+      const quotedTable = isMySQL ? `\`${tab.table}\`` : `"${tab.table}"`;
+      const sql = `SELECT * FROM ${quotedTable} LIMIT 500;`;
+
+      const execId = 'exec-tab-' + Date.now();
+      const res = await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: connId,
+        database: targetDb,
+        schema: targetSchema,
+        sql,
+        limit: 500,
+        offset: 0,
+      } as any);
+
+      if (res) {
+        const detectedPKs =
+          primaryKeys.length > 0
+            ? primaryKeys
+            : (res.columns || []).filter((c: any) => (c as any).isPrimaryKey).map((c: any) => c.name);
+
+        setTableDataByTab((prev) => ({
+          ...prev,
+          [tab.id]: {
+            columns: (res.columns as any) || [],
+            rows: (res.rows as any) || [],
+            primaryKeys: detectedPKs,
+            isLoading: false,
+            error: null,
+          },
+        }));
+        setStatusMessage(`Loaded ${res.rows?.length || 0} rows from ${tab.table}`);
+      }
+    } catch (e: any) {
+      console.error(`Failed to load data for ${tab.table}:`, e);
+      setTableDataByTab((prev) => ({
+        ...prev,
+        [tab.id]: {
+          columns: [],
+          rows: [],
+          primaryKeys: [],
+          isLoading: false,
+          error: e?.message || String(e),
+        },
+      }));
+      setStatusMessage(`Error loading ${tab.table}: ${e?.message || String(e)}`);
+    }
+  };
+
+  // Automatically fetch table rows when switching to or opening a table_data tab
+  useEffect(() => {
+    if (activeTab && activeTab.type === 'table_data') {
+      const existing = tableDataByTab[activeTab.id];
+      if (!existing || (!existing.isLoading && existing.rows.length === 0 && !existing.error)) {
+        loadTableData(activeTab);
+      }
+    }
+  }, [activeTabId]);
 
   const handleExecuteQuery = async (sql: string) => {
     if (!activeConnectionId) {
@@ -106,13 +228,15 @@ export function App() {
   };
 
   const handlePreviewChanges = async () => {
-    if (!activeTab || !activeConnectionId) return;
+    if (!activeTab) return;
+    const connId = activeTab.connectionId || activeConnectionId;
+    if (!connId) return;
     const stagedChanges = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
     const changeList = Object.values(stagedChanges);
     try {
       const sqls = await QueryService.PreviewChanges(
-        activeConnectionId,
-        activeTab.schema || 'main',
+        connId,
+        activeTab.database || activeTab.schema || 'main',
         activeTab.table || '',
         changeList as any
       );
@@ -123,13 +247,15 @@ export function App() {
   };
 
   const handleSubmitChanges = async () => {
-    if (!activeTab || !activeConnectionId) return;
+    if (!activeTab) return;
+    const connId = activeTab.connectionId || activeConnectionId;
+    if (!connId) return;
     const stagedChanges = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
     const changeList = Object.values(stagedChanges);
     try {
       const affected = await QueryService.SubmitChanges(
-        activeConnectionId,
-        activeTab.schema || 'main',
+        connId,
+        activeTab.database || activeTab.schema || 'main',
         activeTab.table || '',
         changeList as any
       );
@@ -137,7 +263,7 @@ export function App() {
       useGridEditStore.getState().revertTabChanges(activeTab.id);
       // Refresh table data
       if (activeTab.table) {
-        handleExecuteQuery(`SELECT * FROM "${activeTab.table}" LIMIT 500;`);
+        loadTableData(activeTab);
       }
     } catch (e: any) {
       alert('Submit failed: ' + (e?.message || String(e)));
@@ -157,7 +283,7 @@ export function App() {
 
           {/* Quick Active Connection Indicator */}
           <div
-            onClick={() => setConnectionDialogOpen(true)}
+            onClick={() => setConnectionDialogOpen(true, activeConnectionId)}
             className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs border border-[#272932] cursor-pointer hover:border-zinc-500 transition-colors"
           >
             <span
@@ -179,7 +305,7 @@ export function App() {
           <Search className="h-3.5 w-3.5" />
           <span>Search Everywhere</span>
           <kbd className="rounded bg-[#2a2d37] px-1 text-[10px] text-zinc-400 font-mono">
-            Shift × 2
+            {searchShortcutLabel}
           </kbd>
         </button>
       </header>
@@ -239,14 +365,53 @@ export function App() {
                 />
               </div>
             ) : activeTab?.type === 'table_data' ? (
-              <div className="flex-1 min-h-0">
-                <DataGrid
-                  tabId={activeTab.id}
-                  columns={queryResult?.columns || []}
-                  rows={queryResult?.rows || []}
-                  onSubmitChanges={handleSubmitChanges}
-                  onPreviewChanges={handlePreviewChanges}
-                />
+              <div className="flex-1 min-h-0 flex flex-col">
+                {/* Table Tab Bar with Table Name, Database, and Refresh Button */}
+                <div className="flex h-9 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
+                  <div className="flex items-center gap-2">
+                    <Table className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="font-semibold text-xs text-white">{activeTab.table}</span>
+                    <span className="text-zinc-600">/</span>
+                    <span className="font-mono text-[11px] text-zinc-400">{activeTab.database || 'main'}</span>
+                    <span className="text-zinc-600">•</span>
+                    <span className="text-[11px] text-zinc-500 font-mono">
+                      {tableDataByTab[activeTab.id]?.rows?.length ?? 0} rows
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => loadTableData(activeTab)}
+                      disabled={tableDataByTab[activeTab.id]?.isLoading}
+                      className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                      title="Reload Table Data"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${tableDataByTab[activeTab.id]?.isLoading ? 'animate-spin' : ''}`} />
+                      <span>Reload</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 min-h-0">
+                  {tableDataByTab[activeTab.id]?.isLoading && (!tableDataByTab[activeTab.id]?.rows || tableDataByTab[activeTab.id]?.rows.length === 0) ? (
+                    <div className="flex h-full items-center justify-center text-xs text-zinc-400 gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin text-blue-400" />
+                      <span>Loading rows from `{activeTab.table}`...</span>
+                    </div>
+                  ) : tableDataByTab[activeTab.id]?.error ? (
+                    <div className="p-4 m-4 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40">
+                      Failed to load table: {tableDataByTab[activeTab.id]?.error}
+                    </div>
+                  ) : (
+                    <DataGrid
+                      tabId={activeTab.id}
+                      columns={tableDataByTab[activeTab.id]?.columns || []}
+                      rows={tableDataByTab[activeTab.id]?.rows || []}
+                      primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
+                      onSubmitChanges={handleSubmitChanges}
+                      onPreviewChanges={handlePreviewChanges}
+                    />
+                  )}
+                </div>
               </div>
             ) : null}
 

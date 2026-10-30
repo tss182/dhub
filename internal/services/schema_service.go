@@ -47,7 +47,23 @@ func (s *SchemaService) GetObjects(connectionID, database, schema string) ([]dri
 	if err != nil {
 		return nil, err
 	}
-	return drv.ListObjects(context.Background(), database, schema)
+	objs, err := drv.ListObjects(context.Background(), database, schema)
+	if err == nil && len(objs) > 0 {
+		go func() {
+			ctx := context.Background()
+			for _, o := range objs {
+				_ = s.store.SaveSchemaCache(ctx, store.CachedObject{
+					ConnectionID: connectionID,
+					DatabaseName: database,
+					SchemaName:   schema,
+					ObjectType:   o.Type,
+					ObjectName:   o.Name,
+					RowEstimate:  o.RowEstimate,
+				})
+			}
+		}()
+	}
+	return objs, err
 }
 
 func (s *SchemaService) GetTableStructure(connectionID, database, schema, table string) (*driver.TableStructure, error) {

@@ -73,7 +73,7 @@ export const SearchEverywhere: React.FC = () => {
                 key={idx}
                 onClick={() => {
                   openTab({
-                    id: `table-${item.connectionId}-${item.objectName}`,
+                    id: `table-${item.connectionId}-${item.databaseName}-${item.objectName}`,
                     type: 'table_data',
                     title: item.objectName,
                     connectionId: item.connectionId,

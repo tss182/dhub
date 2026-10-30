@@ -6,6 +6,7 @@ interface ConnectionState {
   activeConnectionId: string | null;
   activeDatabase: string;
   activeSchema: string;
+  treeDatabases: Record<string, string[]>; // key: connId -> ['db1', 'db2']
   treeObjects: Record<string, ObjectSummary[]>; // key: connId:db:schema
   expandedNodes: Record<string, boolean>;
   isLoading: boolean;
@@ -13,6 +14,7 @@ interface ConnectionState {
 
   setConnections: (conns: ConnectionConfig[]) => void;
   setActiveConnection: (id: string, database?: string, schema?: string) => void;
+  setTreeDatabases: (connId: string, databases: string[]) => void;
   setTreeObjects: (key: string, objects: ObjectSummary[]) => void;
   toggleNode: (nodeKey: string) => void;
   setSelectedTable: (table: string | null) => void;
@@ -24,6 +26,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   activeConnectionId: null,
   activeDatabase: '',
   activeSchema: '',
+  treeDatabases: {},
   treeObjects: {},
   expandedNodes: {},
   isLoading: false,
@@ -36,6 +39,10 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
       activeDatabase: database,
       activeSchema: schema,
     }),
+  setTreeDatabases: (connId, databases) =>
+    set((state) => ({
+      treeDatabases: { ...state.treeDatabases, [connId]: databases },
+    })),
   setTreeObjects: (key, objects) =>
     set((state) => ({
       treeObjects: { ...state.treeObjects, [key]: objects },
