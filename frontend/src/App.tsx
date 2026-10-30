@@ -42,6 +42,8 @@ export function App() {
     closeTabsMatching,
     setActiveTabId,
     updateTabContent,
+    updateTabDatabase,
+    updateTabConnection,
     renameTab,
     duplicateTab,
     setActiveBottomTab,
@@ -52,7 +54,14 @@ export function App() {
     tabRefreshTrigger,
   } = useWorkbenchStore();
 
-  const { activeConnectionId, activeDatabase, activeSchema, connections } = useConnectionStore();
+  const {
+    activeConnectionId,
+    activeDatabase,
+    activeSchema,
+    connections,
+    treeDatabases,
+    setTreeDatabases,
+  } = useConnectionStore();
   const [isRunning, setIsRunning] = useState(false);
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
   const [statusMessage, setStatusMessage] = useState('Ready');
@@ -277,30 +286,52 @@ export function App() {
     }
   }, [activeTabId, tabRefreshTrigger[activeTabId || '']]);
 
+  // Pre-load databases for connections so console dropdowns are always populated
+  useEffect(() => {
+    connections.forEach((c) => {
+      if (!treeDatabases[c.id]) {
+        SchemaService.GetDatabases(c.id)
+          .then((dbs) => {
+            if (dbs && dbs.length > 0) {
+              setTreeDatabases(c.id, dbs);
+            }
+          })
+          .catch(() => {});
+      }
+    });
+  }, [connections]);
+
   const handleExecuteQuery = async (sql: string) => {
-    if (!activeConnectionId) {
+    const targetConnId = activeTab?.connectionId || activeConnectionId;
+    if (!targetConnId) {
       alert('Please select or add a connection in Database Explorer first!');
       return;
     }
+    const conn = connections.find((c) => c.id === targetConnId);
+    const targetDb = activeTab?.database || conn?.databaseName || activeDatabase || 'main';
+    const targetSchema = activeTab?.schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
+
     setIsRunning(true);
-    setStatusMessage('Executing query...');
+    setStatusMessage(`Executing query on [${conn?.name || 'db'}] / [${targetDb}]...`);
     try {
       const execId = 'exec-' + Date.now();
       const res = await QueryService.ExecuteQuery({
         executionId: execId,
-        connectionId: activeConnectionId,
-        database: activeDatabase || 'main',
-        schema: activeSchema || 'main',
+        connectionId: targetConnId,
+        database: targetDb,
+        schema: targetSchema,
         sql,
         limit: 500,
         offset: 0,
       } as any);
 
       setQueryResult(res as any);
-      setStatusMessage(`Completed in ${res?.elapsedMs || 0}ms (${res?.rowsAffected || res?.rows?.length || 0} rows)`);
+      setStatusMessage(
+        `[${targetDb}] Completed in ${res?.elapsedMs || 0}ms (${res?.rowsAffected || res?.rows?.length || 0} rows)`
+      );
       setActiveBottomTab('result');
     } catch (e: any) {
-      setStatusMessage(`Error: ${e?.message || String(e)}`);
+      setStatusMessage(`[${targetDb}] Error: ${e?.message || String(e)}`);
       setQueryResult({
         executionId: '',
         columns: [],
@@ -471,12 +502,43 @@ export function App() {
               <div className="flex-1 min-h-0">
                 <SqlWorksheet
                   sql={activeTab.content || ''}
-                  database={activeTab.database || activeDatabase}
-                  schema={activeTab.schema || activeSchema}
+                  connectionId={activeTab.connectionId || activeConnectionId || ''}
+                  connections={connections}
+                  database={
+                    activeTab.database ||
+                    connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))?.databaseName ||
+                    'main'
+                  }
+                  schema={activeTab.schema || 'public'}
+                  availableDatabases={
+                    treeDatabases[activeTab.connectionId || activeConnectionId || ''] ||
+                    (connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))?.databaseName
+                      ? [connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))!.databaseName!]
+                      : ['main'])
+                  }
                   isRunning={isRunning}
                   onChange={(val) => updateTabContent(activeTab.id, val)}
                   onExecute={handleExecuteQuery}
                   onCancel={() => setIsRunning(false)}
+                  onDatabaseChange={(newDb) => {
+                    const connId = activeTab.connectionId || activeConnectionId || '';
+                    const conn = connections.find((c) => c.id === connId);
+                    const targetSchema = conn?.driver === 'postgres' ? 'public' : newDb;
+                    updateTabDatabase(activeTab.id, newDb, targetSchema);
+                  }}
+                  onConnectionChange={(newConnId) => {
+                    const conn = connections.find((c) => c.id === newConnId);
+                    const defaultDb = conn?.databaseName || treeDatabases[newConnId]?.[0] || 'main';
+                    const defaultSchema = conn?.driver === 'postgres' ? 'public' : defaultDb;
+                    updateTabConnection(activeTab.id, newConnId, defaultDb, defaultSchema);
+                    if (!treeDatabases[newConnId]) {
+                      SchemaService.GetDatabases(newConnId)
+                        .then((dbs) => {
+                          if (dbs) setTreeDatabases(newConnId, dbs);
+                        })
+                        .catch(() => {});
+                    }
+                  }}
                 />
               </div>
             ) : activeTab?.type === 'table_data' ? (

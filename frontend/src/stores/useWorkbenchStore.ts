@@ -29,6 +29,13 @@ interface WorkbenchState {
   refreshTab: (tabId: string) => void;
   setActiveTabId: (tabId: string) => void;
   updateTabContent: (tabId: string, content: string) => void;
+  updateTabDatabase: (tabId: string, database: string, schema?: string) => void;
+  updateTabConnection: (
+    tabId: string,
+    connectionId: string,
+    database?: string,
+    schema?: string
+  ) => void;
   renameTab: (tabId: string, newTitle: string) => void;
   duplicateTab: (tabId: string) => void;
   createConsole: (
@@ -144,6 +151,44 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       ),
       consoles: state.consoles.map((c) =>
         c.id === tabId ? { ...c, content, updatedAt: Date.now() } : c
+      ),
+    })),
+
+  updateTabDatabase: (tabId, database, schema) =>
+    set((state) => {
+      const targetSchema = schema || (database === 'main' ? 'main' : database);
+      return {
+        tabs: state.tabs.map((t) =>
+          t.id === tabId ? { ...t, database, schema: targetSchema } : t
+        ),
+        consoles: state.consoles.map((c) =>
+          c.id === tabId ? { ...c, database, schema: targetSchema, updatedAt: Date.now() } : c
+        ),
+      };
+    }),
+
+  updateTabConnection: (tabId, connectionId, database, schema) =>
+    set((state) => ({
+      tabs: state.tabs.map((t) =>
+        t.id === tabId
+          ? {
+              ...t,
+              connectionId,
+              database: database ?? t.database,
+              schema: schema ?? t.schema,
+            }
+          : t
+      ),
+      consoles: state.consoles.map((c) =>
+        c.id === tabId
+          ? {
+              ...c,
+              connectionId,
+              database: database ?? c.database,
+              schema: schema ?? c.schema,
+              updatedAt: Date.now(),
+            }
+          : c
       ),
     })),
 
