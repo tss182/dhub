@@ -3,28 +3,39 @@ import Editor, { OnMount, loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 
 loader.config({ monaco });
-import { Play, Square, Database, Terminal } from 'lucide-react';
+import { Play, Square, Database, Terminal, ChevronDown } from 'lucide-react';
+import { ConnectionConfig } from '../../types/domain';
 
 interface SqlWorksheetProps {
   sql: string;
+  connectionId?: string;
+  connections?: ConnectionConfig[];
   database: string;
   schema: string;
+  availableDatabases?: string[];
   isRunning: boolean;
   schemaMetadata?: Array<{ table: string; columns: Array<{ name: string; dataType: string }> }>;
   onChange: (value: string) => void;
   onExecute: (statementSql: string) => void;
   onCancel: () => void;
+  onDatabaseChange?: (newDatabase: string) => void;
+  onConnectionChange?: (newConnectionId: string) => void;
 }
 
 export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   sql,
+  connectionId,
+  connections = [],
   database,
   schema,
+  availableDatabases = [],
   isRunning,
   schemaMetadata = [],
   onChange,
   onExecute,
   onCancel,
+  onDatabaseChange,
+  onConnectionChange,
 }) => {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
@@ -102,10 +113,12 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     });
   };
 
+  const currentConn = connections.find((c) => c.id === connectionId);
+
   return (
     <div className="flex h-full flex-col bg-[#191a20]">
       {/* Worksheet Toolbar */}
-      <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 text-xs">
+      <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 text-xs bg-[#14151a]">
         <div className="flex items-center gap-2">
           {!isRunning ? (
             <button
@@ -129,11 +142,62 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
           <div className="h-4 w-[1px] bg-[#272932] mx-1" />
 
-          <div className="flex items-center gap-1.5 rounded bg-[#22242c] px-2.5 py-1 text-zinc-300">
-            <Database className="h-3.5 w-3.5 text-blue-400" />
-            <span className="font-mono text-[11px]">{database || 'default'}</span>
-            <span className="text-zinc-600">/</span>
-            <span className="font-mono text-[11px] text-amber-300">{schema || 'public'}</span>
+          {/* Independent Connection & Database Selector for this Console */}
+          <div className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2 py-0.5 border border-[#272932]">
+            {/* Connection Selector */}
+            {connections && connections.length > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="h-2 w-2 rounded-full shrink-0"
+                  style={{ backgroundColor: currentConn?.colorTag || '#71717a' }}
+                />
+                <select
+                  value={connectionId || ''}
+                  onChange={(e) => onConnectionChange?.(e.target.value)}
+                  className="bg-transparent text-[11px] text-zinc-300 font-medium focus:outline-none cursor-pointer max-w-[120px] truncate"
+                  title="Switch Connection for this Console"
+                >
+                  <option value="" disabled className="bg-[#191a20] text-zinc-400">
+                    Select Connection
+                  </option>
+                  {connections.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-[#191a20] text-zinc-200">
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-zinc-500" />
+                <span className="text-[11px] text-zinc-400">No Connection</span>
+              </div>
+            )}
+
+            <span className="text-zinc-600 font-mono">/</span>
+
+            {/* Database Dropdown Selector */}
+            <div className="flex items-center gap-1">
+              <Database className="h-3 w-3 text-blue-400 shrink-0" />
+              <select
+                value={database || ''}
+                onChange={(e) => onDatabaseChange?.(e.target.value)}
+                className="bg-transparent text-[11px] font-mono text-amber-300 font-semibold focus:outline-none cursor-pointer"
+                title="Target Database for this Console (Independent)"
+              >
+                {availableDatabases && availableDatabases.length > 0 ? (
+                  availableDatabases.map((db) => (
+                    <option key={db} value={db} className="bg-[#191a20] text-zinc-200 font-mono">
+                      {db}
+                    </option>
+                  ))
+                ) : (
+                  <option value={database || 'main'} className="bg-[#191a20] text-zinc-200 font-mono">
+                    {database || 'main'}
+                  </option>
+                )}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -169,4 +233,3 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     </div>
   );
 };
-
