@@ -526,15 +526,13 @@ export function App() {
                 >
                   {tab.title}
                 </span>
-                {tabs.length > 1 && (
-                  <X
-                    className="h-3 w-3 text-zinc-500 hover:text-white ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(tab.id);
-                    }}
-                  />
-                )}
+                <X
+                  className="h-3 w-3 text-zinc-500 hover:text-white ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                />
               </div>
             ))}
           </div>
@@ -626,7 +624,19 @@ export function App() {
                   )}
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-zinc-500 select-none">
+                <Terminal className="h-10 w-10 text-zinc-600 mb-3 stroke-[1.5]" />
+                <h3 className="text-sm font-semibold text-zinc-300">No Open Tabs</h3>
+                <p className="text-xs text-zinc-500 mt-1 max-w-sm">
+                  Pilih table dari Database Explorer atau klik kanan koneksi untuk membuat Query Console.
+                </p>
+                <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-400">
+                  <span className="rounded bg-[#1e2027] border border-[#272932] px-2 py-0.5 font-mono">{searchShortcutLabel}</span>
+                  <span>Search Everywhere</span>
+                </div>
+              </div>
+            )}
 
             {/* Bottom Services Panel (Result / Output / Status) */}
             {isBottomPanelOpen && (

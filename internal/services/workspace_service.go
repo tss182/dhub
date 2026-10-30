@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log"
 
 	"dhub/internal/store"
 )
@@ -15,7 +16,11 @@ func NewWorkspaceService(s *store.LocalStore) *WorkspaceService {
 }
 
 func (w *WorkspaceService) ListWorksheets(connectionID string) ([]store.Worksheet, error) {
-	return w.store.ListWorksheets(context.Background(), connectionID)
+	list, err := w.store.ListWorksheets(context.Background(), connectionID)
+	if err != nil {
+		log.Printf("[WorkspaceService] ListWorksheets error: %v", err)
+	}
+	return list, err
 }
 
 func (w *WorkspaceService) GetWorksheet(id string) (*store.Worksheet, error) {
@@ -23,11 +28,19 @@ func (w *WorkspaceService) GetWorksheet(id string) (*store.Worksheet, error) {
 }
 
 func (w *WorkspaceService) SaveWorksheet(ws store.Worksheet) (string, error) {
-	return w.store.SaveWorksheet(context.Background(), ws)
+	id, err := w.store.SaveWorksheet(context.Background(), ws)
+	if err != nil {
+		log.Printf("[WorkspaceService] SaveWorksheet error: %v", err)
+	}
+	return id, err
 }
 
 func (w *WorkspaceService) DeleteWorksheet(id string) error {
-	return w.store.DeleteWorksheet(context.Background(), id)
+	err := w.store.DeleteWorksheet(context.Background(), id)
+	if err != nil {
+		log.Printf("[WorkspaceService] DeleteWorksheet error: %v", err)
+	}
+	return err
 }
 
 func (w *WorkspaceService) GetQueryHistory(connectionID string, limit int) ([]store.QueryHistoryEntry, error) {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -21,6 +22,34 @@ type Worksheet struct {
 	CursorCol      int       `json:"cursorCol"`
 	SortOrder      int       `json:"sortOrder"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+func (w *Worksheet) UnmarshalJSON(data []byte) error {
+	type Alias Worksheet
+	aux := &struct {
+		UpdatedAt any `json:"updatedAt"`
+		*Alias
+	}{
+		Alias: (*Alias)(w),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	switch v := aux.UpdatedAt.(type) {
+	case string:
+		if v == "" {
+			w.UpdatedAt = time.Now()
+		} else if t, err := time.Parse(time.RFC3339, v); err == nil {
+			w.UpdatedAt = t
+		} else if t2, err2 := time.Parse("2006-01-02 15:04:05", v); err2 == nil {
+			w.UpdatedAt = t2
+		} else {
+			w.UpdatedAt = time.Now()
+		}
+	default:
+		w.UpdatedAt = time.Now()
+	}
+	return nil
 }
 
 func (s *LocalStore) ListWorksheets(ctx context.Context, connectionID string) ([]Worksheet, error) {
@@ -83,7 +112,13 @@ func (s *LocalStore) SaveWorksheet(ctx context.Context, w Worksheet) (string, er
 
 	var connID any
 	if w.ConnectionID != "" {
-		connID = w.ConnectionID
+		var exists int
+		_ = s.db.QueryRowContext(ctx, "SELECT 1 FROM connections WHERE id = ?", w.ConnectionID).Scan(&exists)
+		if exists == 1 {
+			connID = w.ConnectionID
+		} else {
+			connID = nil
+		}
 	} else {
 		connID = nil
 	}
