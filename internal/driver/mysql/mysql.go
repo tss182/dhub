@@ -134,96 +134,21 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 }
 
 func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	start := time.Now()
-	cleanSQL := strings.TrimSpace(req.SQL)
-	isSelect := strings.HasPrefix(strings.ToUpper(cleanSQL), "SELECT") ||
-		strings.HasPrefix(strings.ToUpper(cleanSQL), "SHOW") ||
-		strings.HasPrefix(strings.ToUpper(cleanSQL), "DESCRIBE") ||
-		strings.HasPrefix(strings.ToUpper(cleanSQL), "EXPLAIN")
-
 	conn, err := m.db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	if req.Database != "" && req.Database != "main" {
-		_, _ = conn.ExecContext(ctx, fmt.Sprintf("USE `%s`", req.Database))
-	}
-
-	if !isSelect {
-		res, err := conn.ExecContext(ctx, cleanSQL)
-		if err != nil {
-			return nil, err
-		}
-		ra, _ := res.RowsAffected()
-		return &driver.QueryResult{
-			ExecutionID:  req.ExecutionID,
-			Columns:      []driver.ColumnMeta{},
-			Rows:         [][]any{},
-			RowsAffected: ra,
-			ElapsedMs:    time.Since(start).Milliseconds(),
-		}, nil
-	}
-
-	rows, err := conn.QueryContext(ctx, cleanSQL)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	colTypes, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, err
-	}
-
-	columns := make([]driver.ColumnMeta, len(colTypes))
-	for i, ct := range colTypes {
-		columns[i] = driver.ColumnMeta{
-			Name:     ct.Name(),
-			DataType: ct.DatabaseTypeName(),
-			RawType:  strings.ToLower(ct.DatabaseTypeName()),
-		}
-	}
-
-	var results [][]any
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 500
-	}
-
-	for rows.Next() {
-		if len(results) >= limit {
-			break
-		}
-		values := make([]any, len(columns))
-		valuePtrs := make([]any, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-		if err := rows.Scan(valuePtrs...); err != nil {
-			continue
-		}
-
-		rowValues := make([]any, len(columns))
-		for i, v := range values {
-			if b, ok := v.([]byte); ok {
-				rowValues[i] = string(b)
-			} else {
-				rowValues[i] = v
+	if req.Database != "" {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE `%s`", req.Database)); err != nil {
+			if req.Database != "main" {
+				return nil, fmt.Errorf("error switching to database '%s': %w", req.Database, err)
 			}
 		}
-		results = append(results, rowValues)
 	}
 
-	return &driver.QueryResult{
-		ExecutionID:  req.ExecutionID,
-		Columns:      columns,
-		Rows:         results,
-		RowsAffected: int64(len(results)),
-		ElapsedMs:    time.Since(start).Milliseconds(),
-		HasMore:      len(results) >= limit,
-	}, nil
+	return driver.ExecuteStatements(ctx, conn, req)
 }
 
 func (m *MySQLDriver) GenerateDMLPreview(schema, table string, changes []driver.RowChange) ([]string, error) {

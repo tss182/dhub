@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { WorkbenchTab } from '../types/domain';
+import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
 export interface ConsoleRecord {
   id: string;
@@ -9,6 +10,36 @@ export interface ConsoleRecord {
   schema: string;
   content: string;
   updatedAt: number;
+}
+
+const contentSaveTimeouts: Record<string, ReturnType<typeof setTimeout>> = {};
+
+function persistWorksheet(record: ConsoleRecord) {
+  WorkspaceService.SaveWorksheet({
+    id: record.id,
+    connectionId: record.connectionId || '',
+    title: record.title || 'console.sql',
+    content: record.content || '',
+    targetDatabase: record.database || '',
+    targetSchema: record.schema || '',
+    isPinned: false,
+    cursorLine: 1,
+    cursorCol: 1,
+    sortOrder: 0,
+    updatedAt: '',
+  }).catch((err) => {
+    console.warn('Failed to save worksheet to SQLite:', err);
+  });
+}
+
+function debouncedSaveWorksheet(record: ConsoleRecord, delayMs = 600) {
+  if (contentSaveTimeouts[record.id]) {
+    clearTimeout(contentSaveTimeouts[record.id]);
+  }
+  contentSaveTimeouts[record.id] = setTimeout(() => {
+    persistWorksheet(record);
+    delete contentSaveTimeouts[record.id];
+  }, delayMs);
 }
 
 interface WorkbenchState {
@@ -22,7 +53,9 @@ interface WorkbenchState {
   editingConnectionId: string | null;
   tabRefreshTrigger: Record<string, number>;
   consoles: ConsoleRecord[];
+  hasLoadedConsoles: boolean;
 
+  loadConsoles: () => Promise<void>;
   openTab: (tab: WorkbenchTab) => void;
   closeTab: (tabId: string) => void;
   closeTabsMatching: (predicate: (tab: WorkbenchTab) => boolean) => void;
@@ -54,22 +87,9 @@ interface WorkbenchState {
   setConnectionDialogOpen: (open: boolean, editingId?: string | null) => void;
 }
 
-const DEFAULT_CONSOLE_ID = 'default-console';
-const DEFAULT_CONSOLE_CONTENT = `-- DHub DataGrip-grade Query Console\n-- Shortcut: Ctrl+Enter (Run at cursor), Ctrl+P / Cmd+P (Search Everywhere)\n\nSELECT 1 as id, 'Welcome to DHub' as message;\n`;
-
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
-  tabs: [
-    {
-      id: DEFAULT_CONSOLE_ID,
-      type: 'worksheet',
-      title: 'console_1.sql',
-      connectionId: '',
-      database: '',
-      schema: '',
-      content: DEFAULT_CONSOLE_CONTENT,
-    },
-  ],
-  activeTabId: DEFAULT_CONSOLE_ID,
+  tabs: [],
+  activeTabId: null,
   activeBottomTab: 'result',
   isBottomPanelOpen: true,
   isRightPanelOpen: true,
@@ -77,17 +97,58 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   isConnectionDialogOpen: false,
   editingConnectionId: null,
   tabRefreshTrigger: {},
-  consoles: [
-    {
-      id: DEFAULT_CONSOLE_ID,
-      title: 'console_1.sql',
-      connectionId: '',
-      database: '',
-      schema: '',
-      content: DEFAULT_CONSOLE_CONTENT,
-      updatedAt: Date.now(),
-    },
-  ],
+  consoles: [],
+  hasLoadedConsoles: false,
+
+  loadConsoles: async () => {
+    try {
+      const list = await WorkspaceService.ListWorksheets('');
+      if (list && list.length > 0) {
+        const loaded: ConsoleRecord[] = list.map((w) => ({
+          id: w.id,
+          title: w.title,
+          connectionId: w.connectionId || '',
+          database: w.targetDatabase || '',
+          schema: w.targetSchema || '',
+          content: w.content || '',
+          updatedAt: w.updatedAt ? new Date(w.updatedAt).getTime() : Date.now(),
+        }));
+
+        const { tabs, activeTabId } = get();
+        let nextTabs = tabs;
+        let nextActiveId = activeTabId;
+
+        // If tabs are empty, restore the first console as active tab
+        if (tabs.length === 0 && loaded.length > 0) {
+          const first = loaded[0];
+          nextTabs = [
+            {
+              id: first.id,
+              type: 'worksheet',
+              title: first.title,
+              connectionId: first.connectionId,
+              database: first.database,
+              schema: first.schema,
+              content: first.content,
+            },
+          ];
+          nextActiveId = first.id;
+        }
+
+        set({
+          consoles: loaded,
+          tabs: nextTabs,
+          activeTabId: nextActiveId,
+          hasLoadedConsoles: true,
+        });
+      } else {
+        set({ hasLoadedConsoles: true });
+      }
+    } catch (err) {
+      console.warn('Failed to load worksheets from SQLite:', err);
+      set({ hasLoadedConsoles: true });
+    }
+  },
 
   openTab: (tab) => {
     const { tabs, consoles } = get();
@@ -96,18 +157,17 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
 
     let nextConsoles = consoles;
     if (tab.type === 'worksheet' && !consoles.some((c) => c.id === tab.id)) {
-      nextConsoles = [
-        ...consoles,
-        {
-          id: tab.id,
-          title: tab.title,
-          connectionId: tab.connectionId || '',
-          database: tab.database || '',
-          schema: tab.schema || '',
-          content: tab.content || '',
-          updatedAt: Date.now(),
-        },
-      ];
+      const newRecord: ConsoleRecord = {
+        id: tab.id,
+        title: tab.title,
+        connectionId: tab.connectionId || '',
+        database: tab.database || '',
+        schema: tab.schema || '',
+        content: tab.content || '',
+        updatedAt: Date.now(),
+      };
+      nextConsoles = [...consoles, newRecord];
+      persistWorksheet(newRecord);
     }
 
     set({ tabs: nextTabs, activeTabId: tab.id, consoles: nextConsoles });
@@ -145,41 +205,50 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   setActiveTabId: (activeTabId) => set({ activeTabId }),
 
   updateTabContent: (tabId, content) =>
-    set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === tabId ? { ...t, content, isDirty: true } : t
-      ),
-      consoles: state.consoles.map((c) =>
-        c.id === tabId ? { ...c, content, updatedAt: Date.now() } : c
-      ),
-    })),
-
-  updateTabDatabase: (tabId, database, schema) =>
     set((state) => {
-      const targetSchema = schema || (database === 'main' ? 'main' : database);
+      const updatedConsoles = state.consoles.map((c) =>
+        c.id === tabId ? { ...c, content, updatedAt: Date.now() } : c
+      );
+      const targetConsole = updatedConsoles.find((c) => c.id === tabId);
+      if (targetConsole) {
+        debouncedSaveWorksheet(targetConsole);
+      }
+      return {
+        tabs: state.tabs.map((t) =>
+          t.id === tabId ? { ...t, content, isDirty: true } : t
+        ),
+        consoles: updatedConsoles,
+      };
+    }),
+
+  updateTabDatabase: (tabId, database, schema) => {
+    const targetSchema = schema || (database === 'main' ? 'main' : database);
+    return set((state) => {
+      const updatedConsoles = state.consoles.map((c) =>
+        c.id === tabId
+          ? { ...c, database, schema: targetSchema, updatedAt: Date.now() }
+          : c
+      );
+      const targetConsole = updatedConsoles.find((c) => c.id === tabId);
+      if (targetConsole) {
+        if (contentSaveTimeouts[tabId]) {
+          clearTimeout(contentSaveTimeouts[tabId]);
+          delete contentSaveTimeouts[tabId];
+        }
+        persistWorksheet(targetConsole);
+      }
       return {
         tabs: state.tabs.map((t) =>
           t.id === tabId ? { ...t, database, schema: targetSchema } : t
         ),
-        consoles: state.consoles.map((c) =>
-          c.id === tabId ? { ...c, database, schema: targetSchema, updatedAt: Date.now() } : c
-        ),
+        consoles: updatedConsoles,
       };
-    }),
+    });
+  },
 
   updateTabConnection: (tabId, connectionId, database, schema) =>
-    set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === tabId
-          ? {
-              ...t,
-              connectionId,
-              database: database ?? t.database,
-              schema: schema ?? t.schema,
-            }
-          : t
-      ),
-      consoles: state.consoles.map((c) =>
+    set((state) => {
+      const updatedConsoles = state.consoles.map((c) =>
         c.id === tabId
           ? {
               ...c,
@@ -189,20 +258,52 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
               updatedAt: Date.now(),
             }
           : c
-      ),
-    })),
+      );
+      const targetConsole = updatedConsoles.find((c) => c.id === tabId);
+      if (targetConsole) {
+        if (contentSaveTimeouts[tabId]) {
+          clearTimeout(contentSaveTimeouts[tabId]);
+          delete contentSaveTimeouts[tabId];
+        }
+        persistWorksheet(targetConsole);
+      }
+      return {
+        tabs: state.tabs.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                connectionId,
+                database: database ?? t.database,
+                schema: schema ?? t.schema,
+              }
+            : t
+        ),
+        consoles: updatedConsoles,
+      };
+    }),
 
   renameTab: (tabId, newTitle) => {
     const cleanTitle = newTitle.trim();
     if (!cleanTitle) return;
-    set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === tabId ? { ...t, title: cleanTitle } : t
-      ),
-      consoles: state.consoles.map((c) =>
-        c.id === tabId ? { ...c, title: cleanTitle } : c
-      ),
-    }));
+    set((state) => {
+      const updatedConsoles = state.consoles.map((c) =>
+        c.id === tabId ? { ...c, title: cleanTitle, updatedAt: Date.now() } : c
+      );
+      const targetConsole = updatedConsoles.find((c) => c.id === tabId);
+      if (targetConsole) {
+        if (contentSaveTimeouts[tabId]) {
+          clearTimeout(contentSaveTimeouts[tabId]);
+          delete contentSaveTimeouts[tabId];
+        }
+        persistWorksheet(targetConsole);
+      }
+      return {
+        tabs: state.tabs.map((t) =>
+          t.id === tabId ? { ...t, title: cleanTitle } : t
+        ),
+        consoles: updatedConsoles,
+      };
+    });
   },
 
   duplicateTab: (tabId) => {
@@ -252,11 +353,21 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       tabs: [...state.tabs, newTab],
       activeTabId: id,
     }));
+
+    persistWorksheet(newConsole);
     return id;
   },
 
   deleteConsole: (id) => {
     const { tabs, activeTabId, consoles } = get();
+    if (contentSaveTimeouts[id]) {
+      clearTimeout(contentSaveTimeouts[id]);
+      delete contentSaveTimeouts[id];
+    }
+    WorkspaceService.DeleteWorksheet(id).catch((err) => {
+      console.warn('Failed to delete worksheet from SQLite:', err);
+    });
+
     const filteredTabs = tabs.filter((t) => t.id !== id);
     let nextActive = activeTabId;
     if (activeTabId === id) {

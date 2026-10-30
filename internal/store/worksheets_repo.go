@@ -24,9 +24,19 @@ type Worksheet struct {
 }
 
 func (s *LocalStore) ListWorksheets(ctx context.Context, connectionID string) ([]Worksheet, error) {
-	query := `SELECT id, connection_id, title, content, target_database, target_schema, is_pinned, cursor_line, cursor_col, sort_order, updated_at
-		FROM worksheets WHERE connection_id = ? ORDER BY is_pinned DESC, sort_order, updated_at DESC`
-	rows, err := s.db.QueryContext(ctx, query, connectionID)
+	var query string
+	var rows *sql.Rows
+	var err error
+
+	if connectionID == "" {
+		query = `SELECT id, connection_id, title, content, target_database, target_schema, is_pinned, cursor_line, cursor_col, sort_order, updated_at
+			FROM worksheets ORDER BY is_pinned DESC, sort_order, updated_at DESC`
+		rows, err = s.db.QueryContext(ctx, query)
+	} else {
+		query = `SELECT id, connection_id, title, content, target_database, target_schema, is_pinned, cursor_line, cursor_col, sort_order, updated_at
+			FROM worksheets WHERE connection_id = ? ORDER BY is_pinned DESC, sort_order, updated_at DESC`
+		rows, err = s.db.QueryContext(ctx, query, connectionID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -35,10 +45,12 @@ func (s *LocalStore) ListWorksheets(ctx context.Context, connectionID string) ([
 	var sheets []Worksheet
 	for rows.Next() {
 		var w Worksheet
+		var connID sql.NullString
 		var pinned int
-		if err := rows.Scan(&w.ID, &w.ConnectionID, &w.Title, &w.Content, &w.TargetDatabase, &w.TargetSchema, &pinned, &w.CursorLine, &w.CursorCol, &w.SortOrder, &w.UpdatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &connID, &w.Title, &w.Content, &w.TargetDatabase, &w.TargetSchema, &pinned, &w.CursorLine, &w.CursorCol, &w.SortOrder, &w.UpdatedAt); err != nil {
 			continue
 		}
+		w.ConnectionID = connID.String
 		w.IsPinned = pinned == 1
 		sheets = append(sheets, w)
 	}
@@ -53,6 +65,7 @@ func (s *LocalStore) SaveWorksheet(ctx context.Context, w Worksheet) (string, er
 	query := `INSERT INTO worksheets (id, connection_id, title, content, target_database, target_schema, is_pinned, cursor_line, cursor_col, sort_order, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
+			connection_id = excluded.connection_id,
 			title = excluded.title,
 			content = excluded.content,
 			target_database = excluded.target_database,
@@ -68,7 +81,14 @@ func (s *LocalStore) SaveWorksheet(ctx context.Context, w Worksheet) (string, er
 		pinned = 1
 	}
 
-	_, err := s.db.ExecContext(ctx, query, w.ID, w.ConnectionID, w.Title, w.Content, w.TargetDatabase, w.TargetSchema, pinned, w.CursorLine, w.CursorCol, w.SortOrder)
+	var connID any
+	if w.ConnectionID != "" {
+		connID = w.ConnectionID
+	} else {
+		connID = nil
+	}
+
+	_, err := s.db.ExecContext(ctx, query, w.ID, connID, w.Title, w.Content, w.TargetDatabase, w.TargetSchema, pinned, w.CursorLine, w.CursorCol, w.SortOrder)
 	if err != nil {
 		return "", err
 	}
@@ -84,14 +104,16 @@ func (s *LocalStore) GetWorksheet(ctx context.Context, id string) (*Worksheet, e
 	query := `SELECT id, connection_id, title, content, target_database, target_schema, is_pinned, cursor_line, cursor_col, sort_order, updated_at
 		FROM worksheets WHERE id = ?`
 	var w Worksheet
+	var connID sql.NullString
 	var pinned int
-	err := s.db.QueryRowContext(ctx, query, id).Scan(&w.ID, &w.ConnectionID, &w.Title, &w.Content, &w.TargetDatabase, &w.TargetSchema, &pinned, &w.CursorLine, &w.CursorCol, &w.SortOrder, &w.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&w.ID, &connID, &w.Title, &w.Content, &w.TargetDatabase, &w.TargetSchema, &pinned, &w.CursorLine, &w.CursorCol, &w.SortOrder, &w.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("worksheet not found")
 		}
 		return nil, err
 	}
+	w.ConnectionID = connID.String
 	w.IsPinned = pinned == 1
 	return &w, nil
 }
