@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0409": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "asdev",
+			"FileDescription": "A dhub application",
+			"LegalCopyright": "© 2026, asdev",
+			"ProductName": "My Product",
+			"Comments": "This is a comment"
+		}
+	}
+}
