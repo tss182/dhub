@@ -26,13 +26,13 @@ function persistWorksheet(record: ConsoleRecord) {
     cursorLine: 1,
     cursorCol: 1,
     sortOrder: 0,
-    updatedAt: '',
+    updatedAt: new Date().toISOString(),
   }).catch((err) => {
-    console.warn('Failed to save worksheet to SQLite:', err);
+    console.error('Failed to save worksheet to SQLite:', err);
   });
 }
 
-function debouncedSaveWorksheet(record: ConsoleRecord, delayMs = 600) {
+function debouncedSaveWorksheet(record: ConsoleRecord, delayMs = 400) {
   if (contentSaveTimeouts[record.id]) {
     clearTimeout(contentSaveTimeouts[record.id]);
   }
@@ -40,6 +40,20 @@ function debouncedSaveWorksheet(record: ConsoleRecord, delayMs = 600) {
     persistWorksheet(record);
     delete contentSaveTimeouts[record.id];
   }, delayMs);
+}
+
+// Flush pending console saves when window is closing
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    for (const id of Object.keys(contentSaveTimeouts)) {
+      clearTimeout(contentSaveTimeouts[id]);
+      delete contentSaveTimeouts[id];
+      const target = useWorkbenchStore.getState().consoles.find((c) => c.id === id);
+      if (target) {
+        persistWorksheet(target);
+      }
+    }
+  });
 }
 
 interface WorkbenchState {
@@ -118,21 +132,18 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         let nextTabs = tabs;
         let nextActiveId = activeTabId;
 
-        // If tabs are empty, restore the first console as active tab
+        // If tabs are empty, restore all saved consoles as tabs with the first one active
         if (tabs.length === 0 && loaded.length > 0) {
-          const first = loaded[0];
-          nextTabs = [
-            {
-              id: first.id,
-              type: 'worksheet',
-              title: first.title,
-              connectionId: first.connectionId,
-              database: first.database,
-              schema: first.schema,
-              content: first.content,
-            },
-          ];
-          nextActiveId = first.id;
+          nextTabs = loaded.map((c) => ({
+            id: c.id,
+            type: 'worksheet' as const,
+            title: c.title,
+            connectionId: c.connectionId,
+            database: c.database,
+            schema: c.schema,
+            content: c.content,
+          }));
+          nextActiveId = loaded[0].id;
         }
 
         set({
