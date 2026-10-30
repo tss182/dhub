@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
+import { useSettingsStore } from '../../stores/useSettingsStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
-import { Search, Table, Database, Terminal, FileCode } from 'lucide-react';
+import { Search, Table, Database, Terminal, FileCode, Settings as SettingsIcon } from 'lucide-react';
 
 export const SearchEverywhere: React.FC = () => {
   const { isSearchEverywhereOpen, setSearchEverywhereOpen, openTab } = useWorkbenchStore();
@@ -63,6 +64,30 @@ export const SearchEverywhere: React.FC = () => {
 
         {/* Results List */}
         <div className="max-h-80 overflow-auto p-2">
+          {query &&
+            ('settings'.includes(query.toLowerCase()) ||
+              'preferences'.includes(query.toLowerCase()) ||
+              'config'.includes(query.toLowerCase()) ||
+              'pagination'.includes(query.toLowerCase()) ||
+              'lazy'.includes(query.toLowerCase())) && (
+              <div
+                onClick={() => {
+                  setSearchEverywhereOpen(false);
+                  useSettingsStore.getState().openSettings();
+                }}
+                className="flex items-center justify-between rounded px-3 py-2 hover:bg-[#22242c] cursor-pointer text-zinc-300 hover:text-white border-b border-[#272932] mb-1"
+              >
+                <div className="flex items-center gap-2">
+                  <SettingsIcon className="h-3.5 w-3.5 text-blue-400" />
+                  <span className="font-semibold text-zinc-200">Open Settings & Preferences</span>
+                  <span className="text-zinc-500 text-[11px]">Configure Lazy Load, Pagination & Batch size</span>
+                </div>
+                <span className="text-[10px] uppercase tracking-wider text-blue-400 bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-900/40">
+                  Action
+                </span>
+              </div>
+            )}
+
           {results.length === 0 ? (
             <div className="py-6 text-center text-zinc-500 text-xs">
               {query ? 'No matching database symbols found' : 'Type to search tables, views, and schemas'}

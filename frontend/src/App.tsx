@@ -9,11 +9,14 @@ import { SqlWorksheet } from './components/editor/SqlWorksheet';
 import { DataGrid } from './components/grid/DataGrid';
 import { ConnectionDialog } from './components/modals/ConnectionDialog';
 import { SearchEverywhere } from './components/modals/SearchEverywhere';
+import { SettingsModal } from './components/modals/SettingsModal';
+import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
 import {
   Database,
   Terminal,
   Search,
+  Settings as SettingsIcon,
   X,
   FileCode,
   Table,
@@ -103,10 +106,65 @@ export function App() {
         rows: any[][];
         primaryKeys: string[];
         isLoading: boolean;
+        isLoadingMore: boolean;
         error: string | null;
+        totalCount?: number;
+        hasMore: boolean;
+        pageSize: number;
+        page: number;
       }
     >
   >({});
+
+  // Query Result pagination & lazy load state
+  const [queryPagination, setQueryPagination] = useState<{
+    page: number;
+    pageSize: number;
+    isLoadingMore: boolean;
+    lastSql: string;
+    connectionId: string;
+    database: string;
+    schema: string;
+  }>({
+    page: 1,
+    pageSize: useSettingsStore.getState().defaultPageSize || 100,
+    isLoadingMore: false,
+    lastSql: '',
+    connectionId: '',
+    database: '',
+    schema: '',
+  });
+
+  // Bottom panel resizable height
+  const [bottomPanelHeight, setBottomPanelHeight] = useState<number>(() => {
+    const saved = localStorage.getItem('dhub_bottom_panel_h');
+    return saved ? Math.max(120, Math.min(800, Number(saved))) : 280;
+  });
+  const [isDraggingBottomResizer, setIsDraggingBottomResizer] = useState(false);
+
+  const handleBottomResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingBottomResizer(true);
+    const startY = e.clientY;
+    const startHeight = bottomPanelHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = startY - moveEvent.clientY;
+      const maxH = Math.max(180, window.innerHeight - 160);
+      const newHeight = Math.max(100, Math.min(maxH, startHeight + deltaY));
+      setBottomPanelHeight(newHeight);
+      localStorage.setItem('dhub_bottom_panel_h', String(newHeight));
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingBottomResizer(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
@@ -121,6 +179,13 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
         e.preventDefault();
         setSearchEverywhereOpen(true);
+        return;
+      }
+
+      // Settings shortcut: Ctrl+, / Cmd+,
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        useSettingsStore.getState().toggleSettings();
         return;
       }
 
@@ -193,20 +258,42 @@ export function App() {
     setRenameModal({ isOpen: false, id: '', title: '' });
   };
 
-  const loadTableData = async (tab: WorkbenchTab) => {
+  const loadTableData = async (
+    tab: WorkbenchTab,
+    offset = 0,
+    limit = useSettingsStore.getState().defaultPageSize || 100,
+    append = false,
+    page = 1
+  ) => {
     const connId = tab.connectionId || activeConnectionId;
     if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
 
-    setTableDataByTab((prev) => ({
-      ...prev,
-      [tab.id]: {
-        columns: prev[tab.id]?.columns || [],
-        rows: prev[tab.id]?.rows || [],
-        primaryKeys: prev[tab.id]?.primaryKeys || [],
-        isLoading: true,
-        error: null,
-      },
-    }));
+    if (append) {
+      setTableDataByTab((prev) => ({
+        ...prev,
+        [tab.id]: {
+          ...prev[tab.id],
+          isLoadingMore: true,
+          error: null,
+        },
+      }));
+    } else {
+      setTableDataByTab((prev) => ({
+        ...prev,
+        [tab.id]: {
+          columns: prev[tab.id]?.columns || [],
+          rows: [],
+          primaryKeys: prev[tab.id]?.primaryKeys || [],
+          isLoading: true,
+          isLoadingMore: false,
+          error: null,
+          totalCount: prev[tab.id]?.totalCount,
+          hasMore: false,
+          pageSize: limit,
+          page,
+        },
+      }));
+    }
 
     try {
       const conn = connections.find((c) => c.id === connId);
@@ -215,24 +302,53 @@ export function App() {
       const targetSchema = tab.schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
 
       // 1. Fetch table structure for primary keys
-      let primaryKeys: string[] = [];
-      try {
-        const structure = await SchemaService.GetTableStructure(
-          connId,
-          targetDb,
-          targetSchema,
-          tab.table
-        );
-        if (structure && structure.primaryKeys) {
-          primaryKeys = structure.primaryKeys;
+      let primaryKeys: string[] = tableDataByTab[tab.id]?.primaryKeys || [];
+      if (primaryKeys.length === 0) {
+        try {
+          const structure = await SchemaService.GetTableStructure(
+            connId,
+            targetDb,
+            targetSchema,
+            tab.table
+          );
+          if (structure && structure.primaryKeys) {
+            primaryKeys = structure.primaryKeys;
+          }
+        } catch (structErr) {
+          console.warn('Could not fetch structure for table:', structErr);
         }
-      } catch (structErr) {
-        console.warn('Could not fetch structure for table:', structErr);
       }
 
-      // 2. Query table data
+      // 2. Fetch total row count in background (only on fresh load)
       const quotedTable = isMySQL ? `\`${tab.table}\`` : `"${tab.table}"`;
-      const sql = `SELECT * FROM ${quotedTable} LIMIT 500;`;
+      if (!append && tableDataByTab[tab.id]?.totalCount === undefined) {
+        QueryService.ExecuteQuery({
+          executionId: 'exec-count-' + Date.now(),
+          connectionId: connId,
+          database: targetDb,
+          schema: targetSchema,
+          sql: `SELECT COUNT(*) FROM ${quotedTable};`,
+          limit: 1,
+          offset: 0,
+        } as any)
+          .then((countRes) => {
+            const countVal = countRes?.rows?.[0]?.[0];
+            const num = typeof countVal === 'number' ? countVal : parseInt(String(countVal), 10);
+            if (!isNaN(num)) {
+              setTableDataByTab((prev) => ({
+                ...prev,
+                [tab.id]: {
+                  ...prev[tab.id],
+                  totalCount: num,
+                },
+              }));
+            }
+          })
+          .catch(() => {});
+      }
+
+      // 3. Query table data with LIMIT and OFFSET (default limit 100)
+      const sql = `SELECT * FROM ${quotedTable} LIMIT ${limit} OFFSET ${offset};`;
 
       const execId = 'exec-tab-' + Date.now();
       const res = await QueryService.ExecuteQuery({
@@ -241,8 +357,8 @@ export function App() {
         database: targetDb,
         schema: targetSchema,
         sql,
-        limit: 500,
-        offset: 0,
+        limit,
+        offset,
       } as any);
 
       if (res) {
@@ -251,28 +367,46 @@ export function App() {
             ? primaryKeys
             : (res.columns || []).filter((c: any) => (c as any).isPrimaryKey).map((c: any) => c.name);
 
-        setTableDataByTab((prev) => ({
-          ...prev,
-          [tab.id]: {
-            columns: (res.columns as any) || [],
-            rows: (res.rows as any) || [],
-            primaryKeys: detectedPKs,
-            isLoading: false,
-            error: null,
-          },
-        }));
-        setStatusMessage(`Loaded ${res.rows?.length || 0} rows from ${tab.table}`);
+        const fetchedRows = (res.rows as any) || [];
+        const hasMore = fetchedRows.length >= limit;
+
+        setTableDataByTab((prev) => {
+          const prevRows = append ? prev[tab.id]?.rows || [] : [];
+          const combinedRows = [...prevRows, ...fetchedRows];
+          return {
+            ...prev,
+            [tab.id]: {
+              columns: (res.columns as any) || prev[tab.id]?.columns || [],
+              rows: combinedRows,
+              primaryKeys: detectedPKs,
+              isLoading: false,
+              isLoadingMore: false,
+              error: null,
+              totalCount: prev[tab.id]?.totalCount,
+              hasMore,
+              pageSize: limit,
+              page: append ? prev[tab.id]?.page || 1 : page,
+            },
+          };
+        });
+        setStatusMessage(
+          `Loaded ${fetchedRows.length} rows (${offset + fetchedRows.length} total) from ${tab.table}`
+        );
       }
     } catch (e: any) {
       console.error(`Failed to load data for ${tab.table}:`, e);
       setTableDataByTab((prev) => ({
         ...prev,
         [tab.id]: {
-          columns: [],
-          rows: [],
-          primaryKeys: [],
+          columns: prev[tab.id]?.columns || [],
+          rows: prev[tab.id]?.rows || [],
+          primaryKeys: prev[tab.id]?.primaryKeys || [],
           isLoading: false,
+          isLoadingMore: false,
           error: e?.message || String(e),
+          hasMore: false,
+          pageSize: limit,
+          page: append ? prev[tab.id]?.page || 1 : page,
         },
       }));
       setStatusMessage(`Error loading ${tab.table}: ${e?.message || String(e)}`);
@@ -332,13 +466,17 @@ export function App() {
     }
     const currentConns = useConnectionStore.getState().connections;
     const conn = currentConns.find((c) => c.id === targetConnId);
+    const connDbs = useConnectionStore.getState().treeDatabases[targetConnId] || [];
+    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+    const nonSystemDb = connDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
 
-    // explicitDb has top priority, then tab's database, then activeDatabase, then conn.databaseName
+    // explicitDb has top priority, then tab's database, then conn.databaseName, then nonSystemDb, then activeDatabase
     const targetDb =
       explicitDb ||
       currentTab?.database ||
-      useConnectionStore.getState().activeDatabase ||
       conn?.databaseName ||
+      nonSystemDb ||
+      (connDbs.length > 0 ? connDbs[0] : useConnectionStore.getState().activeDatabase) ||
       (conn?.driver === 'sqlite' ? 'main' : '');
 
     const targetSchema =
@@ -350,18 +488,28 @@ export function App() {
     setStatusMessage(`Executing query on [${conn?.name || 'db'}] / [${targetDb}]...`);
     try {
       const execId = 'exec-' + Date.now();
+      const defaultLimit = useSettingsStore.getState().defaultPageSize || 100;
       const res = await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: targetConnId,
         database: targetDb,
         schema: targetSchema,
         sql,
-        limit: 500,
+        limit: defaultLimit,
         offset: 0,
       } as any);
 
       setQueryResult(res as any);
       setActiveResultIndex(0);
+      setQueryPagination({
+        page: 1,
+        pageSize: defaultLimit,
+        isLoadingMore: false,
+        lastSql: sql,
+        connectionId: targetConnId,
+        database: targetDb,
+        schema: targetSchema,
+      });
       const stmtCount = (res as any)?.results?.length || 1;
       if (stmtCount > 1) {
         setStatusMessage(
@@ -387,6 +535,165 @@ export function App() {
       setActiveBottomTab('result');
     } finally {
       setIsRunning(false);
+    }
+  };
+
+  const handleQueryLoadMore = async () => {
+    if (queryPagination.isLoadingMore || !queryResult || !queryPagination.lastSql) return;
+    const currentRes =
+      queryResult.results && queryResult.results[activeResultIndex]
+        ? queryResult.results[activeResultIndex]
+        : queryResult;
+    const currentRows = currentRes?.rows || [];
+    const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || 100;
+    const offset = currentRows.length;
+
+    setQueryPagination((p) => ({ ...p, isLoadingMore: true }));
+    try {
+      const res = await QueryService.ExecuteQuery({
+        executionId: 'exec-more-' + Date.now(),
+        connectionId: queryPagination.connectionId,
+        database: queryPagination.database,
+        schema: queryPagination.schema,
+        sql: queryPagination.lastSql,
+        limit,
+        offset,
+      } as any);
+
+      if (res) {
+        const fetchedRows = res.rows || [];
+        const combined = [...currentRows, ...fetchedRows];
+        const hasMore = res.hasMore;
+
+        setQueryResult((prev: any) => {
+          if (!prev) return prev;
+          if (prev.results && prev.results[activeResultIndex]) {
+            const nextResults = [...prev.results];
+            nextResults[activeResultIndex] = {
+              ...nextResults[activeResultIndex],
+              rows: combined,
+              hasMore,
+            };
+            return {
+              ...prev,
+              results: nextResults,
+              rows: combined,
+              hasMore,
+            };
+          }
+          return {
+            ...prev,
+            rows: combined,
+            hasMore,
+          };
+        });
+        setStatusMessage(`Loaded +${fetchedRows.length} more rows (${combined.length} total)`);
+      }
+    } catch (e: any) {
+      setStatusMessage(`Error loading more rows: ${e?.message || String(e)}`);
+    } finally {
+      setQueryPagination((p) => ({ ...p, isLoadingMore: false }));
+    }
+  };
+
+  const handleQueryPageChange = async (newPage: number) => {
+    if (queryPagination.isLoadingMore || !queryResult || !queryPagination.lastSql) return;
+    const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || 100;
+    const offset = (newPage - 1) * limit;
+
+    setQueryPagination((p) => ({ ...p, page: newPage, isLoadingMore: true }));
+    try {
+      const res = await QueryService.ExecuteQuery({
+        executionId: 'exec-page-' + Date.now(),
+        connectionId: queryPagination.connectionId,
+        database: queryPagination.database,
+        schema: queryPagination.schema,
+        sql: queryPagination.lastSql,
+        limit,
+        offset,
+      } as any);
+
+      if (res) {
+        const fetchedRows = res.rows || [];
+        const hasMore = res.hasMore;
+
+        setQueryResult((prev: any) => {
+          if (!prev) return prev;
+          if (prev.results && prev.results[activeResultIndex]) {
+            const nextResults = [...prev.results];
+            nextResults[activeResultIndex] = {
+              ...nextResults[activeResultIndex],
+              rows: fetchedRows,
+              hasMore,
+            };
+            return {
+              ...prev,
+              results: nextResults,
+              rows: fetchedRows,
+              hasMore,
+            };
+          }
+          return {
+            ...prev,
+            rows: fetchedRows,
+            hasMore,
+          };
+        });
+        setStatusMessage(`Page ${newPage}: Loaded ${fetchedRows.length} rows`);
+      }
+    } catch (e: any) {
+      setStatusMessage(`Error loading page ${newPage}: ${e?.message || String(e)}`);
+    } finally {
+      setQueryPagination((p) => ({ ...p, isLoadingMore: false }));
+    }
+  };
+
+  const handleQueryPageSizeChange = async (newSize: number) => {
+    if (!queryResult || !queryPagination.lastSql) return;
+    setQueryPagination((p) => ({ ...p, pageSize: newSize, page: 1, isLoadingMore: true }));
+    try {
+      const res = await QueryService.ExecuteQuery({
+        executionId: 'exec-size-' + Date.now(),
+        connectionId: queryPagination.connectionId,
+        database: queryPagination.database,
+        schema: queryPagination.schema,
+        sql: queryPagination.lastSql,
+        limit: newSize,
+        offset: 0,
+      } as any);
+
+      if (res) {
+        const fetchedRows = res.rows || [];
+        const hasMore = res.hasMore;
+
+        setQueryResult((prev: any) => {
+          if (!prev) return prev;
+          if (prev.results && prev.results[activeResultIndex]) {
+            const nextResults = [...prev.results];
+            nextResults[activeResultIndex] = {
+              ...nextResults[activeResultIndex],
+              rows: fetchedRows,
+              hasMore,
+            };
+            return {
+              ...prev,
+              results: nextResults,
+              rows: fetchedRows,
+              hasMore,
+            };
+          }
+          return {
+            ...prev,
+            rows: fetchedRows,
+            hasMore,
+          };
+        });
+        setStatusMessage(`Batch size changed to ${newSize} rows`);
+      }
+    } catch (e: any) {
+      setStatusMessage(`Error changing batch size: ${e?.message || String(e)}`);
+    } finally {
+      setQueryPagination((p) => ({ ...p, isLoadingMore: false }));
     }
   };
 
@@ -489,6 +796,16 @@ export function App() {
               {searchShortcutLabel}
             </kbd>
           </button>
+
+          {/* Settings Trigger */}
+          <button
+            onClick={() => useSettingsStore.getState().openSettings()}
+            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
+            title="Open Settings & Preferences (Ctrl+,)"
+          >
+            <SettingsIcon className="h-3.5 w-3.5" />
+            <span>Settings</span>
+          </button>
         </div>
       </header>
 
@@ -502,7 +819,14 @@ export function App() {
         {/* Center Workbench: Tabs + Editor/Grid + Services Bottom Panel */}
         <div className="flex-1 flex flex-col min-w-0 bg-[#14151a]">
           {/* Tab Bar */}
-          <div className="flex h-9 items-center border-b border-[#272932] bg-[#121317] px-2 gap-1 overflow-x-auto">
+          <div
+            onWheel={(e) => {
+              if (e.deltaY !== 0 || e.deltaX !== 0) {
+                e.currentTarget.scrollLeft += (e.deltaY !== 0 ? e.deltaY : -e.deltaX);
+              }
+            }}
+            className="flex h-9 items-center border-b border-[#272932] bg-[#121317] px-2 gap-1 overflow-x-auto"
+          >
             {tabs.map((tab) => (
               <div
                 key={tab.id}
@@ -539,43 +863,51 @@ export function App() {
 
           {/* Active Tab View */}
           <div className="flex-1 min-h-0 flex flex-col">
-            {activeTab?.type === 'worksheet' ? (
-              <div className="flex-1 min-h-0">
-                <SqlWorksheet
-                  sql={activeTab.content || ''}
-                  connection={connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))}
-                  database={
-                    activeTab.database ||
-                    connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))?.databaseName ||
-                    'main'
-                  }
-                  schema={activeTab.schema || 'public'}
-                  availableDatabases={
-                    treeDatabases[activeTab.connectionId || activeConnectionId || ''] ||
-                    (connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))?.databaseName
-                      ? [connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId))!.databaseName!]
-                      : ['main'])
-                  }
-                  isRunning={isRunning}
-                  onChange={(val) => updateTabContent(activeTab.id, val)}
-                  onExecute={handleExecuteQuery}
-                  onCancel={() => setIsRunning(false)}
-                  onDatabaseChange={(newDb) => {
-                    const currentTab = useWorkbenchStore
-                      .getState()
-                      .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
-                    const connId = currentTab?.connectionId || activeConnectionId || '';
-                    const conn = connections.find((c) => c.id === connId);
-                    const targetSchema = conn?.driver === 'postgres' ? 'public' : newDb;
-                    if (currentTab) {
-                      updateTabDatabase(currentTab.id, newDb, targetSchema);
-                    }
-                    setActiveConnection(connId, newDb, targetSchema);
-                    setStatusMessage(`Switched database to [${newDb}] for [${conn?.name || 'connection'}]`);
-                  }}
-                />
-              </div>
-            ) : activeTab?.type === 'table_data' ? (
+            {activeTab?.type === 'worksheet' ? (() => {
+              const tabConn = connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId));
+              const tabConnDbs = treeDatabases[tabConn?.id || ''] || [];
+              const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+              const nonSystemDb = tabConnDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
+              const effectiveDb =
+                activeTab.database ||
+                tabConn?.databaseName ||
+                nonSystemDb ||
+                (tabConnDbs.length > 0 ? tabConnDbs[0] : (tabConn?.driver === 'sqlite' ? 'main' : ''));
+              const effectiveSchema = activeTab.schema || (tabConn?.driver === 'postgres' ? 'public' : effectiveDb);
+              const availableDbs =
+                tabConnDbs.length > 0
+                  ? tabConnDbs
+                  : (tabConn?.databaseName ? [tabConn.databaseName] : (tabConn?.driver === 'sqlite' ? ['main'] : []));
+
+              return (
+                <div className="flex-1 min-h-0">
+                  <SqlWorksheet
+                    sql={activeTab.content || ''}
+                    connection={tabConn}
+                    database={effectiveDb}
+                    schema={effectiveSchema}
+                    availableDatabases={availableDbs}
+                    isRunning={isRunning}
+                    onChange={(val) => updateTabContent(activeTab.id, val)}
+                    onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || effectiveDb)}
+                    onCancel={() => setIsRunning(false)}
+                    onDatabaseChange={(newDb) => {
+                      const currentTab = useWorkbenchStore
+                        .getState()
+                        .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
+                      const connId = currentTab?.connectionId || activeConnectionId || '';
+                      const conn = connections.find((c) => c.id === connId);
+                      const targetSchema = conn?.driver === 'postgres' ? 'public' : newDb;
+                      if (currentTab) {
+                        updateTabDatabase(currentTab.id, newDb, targetSchema);
+                      }
+                      setActiveConnection(connId, newDb, targetSchema);
+                      setStatusMessage(`Switched database to [${newDb}] for [${conn?.name || 'connection'}]`);
+                    }}
+                  />
+                </div>
+              );
+            })() : activeTab?.type === 'table_data' ? (
               <div className="flex-1 min-h-0 flex flex-col">
                 {/* Table Tab Bar with Table Name, Database, and Refresh Button */}
                 <div className="flex h-9 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
@@ -618,6 +950,27 @@ export function App() {
                       columns={tableDataByTab[activeTab.id]?.columns || []}
                       rows={tableDataByTab[activeTab.id]?.rows || []}
                       primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
+                      totalCount={tableDataByTab[activeTab.id]?.totalCount}
+                      hasMore={tableDataByTab[activeTab.id]?.hasMore}
+                      isLoadingMore={tableDataByTab[activeTab.id]?.isLoadingMore}
+                      page={tableDataByTab[activeTab.id]?.page || 1}
+                      pageSize={tableDataByTab[activeTab.id]?.pageSize || 100}
+                      onPageChange={(newPage) => {
+                        const size = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        loadTableData(activeTab, (newPage - 1) * size, size, false, newPage);
+                      }}
+                      onPageSizeChange={(newSize) => {
+                        loadTableData(activeTab, 0, newSize, false, 1);
+                      }}
+                      onLoadMore={() => {
+                        const currentCount = tableDataByTab[activeTab.id]?.rows?.length || 0;
+                        const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        loadTableData(activeTab, currentCount, currentSize, true);
+                      }}
+                      onRefresh={() => {
+                        const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        loadTableData(activeTab, 0, currentSize, false, 1);
+                      }}
                       onSubmitChanges={handleSubmitChanges}
                       onPreviewChanges={handlePreviewChanges}
                     />
@@ -638,9 +991,33 @@ export function App() {
               </div>
             )}
 
-            {/* Bottom Services Panel (Result / Output / Status) */}
-            {isBottomPanelOpen && (
-              <div className="h-64 border-t border-[#272932] flex flex-col bg-[#191a20]">
+            {/* Splitter & Bottom Services Panel: Only shown on Query Console / SQL Worksheet */}
+            {activeTab?.type === 'worksheet' && (
+              <>
+                {/* Splitter Resizer Handle between Console and Bottom Panel */}
+                {isBottomPanelOpen && (
+                  <div
+                    onMouseDown={handleBottomResizerMouseDown}
+                    onDoubleClick={() => {
+                      const defaultH = 280;
+                      setBottomPanelHeight(defaultH);
+                      localStorage.setItem('dhub_bottom_panel_h', String(defaultH));
+                    }}
+                    className={`group h-2 w-full bg-[#1e2027] hover:bg-blue-600/90 cursor-row-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-t border-b border-[#272932] ${
+                      isDraggingBottomResizer ? 'bg-blue-600' : ''
+                    }`}
+                    title="Drag to resize Result / Console (Double-click to reset)"
+                  >
+                    <div className="h-0.5 w-10 rounded-full bg-zinc-600 group-hover:bg-blue-200 transition-colors" />
+                  </div>
+                )}
+
+                {/* Bottom Services Panel (Result / Output / Status) */}
+                {isBottomPanelOpen ? (
+                  <div
+                    style={{ height: `${bottomPanelHeight}px` }}
+                    className="flex flex-col bg-[#191a20] shrink-0"
+                  >
                 {/* Services Bar */}
                 <div className="flex h-8 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
                   <div className="flex items-center gap-2 overflow-x-auto">
@@ -700,10 +1077,10 @@ export function App() {
                 </div>
 
                 {/* Bottom Panel Content */}
-                <div className="flex-1 min-h-0 overflow-auto p-2">
+                <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                   {activeBottomTab === 'result' ? (
                     queryResult?.error ? (
-                      <div className="p-4 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40 whitespace-pre-wrap">
+                      <div className="p-4 m-2 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40 whitespace-pre-wrap overflow-auto">
                         {queryResult.error}
                       </div>
                     ) : (() => {
@@ -715,7 +1092,7 @@ export function App() {
 
                       if (!hasCols) {
                         return (
-                          <div className="flex h-full flex-col items-center justify-center p-6 text-zinc-400 font-mono text-xs select-none">
+                          <div className="flex flex-1 flex-col items-center justify-center p-6 text-zinc-400 font-mono text-xs select-none">
                             <CheckCircle className="h-6 w-6 text-emerald-400 mb-2" />
                             <span className="font-semibold text-zinc-200">Statement executed successfully</span>
                             <span className="text-zinc-500 mt-1">
@@ -731,18 +1108,28 @@ export function App() {
                       }
 
                       return (
-                        <DataGrid
-                          key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
-                          tabId={`bottom-result-${activeResultIndex}`}
-                          columns={currentRes.columns || []}
-                          rows={currentRes.rows || []}
-                          onSubmitChanges={handleSubmitChanges}
-                          onPreviewChanges={handlePreviewChanges}
-                        />
+                        <div className="flex-1 min-h-0">
+                          <DataGrid
+                            key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
+                            tabId={`bottom-result-${activeResultIndex}`}
+                            columns={currentRes.columns || []}
+                            rows={currentRes.rows || []}
+                            hasMore={currentRes.hasMore}
+                            isLoadingMore={queryPagination.isLoadingMore}
+                            page={queryPagination.page}
+                            pageSize={queryPagination.pageSize}
+                            onPageChange={handleQueryPageChange}
+                            onPageSizeChange={handleQueryPageSizeChange}
+                            onLoadMore={handleQueryLoadMore}
+                            onRefresh={() => handleQueryPageChange(queryPagination.page)}
+                            onSubmitChanges={handleSubmitChanges}
+                            onPreviewChanges={handlePreviewChanges}
+                          />
+                        </div>
                       );
                     })()
                   ) : (
-                    <div className="p-3 font-mono text-xs text-zinc-400 space-y-2">
+                    <div className="flex-1 min-h-0 overflow-auto p-3 font-mono text-xs text-zinc-400 space-y-2">
                       <div>[{new Date().toLocaleTimeString()}] Status: {statusMessage}</div>
                       {queryResult?.results && queryResult.results.length > 1 ? (
                         <div className="space-y-1.5 border-t border-[#272932] pt-2">
@@ -773,9 +1160,21 @@ export function App() {
                   )}
                 </div>
               </div>
+            ) : (
+              <div className="h-7 border-t border-[#272932] bg-[#14151a] px-3 flex items-center justify-between text-xs text-zinc-400 shrink-0 select-none">
+                <button
+                  onClick={toggleBottomPanel}
+                  className="flex items-center gap-1.5 text-zinc-400 hover:text-white transition-colors cursor-pointer text-[11px]"
+                >
+                  <Terminal className="h-3 w-3 text-blue-400" />
+                  <span>Show Query Result / Services Panel</span>
+                </button>
+              </div>
             )}
-          </div>
-        </div>
+          </>
+        )}
+      </div>
+    </div>
 
         {/* Right Sidebar: Query Consoles List */}
         {isRightPanelOpen && (
@@ -983,9 +1382,15 @@ export function App() {
         </div>
       )}
 
+      {/* Resizing Backdrop Overlay */}
+      {isDraggingBottomResizer && (
+        <div className="fixed inset-0 z-50 cursor-row-resize select-none" />
+      )}
+
       {/* Modals */}
       <ConnectionDialog />
       <SearchEverywhere />
+      <SettingsModal />
 
       {/* Status Bar */}
       <footer className="flex h-6 items-center justify-between border-t border-[#272932] px-3 text-[11px] bg-[#121317] text-zinc-500 font-mono">

@@ -73,6 +73,7 @@ export interface StatementResult {
   rows: any[][];
   rowsAffected: number;
   elapsedMs: number;
+  hasMore?: boolean;
   error?: string;
 }
 

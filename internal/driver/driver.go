@@ -75,6 +75,7 @@ type StatementResult struct {
 	Rows         [][]any      `json:"rows"`
 	RowsAffected int64        `json:"rowsAffected"`
 	ElapsedMs    int64        `json:"elapsedMs"`
+	HasMore      bool         `json:"hasMore"`
 	Error        string       `json:"error,omitempty"`
 }
 

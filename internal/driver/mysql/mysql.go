@@ -140,11 +140,9 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	}
 	defer conn.Close()
 
-	if req.Database != "" {
+	if req.Database != "" && req.Database != "main" {
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE `%s`", req.Database)); err != nil {
-			if req.Database != "main" {
-				return nil, fmt.Errorf("error switching to database '%s': %w", req.Database, err)
-			}
+			return nil, fmt.Errorf("error switching to database '%s': %w", req.Database, err)
 		}
 	}
 

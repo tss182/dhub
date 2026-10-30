@@ -5,6 +5,7 @@ import * as monaco from 'monaco-editor';
 loader.config({ monaco });
 import { Play, Square, Database, Terminal, ChevronDown, Check } from 'lucide-react';
 import { ConnectionConfig } from '../../types/domain';
+import { useSettingsStore } from '../../stores/useSettingsStore';
 
 interface SqlWorksheetProps {
   sql: string;
@@ -36,6 +37,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [isDbOpen, setIsDbOpen] = useState(false);
   const dbDropdownRef = useRef<HTMLDivElement>(null);
+
+  const editorFontSize = useSettingsStore((s) => s.editorFontSize);
+  const wordWrap = useSettingsStore((s) => s.wordWrap);
+  const showMinimap = useSettingsStore((s) => s.showMinimap);
 
   // Keep fresh references to avoid stale closure issues inside Monaco addCommand callback
   const onExecuteRef = useRef(onExecute);
@@ -257,9 +262,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           onMount={handleEditorDidMount}
           options={{
             fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 13,
-            lineHeight: 20,
-            minimap: { enabled: false },
+            fontSize: editorFontSize,
+            lineHeight: Math.round(editorFontSize * 1.5),
+            minimap: { enabled: showMinimap },
+            wordWrap: wordWrap ? 'on' : 'off',
             padding: { top: 8, bottom: 8 },
             scrollBeyondLastLine: false,
             smoothScrolling: true,
