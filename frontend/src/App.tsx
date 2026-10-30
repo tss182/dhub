@@ -4,6 +4,7 @@ import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
 import { QueryService, SchemaService } from '../bindings/dhub/internal/services';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
+import { ConsoleList } from './components/layout/ConsoleList';
 import { SqlWorksheet } from './components/editor/SqlWorksheet';
 import { DataGrid } from './components/grid/DataGrid';
 import { ConnectionDialog } from './components/modals/ConnectionDialog';
@@ -23,6 +24,8 @@ import {
   Layers,
   ChevronDown,
   RefreshCw,
+  Pencil,
+  Copy,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab } from './types/domain';
 
@@ -32,12 +35,18 @@ export function App() {
     activeTabId,
     activeBottomTab,
     isBottomPanelOpen,
+    isRightPanelOpen,
+    consoles,
     openTab,
     closeTab,
+    closeTabsMatching,
     setActiveTabId,
     updateTabContent,
+    renameTab,
+    duplicateTab,
     setActiveBottomTab,
     toggleBottomPanel,
+    toggleRightPanel,
     setSearchEverywhereOpen,
     setConnectionDialogOpen,
     tabRefreshTrigger,
@@ -48,6 +57,29 @@ export function App() {
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
   const [statusMessage, setStatusMessage] = useState('Ready');
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
+
+  // Tab Context Menu state
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    isOpen: boolean;
+    x: number;
+    y: number;
+    tab?: WorkbenchTab;
+  }>({
+    isOpen: false,
+    x: 0,
+    y: 0,
+  });
+
+  // Rename Dialog state
+  const [renameModal, setRenameModal] = useState<{
+    isOpen: boolean;
+    id: string;
+    title: string;
+  }>({
+    isOpen: false,
+    id: '',
+    title: '',
+  });
 
   // Tab-specific table data store
   const [tableDataByTab, setTableDataByTab] = useState<
@@ -93,6 +125,60 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Listeners to close Tab Context Menu & escape Rename Modal
+  useEffect(() => {
+    const handleClose = () => {
+      if (tabContextMenu.isOpen) {
+        setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleClose();
+        if (renameModal.isOpen) {
+          setRenameModal({ isOpen: false, id: '', title: '' });
+        }
+      }
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [tabContextMenu.isOpen, renameModal.isOpen]);
+
+  const handleTabContextMenu = (e: React.MouseEvent, tab: WorkbenchTab) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const menuWidth = 190;
+    const menuHeight = 220;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+    setTabContextMenu({
+      isOpen: true,
+      x: Math.max(10, x),
+      y: Math.max(10, y),
+      tab,
+    });
+  };
+
+  const handleOpenRename = (id: string, currentTitle: string) => {
+    setRenameModal({
+      isOpen: true,
+      id,
+      title: currentTitle,
+    });
+  };
+
+  const handleRenameSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (renameModal.title.trim()) {
+      renameTab(renameModal.id, renameModal.title.trim());
+    }
+    setRenameModal({ isOpen: false, id: '', title: '' });
+  };
 
   const loadTableData = async (tab: WorkbenchTab) => {
     const connId = tab.connectionId || activeConnectionId;
@@ -224,39 +310,40 @@ export function App() {
         hasMore: false,
         error: e?.message || String(e),
       });
+      setActiveBottomTab('result');
     } finally {
       setIsRunning(false);
     }
   };
 
   const handlePreviewChanges = async () => {
-    if (!activeTab) return;
-    const connId = activeTab.connectionId || activeConnectionId;
-    if (!connId) return;
-    const stagedChanges = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
-    const changeList = Object.values(stagedChanges);
+    if (!activeTab || activeTab.type !== 'table_data' || !activeConnectionId) return;
+    const staged = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
+    const changeList = Object.values(staged);
+    if (changeList.length === 0) return;
+
     try {
       const sqls = await QueryService.PreviewChanges(
-        connId,
+        activeConnectionId,
         activeTab.database || activeTab.schema || 'main',
         activeTab.table || '',
         changeList as any
       );
-      setDmlPreview(sqls);
+      setDmlPreview(sqls ?? []);
     } catch (e: any) {
-      alert('Preview failed: ' + (e?.message || String(e)));
+      alert('Failed to preview SQL: ' + (e?.message || String(e)));
     }
   };
 
   const handleSubmitChanges = async () => {
-    if (!activeTab) return;
-    const connId = activeTab.connectionId || activeConnectionId;
-    if (!connId) return;
-    const stagedChanges = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
-    const changeList = Object.values(stagedChanges);
+    if (!activeTab || activeTab.type !== 'table_data' || !activeConnectionId) return;
+    const staged = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
+    const changeList = Object.values(staged);
+    if (changeList.length === 0) return;
+
     try {
       const affected = await QueryService.SubmitChanges(
-        connId,
+        activeConnectionId,
         activeTab.database || activeTab.schema || 'main',
         activeTab.table || '',
         changeList as any
@@ -299,23 +386,42 @@ export function App() {
           </div>
         </div>
 
-        {/* Search Everywhere Trigger */}
-        <button
-          onClick={() => setSearchEverywhereOpen(true)}
-          className="flex items-center gap-2 rounded bg-[#1e2027] px-3 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs"
-        >
-          <Search className="h-3.5 w-3.5" />
-          <span>Search Everywhere</span>
-          <kbd className="rounded bg-[#2a2d37] px-1 text-[10px] text-zinc-400 font-mono">
-            {searchShortcutLabel}
-          </kbd>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Toggle Consoles Panel Button */}
+          <button
+            onClick={toggleRightPanel}
+            className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
+              isRightPanelOpen
+                ? 'bg-blue-600/20 border-blue-500 text-blue-300 font-medium'
+                : 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
+            }`}
+            title="Toggle Consoles List Panel"
+          >
+            <Terminal className="h-3.5 w-3.5" />
+            <span>Consoles</span>
+            <span className="rounded bg-[#2a2d37] px-1 text-[10px] font-mono">
+              {consoles.length}
+            </span>
+          </button>
+
+          {/* Search Everywhere Trigger */}
+          <button
+            onClick={() => setSearchEverywhereOpen(true)}
+            className="flex items-center gap-2 rounded bg-[#1e2027] px-3 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span>Search Everywhere</span>
+            <kbd className="rounded bg-[#2a2d37] px-1 text-[10px] text-zinc-400 font-mono">
+              {searchShortcutLabel}
+            </kbd>
+          </button>
+        </div>
       </header>
 
       {/* Main Workspace Body */}
       <div className="flex flex-1 min-h-0">
         {/* Left Sidebar: Database Explorer */}
-        <div className="w-64 min-w-48 max-w-80 h-full">
+        <div className="w-64 min-w-48 max-w-80 h-full shrink-0">
           <DatabaseExplorer />
         </div>
 
@@ -327,21 +433,28 @@ export function App() {
               <div
                 key={tab.id}
                 onClick={() => setActiveTabId(tab.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t text-xs cursor-pointer border-t-2 transition-colors ${
+                onContextMenu={(e) => handleTabContextMenu(e, tab)}
+                className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t text-xs cursor-pointer border-t-2 transition-colors ${
                   activeTabId === tab.id
                     ? 'bg-[#191a20] border-blue-500 text-white font-medium'
                     : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#191a20]/50'
                 }`}
               >
                 {tab.type === 'worksheet' ? (
-                  <FileCode className="h-3.5 w-3.5 text-blue-400" />
+                  <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0" />
                 ) : (
-                  <Table className="h-3.5 w-3.5 text-emerald-400" />
+                  <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                 )}
-                <span>{tab.title}</span>
+                <span
+                  onDoubleClick={() => handleOpenRename(tab.id, tab.title)}
+                  className="truncate max-w-[140px]"
+                  title={`${tab.title} (Double-click or right-click to rename)`}
+                >
+                  {tab.title}
+                </span>
                 {tabs.length > 1 && (
                   <X
-                    className="h-3 w-3 text-zinc-500 hover:text-white ml-1"
+                    className="h-3 w-3 text-zinc-500 hover:text-white ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
                     onClick={(e) => {
                       e.stopPropagation();
                       closeTab(tab.id);
@@ -483,7 +596,178 @@ export function App() {
             )}
           </div>
         </div>
+
+        {/* Right Sidebar: Query Consoles List */}
+        {isRightPanelOpen && (
+          <div className="w-64 min-w-56 max-w-80 h-full border-l border-[#272932] shrink-0">
+            <ConsoleList onRename={handleOpenRename} />
+          </div>
+        )}
       </div>
+
+      {/* Floating Tab Context Menu */}
+      {tabContextMenu.isOpen && tabContextMenu.tab && (
+        <div
+          className="fixed z-50 min-w-[190px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: tabContextMenu.y, left: tabContextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 truncate flex items-center gap-1.5">
+            {tabContextMenu.tab.type === 'worksheet' ? (
+              <FileCode className="h-3 w-3 text-blue-400" />
+            ) : (
+              <Table className="h-3 w-3 text-emerald-400" />
+            )}
+            <span className="truncate">{tabContextMenu.tab.title}</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const tab = tabContextMenu.tab!;
+              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+              handleOpenRename(tab.id, tab.title);
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+            <span>Rename Tab...</span>
+          </button>
+
+          {tabContextMenu.tab.type === 'worksheet' && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const tab = tabContextMenu.tab!;
+                  setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  duplicateTab(tab.id);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Duplicate Console</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const content = tabContextMenu.tab!.content || '';
+                  setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  navigator.clipboard.writeText(content).catch(() => {});
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Copy SQL</span>
+              </button>
+            </>
+          )}
+
+          {tabContextMenu.tab.type === 'table_data' && (
+            <button
+              type="button"
+              onClick={() => {
+                const tab = tabContextMenu.tab!;
+                setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+                loadTableData(tab);
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+            >
+              <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Reload Data</span>
+            </button>
+          )}
+
+          <div className="my-1 border-t border-[#272932]" />
+
+          <button
+            type="button"
+            onClick={() => {
+              const tabId = tabContextMenu.tab!.id;
+              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+              closeTab(tabId);
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+          >
+            <X className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+            <span>Close Tab</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const tabId = tabContextMenu.tab!.id;
+              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+              closeTabsMatching((t) => t.id !== tabId);
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#22242c] hover:text-zinc-200 text-zinc-400 transition-colors text-left cursor-pointer group"
+          >
+            <X className="h-3.5 w-3.5 text-zinc-500 group-hover:text-white" />
+            <span>Close Other Tabs</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+              closeTabsMatching(() => false);
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#22242c] hover:text-zinc-200 text-zinc-400 transition-colors text-left cursor-pointer group"
+          >
+            <X className="h-3.5 w-3.5 text-zinc-500 group-hover:text-white" />
+            <span>Close All Tabs</span>
+          </button>
+        </div>
+      )}
+
+      {/* Rename Modal Dialog */}
+      {renameModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
+          <div className="w-80 rounded-lg bg-[#191a20] border border-[#272932] p-4 text-xs text-zinc-300 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-[#272932]">
+              <span className="font-semibold text-sm text-zinc-100 flex items-center gap-1.5">
+                <Pencil className="h-4 w-4 text-blue-400" />
+                Rename Tab / Console
+              </span>
+              <button
+                onClick={() => setRenameModal({ isOpen: false, id: '', title: '' })}
+                className="text-zinc-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={handleRenameSubmit}>
+              <label className="block text-[11px] text-zinc-400 mb-1.5 font-medium">
+                New Name:
+              </label>
+              <input
+                type="text"
+                value={renameModal.title}
+                onChange={(e) => setRenameModal((prev) => ({ ...prev, title: e.target.value }))}
+                className="w-full rounded bg-[#121317] px-2.5 py-1.5 text-xs text-zinc-100 border border-[#272932] focus:border-blue-500 focus:outline-none"
+                autoFocus
+                onFocus={(e) => e.target.select()}
+              />
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setRenameModal({ isOpen: false, id: '', title: '' })}
+                  className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c] text-zinc-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-sm cursor-pointer"
+                >
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* DML Preview Modal */}
       {dmlPreview && (
