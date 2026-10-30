@@ -9,9 +9,12 @@ interface WorkbenchState {
   isSearchEverywhereOpen: boolean;
   isConnectionDialogOpen: boolean;
   editingConnectionId: string | null;
+  tabRefreshTrigger: Record<string, number>;
 
   openTab: (tab: WorkbenchTab) => void;
   closeTab: (tabId: string) => void;
+  closeTabsMatching: (predicate: (tab: WorkbenchTab) => boolean) => void;
+  refreshTab: (tabId: string) => void;
   setActiveTabId: (tabId: string) => void;
   updateTabContent: (tabId: string, content: string) => void;
   setActiveBottomTab: (tab: 'result' | 'output' | 'history' | 'explain') => void;
@@ -38,6 +41,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   isSearchEverywhereOpen: false,
   isConnectionDialogOpen: false,
   editingConnectionId: null,
+  tabRefreshTrigger: {},
 
   openTab: (tab) => {
     const existing = get().tabs.find((t) => t.id === tab.id);
@@ -56,6 +60,25 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
       nextActive = filtered.length > 0 ? filtered[filtered.length - 1].id : null;
     }
     set({ tabs: filtered, activeTabId: nextActive });
+  },
+
+  closeTabsMatching: (predicate) => {
+    const { tabs, activeTabId } = get();
+    const filtered = tabs.filter((t) => !predicate(t));
+    let nextActive = activeTabId;
+    if (activeTabId && !filtered.some((t) => t.id === activeTabId)) {
+      nextActive = filtered.length > 0 ? filtered[filtered.length - 1].id : null;
+    }
+    set({ tabs: filtered, activeTabId: nextActive });
+  },
+
+  refreshTab: (tabId) => {
+    set((state) => ({
+      tabRefreshTrigger: {
+        ...state.tabRefreshTrigger,
+        [tabId]: (state.tabRefreshTrigger[tabId] || 0) + 1,
+      },
+    }));
   },
 
   setActiveTabId: (activeTabId) => set({ activeTabId }),

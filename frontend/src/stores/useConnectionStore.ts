@@ -15,7 +15,9 @@ interface ConnectionState {
   setConnections: (conns: ConnectionConfig[]) => void;
   setActiveConnection: (id: string, database?: string, schema?: string) => void;
   setTreeDatabases: (connId: string, databases: string[]) => void;
+  removeTreeDatabase: (connId: string, database: string) => void;
   setTreeObjects: (key: string, objects: ObjectSummary[]) => void;
+  removeTreeObject: (key: string, objectName: string) => void;
   toggleNode: (nodeKey: string) => void;
   setSelectedTable: (table: string | null) => void;
   setLoading: (loading: boolean) => void;
@@ -43,9 +45,23 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
     set((state) => ({
       treeDatabases: { ...state.treeDatabases, [connId]: databases },
     })),
+  removeTreeDatabase: (connId, database) =>
+    set((state) => ({
+      treeDatabases: {
+        ...state.treeDatabases,
+        [connId]: (state.treeDatabases[connId] || []).filter((db) => db !== database),
+      },
+    })),
   setTreeObjects: (key, objects) =>
     set((state) => ({
       treeObjects: { ...state.treeObjects, [key]: objects },
+    })),
+  removeTreeObject: (key, objectName) =>
+    set((state) => ({
+      treeObjects: {
+        ...state.treeObjects,
+        [key]: (state.treeObjects[key] || []).filter((o) => o.name !== objectName),
+      },
     })),
   toggleNode: (nodeKey) =>
     set((state) => ({

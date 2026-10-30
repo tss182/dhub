@@ -40,6 +40,7 @@ export function App() {
     toggleBottomPanel,
     setSearchEverywhereOpen,
     setConnectionDialogOpen,
+    tabRefreshTrigger,
   } = useWorkbenchStore();
 
   const { activeConnectionId, activeDatabase, activeSchema, connections } = useConnectionStore();
@@ -179,15 +180,16 @@ export function App() {
     }
   };
 
-  // Automatically fetch table rows when switching to or opening a table_data tab
+  // Automatically fetch table rows when switching to or opening a table_data tab, or when refreshed
   useEffect(() => {
     if (activeTab && activeTab.type === 'table_data') {
       const existing = tableDataByTab[activeTab.id];
-      if (!existing || (!existing.isLoading && existing.rows.length === 0 && !existing.error)) {
+      const refreshCount = tabRefreshTrigger[activeTab.id] || 0;
+      if (refreshCount > 0 || !existing || (!existing.isLoading && existing.rows.length === 0 && !existing.error)) {
         loadTableData(activeTab);
       }
     }
-  }, [activeTabId]);
+  }, [activeTabId, tabRefreshTrigger[activeTabId || '']]);
 
   const handleExecuteQuery = async (sql: string) => {
     if (!activeConnectionId) {
