@@ -1,8 +1,35 @@
 import React, { useEffect, useState } from 'react';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
-import { ConnectionService, SchemaService } from '../../../bindings/dhub/internal/services';
-import { Database, Folder, Table, Eye, ChevronRight, ChevronDown, Plus, RefreshCw, Pencil, Trash2 } from 'lucide-react';
+import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
+import {
+  Database,
+  Folder,
+  Table,
+  Eye,
+  ChevronRight,
+  ChevronDown,
+  Plus,
+  RefreshCw,
+  Pencil,
+  Trash2,
+  Terminal,
+  Code2,
+  Copy,
+  ExternalLink,
+} from 'lucide-react';
+import { ConnectionConfig, ObjectSummary } from '../../types/domain';
+
+interface ContextMenuState {
+  isOpen: boolean;
+  x: number;
+  y: number;
+  type: 'connection' | 'database' | 'table' | 'empty';
+  connection?: ConnectionConfig;
+  database?: string;
+  schema?: string;
+  table?: ObjectSummary;
+}
 
 export const DatabaseExplorer: React.FC = () => {
   const {
@@ -13,15 +40,76 @@ export const DatabaseExplorer: React.FC = () => {
     setActiveConnection,
     treeDatabases,
     setTreeDatabases,
+    removeTreeDatabase,
     treeObjects,
     setTreeObjects,
+    removeTreeObject,
     expandedNodes,
     toggleNode,
   } = useConnectionStore();
 
-  const { openTab, setConnectionDialogOpen } = useWorkbenchStore();
+  const {
+    tabs,
+    openTab,
+    closeTab,
+    closeTabsMatching,
+    refreshTab,
+    setConnectionDialogOpen,
+  } = useWorkbenchStore();
+
   const [filterText, setFilterText] = useState('');
   const [loadingConnId, setLoadingConnId] = useState<string | null>(null);
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  // Context Menu state
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    isOpen: false,
+    x: 0,
+    y: 0,
+    type: 'empty',
+  });
+
+  const closeContextMenu = () => {
+    setContextMenu((prev) => (prev.isOpen ? { ...prev, isOpen: false } : prev));
+  };
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      closeContextMenu();
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeContextMenu();
+    };
+
+    window.addEventListener('click', handleOutsideClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleOutsideClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const openContextMenu = (
+    e: React.MouseEvent,
+    type: ContextMenuState['type'],
+    data: Partial<ContextMenuState>
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const menuWidth = 220;
+    const menuHeight = 250;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+
+    setContextMenu({
+      isOpen: true,
+      x: Math.max(10, x),
+      y: Math.max(10, y),
+      type,
+      ...data,
+    });
+  };
 
   const loadConnections = async () => {
     try {
@@ -56,15 +144,17 @@ export const DatabaseExplorer: React.FC = () => {
         const currentSchema = conn?.driver === 'postgres' ? 'public' : currentDb;
         setActiveConnection(connId, currentDb, currentSchema);
 
-        // Pre-fetch objects for all databases in background so Speed Search can find tables everywhere
+        // Pre-fetch objects for all databases in background
         for (const dbName of safeDbs) {
           const targetSchema = conn?.driver === 'postgres' ? 'public' : dbName;
           const sKey = `${connId}:${dbName}:${targetSchema}`;
-          SchemaService.GetObjects(connId, dbName, targetSchema).then((objs) => {
-            if (objs) {
-              setTreeObjects(sKey, objs as any);
-            }
-          }).catch(() => {});
+          SchemaService.GetObjects(connId, dbName, targetSchema)
+            .then((objs) => {
+              if (objs) {
+                setTreeObjects(sKey, objs as any);
+              }
+            })
+            .catch(() => {});
         }
       } catch (e) {
         console.error('Failed to load databases for connection:', e);
@@ -102,7 +192,7 @@ export const DatabaseExplorer: React.FC = () => {
       const safeDbs = dbs.length > 0 ? dbs : conn?.databaseName ? [conn.databaseName] : ['main'];
       setTreeDatabases(connId, safeDbs);
 
-      // Refresh currently selected database objects if any
+      // Refresh currently selected database objects
       const currentDb = activeDatabase || safeDbs[0];
       const targetSchema = conn?.driver === 'postgres' ? 'public' : currentDb;
       const objects = (await SchemaService.GetObjects(connId, currentDb, targetSchema)) ?? [];
@@ -119,6 +209,7 @@ export const DatabaseExplorer: React.FC = () => {
     if (!confirm(`Are you sure you want to delete connection "${name}"?`)) return;
     try {
       await ConnectionService.DeleteConnection(connId);
+      closeTabsMatching((t) => t.connectionId === connId);
       const list = await ConnectionService.ListConnections();
       setConnections((list ?? []) as any);
       if (activeConnectionId === connId) {
@@ -139,6 +230,106 @@ export const DatabaseExplorer: React.FC = () => {
     setConnectionDialogOpen(true, connId);
   };
 
+  // Database handlers
+  const handleRefreshDatabase = async (connId: string, dbName: string) => {
+    const conn = connections.find((c) => c.id === connId);
+    const targetSchema = conn?.driver === 'postgres' ? 'public' : dbName;
+    const schemaKey = `${connId}:${dbName}:${targetSchema}`;
+    try {
+      const objects = (await SchemaService.GetObjects(connId, dbName, targetSchema)) ?? [];
+      setTreeObjects(schemaKey, objects as any);
+    } catch (err: any) {
+      alert(`Failed to refresh database: ${err?.message || String(err)}`);
+    }
+  };
+
+  const handleEditDatabase = (conn: ConnectionConfig, dbName: string) => {
+    if (conn.driver === 'postgres') {
+      const newName = prompt(`Enter new name for database "${dbName}":`, dbName);
+      if (!newName || newName.trim() === '' || newName === dbName) return;
+      const execId = 'rename-db-' + Date.now();
+      QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: 'postgres',
+        schema: 'public',
+        sql: `ALTER DATABASE "${dbName}" RENAME TO "${newName.trim()}";`,
+        limit: 10,
+        offset: 0,
+      } as any)
+        .then(async () => {
+          const dbs = (await SchemaService.GetDatabases(conn.id)) ?? [];
+          setTreeDatabases(conn.id, dbs);
+          alert(`Database successfully renamed to "${newName.trim()}"`);
+        })
+        .catch((err: any) => {
+          alert(`Failed to rename database: ${err?.message || String(err)}`);
+        });
+    } else if (conn.driver === 'mysql') {
+      // Open a query console pre-populated with ALTER DATABASE statement
+      const consoleCount = tabs.filter((t) => t.type === 'worksheet').length + 1;
+      openTab({
+        id: `console-alter-${Date.now()}`,
+        type: 'worksheet',
+        title: `alter_${dbName}.sql`,
+        connectionId: conn.id,
+        database: dbName,
+        schema: dbName,
+        content: `-- Modify Character Set / Collation for Database: ${dbName}\nALTER DATABASE \`${dbName}\` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;\n`,
+      });
+    } else {
+      alert('SQLite databases are local files and do not support database modification queries.');
+    }
+  };
+
+  const handleDeleteDatabase = async (conn: ConnectionConfig, dbName: string) => {
+    if (conn.driver === 'sqlite') {
+      alert('SQLite uses a local database file. To remove it, delete the connection or delete the file from your disk.');
+      return;
+    }
+
+    if (
+      !confirm(
+        `Are you sure you want to DROP database "${dbName}"?\n\nWARNING: This will permanently delete the database and all its tables and data. This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    const sql =
+      conn.driver === 'mysql'
+        ? `DROP DATABASE \`${dbName}\`;`
+        : `DROP DATABASE "${dbName}";`;
+
+    try {
+      const execId = 'drop-db-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: conn.driver === 'mysql' ? '' : 'postgres',
+        schema: 'public',
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      removeTreeDatabase(conn.id, dbName);
+      closeTabsMatching((t) => t.connectionId === conn.id && t.database === dbName);
+
+      if (activeConnectionId === conn.id && activeDatabase === dbName) {
+        const remaining = (treeDatabases[conn.id] || []).filter((d) => d !== dbName);
+        setActiveConnection(conn.id, remaining[0] || '', '');
+      }
+
+      // Re-fetch remaining databases
+      const dbs = (await SchemaService.GetDatabases(conn.id)) ?? [];
+      setTreeDatabases(conn.id, dbs);
+    } catch (err: any) {
+      alert(`Failed to drop database: ${err?.message || String(err)}`);
+    }
+  };
+
+  // Table handlers
   const handleTableClick = (connId: string, db: string, schema: string, tableName: string) => {
     openTab({
       id: `table-${connId}-${db}-${tableName}`,
@@ -151,8 +342,128 @@ export const DatabaseExplorer: React.FC = () => {
     });
   };
 
+  const handleEditTableStructure = (conn: ConnectionConfig, db: string, schema: string, tableName: string) => {
+    let sql = '';
+    if (conn.driver === 'mysql') {
+      sql = `-- View Structure & DDL for ${tableName}\nSHOW CREATE TABLE \`${tableName}\`;\nDESCRIBE \`${tableName}\`;\n`;
+    } else if (conn.driver === 'postgres') {
+      sql = `-- Columns structure for ${tableName}\nSELECT column_name, data_type, is_nullable, column_default\nFROM information_schema.columns\nWHERE table_schema = '${schema}' AND table_name = '${tableName}'\nORDER BY ordinal_position;\n`;
+    } else {
+      sql = `-- SQLite Table DDL for ${tableName}\nSELECT sql FROM sqlite_master WHERE name = '${tableName}';\nPRAGMA table_info("${tableName}");\n`;
+    }
+
+    openTab({
+      id: `console-ddl-${Date.now()}`,
+      type: 'worksheet',
+      title: `${tableName}_structure.sql`,
+      connectionId: conn.id,
+      database: db,
+      schema: schema,
+      content: sql,
+    });
+  };
+
+  const handleRefreshTable = async (connId: string, db: string, schema: string, tableName: string) => {
+    try {
+      await SchemaService.GetTableStructure(connId, db, schema, tableName);
+      const objects = (await SchemaService.GetObjects(connId, db, schema)) ?? [];
+      setTreeObjects(`${connId}:${db}:${schema}`, objects as any);
+      // Trigger grid refresh if table tab is open
+      refreshTab(`table-${connId}-${db}-${tableName}`);
+    } catch (err: any) {
+      console.warn('Failed to refresh table:', err);
+    }
+  };
+
+  const handleDeleteTable = async (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    obj: ObjectSummary
+  ) => {
+    const isView = obj.type === 'view';
+    const keyword = isView ? 'VIEW' : 'TABLE';
+
+    if (
+      !confirm(
+        `Are you sure you want to DROP ${keyword.toLowerCase()} "${obj.name}"?\n\nWARNING: All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    let sql = '';
+    if (conn.driver === 'mysql') {
+      sql = `DROP ${keyword} \`${obj.name}\`;`;
+    } else if (conn.driver === 'postgres') {
+      sql = `DROP ${keyword} "${schema}"."${obj.name}";`;
+    } else {
+      sql = `DROP ${keyword} "${obj.name}";`;
+    }
+
+    try {
+      const execId = 'drop-table-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema: schema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      const schemaKey = `${conn.id}:${db}:${schema}`;
+      removeTreeObject(schemaKey, obj.name);
+      closeTab(`table-${conn.id}-${db}-${obj.name}`);
+
+      // Background refresh
+      SchemaService.GetObjects(conn.id, db, schema)
+        .then((objs) => {
+          if (objs) setTreeObjects(schemaKey, objs as any);
+        })
+        .catch(() => {});
+    } catch (err: any) {
+      alert(`Failed to drop ${keyword.toLowerCase()}: ${err?.message || String(err)}`);
+    }
+  };
+
+  const handleNewConsole = (connId: string, dbName?: string, schema?: string, tableName?: string) => {
+    const conn = connections.find((c) => c.id === connId);
+    const targetDb = dbName || conn?.databaseName || 'main';
+    const targetSchema = schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
+    const count = tabs.filter((t) => t.type === 'worksheet').length + 1;
+
+    let content = `-- Query Console for ${targetDb}\n-- Ctrl+Enter to execute\n\n`;
+    if (tableName) {
+      const quoted = conn?.driver === 'mysql' ? `\`${tableName}\`` : `"${tableName}"`;
+      content += `SELECT * FROM ${quoted} LIMIT 100;\n`;
+    } else {
+      content += `SELECT 1;\n`;
+    }
+
+    openTab({
+      id: `console-${Date.now()}`,
+      type: 'worksheet',
+      title: tableName ? `${tableName}.sql` : `console_${count}.sql`,
+      connectionId: connId,
+      database: targetDb,
+      schema: targetSchema,
+      content,
+    });
+  };
+
+  const handleCopyText = (text: string) => {
+    navigator.clipboard.writeText(text).catch(() => {});
+    setCopiedText(text);
+    setTimeout(() => setCopiedText(null), 1500);
+  };
+
   return (
-    <div className="flex h-full flex-col bg-[#191a20] border-r border-[#272932] text-xs">
+    <div
+      onContextMenu={(e) => openContextMenu(e, 'empty', {})}
+      className="flex h-full flex-col bg-[#191a20] border-r border-[#272932] text-xs relative select-none"
+    >
       {/* Header */}
       <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3">
         <span className="font-semibold uppercase tracking-wider text-[11px] text-zinc-400">
@@ -207,10 +518,11 @@ export const DatabaseExplorer: React.FC = () => {
             const isSQLite = c.driver === 'sqlite';
 
             return (
-              <div key={c.id} className="mb-1 select-none">
+              <div key={c.id} className="mb-1">
                 {/* Connection Node */}
                 <div
                   onClick={() => handleExpandConnection(c.id)}
+                  onContextMenu={(e) => openContextMenu(e, 'connection', { connection: c })}
                   className={`group flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
                     activeConnectionId === c.id ? 'bg-[#22242c] font-medium text-white' : ''
                   }`}
@@ -246,7 +558,7 @@ export const DatabaseExplorer: React.FC = () => {
                       type="button"
                       onClick={(e) => handleRefreshConnection(c.id, e)}
                       className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
-                      title="Refresh Metadata"
+                      title="Refresh Connection"
                     >
                       <RefreshCw className={`h-3 w-3 ${isConnLoading ? 'animate-spin' : ''}`} />
                     </button>
@@ -285,6 +597,14 @@ export const DatabaseExplorer: React.FC = () => {
                               <div
                                 key={obj.name}
                                 onClick={() => handleTableClick(c.id, 'main', 'main', obj.name)}
+                                onContextMenu={(e) =>
+                                  openContextMenu(e, 'table', {
+                                    connection: c,
+                                    database: 'main',
+                                    schema: 'main',
+                                    table: obj,
+                                  })
+                                }
                                 className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                               >
                                 {obj.type === 'view' ? (
@@ -303,104 +623,143 @@ export const DatabaseExplorer: React.FC = () => {
                       databases.length === 0 && !isConnLoading ? (
                         <div className="text-[11px] text-zinc-500 italic py-1">No databases found</div>
                       ) : (
-                        databases
-                          .map((dbName) => {
-                            const filterLower = filterText.toLowerCase().trim();
-                            const targetSchema = c.driver === 'postgres' ? 'public' : dbName;
-                            const schemaKey = `${c.id}:${dbName}:${targetSchema}`;
-                            const allObjects = treeObjects[schemaKey] || [];
-                            
-                            const dbMatches = !filterLower || dbName.toLowerCase().includes(filterLower);
-                            const matchingObjects = filterLower
-                              ? allObjects.filter((o) => o.name.toLowerCase().includes(filterLower))
-                              : allObjects;
-                            const hasMatchingObject = matchingObjects.length > 0;
+                        databases.map((dbName) => {
+                          const filterLower = filterText.toLowerCase().trim();
+                          const targetSchema = c.driver === 'postgres' ? 'public' : dbName;
+                          const schemaKey = `${c.id}:${dbName}:${targetSchema}`;
+                          const allObjects = treeObjects[schemaKey] || [];
 
-                            // Hide database if neither dbName nor any child table matches
-                            if (filterLower && !dbMatches && !hasMatchingObject) {
-                              return null;
-                            }
+                          const dbMatches = !filterLower || dbName.toLowerCase().includes(filterLower);
+                          const matchingObjects = filterLower
+                            ? allObjects.filter((o) => o.name.toLowerCase().includes(filterLower))
+                            : allObjects;
+                          const hasMatchingObject = matchingObjects.length > 0;
 
-                            // Auto-expand if a child table matches during search
-                            const isDbExpanded = !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
-                            const tables = (filterLower && !dbMatches ? matchingObjects : allObjects).filter((o) => o.type !== 'view');
-                            const views = (filterLower && !dbMatches ? matchingObjects : allObjects).filter((o) => o.type === 'view');
-                            const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
+                          if (filterLower && !dbMatches && !hasMatchingObject) {
+                            return null;
+                          }
 
-                            return (
-                              <div key={dbName} className="mb-0.5">
-                                {/* Database Node */}
-                                <div
-                                  onClick={() => handleExpandDatabase(c.id, dbName)}
-                                  className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
-                                    isDbActive ? 'bg-[#22242c] text-blue-300 font-medium' : ''
-                                  }`}
-                                >
-                                  {isDbExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-zinc-500 shrink-0" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
-                                  )}
-                                  <Database className={`h-3 w-3 shrink-0 ${isDbActive ? 'text-blue-400' : 'text-zinc-400'}`} />
-                                  <span className="truncate flex-1">{dbName}</span>
-                                  {filterLower && hasMatchingObject && !dbMatches && (
-                                    <span className="text-[9px] text-amber-400 bg-amber-950/40 px-1 rounded font-mono">
-                                      {matchingObjects.length} match
-                                    </span>
-                                  )}
-                                </div>
+                          const isDbExpanded =
+                            !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
+                          const tables = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
+                            (o) => o.type !== 'view'
+                          );
+                          const views = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
+                            (o) => o.type === 'view'
+                          );
+                          const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
 
-                                {/* Tables & Views under this database */}
-                                {isDbExpanded && (
-                                  <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
-                                    <div className="text-[10px] text-zinc-500 flex items-center gap-1 py-0.5">
-                                      <Folder className="h-2.5 w-2.5" />
-                                      <span>tables ({tables.length})</span>
-                                    </div>
-                                    {tables.map((obj) => {
-                                      const isMatch = filterLower && obj.name.toLowerCase().includes(filterLower);
-                                      return (
-                                        <div
-                                          key={obj.name}
-                                          onClick={() => handleTableClick(c.id, dbName, targetSchema, obj.name)}
-                                          className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
-                                            isMatch ? 'text-amber-300 bg-amber-950/20 font-medium' : 'text-zinc-400 hover:text-white'
-                                          }`}
-                                        >
-                                          <Table className={`h-3 w-3 shrink-0 ${isMatch ? 'text-amber-400' : 'text-emerald-400'}`} />
-                                          <span className="truncate">{obj.name}</span>
-                                        </div>
-                                      );
-                                    })}
-
-                                    {views.length > 0 && (
-                                      <>
-                                        <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
-                                          <Folder className="h-2.5 w-2.5" />
-                                          <span>views ({views.length})</span>
-                                        </div>
-                                        {views.map((obj) => {
-                                          const isMatch = filterLower && obj.name.toLowerCase().includes(filterLower);
-                                          return (
-                                            <div
-                                              key={obj.name}
-                                              onClick={() => handleTableClick(c.id, dbName, targetSchema, obj.name)}
-                                              className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
-                                                isMatch ? 'text-amber-300 bg-amber-950/20 font-medium' : 'text-zinc-400 hover:text-white'
-                                              }`}
-                                            >
-                                              <Eye className={`h-3 w-3 shrink-0 ${isMatch ? 'text-amber-400' : 'text-purple-400'}`} />
-                                              <span className="truncate">{obj.name}</span>
-                                            </div>
-                                          );
-                                        })}
-                                      </>
-                                    )}
-                                  </div>
+                          return (
+                            <div key={dbName} className="mb-0.5">
+                              {/* Database Node */}
+                              <div
+                                onClick={() => handleExpandDatabase(c.id, dbName)}
+                                onContextMenu={(e) =>
+                                  openContextMenu(e, 'database', {
+                                    connection: c,
+                                    database: dbName,
+                                    schema: targetSchema,
+                                  })
+                                }
+                                className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
+                                  isDbActive ? 'bg-[#22242c] text-blue-300 font-medium' : ''
+                                }`}
+                              >
+                                {isDbExpanded ? (
+                                  <ChevronDown className="h-3 w-3 text-zinc-500 shrink-0" />
+                                ) : (
+                                  <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
+                                )}
+                                <Database
+                                  className={`h-3 w-3 shrink-0 ${isDbActive ? 'text-blue-400' : 'text-zinc-400'}`}
+                                />
+                                <span className="truncate flex-1">{dbName}</span>
+                                {filterLower && hasMatchingObject && !dbMatches && (
+                                  <span className="text-[9px] text-amber-400 bg-amber-950/40 px-1 rounded font-mono">
+                                    {matchingObjects.length} match
+                                  </span>
                                 )}
                               </div>
-                            );
-                          })
+
+                              {/* Tables & Views under this database */}
+                              {isDbExpanded && (
+                                <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
+                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 py-0.5">
+                                    <Folder className="h-2.5 w-2.5" />
+                                    <span>tables ({tables.length})</span>
+                                  </div>
+                                  {tables.map((obj) => {
+                                    const isMatch = filterLower && obj.name.toLowerCase().includes(filterLower);
+                                    return (
+                                      <div
+                                        key={obj.name}
+                                        onClick={() => handleTableClick(c.id, dbName, targetSchema, obj.name)}
+                                        onContextMenu={(e) =>
+                                          openContextMenu(e, 'table', {
+                                            connection: c,
+                                            database: dbName,
+                                            schema: targetSchema,
+                                            table: obj,
+                                          })
+                                        }
+                                        className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
+                                          isMatch
+                                            ? 'text-amber-300 bg-amber-950/20 font-medium'
+                                            : 'text-zinc-400 hover:text-white'
+                                        }`}
+                                      >
+                                        <Table
+                                          className={`h-3 w-3 shrink-0 ${
+                                            isMatch ? 'text-amber-400' : 'text-emerald-400'
+                                          }`}
+                                        />
+                                        <span className="truncate">{obj.name}</span>
+                                      </div>
+                                    );
+                                  })}
+
+                                  {views.length > 0 && (
+                                    <>
+                                      <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                        <Folder className="h-2.5 w-2.5" />
+                                        <span>views ({views.length})</span>
+                                      </div>
+                                      {views.map((obj) => {
+                                        const isMatch = filterLower && obj.name.toLowerCase().includes(filterLower);
+                                        return (
+                                          <div
+                                            key={obj.name}
+                                            onClick={() => handleTableClick(c.id, dbName, targetSchema, obj.name)}
+                                            onContextMenu={(e) =>
+                                              openContextMenu(e, 'table', {
+                                                connection: c,
+                                                database: dbName,
+                                                schema: targetSchema,
+                                                table: obj,
+                                              })
+                                            }
+                                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
+                                              isMatch
+                                                ? 'text-amber-300 bg-amber-950/20 font-medium'
+                                                : 'text-zinc-400 hover:text-white'
+                                            }`}
+                                          >
+                                            <Eye
+                                              className={`h-3 w-3 shrink-0 ${
+                                                isMatch ? 'text-amber-400' : 'text-purple-400'
+                                              }`}
+                                            />
+                                            <span className="truncate">{obj.name}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
                       )
                     )}
                   </div>
@@ -410,6 +769,276 @@ export const DatabaseExplorer: React.FC = () => {
           })
         )}
       </div>
+
+      {/* Floating JetBrains-style Context Menu */}
+      {contextMenu.isOpen && (
+        <div
+          className="fixed z-50 min-w-[210px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Menu Header */}
+          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 flex items-center justify-between">
+            <span className="truncate">
+              {contextMenu.type === 'connection' && `Connection: ${contextMenu.connection?.name}`}
+              {contextMenu.type === 'database' && `Database: ${contextMenu.database}`}
+              {contextMenu.type === 'table' &&
+                `${contextMenu.table?.type === 'view' ? 'View' : 'Table'}: ${contextMenu.table?.name}`}
+              {contextMenu.type === 'empty' && 'Explorer Menu'}
+            </span>
+            {copiedText && <span className="text-[9px] text-emerald-400 lowercase font-normal">copied!</span>}
+          </div>
+
+          {/* Connection Menu Items */}
+          {contextMenu.type === 'connection' && contextMenu.connection && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleEditConnection(contextMenu.connection!.id);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Edit Connection...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleRefreshConnection(contextMenu.connection!.id);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Refresh Connection</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleNewConsole(contextMenu.connection!.id, contextMenu.connection!.databaseName);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>New Query Console</span>
+              </button>
+
+              <div className="my-1 border-t border-[#272932]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleDeleteConnection(contextMenu.connection!.id, contextMenu.connection!.name);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                <span>Delete Connection</span>
+              </button>
+            </>
+          )}
+
+          {/* Database Menu Items */}
+          {contextMenu.type === 'database' && contextMenu.connection && contextMenu.database && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleNewConsole(contextMenu.connection!.id, contextMenu.database);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>New Query Console</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleEditDatabase(contextMenu.connection!, contextMenu.database!);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Edit Database (Alter/Properties)...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleRefreshDatabase(contextMenu.connection!.id, contextMenu.database!);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Refresh Database</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleCopyText(contextMenu.database!)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Copy Database Name</span>
+              </button>
+
+              <div className="my-1 border-t border-[#272932]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleDeleteDatabase(contextMenu.connection!, contextMenu.database!);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                <span>Drop Database...</span>
+              </button>
+            </>
+          )}
+
+          {/* Table Menu Items */}
+          {contextMenu.type === 'table' && contextMenu.connection && contextMenu.table && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleTableClick(
+                    contextMenu.connection!.id,
+                    contextMenu.database || 'main',
+                    contextMenu.schema || 'main',
+                    contextMenu.table!.name
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Table className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                <span>Edit Data (Open Table)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleEditTableStructure(
+                    contextMenu.connection!,
+                    contextMenu.database || 'main',
+                    contextMenu.schema || 'main',
+                    contextMenu.table!.name
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Code2 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Edit Structure (DDL)...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleNewConsole(
+                    contextMenu.connection!.id,
+                    contextMenu.database || 'main',
+                    contextMenu.schema || 'main',
+                    contextMenu.table!.name
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>New Query Console</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleRefreshTable(
+                    contextMenu.connection!.id,
+                    contextMenu.database || 'main',
+                    contextMenu.schema || 'main',
+                    contextMenu.table!.name
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Refresh Table</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleCopyText(contextMenu.table!.name)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Copy Table Name</span>
+              </button>
+
+              <div className="my-1 border-t border-[#272932]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleDeleteTable(
+                    contextMenu.connection!,
+                    contextMenu.database || 'main',
+                    contextMenu.schema || 'main',
+                    contextMenu.table!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                <span>Drop {contextMenu.table!.type === 'view' ? 'View' : 'Table'}...</span>
+              </button>
+            </>
+          )}
+
+          {/* Empty Space Menu Items */}
+          {contextMenu.type === 'empty' && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  setConnectionDialogOpen(true, null);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Plus className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>New Connection...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  loadConnections();
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Refresh All Connections</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
