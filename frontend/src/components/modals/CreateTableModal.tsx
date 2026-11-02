@@ -33,6 +33,21 @@ export interface ColumnDefinition {
   comment: string;
 }
 
+export interface IndexColumnConfig {
+  name: string;
+  order: 'ASC' | 'DESC';
+  length?: string;
+}
+
+export interface IndexDefinition {
+  id: string;
+  name: string;
+  type: 'INDEX' | 'UNIQUE' | 'FULLTEXT' | 'SPATIAL';
+  method: string;
+  columns: IndexColumnConfig[];
+  comment?: string;
+}
+
 interface CreateTableModalProps {
   isOpen: boolean;
   connection: ConnectionConfig | null;
@@ -304,6 +319,66 @@ const CustomTypeSelect: React.FC<CustomTypeSelectProps> = ({ value, onChange, ty
   );
 };
 
+interface AddColumnToIndexDropdownProps {
+  columns: string[];
+  onSelect: (colName: string) => void;
+}
+
+const AddColumnToIndexDropdown: React.FC<AddColumnToIndexDropdownProps> = ({ columns, onSelect }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium text-blue-400 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 cursor-pointer transition-colors"
+        title="Add column to this index"
+      >
+        <Plus className="h-3 w-3" />
+        <span>Column</span>
+        <ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1 min-w-[140px] max-h-48 overflow-y-auto rounded-lg border border-[#2b2e3a] bg-[#16171f] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+          <div className="px-2 py-0.5 text-[9px] font-bold uppercase text-zinc-400 border-b border-[#272932] mb-1 select-none">
+            Add Column
+          </div>
+          {columns.map((c) => (
+            <div
+              key={c}
+              onClick={() => {
+                onSelect(c);
+                setIsOpen(false);
+              }}
+              className="px-2 py-1 rounded text-xs font-mono text-zinc-200 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors flex items-center justify-between"
+            >
+              <span>{c}</span>
+              <Plus className="h-3 w-3 text-zinc-400" />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   isOpen,
   connection,
@@ -318,6 +393,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [charset, setCharset] = useState('utf8mb4');
   const [collation, setCollation] = useState('utf8mb4_unicode_ci');
   const [columns, setColumns] = useState<ColumnDefinition[]>([]);
+  const [indexes, setIndexes] = useState<IndexDefinition[]>([]);
+  const [activeSubTab, setActiveSubTab] = useState<'columns' | 'indexes'>('columns');
   const [showSqlPreview, setShowSqlPreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
@@ -331,6 +408,36 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     return MYSQL_TYPE_GROUPS;
   }, [driver]);
 
+  const indexTypeOptions = useMemo(() => {
+    if (driver === 'mysql') {
+      return [
+        { value: 'INDEX', label: 'INDEX (Normal)' },
+        { value: 'UNIQUE', label: 'UNIQUE' },
+        { value: 'FULLTEXT', label: 'FULLTEXT' },
+        { value: 'SPATIAL', label: 'SPATIAL' },
+      ];
+    }
+    return [
+      { value: 'INDEX', label: 'INDEX (Normal)' },
+      { value: 'UNIQUE', label: 'UNIQUE' },
+    ];
+  }, [driver]);
+
+  const indexMethodOptions = useMemo(() => {
+    if (driver === 'postgres') {
+      return [
+        { value: 'BTREE', label: 'BTREE' },
+        { value: 'HASH', label: 'HASH' },
+        { value: 'GIN', label: 'GIN' },
+        { value: 'GIST', label: 'GIST' },
+      ];
+    }
+    return [
+      { value: 'BTREE', label: 'BTREE' },
+      { value: 'HASH', label: 'HASH' },
+    ];
+  }, [driver]);
+
   // Reset and initialize with 1 empty column row when modal opens
   useEffect(() => {
     if (isOpen) {
@@ -341,6 +448,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       setCollation('utf8mb4_unicode_ci');
       setShowSqlPreview(false);
       setCopiedSql(false);
+      setIndexes([]);
+      setActiveSubTab('columns');
 
       // Default column is empty as requested: "colom default kosong"
       setColumns([
@@ -386,11 +495,20 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   };
 
   const handleRemoveColumn = (id: string) => {
+    const colToRemove = columns.find((c) => c.id === id);
     if (columns.length <= 1) {
       alertWarning('A table must have at least one column.', 'Cannot Remove Column');
       return;
     }
     setColumns((prev) => prev.filter((c) => c.id !== id));
+    if (colToRemove?.name) {
+      setIndexes((prev) =>
+        prev.map((idx) => ({
+          ...idx,
+          columns: idx.columns.filter((c) => c.name !== colToRemove.name),
+        }))
+      );
+    }
   };
 
   const handleMoveColumn = (index: number, direction: 'up' | 'down') => {
@@ -406,6 +524,9 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   };
 
   const handleUpdateColumn = (id: string, updates: Partial<ColumnDefinition>) => {
+    const oldCol = columns.find((c) => c.id === id);
+    const oldName = oldCol?.name;
+
     setColumns((prev) =>
       prev.map((col) => {
         if (col.id !== id) return col;
@@ -428,9 +549,100 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         return next;
       })
     );
+
+    // Sync renamed column into index definitions
+    if (updates.name && oldName && updates.name !== oldName) {
+      setIndexes((prev) =>
+        prev.map((idx) => ({
+          ...idx,
+          columns: idx.columns.map((c) => (c.name === oldName ? { ...c, name: updates.name! } : c)),
+        }))
+      );
+    }
   };
 
-  // Generate DDL SQL string
+  // Index Management Handlers
+  const handleAddIndex = () => {
+    const namedCols = columns.filter((c) => c.name.trim());
+    const firstCol = namedCols[0]?.name.trim() || '';
+    const cleanTbl = tableName.trim() || 'table';
+    const newIdx: IndexDefinition = {
+      id: 'idx-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      name: firstCol ? `idx_${cleanTbl}_${firstCol}` : `idx_${cleanTbl}_${indexes.length + 1}`,
+      type: 'INDEX',
+      method: driver === 'sqlite' ? '' : 'BTREE',
+      columns: firstCol ? [{ name: firstCol, order: 'ASC' }] : [],
+      comment: '',
+    };
+    setIndexes((prev) => [...prev, newIdx]);
+  };
+
+  const handleUpdateIndex = (id: string, updates: Partial<IndexDefinition>) => {
+    setIndexes((prev) => prev.map((idx) => (idx.id === id ? { ...idx, ...updates } : idx)));
+  };
+
+  const handleRemoveIndex = (id: string) => {
+    setIndexes((prev) => prev.filter((idx) => idx.id !== id));
+  };
+
+  const handleAddColumnToIndex = (indexId: string, colName: string) => {
+    if (!colName) return;
+    setIndexes((prev) =>
+      prev.map((idx) => {
+        if (idx.id !== indexId) return idx;
+        if (idx.columns.some((c) => c.name === colName)) return idx;
+        const newCols = [...idx.columns, { name: colName, order: 'ASC' as const }];
+        const cleanTbl = tableName.trim() || 'table';
+        const prefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+        const autoName = `${prefix}_${cleanTbl}_${newCols.map((c) => c.name).join('_')}`;
+        const shouldUpdateName = !idx.name || idx.name.startsWith('idx_') || idx.name.startsWith('uk_');
+        return {
+          ...idx,
+          name: shouldUpdateName ? autoName : idx.name,
+          columns: newCols,
+        };
+      })
+    );
+  };
+
+  const handleRemoveColumnFromIndex = (indexId: string, colIndex: number) => {
+    setIndexes((prev) =>
+      prev.map((idx) => {
+        if (idx.id !== indexId) return idx;
+        const newCols = idx.columns.filter((_, i) => i !== colIndex);
+        return { ...idx, columns: newCols };
+      })
+    );
+  };
+
+  const handleMoveIndexColumn = (indexId: string, colIndex: number, direction: 'left' | 'right') => {
+    setIndexes((prev) =>
+      prev.map((idx) => {
+        if (idx.id !== indexId) return idx;
+        const targetIdx = direction === 'left' ? colIndex - 1 : colIndex + 1;
+        if (targetIdx < 0 || targetIdx >= idx.columns.length) return idx;
+        const newCols = [...idx.columns];
+        const temp = newCols[colIndex];
+        newCols[colIndex] = newCols[targetIdx];
+        newCols[targetIdx] = temp;
+        return { ...idx, columns: newCols };
+      })
+    );
+  };
+
+  const handleToggleIndexColumnOrder = (indexId: string, colIndex: number) => {
+    setIndexes((prev) =>
+      prev.map((idx) => {
+        if (idx.id !== indexId) return idx;
+        const newCols = idx.columns.map((col, i) =>
+          i === colIndex ? { ...col, order: (col.order === 'ASC' ? 'DESC' : 'ASC') as 'ASC' | 'DESC' } : col
+        );
+        return { ...idx, columns: newCols };
+      })
+    );
+  };
+
+  // Generate DDL SQL string with complete composite indexing support
   const generatedSql = useMemo(() => {
     const cleanTable = tableName.trim();
     if (!cleanTable) {
@@ -439,6 +651,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
     const lines: string[] = [];
     const pkCols = columns.filter((c) => c.isPrimaryKey && c.name.trim());
+    const validColNames = columns.map((c) => c.name.trim()).filter(Boolean);
 
     if (driver === 'mysql') {
       const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
@@ -478,6 +691,38 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         lines.push(`  PRIMARY KEY (${pkCols.map((c) => `\`${c.name.trim()}\``).join(', ')})`);
       }
 
+      // Add Indexes to MySQL CREATE TABLE
+      indexes.forEach((idx) => {
+        const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+        if (validCols.length === 0) return;
+
+        const colParts = validCols
+          .map((c) => {
+            let part = `\`${c.name.trim()}\``;
+            if (c.length && c.length.trim()) part += `(${c.length.trim()})`;
+            if (c.order === 'DESC') part += ' DESC';
+            return part;
+          })
+          .join(', ');
+
+        const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+        const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+
+        let idxKeyword = 'KEY';
+        if (idx.type === 'UNIQUE') idxKeyword = 'UNIQUE KEY';
+        else if (idx.type === 'FULLTEXT') idxKeyword = 'FULLTEXT KEY';
+        else if (idx.type === 'SPATIAL') idxKeyword = 'SPATIAL KEY';
+
+        let idxDef = `  ${idxKeyword} \`${idxName}\` (${colParts})`;
+        if (idx.method && (idx.method === 'BTREE' || idx.method === 'HASH')) {
+          idxDef += ` USING ${idx.method}`;
+        }
+        if (idx.comment && idx.comment.trim()) {
+          idxDef += ` COMMENT '${idx.comment.trim().replace(/'/g, "\\'")}'`;
+        }
+        lines.push(idxDef);
+      });
+
       let ddl = `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE=${engine} DEFAULT CHARSET=${charset} COLLATE=${collation}`;
       if (tableComment.trim()) {
         ddl += ` COMMENT='${tableComment.trim().replace(/'/g, "\\'")}'`;
@@ -513,7 +758,31 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
       }
 
-      return `CREATE TABLE ${schemaPrefix}"${cleanTable}" (\n${lines.join(',\n')}\n);`;
+      const statements: string[] = [];
+      statements.push(`CREATE TABLE ${schemaPrefix}"${cleanTable}" (\n${lines.join(',\n')}\n);`);
+
+      // Add PostgreSQL CREATE INDEX statements
+      indexes.forEach((idx) => {
+        const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+        if (validCols.length === 0) return;
+
+        const colParts = validCols
+          .map((c) => {
+            let part = `"${c.name.trim()}"`;
+            if (c.order === 'DESC') part += ' DESC';
+            return part;
+          })
+          .join(', ');
+
+        const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+        const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+        const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+        const methodClause = idx.method && ['BTREE', 'HASH', 'GIN', 'GIST'].includes(idx.method) ? ` USING ${idx.method}` : '';
+
+        statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON ${schemaPrefix}"${cleanTable}"${methodClause} (${colParts});`);
+      });
+
+      return statements.join('\n\n');
     } else {
       // SQLite
       columns.forEach((col) => {
@@ -550,9 +819,32 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
       }
 
-      return `CREATE TABLE "${cleanTable}" (\n${lines.join(',\n')}\n);`;
+      const statements: string[] = [];
+      statements.push(`CREATE TABLE "${cleanTable}" (\n${lines.join(',\n')}\n);`);
+
+      // Add SQLite CREATE INDEX statements
+      indexes.forEach((idx) => {
+        const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+        if (validCols.length === 0) return;
+
+        const colParts = validCols
+          .map((c) => {
+            let part = `"${c.name.trim()}"`;
+            if (c.order === 'DESC') part += ' DESC';
+            return part;
+          })
+          .join(', ');
+
+        const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+        const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+        const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+
+        statements.push(`CREATE ${isUnique}INDEX IF NOT EXISTS "${idxName}" ON "${cleanTable}" (${colParts});`);
+      });
+
+      return statements.join('\n\n');
     }
-  }, [tableName, columns, database, targetSchema, engine, charset, collation, tableComment, driver]);
+  }, [tableName, columns, indexes, database, targetSchema, engine, charset, collation, tableComment, driver]);
 
   const handleCopySql = () => {
     if (!generatedSql) return;
@@ -793,29 +1085,73 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
             )}
           </div>
 
-          {/* Columns Header Bar + Add Column Action */}
+          {/* Sub-Tabs Navigation Bar: Columns vs Indexes */}
           <div className="flex h-11 items-center justify-between px-5 bg-[#14151a] border-b border-[#272932] shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
-                Columns & Fields
-              </span>
-              <span className="font-mono text-[11px] bg-[#20222b] px-2 py-0.5 rounded text-zinc-400 border border-[#2d303e]">
-                {columns.length} field(s)
-              </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('columns')}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeSubTab === 'columns'
+                    ? 'bg-blue-600/15 text-blue-400 border border-blue-500/40 shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f212a] border border-transparent'
+                }`}
+              >
+                <span>Columns & Fields</span>
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
+                    activeSubTab === 'columns' ? 'bg-blue-500/25 text-blue-300 font-bold' : 'bg-[#22242c] text-zinc-400'
+                  }`}
+                >
+                  {columns.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('indexes')}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeSubTab === 'indexes'
+                    ? 'bg-blue-600/15 text-blue-400 border border-blue-500/40 shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f212a] border border-transparent'
+                }`}
+              >
+                <span>Indexes & Keys</span>
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
+                    activeSubTab === 'indexes' ? 'bg-blue-500/25 text-blue-300 font-bold' : 'bg-[#22242c] text-zinc-400'
+                  }`}
+                >
+                  {indexes.length}
+                </span>
+              </button>
             </div>
 
-            <button
-              type="button"
-              onClick={handleAddColumn}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Add Column</span>
-            </button>
+            {/* Contextual Action Button */}
+            {activeSubTab === 'columns' ? (
+              <button
+                type="button"
+                onClick={handleAddColumn}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add Column</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleAddIndex}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add Index</span>
+              </button>
+            )}
           </div>
 
-          {/* Columns Table List */}
-          <div className="flex-1 overflow-auto min-h-0 bg-[#121317]">
+          {/* Tab 1 Content: Columns Table */}
+          {activeSubTab === 'columns' && (
+            <div className="flex-1 overflow-auto min-h-0 bg-[#121317]">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="sticky top-0 bg-[#181920] border-b border-[#272932] shadow-xs z-10 select-none">
                 <tr className="text-zinc-400 font-semibold text-[11px]">
@@ -998,6 +1334,204 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               </tbody>
             </table>
           </div>
+          )}
+
+          {/* Tab 2 Content: Indexes & Keys Table (Composite Indexing Support) */}
+          {activeSubTab === 'indexes' && (
+            <div className="flex-1 overflow-auto min-h-0 bg-[#121317]">
+              {indexes.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center p-8 text-center text-zinc-500 select-none">
+                  <div className="h-12 w-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-3">
+                    <Key className="h-6 w-6 stroke-[1.5]" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-zinc-200">No Indexes Configured</h3>
+                  <p className="text-xs text-zinc-400 mt-1 max-w-md">
+                    Indexes speed up queries and enforce uniqueness. You can configure single or composite indexes across multiple columns.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleAddIndex}
+                    className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Create First Index</span>
+                  </button>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="sticky top-0 bg-[#181920] border-b border-[#272932] shadow-xs z-10 select-none">
+                    <tr className="text-zinc-400 font-semibold text-[11px]">
+                      <th className="w-10 px-2 py-2 text-center border-r border-[#272932]">#</th>
+                      <th className="w-64 px-3 py-2 border-r border-[#272932]">Index Name *</th>
+                      <th className="w-44 px-3 py-2 border-r border-[#272932]">Index Type</th>
+                      {driver !== 'sqlite' && (
+                        <th className="w-32 px-3 py-2 border-r border-[#272932]">Method</th>
+                      )}
+                      <th className="px-3 py-2 border-r border-[#272932]">Indexed Columns (Composite in Order)</th>
+                      {driver === 'mysql' && (
+                        <th className="w-44 px-3 py-2 border-r border-[#272932]">Comment</th>
+                      )}
+                      <th className="w-20 px-2 py-2 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#20222a] font-mono">
+                    {indexes.map((idx, indexIdx) => {
+                      const availableColsForIndex = columns
+                        .map((c) => c.name.trim())
+                        .filter((name) => name && !idx.columns.some((ic) => ic.name === name));
+
+                      return (
+                        <tr key={idx.id} className="hover:bg-[#1a1c24] transition-colors group">
+                          {/* Number */}
+                          <td className="px-2 py-2 text-center text-zinc-500 border-r border-[#20222a] text-[11px]">
+                            {indexIdx + 1}
+                          </td>
+
+                          {/* Index Name */}
+                          <td className="px-2 py-2 border-r border-[#20222a]">
+                            <input
+                              type="text"
+                              placeholder="e.g. idx_table_col1_col2"
+                              value={idx.name}
+                              onChange={(e) => handleUpdateIndex(idx.id, { name: e.target.value })}
+                              className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs font-mono text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                            />
+                          </td>
+
+                          {/* Index Type Dropdown */}
+                          <td className="px-2 py-2 border-r border-[#20222a]">
+                            <CustomSelect
+                              value={idx.type}
+                              onChange={(val) => {
+                                const newType = val as any;
+                                const cleanTbl = tableName.trim() || 'table';
+                                const prefix = newType === 'UNIQUE' ? 'uk' : 'idx';
+                                const autoName = `${prefix}_${cleanTbl}_${idx.columns.map((c) => c.name).join('_')}`;
+                                const shouldUpdate = !idx.name || idx.name.startsWith('idx_') || idx.name.startsWith('uk_');
+                                handleUpdateIndex(idx.id, {
+                                  type: newType,
+                                  name: shouldUpdate && idx.columns.length > 0 ? autoName : idx.name,
+                                });
+                              }}
+                              options={indexTypeOptions}
+                            />
+                          </td>
+
+                          {/* Method Dropdown */}
+                          {driver !== 'sqlite' && (
+                            <td className="px-2 py-2 border-r border-[#20222a]">
+                              <CustomSelect
+                                value={idx.method}
+                                onChange={(val) => handleUpdateIndex(idx.id, { method: val })}
+                                options={indexMethodOptions}
+                              />
+                            </td>
+                          )}
+
+                          {/* Indexed Columns (Composite in Order) */}
+                          <td className="px-3 py-2 border-r border-[#20222a]">
+                            <div className="flex flex-wrap items-center gap-1.5 min-h-[30px]">
+                              {idx.columns.map((col, cIdx) => (
+                                <div
+                                  key={col.name + '-' + cIdx}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#20222b] border border-[#323647] text-white text-xs font-mono group/col shadow-xs"
+                                >
+                                  <span className="font-semibold text-emerald-300">{col.name}</span>
+
+                                  {/* Order toggle: ASC / DESC */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleIndexColumnOrder(idx.id, cIdx)}
+                                    className="px-1.5 py-0.2 rounded text-[10px] font-bold text-blue-400 hover:text-white hover:bg-blue-600/40 cursor-pointer transition-colors"
+                                    title="Toggle ASC / DESC"
+                                  >
+                                    {col.order}
+                                  </button>
+
+                                  {/* Reorder in composite */}
+                                  {idx.columns.length > 1 && (
+                                    <div className="flex items-center opacity-60 group-hover/col:opacity-100">
+                                      <button
+                                        type="button"
+                                        disabled={cIdx === 0}
+                                        onClick={() => handleMoveIndexColumn(idx.id, cIdx, 'left')}
+                                        className="px-1 text-zinc-400 hover:text-white disabled:opacity-20 cursor-pointer"
+                                        title="Move Left (Higher Priority)"
+                                      >
+                                        ←
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={cIdx === idx.columns.length - 1}
+                                        onClick={() => handleMoveIndexColumn(idx.id, cIdx, 'right')}
+                                        className="px-1 text-zinc-400 hover:text-white disabled:opacity-20 cursor-pointer"
+                                        title="Move Right (Lower Priority)"
+                                      >
+                                        →
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {/* Remove column from index */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveColumnFromIndex(idx.id, cIdx)}
+                                    className="text-zinc-500 hover:text-rose-400 cursor-pointer ml-0.5"
+                                    title="Remove from Index"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              ))}
+
+                              {/* Add Column Dropdown */}
+                              {availableColsForIndex.length > 0 ? (
+                                <AddColumnToIndexDropdown
+                                  columns={availableColsForIndex}
+                                  onSelect={(c) => handleAddColumnToIndex(idx.id, c)}
+                                />
+                              ) : idx.columns.length === 0 ? (
+                                <span className="text-[11px] text-zinc-500 italic">
+                                  {columns.filter((c) => c.name.trim()).length === 0
+                                    ? 'Add column names first in Columns tab'
+                                    : 'No column selected'}
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+
+                          {/* Comment (MySQL) */}
+                          {driver === 'mysql' && (
+                            <td className="px-2 py-2 border-r border-[#20222a]">
+                              <input
+                                type="text"
+                                placeholder="Optional comment..."
+                                value={idx.comment || ''}
+                                onChange={(e) => handleUpdateIndex(idx.id, { comment: e.target.value })}
+                                className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                              />
+                            </td>
+                          )}
+
+                          {/* Actions */}
+                          <td className="px-2 py-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveIndex(idx.id)}
+                              className="p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 cursor-pointer transition-colors"
+                              title="Delete Index"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
 
           {/* SQL Preview Drawer */}
           {showSqlPreview && (
