@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { ConnectionConfig, ObjectSummary } from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning } from '../../stores/useAlertStore';
+import { CreateTableModal } from '../modals/CreateTableModal';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -85,6 +86,28 @@ export const DatabaseExplorer: React.FC = () => {
     charset: 'utf8mb4',
     collation: 'utf8mb4_unicode_ci',
   });
+
+  // Create Table Dialog state
+  const [createTableModal, setCreateTableModal] = useState<{
+    isOpen: boolean;
+    connection: ConnectionConfig | null;
+    database: string;
+    schema: string;
+  }>({
+    isOpen: false,
+    connection: null,
+    database: '',
+    schema: '',
+  });
+
+  const handleOpenCreateTable = (conn: ConnectionConfig, database: string, schema?: string) => {
+    setCreateTableModal({
+      isOpen: true,
+      connection: conn,
+      database: database || conn.databaseName || 'main',
+      schema: schema || (conn.driver === 'postgres' ? 'public' : database || 'main'),
+    });
+  };
 
   const closeContextMenu = () => {
     setContextMenu((prev) => (prev.isOpen ? { ...prev, isOpen: false } : prev));
@@ -684,9 +707,22 @@ export const DatabaseExplorer: React.FC = () => {
                         );
                         return (
                           <div>
-                            <div className="text-[11px] text-zinc-500 flex items-center gap-1 py-0.5">
-                              <Folder className="h-3 w-3" />
-                              <span>tables ({objects.length})</span>
+                            <div className="text-[11px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
+                              <div className="flex items-center gap-1">
+                                <Folder className="h-3 w-3" />
+                                <span>tables ({objects.length})</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenCreateTable(c, 'main', 'main');
+                                }}
+                                className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                title="Create New Table"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
                             </div>
                             {objects.map((obj) => (
                               <div
@@ -756,7 +792,7 @@ export const DatabaseExplorer: React.FC = () => {
                                     schema: targetSchema,
                                   })
                                 }
-                                className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
+                                className={`group/db flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
                                   isDbActive ? 'bg-[#22242c] text-blue-300 font-medium' : ''
                                 }`}
                               >
@@ -774,14 +810,40 @@ export const DatabaseExplorer: React.FC = () => {
                                     {matchingObjects.length} match
                                   </span>
                                 )}
+                                <div className="opacity-0 group-hover/db:opacity-100 flex items-center transition-opacity ml-1">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenCreateTable(c, dbName, targetSchema);
+                                    }}
+                                    className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
+                                    title={`Create New Table in "${dbName}"`}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </button>
+                                </div>
                               </div>
 
                               {/* Tables & Views under this database */}
                               {isDbExpanded && (
                                 <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
-                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 py-0.5">
-                                    <Folder className="h-2.5 w-2.5" />
-                                    <span>tables ({tables.length})</span>
+                                  <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
+                                    <div className="flex items-center gap-1">
+                                      <Folder className="h-2.5 w-2.5" />
+                                      <span>tables ({tables.length})</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenCreateTable(c, dbName, targetSchema);
+                                      }}
+                                      className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                      title={`Create New Table in "${dbName}"`}
+                                    >
+                                      <Plus className="h-2.5 w-2.5" />
+                                    </button>
                                   </div>
                                   {tables.map((obj) => {
                                     const isMatch = filterLower && obj.name.toLowerCase().includes(filterLower);
@@ -887,17 +949,31 @@ export const DatabaseExplorer: React.FC = () => {
           {/* Connection Menu Items */}
           {contextMenu.type === 'connection' && contextMenu.connection && (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleOpenCreateDatabase(contextMenu.connection!);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                <span>New Database...</span>
-              </button>
+              {contextMenu.connection.driver === 'sqlite' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenCreateTable(contextMenu.connection!, 'main', 'main');
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>New Table...</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenCreateDatabase(contextMenu.connection!);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>New Database...</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -954,6 +1030,22 @@ export const DatabaseExplorer: React.FC = () => {
           {/* Database Menu Items */}
           {contextMenu.type === 'database' && contextMenu.connection && contextMenu.database && (
             <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleOpenCreateTable(
+                    contextMenu.connection!,
+                    contextMenu.database!,
+                    contextMenu.schema || contextMenu.database!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+              >
+                <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>New Table...</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
@@ -1273,6 +1365,20 @@ export const DatabaseExplorer: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Create Table Dialog */}
+      <CreateTableModal
+        isOpen={createTableModal.isOpen}
+        connection={createTableModal.connection}
+        database={createTableModal.database}
+        schema={createTableModal.schema}
+        onClose={() => setCreateTableModal((prev) => ({ ...prev, isOpen: false }))}
+        onTableCreated={(tableName) => {
+          if (createTableModal.connection) {
+            handleRefreshDatabase(createTableModal.connection.id, createTableModal.database);
+          }
+        }}
+      />
     </div>
   );
 };
