@@ -123,6 +123,7 @@ export interface WorkbenchTab {
   type: WorkbenchTabType;
   title: string;
   connectionId: string;
+  driver?: string;
   database: string;
   schema: string;
   table?: string;

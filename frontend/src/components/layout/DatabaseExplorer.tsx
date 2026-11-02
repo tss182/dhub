@@ -331,11 +331,13 @@ export const DatabaseExplorer: React.FC = () => {
 
   // Table handlers
   const handleTableClick = (connId: string, db: string, schema: string, tableName: string) => {
+    const conn = connections.find((c) => c.id === connId);
     openTab({
       id: `table-${connId}-${db}-${tableName}`,
       type: 'table_data',
       title: tableName,
       connectionId: connId,
+      driver: conn?.driver,
       database: db,
       schema: schema,
       table: tableName,

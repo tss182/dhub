@@ -409,6 +409,18 @@ export const SettingsModal: React.FC = () => {
                       </kbd>
                     </div>
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Delete Active Row</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Delete / ⌘⌫
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Revert / Cancel Changes</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Esc
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Settings & Preferences</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
                         Ctrl+, / ⌘,
