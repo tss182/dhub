@@ -153,7 +153,11 @@ func (s *SQLiteDriver) GenerateDMLPreview(schema, table string, changes []driver
 				cols = append(cols, fmt.Sprintf(`"%s"`, k))
 				vals = append(vals, formatSQLVal(v))
 			}
-			statements = append(statements, fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s);`, table, strings.Join(cols, ", "), strings.Join(vals, ", ")))
+			stmt := fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s);`, table, strings.Join(cols, ", "), strings.Join(vals, ", "))
+			if len(cols) == 0 {
+				stmt = fmt.Sprintf(`INSERT INTO "%s" DEFAULT VALUES;`, table)
+			}
+			statements = append(statements, stmt)
 		case "update":
 			sets := []string{}
 			for k, v := range c.Changes {
@@ -195,6 +199,9 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, schema, table string, c
 				vals = append(vals, v)
 			}
 			stmt := fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s)`, table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
+			if len(cols) == 0 {
+				stmt = fmt.Sprintf(`INSERT INTO "%s" DEFAULT VALUES`, table)
+			}
 			res, err := tx.ExecContext(ctx, stmt, vals...)
 			if err != nil {
 				return 0, err

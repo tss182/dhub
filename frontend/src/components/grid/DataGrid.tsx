@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ColumnMeta } from '../../types/domain';
-import { useGridEditStore } from '../../stores/useGridEditStore';
+import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import {
   Plus,
@@ -268,29 +268,63 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const revertTabChanges = useGridEditStore((state) => state.revertTabChanges);
   const stagedCount = Object.keys(stagedChanges).length;
 
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+
+  const insertedChanges = useMemo(() => {
+    return Object.values(stagedChanges).filter(
+      (c): c is StagedRowChange & { type: 'insert' } => c?.type === 'insert'
+    );
+  }, [stagedChanges]);
+
   const handleStartEdit = (rowIndex: number, colIndex: number, currentVal: any) => {
     setEditingCell({ rowIndex, colIndex });
     setEditVal(currentVal !== null && currentVal !== undefined ? String(currentVal) : '');
+  };
+
+  const handleAddRow = () => {
+    const newRowId = -Date.now();
+    stageRowInsert(tabId, newRowId);
+    setSelectedRowIndex(newRowId);
+
+    // Auto-focus first editable column of the newly inserted row
+    const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
+    const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
+    if (columns.length > 0) {
+      setTimeout(() => {
+        handleStartEdit(newRowId, targetColIdx, '');
+      }, 50);
+    }
   };
 
   const handleFinishEdit = () => {
     if (!editingCell) return;
     const { rowIndex, colIndex } = editingCell;
     const col = columns[colIndex];
-    const originalRowValues: Record<string, unknown> = {};
-    columns.forEach((c, idx) => {
-      originalRowValues[c.name] = rows[rowIndex]?.[idx];
-    });
+    if (!col) {
+      setEditingCell(null);
+      return;
+    }
 
-    const pkMap: Record<string, unknown> = {};
-    primaryKeys.forEach((pk) => {
-      const idx = columns.findIndex((c) => c.name === pk);
-      if (idx !== -1) {
-        pkMap[pk] = rows[rowIndex]?.[idx];
-      }
-    });
+    if (rowIndex < 0) {
+      // Staged inserted row (negative rowIndex)
+      stageCellUpdate(tabId, rowIndex, {}, {}, col.name, editVal);
+    } else {
+      // Existing database row
+      const originalRowValues: Record<string, unknown> = {};
+      columns.forEach((c, idx) => {
+        originalRowValues[c.name] = rows[rowIndex]?.[idx];
+      });
 
-    stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, editVal);
+      const pkMap: Record<string, unknown> = {};
+      primaryKeys.forEach((pk) => {
+        const idx = columns.findIndex((c) => c.name === pk);
+        if (idx !== -1) {
+          pkMap[pk] = rows[rowIndex]?.[idx];
+        }
+      });
+
+      stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, editVal);
+    }
     setEditingCell(null);
   };
 
@@ -414,9 +448,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
       <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
         <div className="flex items-center gap-2">
           <button
-            onClick={() => stageRowInsert(tabId, -Date.now())}
+            onClick={handleAddRow}
             className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-300 transition-colors cursor-pointer"
-            title="Add New Row"
+            title="Add New Row (Staged Insert)"
           >
             <Plus className="h-3.5 w-3.5 text-emerald-400" />
             <span>Add Row</span>
@@ -424,13 +458,36 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
           <button
             onClick={() => {
-              if (rows.length > 0) {
+              if (selectedRowIndex !== null) {
+                if (selectedRowIndex < 0) {
+                  stageRowDelete(tabId, selectedRowIndex, {}, {});
+                  setSelectedRowIndex(null);
+                  return;
+                }
                 const pkMap: Record<string, unknown> = {};
+                const originalRowValues: Record<string, unknown> = {};
+                columns.forEach((c, idx) => {
+                  originalRowValues[c.name] = rows[selectedRowIndex]?.[idx];
+                });
                 primaryKeys.forEach((pk) => {
                   const idx = columns.findIndex((c) => c.name === pk);
-                  if (idx !== -1) pkMap[pk] = rows[0][idx];
+                  if (idx !== -1) pkMap[pk] = rows[selectedRowIndex]?.[idx];
                 });
-                stageRowDelete(tabId, 0, pkMap, {});
+                stageRowDelete(tabId, selectedRowIndex, pkMap, originalRowValues);
+              } else if (insertedChanges.length > 0) {
+                const last = insertedChanges[insertedChanges.length - 1];
+                stageRowDelete(tabId, last.rowIndex, {}, {});
+              } else if (rows.length > 0) {
+                const pkMap: Record<string, unknown> = {};
+                const originalRowValues: Record<string, unknown> = {};
+                columns.forEach((c, idx) => {
+                  originalRowValues[c.name] = rows[0]?.[idx];
+                });
+                primaryKeys.forEach((pk) => {
+                  const idx = columns.findIndex((c) => c.name === pk);
+                  if (idx !== -1) pkMap[pk] = rows[0]?.[idx];
+                });
+                stageRowDelete(tabId, 0, pkMap, originalRowValues);
               }
             }}
             className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-300 transition-colors cursor-pointer"
@@ -694,7 +751,95 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </tr>
           </thead>
           <tbody>
-            {displayedRows.length === 0 ? (
+            {/* 1. Staged Inserted Rows (at top of grid for immediate visibility & editing) */}
+            {insertedChanges.map((change, insIdx) => {
+              const isSelected = selectedRowIndex === change.rowIndex;
+              let rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
+              if (isSelected) rowClass += ' ring-1 ring-emerald-400 bg-emerald-900/40';
+
+              return (
+                <tr
+                  key={change.rowIndex}
+                  onClick={() => setSelectedRowIndex(change.rowIndex)}
+                  className={rowClass}
+                >
+                  <td className="w-12 px-1 py-1 text-center border-r border-[#272932] select-none text-[11px] font-bold">
+                    <div className="flex items-center justify-center gap-1">
+                      <span className="text-emerald-400 font-mono text-xs" title="New Staged Row">
+                        +{insIdx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          stageRowDelete(tabId, change.rowIndex, {}, {});
+                          if (selectedRowIndex === change.rowIndex) setSelectedRowIndex(null);
+                        }}
+                        className="opacity-0 group-hover/insert:opacity-100 p-0.5 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 rounded transition-opacity cursor-pointer"
+                        title="Discard this new row"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </td>
+
+                  {columns.map((col, cIdx) => {
+                    const isEditing = editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
+                    const colVal = change.changes[col.name];
+                    const isSet = colVal !== undefined;
+                    const displayVal = isSet ? colVal : (col.defaultValue || null);
+
+                    return (
+                      <td
+                        key={col.name}
+                        onClick={() => {
+                          if (!isEditing) {
+                            handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
+                          }
+                        }}
+                        className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs cursor-text ${
+                          isSet ? 'bg-emerald-900/40 text-emerald-100 font-medium' : 'text-zinc-500'
+                        }`}
+                        title="Click to edit new row cell"
+                      >
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editVal}
+                            onChange={(e) => setEditVal(e.target.value)}
+                            onBlur={handleFinishEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleFinishEdit();
+                              if (e.key === 'Escape') setEditingCell(null);
+                              if (e.key === 'Tab') {
+                                e.preventDefault();
+                                handleFinishEdit();
+                                const nextCol = (cIdx + 1) % columns.length;
+                                setTimeout(() => {
+                                  const nextVal = change.changes[columns[nextCol].name];
+                                  handleStartEdit(change.rowIndex, nextCol, nextVal ?? '');
+                                }, 10);
+                              }
+                            }}
+                            className="w-full bg-[#101115] border border-emerald-500 px-1 py-0.5 text-white outline-none rounded font-mono text-xs shadow-inner"
+                          />
+                        ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
+                          <span className="text-zinc-600 italic">
+                            {col.isAutoIncrement ? '(Auto)' : 'NULL'}
+                          </span>
+                        ) : (
+                          String(displayVal)
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+
+            {/* 2. Existing Database Rows */}
+            {displayedRows.length === 0 && insertedChanges.length === 0 ? (
               <tr>
                 <td colSpan={columns.length + 1} className="py-12 text-center text-zinc-500 font-sans">
                   No data to display
@@ -706,14 +851,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
                 const staged = stagedChanges[globalRowIndex];
                 const isDeleted = staged?.type === 'delete';
-                const isInserted = staged?.type === 'insert';
+                const isSelected = selectedRowIndex === globalRowIndex;
 
-                let rowClass = 'border-b border-[#22242c] hover:bg-[#20222a]';
+                let rowClass = 'border-b border-[#22242c] hover:bg-[#20222a] transition-colors';
                 if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
-                if (isInserted) rowClass += ' bg-emerald-950/20 border-l-2 border-emerald-500';
+                if (isSelected) rowClass += ' bg-blue-600/15 border-l-2 border-l-blue-500';
 
                 return (
-                  <tr key={globalRowIndex} className={rowClass}>
+                  <tr
+                    key={globalRowIndex}
+                    onClick={() => setSelectedRowIndex(globalRowIndex)}
+                    className={rowClass}
+                  >
                     <td className="px-2 py-1 text-center text-zinc-600 border-r border-[#272932] select-none text-[11px]">
                       {globalRowIndex + 1}
                     </td>
@@ -725,6 +874,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       return (
                         <td
                           key={col.name}
+                          onClick={() => {
+                            if (!isEditing && !isDeleted) {
+                              setSelectedRowIndex(globalRowIndex);
+                            }
+                          }}
                           onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
                           className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs ${
                             hasColChange ? 'bg-blue-900/30 text-blue-200 font-medium' : ''
@@ -740,6 +894,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleFinishEdit();
                                 if (e.key === 'Escape') setEditingCell(null);
+                                if (e.key === 'Tab') {
+                                  e.preventDefault();
+                                  handleFinishEdit();
+                                  const nextCol = (cIdx + 1) % columns.length;
+                                  setTimeout(() => {
+                                    handleStartEdit(globalRowIndex, nextCol, row[nextCol]);
+                                  }, 10);
+                                }
                               }}
                               className="w-full bg-[#121317] border border-blue-500 px-1 py-0.5 text-white outline-none rounded"
                             />
