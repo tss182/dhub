@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ColumnMeta } from '../../types/domain';
 import { useGridEditStore } from '../../stores/useGridEditStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -22,6 +22,9 @@ import {
   Key,
   Hash,
   Info,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 
 function parseColumnTypeDetails(dataType?: string) {
@@ -37,23 +40,10 @@ function parseColumnTypeDetails(dataType?: string) {
   return { baseType, size, extra };
 }
 
-export interface ColumnFilterItem {
-  op: string;
-  value: string;
+export interface SortConfig {
+  column: string;
+  direction: 'asc' | 'desc';
 }
-
-export const FILTER_OPERATORS = [
-  { label: '= (Equals)', value: '=' },
-  { label: 'LIKE (Contains)', value: 'LIKE' },
-  { label: 'NOT LIKE', value: 'NOT LIKE' },
-  { label: '!= (Not Equals)', value: '!=' },
-  { label: '> (Greater Than)', value: '>' },
-  { label: '< (Less Than)', value: '<' },
-  { label: '>= (Greater or Equal)', value: '>=' },
-  { label: '<= (Less or Equal)', value: '<=' },
-  { label: 'IS NULL', value: 'IS NULL' },
-  { label: 'IS NOT NULL', value: 'IS NOT NULL' },
-];
 
 const EMPTY_STAGED: Record<number, any> = {};
 
@@ -74,9 +64,10 @@ interface DataGridProps {
   onLoadMore?: () => void;
   onRefresh?: () => void;
   whereClause?: string;
-  columnFilters?: Record<string, ColumnFilterItem>;
-  onApplyFilters?: (whereClause: string, columnFilters: Record<string, ColumnFilterItem>) => void;
+  onApplyWhere?: (whereClause: string) => void;
   isTableTab?: boolean;
+  sortConfig?: SortConfig | null;
+  onSortChange?: (column: string, direction: 'asc' | 'desc' | null) => void;
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({
@@ -96,20 +87,37 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onLoadMore,
   onRefresh,
   whereClause = '',
-  columnFilters = {},
-  onApplyFilters,
+  onApplyWhere,
   isTableTab = false,
+  sortConfig = null,
+  onSortChange,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
-  const [localColFilters, setLocalColFilters] = useState<Record<string, ColumnFilterItem>>(columnFilters || {});
-  const [openColFilter, setOpenColFilter] = useState<{
-    colName: string;
-    x: number;
-    y: number;
-    op: string;
-    value: string;
-  } | null>(null);
+  const [localSort, setLocalSort] = useState<SortConfig | null>(sortConfig || null);
+
+  useEffect(() => {
+    setWhereInput(whereClause || '');
+  }, [whereClause]);
+
+  useEffect(() => {
+    setLocalSort(sortConfig || null);
+  }, [sortConfig]);
+
+  const handleToggleSort = (colName: string) => {
+    let nextDir: 'asc' | 'desc' | null = 'asc';
+    if (localSort?.column === colName) {
+      if (localSort.direction === 'asc') {
+        nextDir = 'desc';
+      } else if (localSort.direction === 'desc') {
+        nextDir = null;
+      }
+    }
+
+    const nextSort = nextDir ? { column: colName, direction: nextDir } : null;
+    setLocalSort(nextSort);
+    onSortChange?.(colName, nextDir);
+  };
 
   const [hoveredCol, setHoveredCol] = useState<{
     col: ColumnMeta;
@@ -150,94 +158,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
     };
   }, []);
-
-  const colFilterRef = useRef<HTMLDivElement>(null);
-
-  // Sync external filter props
-  useEffect(() => {
-    setWhereInput(whereClause || '');
-  }, [whereClause]);
-
-  useEffect(() => {
-    setLocalColFilters(columnFilters || {});
-  }, [columnFilters]);
-
-  // Close column filter popover on click outside or Escape
-  useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (colFilterRef.current && !colFilterRef.current.contains(e.target as Node)) {
-        setOpenColFilter(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenColFilter(null);
-    };
-
-    if (openColFilter) {
-      window.addEventListener('mousedown', handleOutsideClick);
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => {
-      window.removeEventListener('mousedown', handleOutsideClick);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [openColFilter]);
-
-  const handleApplyAllFilters = (wText: string, cFilters: Record<string, ColumnFilterItem>) => {
-    onApplyFilters?.(wText, cFilters);
-  };
-
-  const handleOpenColFilter = (e: React.MouseEvent, colName: string) => {
-    e.stopPropagation();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const current = localColFilters[colName] || { op: 'LIKE', value: '' };
-    const popoverWidth = 260;
-    const x = Math.min(rect.left, window.innerWidth - popoverWidth - 16);
-    const y = rect.bottom + 4;
-    setOpenColFilter({
-      colName,
-      x: Math.max(8, x),
-      y,
-      op: current.op || 'LIKE',
-      value: current.value || '',
-    });
-  };
-
-  const handleSaveColFilter = () => {
-    if (!openColFilter) return;
-    const isNullOp = ['IS NULL', 'IS NOT NULL'].includes(openColFilter.op);
-    if (!isNullOp && !openColFilter.value.trim()) {
-      handleRemoveColFilter(openColFilter.colName);
-      return;
-    }
-
-    const updated = {
-      ...localColFilters,
-      [openColFilter.colName]: {
-        op: openColFilter.op,
-        value: openColFilter.value.trim(),
-      },
-    };
-    setLocalColFilters(updated);
-    setOpenColFilter(null);
-    handleApplyAllFilters(whereInput, updated);
-  };
-
-  const handleRemoveColFilter = (colName: string) => {
-    const updated = { ...localColFilters };
-    delete updated[colName];
-    setLocalColFilters(updated);
-    if (openColFilter?.colName === colName) {
-      setOpenColFilter(null);
-    }
-    handleApplyAllFilters(whereInput, updated);
-  };
-
-  const handleResetAllFilters = () => {
-    setWhereInput('');
-    setLocalColFilters({});
-    handleApplyAllFilters('', {});
-  };
 
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colIndex: number } | null>(null);
   const [editVal, setEditVal] = useState<string>('');
@@ -348,30 +268,75 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   // Filter rows client-side
-  const filteredRows = rows.filter((r) => {
-    if (!filterText) return true;
-    return r.some((cell) => String(cell).toLowerCase().includes(filterText.toLowerCase()));
-  });
+  const filteredRows = useMemo(() => {
+    if (!filterText) return rows;
+    const lower = filterText.toLowerCase();
+    return rows.filter((r) => r.some((cell) => String(cell).toLowerCase().includes(lower)));
+  }, [rows, filterText]);
 
-  const isMultiPageInMemory = filteredRows.length > localPageSize;
+  // Sort rows client-side (when onSortChange is not provided, e.g. query console results)
+  const sortedRows = useMemo(() => {
+    if (onSortChange || !localSort) return filteredRows;
+
+    const colIdx = columns.findIndex((c) => c.name === localSort.column);
+    if (colIdx === -1) return filteredRows;
+
+    const colMeta = columns[colIdx];
+    const rawType = (colMeta?.rawType || colMeta?.dataType || '').toLowerCase();
+    const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
+
+    return [...filteredRows].sort((rowA, rowB) => {
+      const valA = rowA[colIdx];
+      const valB = rowB[colIdx];
+
+      if (valA === null || valA === undefined) return localSort.direction === 'asc' ? 1 : -1;
+      if (valB === null || valB === undefined) return localSort.direction === 'asc' ? -1 : 1;
+
+      if (isNum) {
+        const numA = Number(valA);
+        const numB = Number(valB);
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return localSort.direction === 'asc' ? numA - numB : numB - numA;
+        }
+      }
+
+      const strA = String(valA);
+      const strB = String(valB);
+      const cmp = strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
+      return localSort.direction === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredRows, localSort, onSortChange, columns]);
+
+  const isMultiPageInMemory = sortedRows.length > localPageSize;
 
   // Rows to display based on viewMode
   const displayedRows =
     viewMode === 'paged'
       ? isMultiPageInMemory
-        ? filteredRows.slice((currentPage - 1) * localPageSize, currentPage * localPageSize)
-        : filteredRows
-      : filteredRows;
+        ? sortedRows.slice((currentPage - 1) * localPageSize, currentPage * localPageSize)
+        : sortedRows
+      : sortedRows;
 
-  // Determine effective total rows
+  const currentOffset = (currentPage - 1) * localPageSize;
+  const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
+  const endRow = currentOffset + displayedRows.length;
+
+  // Determine effective total rows:
+  // 1. If explicit totalCount is provided and >= endRow, use it.
+  // 2. If client-side multi-page in memory, use filteredRows.length.
+  // 3. If !hasMore (we reached the end of the dataset), total is EXACTLY endRow!
+  // 4. Otherwise, total is at least endRow + 1.
   const effectiveTotal =
-    totalCount !== undefined
+    totalCount !== undefined && totalCount >= endRow
       ? totalCount
       : isMultiPageInMemory
       ? filteredRows.length
-      : hasMore
-      ? currentPage * localPageSize + 1
-      : (currentPage - 1) * localPageSize + displayedRows.length;
+      : !hasMore
+      ? endRow
+      : Math.max(endRow + 1, totalCount || 0);
+
+  const isExactTotalKnown =
+    (totalCount !== undefined && totalCount >= endRow) || !hasMore || isMultiPageInMemory;
 
   const totalPages = Math.max(1, Math.ceil(effectiveTotal / localPageSize));
 
@@ -394,8 +359,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const handleNavigatePage = (targetPage: number) => {
-    const maxPage =
-      totalCount !== undefined ? totalPages : hasMore ? Math.max(totalPages, targetPage) : totalPages;
+    const maxPage = isExactTotalKnown ? totalPages : Math.max(totalPages, targetPage);
     const clamped = Math.max(1, Math.min(targetPage, maxPage));
     setCurrentPage(clamped);
     if (onPageChange) {
@@ -511,92 +475,64 @@ export const DataGrid: React.FC<DataGridProps> = ({
       </div>
 
       {/* SQL WHERE Filter Bar (Below Add Row toolbar) */}
-      {onApplyFilters && (
-        <div className="flex flex-col border-b border-[#272932] bg-[#14151a]">
-          <div className="flex items-center gap-2 px-3 py-1.5">
-            <div className="flex items-center gap-1.5 shrink-0 select-none">
-              <span className="font-mono text-[11px] font-bold text-blue-400 bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded">
-                WHERE
-              </span>
-            </div>
-            <div className="relative flex-1 flex items-center">
-              <input
-                type="text"
-                placeholder="e.g. name like '%user' and id = '1'  (Press Enter to apply)"
-                value={whereInput}
-                onChange={(e) => setWhereInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    handleApplyAllFilters(whereInput, localColFilters);
-                  }
-                }}
-                className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] pl-3 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
-              />
-              {whereInput && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWhereInput('');
-                    handleApplyAllFilters('', localColFilters);
-                  }}
-                  className="absolute right-2 text-zinc-500 hover:text-white cursor-pointer"
-                  title="Clear WHERE filter"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handleApplyAllFilters(whereInput, localColFilters)}
-              className="flex items-center gap-1.5 h-7 px-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs shrink-0"
-              title="Apply WHERE filter (Enter)"
-            >
-              <Filter className="h-3 w-3" />
-              <span>Apply</span>
-            </button>
-
-            {(whereInput || Object.keys(localColFilters).length > 0) && (
+      {isTableTab && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[#272932] bg-[#14151a]">
+          <div className="flex items-center gap-1.5 shrink-0 select-none">
+            <span className="font-mono text-[11px] font-bold text-blue-400 bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded">
+              WHERE
+            </span>
+          </div>
+          <div className="relative flex-1 flex items-center">
+            <input
+              type="text"
+              placeholder="e.g. name like '%user' and id = '1' (Press Enter to apply)"
+              value={whereInput}
+              onChange={(e) => setWhereInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  onApplyWhere?.(whereInput);
+                }
+              }}
+              className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] pl-3 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+            />
+            {whereInput && (
               <button
                 type="button"
-                onClick={handleResetAllFilters}
-                className="flex items-center gap-1 h-7 px-2.5 rounded bg-[#20222b] hover:bg-rose-950/40 hover:text-rose-300 text-zinc-400 border border-[#272932] text-xs transition-colors cursor-pointer shrink-0"
-                title="Clear all filters (WHERE + Column filters)"
+                onClick={() => {
+                  setWhereInput('');
+                  onApplyWhere?.('');
+                }}
+                className="absolute right-2 text-zinc-500 hover:text-white cursor-pointer"
+                title="Clear WHERE filter"
               >
-                <RotateCcw className="h-3 w-3" />
-                <span>Reset All</span>
+                <X className="h-3 w-3" />
               </button>
             )}
           </div>
 
-          {/* Active Column Filter Badges / Pills */}
-          {Object.keys(localColFilters).length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 px-3 py-1 bg-[#101115] border-t border-[#22242c] text-[11px]">
-              <span className="text-zinc-500 text-[10px] uppercase font-semibold tracking-wider select-none">
-                Column Filters ({Object.keys(localColFilters).length}):
-              </span>
-              {Object.entries(localColFilters).map(([cName, f]) => (
-                <span
-                  key={cName}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-950/60 border border-blue-800/40 text-blue-300 font-mono text-[11px]"
-                >
-                  <span className="font-semibold text-zinc-200">{cName}</span>
-                  <span className="text-blue-400 font-semibold">{f.op}</span>
-                  {!['IS NULL', 'IS NOT NULL'].includes(f.op) && (
-                    <span className="text-zinc-300 truncate max-w-[120px]">'{f.value}'</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveColFilter(cName)}
-                    className="text-zinc-400 hover:text-white cursor-pointer ml-0.5"
-                    title={`Remove filter for ${cName}`}
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
+          <button
+            type="button"
+            onClick={() => onApplyWhere?.(whereInput)}
+            className="flex items-center gap-1.5 h-7 px-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs shrink-0"
+            title="Apply WHERE filter (Enter)"
+          >
+            <Filter className="h-3 w-3" />
+            <span>Apply</span>
+          </button>
+
+          {whereInput && (
+            <button
+              type="button"
+              onClick={() => {
+                setWhereInput('');
+                onApplyWhere?.('');
+              }}
+              className="flex items-center gap-1 h-7 px-2.5 rounded bg-[#20222b] hover:bg-rose-950/40 hover:text-rose-300 text-zinc-400 border border-[#272932] text-xs transition-colors cursor-pointer shrink-0"
+              title="Reset WHERE filter"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span>Reset</span>
+            </button>
           )}
         </div>
       )}
@@ -612,44 +548,62 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <tr className="border-b border-[#272932]">
               <th className="w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r border-[#272932]">#</th>
               {columns.map((col) => {
-                const isFiltered = Boolean(localColFilters[col.name]);
                 const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+                const isSorted = localSort?.column === col.name;
                 return (
                   <th
                     key={col.name}
+                    onClick={() => handleToggleSort(col.name)}
                     onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
                     onMouseLeave={handleColMouseLeave}
-                    className="px-3 py-1.5 text-left font-semibold border-r border-[#272932] text-zinc-200 group/th select-none hover:bg-[#1a1b24] transition-colors"
+                    className="px-3 py-1.5 text-left font-semibold border-r border-[#272932] text-zinc-200 group/th select-none hover:bg-[#1c1d28] transition-colors cursor-pointer"
+                    title={`Click to sort by ${col.name} (${
+                      isSorted
+                        ? localSort.direction === 'asc'
+                          ? 'Ascending -> Click for Descending'
+                          : 'Descending -> Click to Reset'
+                        : 'Unsorted -> Click for Ascending'
+                    })`}
                   >
-                    <div className="flex items-center justify-between gap-1.5">
-                      <div className="flex items-center gap-1.5 truncate cursor-default">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 truncate">
                         {isPK && (
                           <Key className="h-3 w-3 text-amber-400 fill-amber-400/30 shrink-0" />
                         )}
-                        <span className="truncate font-semibold text-zinc-200">{col.name}</span>
+                        <span className="truncate font-semibold text-zinc-200 group-hover/th:text-white transition-colors">
+                          {col.name}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-normal font-sans">
+                          {col.dataType}
+                        </span>
                       </div>
 
-                      {onApplyFilters && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            handleColMouseLeave();
-                            handleOpenColFilter(e, col.name);
-                          }}
-                          className={`p-1 rounded transition-colors cursor-pointer shrink-0 ${
-                            isFiltered
-                              ? 'bg-blue-600 text-white shadow-xs'
-                              : 'text-zinc-500 hover:text-zinc-200 hover:bg-[#252834] opacity-40 group-hover/th:opacity-100'
-                          }`}
-                          title={
-                            isFiltered
-                              ? `Filter active: ${col.name} ${localColFilters[col.name].op} '${localColFilters[col.name].value}'`
-                              : `Filter by ${col.name}`
-                          }
-                        >
-                          <Filter className="h-3 w-3" />
-                        </button>
-                      )}
+                      {/* Sort Indicator / Button */}
+                      <div className="flex items-center shrink-0">
+                        {isSorted ? (
+                          localSort.direction === 'asc' ? (
+                            <span
+                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
+                              title={`${col.name} sorted Ascending (Click for Descending)`}
+                            >
+                              <ArrowUp className="h-3 w-3" />
+                              <span className="text-[9px] font-bold">ASC</span>
+                            </span>
+                          ) : (
+                            <span
+                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
+                              title={`${col.name} sorted Descending (Click to reset sort)`}
+                            >
+                              <ArrowDown className="h-3 w-3" />
+                              <span className="text-[9px] font-bold">DESC</span>
+                            </span>
+                          )
+                        ) : (
+                          <span title={`Click to sort by ${col.name}`}>
+                            <ArrowUpDown className="h-3 w-3 text-zinc-500 opacity-0 group-hover/th:opacity-75 transition-opacity" />
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </th>
                 );
@@ -754,20 +708,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
         <div className="flex items-center gap-2 font-sans text-[11px]">
           {viewMode === 'paged' ? (
             (() => {
-              const startRow = displayedRows.length === 0 ? 0 : (currentPage - 1) * localPageSize + 1;
-              const endRow = (currentPage - 1) * localPageSize + displayedRows.length;
-              const totalText =
-                totalCount !== undefined
-                  ? String(totalCount)
-                  : hasMore
-                  ? `${endRow}+`
-                  : String(effectiveTotal);
+              const totalDisplay = isExactTotalKnown ? String(effectiveTotal) : `${endRow}+`;
 
               return (
                 <span>
                   Showing <strong className="text-zinc-200">{startRow}</strong> –{' '}
                   <strong className="text-zinc-200">{endRow}</strong> of{' '}
-                  <strong className="text-zinc-200">{totalText}</strong> rows
+                  <strong className="text-zinc-200">{totalDisplay}</strong> rows
                 </span>
               );
             })()
@@ -775,8 +722,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <div className="flex items-center gap-2">
               <span>
                 Loaded <strong className="text-zinc-200">{rows.length}</strong>
-                {totalCount !== undefined ? (
-                  <> of <strong className="text-zinc-200">{totalCount}</strong></>
+                {isExactTotalKnown ? (
+                  <> of <strong className="text-zinc-200">{effectiveTotal}</strong></>
+                ) : hasMore ? (
+                  <>+ rows</>
                 ) : null}{' '}
                 rows
               </span>
@@ -825,14 +774,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <strong className="text-white font-mono">{currentPage}</strong>
               <span>of</span>
               <strong className="text-white font-mono">
-                {totalPages}{totalCount === undefined && hasMore ? '+' : ''}
+                {totalPages}{!isExactTotalKnown ? '+' : ''}
               </strong>
               {isLoadingMore && <RefreshCw className="h-3 w-3 animate-spin text-blue-400 ml-1" />}
             </span>
 
             <button
               onClick={() => handleNavigatePage(currentPage + 1)}
-              disabled={(totalCount !== undefined ? currentPage >= totalPages : !hasMore) || isLoadingMore}
+              disabled={(isExactTotalKnown ? currentPage >= totalPages : !hasMore) || isLoadingMore}
               className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
               title="Next Page"
             >
@@ -840,9 +789,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </button>
             <button
               onClick={() => handleNavigatePage(totalPages)}
-              disabled={totalCount === undefined || currentPage >= totalPages || isLoadingMore}
+              disabled={!isExactTotalKnown || currentPage >= totalPages || isLoadingMore}
               className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title={totalCount !== undefined ? `Last Page (${totalPages})` : 'Last page unknown until end reached'}
+              title={isExactTotalKnown ? `Last Page (${totalPages})` : 'Last page unknown until end reached'}
             >
               <ChevronsRight className="h-3.5 w-3.5" />
             </button>
@@ -904,108 +853,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
           )}
         </div>
       </div>
-
-      {/* Floating Column Filter Popover */}
-      {openColFilter && (
-        <div
-          ref={colFilterRef}
-          style={{ top: openColFilter.y, left: openColFilter.x }}
-          className="fixed z-50 w-68 rounded-lg bg-[#181920] border border-[#2e313d] shadow-2xl p-3 text-xs text-zinc-300 font-sans select-none animate-in fade-in zoom-in-95 duration-100"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between border-b border-[#272932] pb-2 mb-2.5">
-            <div className="flex items-center gap-1.5 truncate">
-              <Filter className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              <span className="font-semibold text-zinc-100 truncate">{openColFilter.colName}</span>
-              <span className="text-[10px] text-zinc-500 font-mono">
-                {columns.find((c) => c.name === openColFilter.colName)?.dataType}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setOpenColFilter(null)}
-              className="text-zinc-400 hover:text-white cursor-pointer"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="space-y-2.5">
-            <div>
-              <label className="text-[10px] uppercase font-semibold text-zinc-400 block mb-1 tracking-wider">
-                Operator
-              </label>
-              <select
-                value={openColFilter.op}
-                onChange={(e) =>
-                  setOpenColFilter((prev) => (prev ? { ...prev, op: e.target.value } : null))
-                }
-                className="w-full h-7 rounded bg-[#101115] border border-[#2e313f] px-2 text-xs text-zinc-200 focus:border-blue-500 focus:outline-none cursor-pointer"
-              >
-                {FILTER_OPERATORS.map((f) => (
-                  <option key={f.value} value={f.value}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {!['IS NULL', 'IS NOT NULL'].includes(openColFilter.op) && (
-              <div>
-                <label className="text-[10px] uppercase font-semibold text-zinc-400 block mb-1 tracking-wider">
-                  Filter Value
-                </label>
-                <input
-                  type="text"
-                  autoFocus
-                  placeholder={openColFilter.op === 'LIKE' ? 'e.g. %user or text' : 'Value...'}
-                  value={openColFilter.value}
-                  onChange={(e) =>
-                    setOpenColFilter((prev) => (prev ? { ...prev, value: e.target.value } : null))
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleSaveColFilter();
-                    }
-                  }}
-                  className="w-full h-7 rounded bg-[#101115] border border-[#2e313f] px-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            )}
-
-            <div className="flex items-center justify-between pt-2 border-t border-[#272932]">
-              {localColFilters[openColFilter.colName] ? (
-                <button
-                  type="button"
-                  onClick={() => handleRemoveColFilter(openColFilter.colName)}
-                  className="text-rose-400 hover:text-rose-300 text-[11px] cursor-pointer"
-                >
-                  Clear Filter
-                </button>
-              ) : (
-                <div />
-              )}
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setOpenColFilter(null)}
-                  className="px-2.5 py-1 rounded bg-[#20222b] hover:bg-[#282a35] text-zinc-300 text-xs transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveColFilter}
-                  className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs"
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Column Hover Metadata Tooltip Card */}
       {hoveredCol && (
