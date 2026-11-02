@@ -8,7 +8,8 @@ BIN_DIR ?= bin
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev build:mac build:mac:bin build:mac:dmg build:deb build:rpm build:appimage build:windows build:windows:installer clean bindings
+.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings
+.PHONY: build-mac build-mac-bin build-mac-dmg build-deb build-rpm build-appimage build-windows build-windows-installer
 
 help:
 	@echo "========================================================================"
@@ -35,39 +36,49 @@ dev:
 	$(WAILS) dev
 
 # macOS Builds
-build:mac:
+build\:mac:
 	@echo "==> Building macOS application bundle (.app)..."
 	$(WAILS) task darwin:package
 
-build:mac:bin:
+build\:mac\:bin:
 	@echo "==> Building macOS binary only..."
 	$(WAILS) task darwin:build
 
-build:mac:dmg:
+build\:mac\:dmg:
 	@echo "==> Building macOS DMG package..."
 	$(WAILS) task darwin:package:dmg
 
 # Linux Package Builds
-build:deb:
+build\:deb:
 	@echo "==> Building Linux Debian package (.deb)..."
 	$(WAILS) task linux:create:deb
 
-build:rpm:
+build\:rpm:
 	@echo "==> Building Linux RPM package (.rpm)..."
 	$(WAILS) task linux:create:rpm
 
-build:appimage:
+build\:appimage:
 	@echo "==> Building Linux AppImage..."
 	$(WAILS) task linux:create:appimage
 
 # Windows Builds
-build:windows:
+build\:windows:
 	@echo "==> Building Windows executable (.exe)..."
 	$(WAILS) task windows:build
 
-build:windows:installer:
+build\:windows\:installer:
 	@echo "==> Building Windows NSIS installer..."
 	$(WAILS) task windows:package
+
+# Aliases with hyphens for standard Makefile conventions
+build-mac: build\:mac
+build-mac-bin: build\:mac\:bin
+build-mac-dmg: build\:mac\:dmg
+build-deb: build\:deb
+build-rpm: build\:rpm
+build-appimage: build\:appimage
+build-windows: build\:windows
+build-windows-installer: build\:windows\:installer
 
 # Utilities
 bindings:
