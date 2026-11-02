@@ -112,6 +112,8 @@ export function App() {
         hasMore: boolean;
         pageSize: number;
         page: number;
+        whereClause?: string;
+        columnFilters?: Record<string, { op: string; value: string }>;
       }
     >
   >({});
@@ -243,6 +245,8 @@ export function App() {
   };
 
   const handleOpenRename = (id: string, currentTitle: string) => {
+    const targetTab = tabs.find((t) => t.id === id);
+    if (targetTab && targetTab.type !== 'worksheet') return;
     setRenameModal({
       isOpen: true,
       id,
@@ -263,10 +267,17 @@ export function App() {
     offset = 0,
     limit = useSettingsStore.getState().defaultPageSize || 100,
     append = false,
-    page = 1
+    page = 1,
+    newWhereClause?: string,
+    newColumnFilters?: Record<string, { op: string; value: string }>
   ) => {
     const connId = tab.connectionId || activeConnectionId;
     if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
+
+    const prevTabData = tableDataByTab[tab.id];
+    const whereClause = newWhereClause !== undefined ? newWhereClause : (prevTabData?.whereClause ?? '');
+    const columnFilters = newColumnFilters !== undefined ? newColumnFilters : (prevTabData?.columnFilters ?? {});
+    const filtersChanged = newWhereClause !== undefined || newColumnFilters !== undefined;
 
     if (append) {
       setTableDataByTab((prev) => ({
@@ -287,10 +298,12 @@ export function App() {
           isLoading: true,
           isLoadingMore: false,
           error: null,
-          totalCount: prev[tab.id]?.totalCount,
+          totalCount: filtersChanged ? undefined : prev[tab.id]?.totalCount,
           hasMore: false,
           pageSize: limit,
           page,
+          whereClause,
+          columnFilters,
         },
       }));
     }
@@ -301,9 +314,10 @@ export function App() {
       const targetDb = tab.database || conn?.databaseName || 'main';
       const targetSchema = tab.schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
 
-      // 1. Fetch table structure for primary keys
+      // 1. Fetch table structure for primary keys & detailed column definitions (size, nullability, comment, etc.)
       let primaryKeys: string[] = tableDataByTab[tab.id]?.primaryKeys || [];
-      if (primaryKeys.length === 0) {
+      let structureColumns: ColumnMeta[] = tableDataByTab[tab.id]?.columns || [];
+      if (primaryKeys.length === 0 || structureColumns.length === 0 || !structureColumns[0]?.dataType?.includes('(')) {
         try {
           const structure = await SchemaService.GetTableStructure(
             connId,
@@ -311,23 +325,79 @@ export function App() {
             targetSchema,
             tab.table
           );
-          if (structure && structure.primaryKeys) {
-            primaryKeys = structure.primaryKeys;
+          if (structure) {
+            if (structure.primaryKeys && structure.primaryKeys.length > 0) {
+              primaryKeys = structure.primaryKeys;
+            }
+            if (structure.columns && structure.columns.length > 0) {
+              structureColumns = structure.columns;
+            }
           }
         } catch (structErr) {
           console.warn('Could not fetch structure for table:', structErr);
         }
       }
 
-      // 2. Fetch total row count in background (only on fresh load)
       const quotedTable = isMySQL ? `\`${tab.table}\`` : `"${tab.table}"`;
-      if (!append && tableDataByTab[tab.id]?.totalCount === undefined) {
+
+      // 2. Build combined SQL WHERE clause
+      const whereParts: string[] = [];
+
+      // 2a. Custom WHERE text entered by user (e.g. name like '%user' and id = '1')
+      const trimmedCustom = (whereClause || '').trim();
+      if (trimmedCustom) {
+        const cleanCustom = trimmedCustom.replace(/^where\s+/i, '').trim();
+        if (cleanCustom) {
+          whereParts.push(`(${cleanCustom})`);
+        }
+      }
+
+      // 2b. Column filters (supports multi-column filtering)
+      Object.entries(columnFilters || {}).forEach(([colName, filter]: [string, any]) => {
+        if (!filter || !filter.op) return;
+        const quotedCol = isMySQL ? `\`${colName}\`` : `"${colName}"`;
+        const colMeta = (tableDataByTab[tab.id]?.columns || []).find((c) => c.name === colName);
+        const rawType = (colMeta?.rawType || colMeta?.dataType || '').toLowerCase();
+        const isNumeric = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
+
+        if (filter.op === 'IS NULL') {
+          whereParts.push(`(${quotedCol} IS NULL)`);
+        } else if (filter.op === 'IS NOT NULL') {
+          whereParts.push(`(${quotedCol} IS NOT NULL)`);
+        } else if (filter.value !== undefined && filter.value !== '') {
+          const escapedVal = String(filter.value).replace(/'/g, "''");
+          if (filter.op === 'LIKE') {
+            const hasWildcard = escapedVal.includes('%') || escapedVal.includes('_');
+            const likeVal = hasWildcard ? escapedVal : `%${escapedVal}%`;
+            whereParts.push(`(${quotedCol} LIKE '${likeVal}')`);
+          } else if (filter.op === 'NOT LIKE') {
+            const hasWildcard = escapedVal.includes('%') || escapedVal.includes('_');
+            const likeVal = hasWildcard ? escapedVal : `%${escapedVal}%`;
+            whereParts.push(`(${quotedCol} NOT LIKE '${likeVal}')`);
+          } else if (['>', '<', '>=', '<='].includes(filter.op)) {
+            const finalVal = isNumeric && !isNaN(Number(escapedVal)) ? escapedVal : `'${escapedVal}'`;
+            whereParts.push(`(${quotedCol} ${filter.op} ${finalVal})`);
+          } else if (filter.op === '!=') {
+            const finalVal = isNumeric && !isNaN(Number(escapedVal)) ? escapedVal : `'${escapedVal}'`;
+            whereParts.push(`(${quotedCol} != ${finalVal})`);
+          } else {
+            // Default '='
+            const finalVal = isNumeric && !isNaN(Number(escapedVal)) ? escapedVal : `'${escapedVal}'`;
+            whereParts.push(`(${quotedCol} = ${finalVal})`);
+          }
+        }
+      });
+
+      const combinedWhere = whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : '';
+
+      // 3. Fetch total row count in background (on initial load or when filters change)
+      if (!append && (filtersChanged || tableDataByTab[tab.id]?.totalCount === undefined)) {
         QueryService.ExecuteQuery({
           executionId: 'exec-count-' + Date.now(),
           connectionId: connId,
           database: targetDb,
           schema: targetSchema,
-          sql: `SELECT COUNT(*) FROM ${quotedTable};`,
+          sql: `SELECT COUNT(*) FROM ${quotedTable}${combinedWhere};`,
           limit: 1,
           offset: 0,
         } as any)
@@ -347,10 +417,9 @@ export function App() {
           .catch(() => {});
       }
 
-      // 3. Query table data with LIMIT and OFFSET
-      // Fetch limit + 1 so we can accurately determine if hasMore is true
+      // 4. Query table data with LIMIT, OFFSET and WHERE
       const fetchLimit = limit + 1;
-      const sql = `SELECT * FROM ${quotedTable} LIMIT ${fetchLimit} OFFSET ${offset};`;
+      const sql = `SELECT * FROM ${quotedTable}${combinedWhere} LIMIT ${fetchLimit} OFFSET ${offset};`;
 
       const execId = 'exec-tab-' + Date.now();
       const res = await QueryService.ExecuteQuery({
@@ -360,7 +429,7 @@ export function App() {
         schema: targetSchema,
         sql,
         limit: fetchLimit,
-        offset: 0, // SQL already applied OFFSET ${offset}, so Go MUST NOT skip rows!
+        offset: 0,
       } as any);
 
       if (res) {
@@ -373,13 +442,37 @@ export function App() {
         const hasMore = rawRows.length > limit;
         const fetchedRows = hasMore ? rawRows.slice(0, limit) : rawRows;
 
+        // Merge columns: prefer structureColumns because they contain full types, size, nullable, comments, etc.
+        let finalCols: ColumnMeta[] = (res.columns as any) || [];
+        if (structureColumns.length > 0) {
+          finalCols = finalCols.map((c) => {
+            const found = structureColumns.find((sc) => sc.name.toLowerCase() === c.name.toLowerCase());
+            if (found) {
+              return {
+                ...c,
+                ...found,
+                isPrimaryKey: detectedPKs.includes(c.name) || found.isPrimaryKey,
+              };
+            }
+            return {
+              ...c,
+              isPrimaryKey: detectedPKs.includes(c.name),
+            };
+          });
+        } else {
+          finalCols = finalCols.map((c) => ({
+            ...c,
+            isPrimaryKey: detectedPKs.includes(c.name),
+          }));
+        }
+
         setTableDataByTab((prev) => {
           const prevRows = append ? prev[tab.id]?.rows || [] : [];
           const combinedRows = [...prevRows, ...fetchedRows];
           return {
             ...prev,
             [tab.id]: {
-              columns: (res.columns as any) || prev[tab.id]?.columns || [],
+              columns: finalCols,
               rows: combinedRows,
               primaryKeys: detectedPKs,
               isLoading: false,
@@ -389,11 +482,14 @@ export function App() {
               hasMore,
               pageSize: limit,
               page: append ? prev[tab.id]?.page || 1 : page,
+              whereClause,
+              columnFilters,
             },
           };
         });
+        const filterNotice = whereParts.length > 0 ? ` (filtered by ${whereParts.length} condition(s))` : '';
         setStatusMessage(
-          `Loaded ${fetchedRows.length} rows (${offset + fetchedRows.length} total) from ${tab.table}`
+          `Loaded ${fetchedRows.length} rows (${offset + fetchedRows.length} total) from ${tab.table}${filterNotice}`
         );
       }
     } catch (e: any) {
@@ -410,6 +506,8 @@ export function App() {
           hasMore: false,
           pageSize: limit,
           page: append ? prev[tab.id]?.page || 1 : page,
+          whereClause,
+          columnFilters,
         },
       }));
       setStatusMessage(`Error loading ${tab.table}: ${e?.message || String(e)}`);
@@ -847,9 +945,9 @@ export function App() {
                   <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                 )}
                 <span
-                  onDoubleClick={() => handleOpenRename(tab.id, tab.title)}
+                  onDoubleClick={tab.type === 'worksheet' ? () => handleOpenRename(tab.id, tab.title) : undefined}
                   className="truncate max-w-[140px]"
-                  title={`${tab.title} (Double-click or right-click to rename)`}
+                  title={tab.type === 'worksheet' ? `${tab.title} (Double-click or right-click to rename)` : tab.title}
                 >
                   {tab.title}
                 </span>
@@ -958,6 +1056,13 @@ export function App() {
                       isLoadingMore={tableDataByTab[activeTab.id]?.isLoadingMore}
                       page={tableDataByTab[activeTab.id]?.page || 1}
                       pageSize={tableDataByTab[activeTab.id]?.pageSize || 100}
+                      whereClause={tableDataByTab[activeTab.id]?.whereClause}
+                      columnFilters={tableDataByTab[activeTab.id]?.columnFilters}
+                      onApplyFilters={(whereClause, colFilters) => {
+                        const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        loadTableData(activeTab, 0, currentSize, false, 1, whereClause, colFilters);
+                      }}
+                      isTableTab={true}
                       onPageChange={(newPage) => {
                         const size = tableDataByTab[activeTab.id]?.pageSize || 100;
                         loadTableData(activeTab, (newPage - 1) * size, size, false, newPage);
@@ -1203,21 +1308,20 @@ export function App() {
             <span className="truncate">{tabContextMenu.tab.title}</span>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              const tab = tabContextMenu.tab!;
-              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-              handleOpenRename(tab.id, tab.title);
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-            <span>Rename Tab...</span>
-          </button>
-
           {tabContextMenu.tab.type === 'worksheet' && (
             <>
+              <button
+                type="button"
+                onClick={() => {
+                  const tab = tabContextMenu.tab!;
+                  setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  handleOpenRename(tab.id, tab.title);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Rename Tab...</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {

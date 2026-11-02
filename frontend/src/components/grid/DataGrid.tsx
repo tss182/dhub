@@ -18,7 +18,42 @@ import {
   X,
   Layers,
   ArrowDownCircle,
+  Filter,
+  Key,
+  Hash,
+  Info,
 } from 'lucide-react';
+
+function parseColumnTypeDetails(dataType?: string) {
+  if (!dataType) return { baseType: 'UNKNOWN', size: null, extra: null };
+  const trimmed = dataType.trim();
+  const match = trimmed.match(/^([a-zA-Z\s_]+)(?:\(([^)]+)\))?(.*)$/);
+  if (!match) {
+    return { baseType: trimmed.toUpperCase(), size: null, extra: null };
+  }
+  const baseType = match[1].trim().toUpperCase();
+  const size = match[2]?.trim() || null;
+  const extra = match[3]?.trim().toUpperCase() || null;
+  return { baseType, size, extra };
+}
+
+export interface ColumnFilterItem {
+  op: string;
+  value: string;
+}
+
+export const FILTER_OPERATORS = [
+  { label: '= (Equals)', value: '=' },
+  { label: 'LIKE (Contains)', value: 'LIKE' },
+  { label: 'NOT LIKE', value: 'NOT LIKE' },
+  { label: '!= (Not Equals)', value: '!=' },
+  { label: '> (Greater Than)', value: '>' },
+  { label: '< (Less Than)', value: '<' },
+  { label: '>= (Greater or Equal)', value: '>=' },
+  { label: '<= (Less or Equal)', value: '<=' },
+  { label: 'IS NULL', value: 'IS NULL' },
+  { label: 'IS NOT NULL', value: 'IS NOT NULL' },
+];
 
 const EMPTY_STAGED: Record<number, any> = {};
 
@@ -38,6 +73,10 @@ interface DataGridProps {
   onPageSizeChange?: (newSize: number) => void;
   onLoadMore?: () => void;
   onRefresh?: () => void;
+  whereClause?: string;
+  columnFilters?: Record<string, ColumnFilterItem>;
+  onApplyFilters?: (whereClause: string, columnFilters: Record<string, ColumnFilterItem>) => void;
+  isTableTab?: boolean;
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({
@@ -56,8 +95,150 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onPageSizeChange,
   onLoadMore,
   onRefresh,
+  whereClause = '',
+  columnFilters = {},
+  onApplyFilters,
+  isTableTab = false,
 }) => {
   const [filterText, setFilterText] = useState('');
+  const [whereInput, setWhereInput] = useState(whereClause || '');
+  const [localColFilters, setLocalColFilters] = useState<Record<string, ColumnFilterItem>>(columnFilters || {});
+  const [openColFilter, setOpenColFilter] = useState<{
+    colName: string;
+    x: number;
+    y: number;
+    op: string;
+    value: string;
+  } | null>(null);
+
+  const [hoveredCol, setHoveredCol] = useState<{
+    col: ColumnMeta;
+    isPK: boolean;
+    details: { baseType: string; size: string | null; extra: string | null };
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const hoverTimeoutRef = useRef<any>(null);
+
+  const handleColMouseEnter = (e: React.MouseEvent, col: ColumnMeta, isPK: boolean) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const tooltipWidth = 240;
+    const x = Math.min(Math.max(8, rect.left), window.innerWidth - tooltipWidth - 16);
+    const y = rect.bottom + 4;
+    const details = parseColumnTypeDetails(col.dataType);
+
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredCol({
+        col,
+        isPK,
+        details,
+        x,
+        y,
+      });
+    }, 120);
+  };
+
+  const handleColMouseLeave = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    setHoveredCol(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
+
+  const colFilterRef = useRef<HTMLDivElement>(null);
+
+  // Sync external filter props
+  useEffect(() => {
+    setWhereInput(whereClause || '');
+  }, [whereClause]);
+
+  useEffect(() => {
+    setLocalColFilters(columnFilters || {});
+  }, [columnFilters]);
+
+  // Close column filter popover on click outside or Escape
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (colFilterRef.current && !colFilterRef.current.contains(e.target as Node)) {
+        setOpenColFilter(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenColFilter(null);
+    };
+
+    if (openColFilter) {
+      window.addEventListener('mousedown', handleOutsideClick);
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener('mousedown', handleOutsideClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [openColFilter]);
+
+  const handleApplyAllFilters = (wText: string, cFilters: Record<string, ColumnFilterItem>) => {
+    onApplyFilters?.(wText, cFilters);
+  };
+
+  const handleOpenColFilter = (e: React.MouseEvent, colName: string) => {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const current = localColFilters[colName] || { op: 'LIKE', value: '' };
+    const popoverWidth = 260;
+    const x = Math.min(rect.left, window.innerWidth - popoverWidth - 16);
+    const y = rect.bottom + 4;
+    setOpenColFilter({
+      colName,
+      x: Math.max(8, x),
+      y,
+      op: current.op || 'LIKE',
+      value: current.value || '',
+    });
+  };
+
+  const handleSaveColFilter = () => {
+    if (!openColFilter) return;
+    const isNullOp = ['IS NULL', 'IS NOT NULL'].includes(openColFilter.op);
+    if (!isNullOp && !openColFilter.value.trim()) {
+      handleRemoveColFilter(openColFilter.colName);
+      return;
+    }
+
+    const updated = {
+      ...localColFilters,
+      [openColFilter.colName]: {
+        op: openColFilter.op,
+        value: openColFilter.value.trim(),
+      },
+    };
+    setLocalColFilters(updated);
+    setOpenColFilter(null);
+    handleApplyAllFilters(whereInput, updated);
+  };
+
+  const handleRemoveColFilter = (colName: string) => {
+    const updated = { ...localColFilters };
+    delete updated[colName];
+    setLocalColFilters(updated);
+    if (openColFilter?.colName === colName) {
+      setOpenColFilter(null);
+    }
+    handleApplyAllFilters(whereInput, updated);
+  };
+
+  const handleResetAllFilters = () => {
+    setWhereInput('');
+    setLocalColFilters({});
+    handleApplyAllFilters('', {});
+  };
+
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colIndex: number } | null>(null);
   const [editVal, setEditVal] = useState<string>('');
   const globalViewMode = useSettingsStore((state) => state.dataViewMode);
@@ -67,7 +248,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [currentPage, setCurrentPage] = useState(page || 1);
   const [localPageSize, setLocalPageSize] = useState(pageSize || globalDefaultPageSize || 100);
   const [isBatchSizeOpen, setIsBatchSizeOpen] = useState(false);
-  const [knownTotal, setKnownTotal] = useState<number | undefined>(totalCount);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const batchSizeRef = useRef<HTMLDivElement>(null);
@@ -78,18 +258,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
       setCurrentPage(page);
     }
   }, [page]);
-
-  // Sync external totalCount prop
-  useEffect(() => {
-    if (totalCount !== undefined) {
-      setKnownTotal(totalCount);
-    }
-  }, [totalCount]);
-
-  // Reset knownTotal when tabId changes unless totalCount is provided
-  useEffect(() => {
-    setKnownTotal(totalCount);
-  }, [tabId, totalCount]);
 
   // Close batch size dropdown on outside click or Escape
   useEffect(() => {
@@ -195,20 +363,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
         : filteredRows
       : filteredRows;
 
-  // When we hit a page where hasMore is false, the exact total count is known
-  useEffect(() => {
-    if (!hasMore && displayedRows.length >= 0) {
-      const exact = isMultiPageInMemory
-        ? filteredRows.length
-        : (currentPage - 1) * localPageSize + displayedRows.length;
-      setKnownTotal(exact);
-    }
-  }, [hasMore, currentPage, localPageSize, displayedRows.length, isMultiPageInMemory, filteredRows.length]);
-
   // Determine effective total rows
   const effectiveTotal =
-    knownTotal !== undefined
-      ? knownTotal
+    totalCount !== undefined
+      ? totalCount
       : isMultiPageInMemory
       ? filteredRows.length
       : hasMore
@@ -236,7 +394,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const handleNavigatePage = (targetPage: number) => {
-    const clamped = Math.max(1, Math.min(targetPage, totalPages));
+    const maxPage =
+      totalCount !== undefined ? totalPages : hasMore ? Math.max(totalPages, targetPage) : totalPages;
+    const clamped = Math.max(1, Math.min(targetPage, maxPage));
     setCurrentPage(clamped);
     if (onPageChange) {
       onPageChange(clamped);
@@ -246,7 +406,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const handlePageSizeChange = (newSize: number) => {
     setLocalPageSize(newSize);
     setCurrentPage(1);
-    setKnownTotal(totalCount);
     onPageSizeChange?.(newSize);
   };
 
@@ -351,6 +510,97 @@ export const DataGrid: React.FC<DataGridProps> = ({
         </div>
       </div>
 
+      {/* SQL WHERE Filter Bar (Below Add Row toolbar) */}
+      {onApplyFilters && (
+        <div className="flex flex-col border-b border-[#272932] bg-[#14151a]">
+          <div className="flex items-center gap-2 px-3 py-1.5">
+            <div className="flex items-center gap-1.5 shrink-0 select-none">
+              <span className="font-mono text-[11px] font-bold text-blue-400 bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded">
+                WHERE
+              </span>
+            </div>
+            <div className="relative flex-1 flex items-center">
+              <input
+                type="text"
+                placeholder="e.g. name like '%user' and id = '1'  (Press Enter to apply)"
+                value={whereInput}
+                onChange={(e) => setWhereInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleApplyAllFilters(whereInput, localColFilters);
+                  }
+                }}
+                className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] pl-3 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+              />
+              {whereInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWhereInput('');
+                    handleApplyAllFilters('', localColFilters);
+                  }}
+                  className="absolute right-2 text-zinc-500 hover:text-white cursor-pointer"
+                  title="Clear WHERE filter"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleApplyAllFilters(whereInput, localColFilters)}
+              className="flex items-center gap-1.5 h-7 px-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs shrink-0"
+              title="Apply WHERE filter (Enter)"
+            >
+              <Filter className="h-3 w-3" />
+              <span>Apply</span>
+            </button>
+
+            {(whereInput || Object.keys(localColFilters).length > 0) && (
+              <button
+                type="button"
+                onClick={handleResetAllFilters}
+                className="flex items-center gap-1 h-7 px-2.5 rounded bg-[#20222b] hover:bg-rose-950/40 hover:text-rose-300 text-zinc-400 border border-[#272932] text-xs transition-colors cursor-pointer shrink-0"
+                title="Clear all filters (WHERE + Column filters)"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Reset All</span>
+              </button>
+            )}
+          </div>
+
+          {/* Active Column Filter Badges / Pills */}
+          {Object.keys(localColFilters).length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-3 py-1 bg-[#101115] border-t border-[#22242c] text-[11px]">
+              <span className="text-zinc-500 text-[10px] uppercase font-semibold tracking-wider select-none">
+                Column Filters ({Object.keys(localColFilters).length}):
+              </span>
+              {Object.entries(localColFilters).map(([cName, f]) => (
+                <span
+                  key={cName}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-950/60 border border-blue-800/40 text-blue-300 font-mono text-[11px]"
+                >
+                  <span className="font-semibold text-zinc-200">{cName}</span>
+                  <span className="text-blue-400 font-semibold">{f.op}</span>
+                  {!['IS NULL', 'IS NOT NULL'].includes(f.op) && (
+                    <span className="text-zinc-300 truncate max-w-[120px]">'{f.value}'</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveColFilter(cName)}
+                    className="text-zinc-400 hover:text-white cursor-pointer ml-0.5"
+                    title={`Remove filter for ${cName}`}
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Grid Table Container */}
       <div
         ref={containerRef}
@@ -361,18 +611,49 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <thead className="sticky top-0 bg-[#14151a] shadow-sm z-10">
             <tr className="border-b border-[#272932]">
               <th className="w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r border-[#272932]">#</th>
-              {columns.map((col) => (
-                <th
-                  key={col.name}
-                  className="px-3 py-1.5 text-left font-semibold border-r border-[#272932] text-zinc-200"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span>{col.name}</span>
-                    {col.isPrimaryKey && <span className="text-[10px] text-amber-400 font-normal">(PK)</span>}
-                    <span className="text-[10px] text-zinc-500 font-normal font-sans">{col.dataType}</span>
-                  </div>
-                </th>
-              ))}
+              {columns.map((col) => {
+                const isFiltered = Boolean(localColFilters[col.name]);
+                const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+                return (
+                  <th
+                    key={col.name}
+                    onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
+                    onMouseLeave={handleColMouseLeave}
+                    className="px-3 py-1.5 text-left font-semibold border-r border-[#272932] text-zinc-200 group/th select-none hover:bg-[#1a1b24] transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 truncate cursor-default">
+                        {isPK && (
+                          <Key className="h-3 w-3 text-amber-400 fill-amber-400/30 shrink-0" />
+                        )}
+                        <span className="truncate font-semibold text-zinc-200">{col.name}</span>
+                      </div>
+
+                      {onApplyFilters && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            handleColMouseLeave();
+                            handleOpenColFilter(e, col.name);
+                          }}
+                          className={`p-1 rounded transition-colors cursor-pointer shrink-0 ${
+                            isFiltered
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'text-zinc-500 hover:text-zinc-200 hover:bg-[#252834] opacity-40 group-hover/th:opacity-100'
+                          }`}
+                          title={
+                            isFiltered
+                              ? `Filter active: ${col.name} ${localColFilters[col.name].op} '${localColFilters[col.name].value}'`
+                              : `Filter by ${col.name}`
+                          }
+                        >
+                          <Filter className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -476,11 +757,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
               const startRow = displayedRows.length === 0 ? 0 : (currentPage - 1) * localPageSize + 1;
               const endRow = (currentPage - 1) * localPageSize + displayedRows.length;
               const totalText =
-                knownTotal !== undefined
-                  ? String(knownTotal)
+                totalCount !== undefined
+                  ? String(totalCount)
                   : hasMore
                   ? `${endRow}+`
-                  : String(endRow);
+                  : String(effectiveTotal);
 
               return (
                 <span>
@@ -494,8 +775,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <div className="flex items-center gap-2">
               <span>
                 Loaded <strong className="text-zinc-200">{rows.length}</strong>
-                {knownTotal !== undefined ? (
-                  <> of <strong className="text-zinc-200">{knownTotal}</strong></>
+                {totalCount !== undefined ? (
+                  <> of <strong className="text-zinc-200">{totalCount}</strong></>
                 ) : null}{' '}
                 rows
               </span>
@@ -544,14 +825,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <strong className="text-white font-mono">{currentPage}</strong>
               <span>of</span>
               <strong className="text-white font-mono">
-                {totalPages}{knownTotal === undefined && hasMore ? '+' : ''}
+                {totalPages}{totalCount === undefined && hasMore ? '+' : ''}
               </strong>
               {isLoadingMore && <RefreshCw className="h-3 w-3 animate-spin text-blue-400 ml-1" />}
             </span>
 
             <button
               onClick={() => handleNavigatePage(currentPage + 1)}
-              disabled={(knownTotal !== undefined ? currentPage >= totalPages : !hasMore) || isLoadingMore}
+              disabled={(totalCount !== undefined ? currentPage >= totalPages : !hasMore) || isLoadingMore}
               className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
               title="Next Page"
             >
@@ -559,9 +840,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </button>
             <button
               onClick={() => handleNavigatePage(totalPages)}
-              disabled={knownTotal === undefined || currentPage >= totalPages || isLoadingMore}
+              disabled={totalCount === undefined || currentPage >= totalPages || isLoadingMore}
               className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title={knownTotal !== undefined ? `Last Page (${totalPages})` : 'Last page unknown until end reached'}
+              title={totalCount !== undefined ? `Last Page (${totalPages})` : 'Last page unknown until end reached'}
             >
               <ChevronsRight className="h-3.5 w-3.5" />
             </button>
@@ -623,6 +904,194 @@ export const DataGrid: React.FC<DataGridProps> = ({
           )}
         </div>
       </div>
+
+      {/* Floating Column Filter Popover */}
+      {openColFilter && (
+        <div
+          ref={colFilterRef}
+          style={{ top: openColFilter.y, left: openColFilter.x }}
+          className="fixed z-50 w-68 rounded-lg bg-[#181920] border border-[#2e313d] shadow-2xl p-3 text-xs text-zinc-300 font-sans select-none animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-[#272932] pb-2 mb-2.5">
+            <div className="flex items-center gap-1.5 truncate">
+              <Filter className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              <span className="font-semibold text-zinc-100 truncate">{openColFilter.colName}</span>
+              <span className="text-[10px] text-zinc-500 font-mono">
+                {columns.find((c) => c.name === openColFilter.colName)?.dataType}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpenColFilter(null)}
+              className="text-zinc-400 hover:text-white cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="space-y-2.5">
+            <div>
+              <label className="text-[10px] uppercase font-semibold text-zinc-400 block mb-1 tracking-wider">
+                Operator
+              </label>
+              <select
+                value={openColFilter.op}
+                onChange={(e) =>
+                  setOpenColFilter((prev) => (prev ? { ...prev, op: e.target.value } : null))
+                }
+                className="w-full h-7 rounded bg-[#101115] border border-[#2e313f] px-2 text-xs text-zinc-200 focus:border-blue-500 focus:outline-none cursor-pointer"
+              >
+                {FILTER_OPERATORS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {!['IS NULL', 'IS NOT NULL'].includes(openColFilter.op) && (
+              <div>
+                <label className="text-[10px] uppercase font-semibold text-zinc-400 block mb-1 tracking-wider">
+                  Filter Value
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder={openColFilter.op === 'LIKE' ? 'e.g. %user or text' : 'Value...'}
+                  value={openColFilter.value}
+                  onChange={(e) =>
+                    setOpenColFilter((prev) => (prev ? { ...prev, value: e.target.value } : null))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleSaveColFilter();
+                    }
+                  }}
+                  className="w-full h-7 rounded bg-[#101115] border border-[#2e313f] px-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-2 border-t border-[#272932]">
+              {localColFilters[openColFilter.colName] ? (
+                <button
+                  type="button"
+                  onClick={() => handleRemoveColFilter(openColFilter.colName)}
+                  className="text-rose-400 hover:text-rose-300 text-[11px] cursor-pointer"
+                >
+                  Clear Filter
+                </button>
+              ) : (
+                <div />
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOpenColFilter(null)}
+                  className="px-2.5 py-1 rounded bg-[#20222b] hover:bg-[#282a35] text-zinc-300 text-xs transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveColFilter}
+                  className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Column Hover Metadata Tooltip Card */}
+      {hoveredCol && (
+        <div
+          className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl p-3 text-xs font-sans min-w-[220px] max-w-[320px] animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: hoveredCol.y, left: hoveredCol.x }}
+        >
+          {/* Header: Name + PK Badge */}
+          <div className="flex items-center justify-between gap-2 border-b border-[#272932] pb-2 mb-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {hoveredCol.isPK ? (
+                <Key className="h-3.5 w-3.5 text-amber-400 fill-amber-400/30 shrink-0" />
+              ) : (
+                <Hash className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+              )}
+              <span className="font-bold text-zinc-100 truncate text-[13px]">{hoveredCol.col.name}</span>
+            </div>
+            {hoveredCol.isPK && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono shrink-0">
+                PRIMARY KEY
+              </span>
+            )}
+          </div>
+
+          {/* Metadata Rows */}
+          <div className="space-y-1.5 text-[11px]">
+            {/* Data Type */}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-zinc-500">Data Type:</span>
+              <span className="font-mono font-medium text-blue-400 uppercase bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-900/40">
+                {hoveredCol.col.dataType || 'UNKNOWN'}
+              </span>
+            </div>
+
+            {/* Size / Length if extracted */}
+            {hoveredCol.details.size && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-zinc-500">Length / Size:</span>
+                <span className="font-mono text-zinc-300">{hoveredCol.details.size}</span>
+              </div>
+            )}
+
+            {/* Nullable */}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-zinc-500">Nullable:</span>
+              <span
+                className={`font-mono text-[10px] ${
+                  hoveredCol.col.isNullable ? 'text-zinc-400' : 'text-amber-400/90 font-semibold'
+                }`}
+              >
+                {hoveredCol.col.isNullable ? 'YES (NULL)' : 'NO (NOT NULL)'}
+              </span>
+            </div>
+
+            {/* Auto Increment */}
+            {hoveredCol.col.isAutoIncrement && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-zinc-500">Extra:</span>
+                <span className="font-mono text-emerald-400 text-[10px]">auto_increment</span>
+              </div>
+            )}
+
+            {/* Default Value */}
+            {hoveredCol.col.defaultValue !== undefined && hoveredCol.col.defaultValue !== '' && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-zinc-500">Default:</span>
+                <span className="font-mono text-zinc-400 truncate max-w-[150px]">
+                  {hoveredCol.col.defaultValue}
+                </span>
+              </div>
+            )}
+
+            {/* Comment / Description */}
+            {hoveredCol.col.comment && (
+              <div className="mt-2 pt-2 border-t border-[#272932]">
+                <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-0.5">
+                  Description
+                </div>
+                <div className="text-zinc-300 text-[11px] leading-relaxed italic">
+                  {hoveredCol.col.comment}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,10 +1,13 @@
 [Desktop Entry]
 Type=Application
-Name=dhub
-Exec=dhub
+Name=DHub
+GenericName=Database IDE
+Comment=High-Performance Multi-Database IDE
+Exec=dhub %U
 Icon=dhub
-Categories=Development;
+Categories=Development;Database;IDE;
 Terminal=false
-Keywords=wails
+Keywords=database;sql;mysql;postgres;sqlite;dhub;
 Version=1.0
-StartupNotify=false
+StartupNotify=true
+StartupWMClass=dhub

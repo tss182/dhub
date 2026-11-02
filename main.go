@@ -15,6 +15,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed frontend/public/app-icon.png
+var appIcon []byte
+
 func init() {
 	// Register custom events for typed JS bindings
 	application.RegisterEvent[app.QueryStatusEvent]("query:status")
@@ -42,6 +45,11 @@ func main() {
 	wailsApp = application.New(application.Options{
 		Name:        "DHub",
 		Description: "High-Performance Multi-Database IDE",
+		Icon:        appIcon,
+		Linux: application.LinuxOptions{
+			ProgramName:   "dhub",
+			ApplicationID: "com.dhub.app",
+		},
 		Services: []application.Service{
 			application.NewService(connSvc),
 			application.NewService(schemaSvc),
@@ -64,6 +72,9 @@ func main() {
 		MinHeight:        640,
 		BackgroundColour: application.NewRGB(18, 19, 23), // DataGrip Islands Dark
 		URL:              "/",
+		Linux: application.LinuxWindow{
+			Icon: appIcon,
+		},
 	})
 
 	if err := wailsApp.Run(); err != nil {
