@@ -26,6 +26,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   Copy,
+  AlertCircle,
 } from 'lucide-react';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
@@ -42,6 +43,87 @@ function parseColumnTypeDetails(dataType?: string) {
   const size = match[2]?.trim() || null;
   const extra = match[3]?.trim().toUpperCase() || null;
   return { baseType, size, extra };
+}
+
+function getColumnInputType(dataType?: string): 'date' | 'datetime-local' | 'time' | 'text' {
+  if (!dataType) return 'text';
+  const { baseType } = parseColumnTypeDetails(dataType);
+  const upper = baseType.toUpperCase();
+
+  if (upper === 'DATE') {
+    return 'date';
+  }
+  if (
+    upper.includes('TIMESTAMP') ||
+    upper.includes('DATETIME')
+  ) {
+    return 'datetime-local';
+  }
+  if (upper.includes('TIME') && !upper.includes('TIMESTAMP')) {
+    return 'time';
+  }
+  return 'text';
+}
+
+function formatToDateInputValue(val: any, type: 'date' | 'datetime-local' | 'time' | 'text'): string {
+  if (val === null || val === undefined) return '';
+  const str = String(val).trim();
+  if (!str) return '';
+
+  if (type === 'date') {
+    const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+    return '';
+  }
+
+  if (type === 'datetime-local') {
+    const normalized = str.replace(' ', 'T').replace(/Z$/, '');
+    const match = normalized.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)/);
+    if (match) return match[1];
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    return '';
+  }
+
+  if (type === 'time') {
+    const match = str.match(/(\d{2}:\d{2}(?::\d{2})?)/);
+    if (match) return match[1];
+    return '';
+  }
+
+  return str;
+}
+
+function normalizeDateCommitValue(val: string, inputType: 'date' | 'datetime-local' | 'time' | 'text'): string | null {
+  if (val === null || val === undefined) return null;
+  const trimmed = String(val).trim();
+  if (!trimmed) return null;
+
+  if (inputType === 'datetime-local') {
+    let s = trimmed.replace('T', ' ');
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) {
+      s += ':00';
+    }
+    return s;
+  }
+  if (inputType === 'date') {
+    return trimmed;
+  }
+  if (inputType === 'time') {
+    if (/^\d{2}:\d{2}$/.test(trimmed)) {
+      return trimmed + ':00';
+    }
+    return trimmed;
+  }
+  return trimmed;
 }
 
 export interface SortConfig {
@@ -273,6 +355,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const stagedCount = Object.keys(stagedChanges).length;
 
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const insertedChanges = useMemo(() => {
     return Object.values(stagedChanges).filter(
@@ -281,8 +364,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [stagedChanges]);
 
   const handleStartEdit = (rowIndex: number, colIndex: number, currentVal: any) => {
+    const col = columns[colIndex];
+    const inputType = getColumnInputType(col?.dataType);
     setEditingCell({ rowIndex, colIndex });
-    setEditVal(currentVal !== null && currentVal !== undefined ? String(currentVal) : '');
+    setEditVal(formatToDateInputValue(currentVal, inputType));
   };
 
   const handleAddRow = () => {
@@ -309,9 +394,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
       return;
     }
 
+    const inputType = getColumnInputType(col.dataType);
+    const finalVal = normalizeDateCommitValue(editVal, inputType);
+
     if (rowIndex < 0) {
       // Staged inserted row (negative rowIndex)
-      stageCellUpdate(tabId, rowIndex, {}, {}, col.name, editVal);
+      stageCellUpdate(tabId, rowIndex, {}, {}, col.name, finalVal);
     } else {
       // Existing database row
       const originalRowValues: Record<string, unknown> = {};
@@ -327,7 +415,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         }
       });
 
-      stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, editVal);
+      stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, finalVal);
     }
     setEditingCell(null);
   };
@@ -406,19 +494,111 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   };
 
-  // Keyboard shortcuts: Apply (Ctrl+S / Cmd+S), Duplicate (Ctrl+D / Cmd+D)
+  const handleDeleteActiveRow = () => {
+    if (selectedRowIndex !== null) {
+      if (selectedRowIndex < 0) {
+        stageRowDelete(tabId, selectedRowIndex, {}, {});
+        setSelectedRowIndex(null);
+        return;
+      }
+      const pkMap: Record<string, unknown> = {};
+      const originalRowValues: Record<string, unknown> = {};
+      columns.forEach((c, idx) => {
+        originalRowValues[c.name] = rows[selectedRowIndex]?.[idx];
+      });
+      primaryKeys.forEach((pk) => {
+        const idx = columns.findIndex((c) => c.name === pk);
+        if (idx !== -1) pkMap[pk] = rows[selectedRowIndex]?.[idx];
+      });
+      stageRowDelete(tabId, selectedRowIndex, pkMap, originalRowValues);
+    } else if (insertedChanges.length > 0) {
+      const last = insertedChanges[insertedChanges.length - 1];
+      stageRowDelete(tabId, last.rowIndex, {}, {});
+    } else if (rows.length > 0) {
+      const pkMap: Record<string, unknown> = {};
+      const originalRowValues: Record<string, unknown> = {};
+      columns.forEach((c, idx) => {
+        originalRowValues[c.name] = rows[0]?.[idx];
+      });
+      primaryKeys.forEach((pk) => {
+        const idx = columns.findIndex((c) => c.name === pk);
+        if (idx !== -1) pkMap[pk] = rows[0]?.[idx];
+      });
+      stageRowDelete(tabId, 0, pkMap, originalRowValues);
+    }
+  };
+
+  // Keyboard shortcuts: Apply (Ctrl+S / Cmd+S), Duplicate (Ctrl+D / Cmd+D), Delete active row (Cmd+Backspace / Delete), Cancel (Esc)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('.monaco-editor')) return;
+
+      // 1. When Cancel confirmation dialog is active
+      if (showCancelConfirm) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowCancelConfirm(false);
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          revertTabChanges(tabId);
+          setEditingCell(null);
+          if (selectedRowIndex !== null && selectedRowIndex < 0) {
+            setSelectedRowIndex(null);
+          }
+          setShowCancelConfirm(false);
+          return;
+        }
+        return;
+      }
+
+      // Check if user is typing in quick filter or WHERE inputs (don't intercept Esc for them)
+      const isInFilterOrWhere = target?.closest?.('[data-filter-input]') || target?.closest?.('[data-where-input]');
+
+      // Shortcut: Esc for Cancel / Revert Changes
+      if (e.key === 'Escape') {
+        if (isInFilterOrWhere) {
+          return;
+        }
+        if (editingCell) {
+          e.preventDefault();
+          setEditingCell(null);
+          if (stagedCount > 0) {
+            setShowCancelConfirm(true);
+          }
+          return;
+        }
+        if (stagedCount > 0) {
+          e.preventDefault();
+          setShowCancelConfirm(true);
+          return;
+        }
+      }
+
+      const activeEl = document.activeElement;
+      const isTyping =
+        (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) ||
+        (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA'));
+
+      // Shortcut: Delete active row (Cmd+Backspace on macOS, Delete key on Linux/Windows)
+      // Only delete row when NOT actively typing in an input/textarea
+      const isMacDelete = isMac && e.metaKey && (e.key === 'Backspace' || e.key === 'Delete');
+      const isOtherDelete = !isMac && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Delete';
+
+      if (!isTyping && (isMacDelete || isOtherDelete)) {
+        e.preventDefault();
+        handleDeleteActiveRow();
+        return;
+      }
+
       const isMod = isMac ? e.metaKey : e.ctrlKey;
       if (!isMod) return;
 
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.('.monaco-editor')) return;
-      if (
-        target &&
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') &&
-        !target.closest?.('[data-grid-container]')
-      ) {
+      if (isTyping && !target?.closest?.('[data-grid-container]')) {
         return;
       }
 
@@ -439,7 +619,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tabId, isMac, editingCell, editVal, columns, rows, selectedRowIndex, insertedChanges, onSubmitChanges]);
+  }, [tabId, isMac, editingCell, editVal, columns, rows, selectedRowIndex, insertedChanges, onSubmitChanges, stagedCount, showCancelConfirm]);
 
   // Filter rows client-side
   const filteredRows = useMemo(() => {
@@ -577,41 +757,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
           </button>
 
           <button
-            onClick={() => {
-              if (selectedRowIndex !== null) {
-                if (selectedRowIndex < 0) {
-                  stageRowDelete(tabId, selectedRowIndex, {}, {});
-                  setSelectedRowIndex(null);
-                  return;
-                }
-                const pkMap: Record<string, unknown> = {};
-                const originalRowValues: Record<string, unknown> = {};
-                columns.forEach((c, idx) => {
-                  originalRowValues[c.name] = rows[selectedRowIndex]?.[idx];
-                });
-                primaryKeys.forEach((pk) => {
-                  const idx = columns.findIndex((c) => c.name === pk);
-                  if (idx !== -1) pkMap[pk] = rows[selectedRowIndex]?.[idx];
-                });
-                stageRowDelete(tabId, selectedRowIndex, pkMap, originalRowValues);
-              } else if (insertedChanges.length > 0) {
-                const last = insertedChanges[insertedChanges.length - 1];
-                stageRowDelete(tabId, last.rowIndex, {}, {});
-              } else if (rows.length > 0) {
-                const pkMap: Record<string, unknown> = {};
-                const originalRowValues: Record<string, unknown> = {};
-                columns.forEach((c, idx) => {
-                  originalRowValues[c.name] = rows[0]?.[idx];
-                });
-                primaryKeys.forEach((pk) => {
-                  const idx = columns.findIndex((c) => c.name === pk);
-                  if (idx !== -1) pkMap[pk] = rows[0]?.[idx];
-                });
-                stageRowDelete(tabId, 0, pkMap, originalRowValues);
-              }
-            }}
+            onClick={handleDeleteActiveRow}
             className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-            title="Delete Selected Row"
+            title={`Delete Active Row (${isMac ? 'Cmd+Backspace' : 'Delete'})`}
           >
             <Trash2 className="h-3.5 w-3.5 text-rose-400" />
           </button>
@@ -630,31 +778,35 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
           {stagedCount > 0 && (
             <>
+              <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
+
               <button
                 onClick={onPreviewChanges}
-                className="flex items-center gap-1 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 px-2.5 py-1 transition-colors cursor-pointer"
+                className="flex h-7 w-7 items-center justify-center rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 transition-colors cursor-pointer"
                 title="Preview SQL DML"
               >
-                <Eye className="h-3.5 w-3.5" />
-                <span>Preview DML</span>
+                <Eye className="h-4 w-4" />
               </button>
 
               <button
                 onClick={handleApplyChanges}
-                className="flex items-center gap-1 rounded bg-emerald-600 text-white hover:bg-emerald-500 px-2.5 py-1 font-medium transition-colors cursor-pointer shadow-sm"
-                title={`Apply Changes (${modKey}+S)`}
+                className="relative flex h-7 w-7 items-center justify-center rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer shadow-sm"
+                title={`Apply Changes (${stagedCount}) (${modKey}+S)`}
               >
-                <Check className="h-3.5 w-3.5" />
-                <span>Apply ({stagedCount})</span>
+                <Check className="h-4 w-4 stroke-[2.5]" />
+                {stagedCount > 1 && (
+                  <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-emerald-400 text-[9px] font-bold text-zinc-950 px-0.5 pointer-events-none">
+                    {stagedCount}
+                  </span>
+                )}
               </button>
 
               <button
-                onClick={() => revertTabChanges(tabId)}
-                className="flex items-center gap-1 rounded bg-rose-950/40 border border-rose-800/60 hover:bg-rose-900/60 text-rose-300 hover:text-white px-2 py-1 transition-colors cursor-pointer"
-                title="Revert Staged Changes"
+                onClick={() => setShowCancelConfirm(true)}
+                className="flex h-7 w-7 items-center justify-center rounded bg-rose-950/40 border border-rose-800/60 hover:bg-rose-900/60 text-rose-400 hover:text-white transition-colors cursor-pointer"
+                title="Batalkan Perubahan (Esc)"
               >
-                <RotateCcw className="h-3.5 w-3.5 text-rose-400" />
-                <span>Revert</span>
+                <X className="h-4 w-4 text-rose-400" />
               </button>
             </>
           )}
@@ -711,6 +863,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <Search className="h-3 w-3 text-zinc-500 absolute left-2 pointer-events-none" />
             <input
               type="text"
+              data-filter-input="true"
               placeholder="Filter in result..."
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
@@ -739,6 +892,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <div className="relative flex-1 flex items-center">
             <input
               type="text"
+              data-where-input="true"
               placeholder="e.g. name like '%user' and id = '1' (Press Enter to apply)"
               value={whereInput}
               onChange={(e) => setWhereInput(e.target.value)}
@@ -906,6 +1060,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     const colVal = change.changes[col.name];
                     const isSet = colVal !== undefined;
                     const displayVal = isSet ? colVal : (col.defaultValue || null);
+                    const colInputType = getColumnInputType(col.dataType);
 
                     return (
                       <td
@@ -922,14 +1077,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       >
                         {isEditing ? (
                           <input
-                            type="text"
+                            type={colInputType === 'text' ? 'text' : colInputType}
+                            step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
                             autoFocus
+                            ref={(el) => {
+                              if (colInputType !== 'text') {
+                                try { el?.showPicker?.(); } catch {}
+                              }
+                            }}
                             value={editVal}
                             onChange={(e) => setEditVal(e.target.value)}
                             onBlur={handleFinishEdit}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') handleFinishEdit();
-                              if (e.key === 'Escape') setEditingCell(null);
+                              if (e.key === 'Escape') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setEditingCell(null);
+                                if (stagedCount > 0) {
+                                  setShowCancelConfirm(true);
+                                }
+                              }
                               if (e.key === 'Tab') {
                                 e.preventDefault();
                                 handleFinishEdit();
@@ -940,7 +1108,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
                                 }, 10);
                               }
                             }}
-                            className="w-full bg-[#101115] border border-emerald-500 px-1 py-0.5 text-white outline-none rounded font-mono text-xs shadow-inner"
+                            className={`[color-scheme:dark] w-full bg-[#101115] border border-emerald-500 px-1 py-0.5 text-white outline-none rounded font-mono text-xs shadow-inner ${
+                              colInputType !== 'text' ? 'cursor-pointer' : ''
+                            }`}
                           />
                         ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
                           <span className="text-zinc-600 italic">
@@ -988,6 +1158,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       const isEditing = editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
                       const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
                       const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
+                      const colInputType = getColumnInputType(col.dataType);
 
                       return (
                         <td
@@ -1004,14 +1175,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
                         >
                           {isEditing ? (
                             <input
-                              type="text"
+                              type={colInputType === 'text' ? 'text' : colInputType}
+                              step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
                               autoFocus
+                              ref={(el) => {
+                                if (colInputType !== 'text') {
+                                  try { el?.showPicker?.(); } catch {}
+                                }
+                              }}
                               value={editVal}
                               onChange={(e) => setEditVal(e.target.value)}
                               onBlur={handleFinishEdit}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleFinishEdit();
-                                if (e.key === 'Escape') setEditingCell(null);
+                                if (e.key === 'Escape') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setEditingCell(null);
+                                if (stagedCount > 0) {
+                                  setShowCancelConfirm(true);
+                                }
+                              }
                                 if (e.key === 'Tab') {
                                   e.preventDefault();
                                   handleFinishEdit();
@@ -1021,7 +1205,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
                                   }, 10);
                                 }
                               }}
-                              className="w-full bg-[#121317] border border-blue-500 px-1 py-0.5 text-white outline-none rounded"
+                              className={`[color-scheme:dark] w-full bg-[#121317] border border-blue-500 px-1 py-0.5 text-white outline-none rounded ${
+                                colInputType !== 'text' ? 'cursor-pointer' : ''
+                              }`}
                             />
                           ) : displayVal === null || displayVal === undefined ? (
                             <span className="text-zinc-600 italic">NULL</span>
@@ -1299,6 +1485,63 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Changes Confirmation Modal */}
+      {showCancelConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setShowCancelConfirm(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#14151a] p-5 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-500/10 border border-rose-500/25 text-rose-400">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-semibold text-zinc-100">
+                  Batalkan Perubahan?
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
+                  Terdapat <span className="font-semibold text-rose-300 font-mono">{stagedCount}</span> perubahan yang belum disimpan. Semua penambahan, pengeditan, atau penghapusan baris yang belum diapply akan dibatalkan.
+                </p>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Lanjut batalkan perubahan atau tidak?
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+              <button
+                type="button"
+                onClick={() => setShowCancelConfirm(false)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
+              >
+                <span>Batal (Kembali)</span>
+                <kbd className="text-[10px] text-zinc-500 font-mono bg-[#14151a] px-1 rounded border border-[#2d303f]">Esc</kbd>
+              </button>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => {
+                  revertTabChanges(tabId);
+                  setEditingCell(null);
+                  if (selectedRowIndex !== null && selectedRowIndex < 0) {
+                    setSelectedRowIndex(null);
+                  }
+                  setShowCancelConfirm(false);
+                }}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors cursor-pointer shadow-sm"
+              >
+                <span>Ya, Lanjut Batalkan</span>
+                <kbd className="text-[10px] text-rose-200 font-mono bg-rose-700/60 px-1 rounded">↵ Enter</kbd>
+              </button>
+            </div>
           </div>
         </div>
       )}

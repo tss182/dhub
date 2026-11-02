@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useWorkbenchStore } from './stores/useWorkbenchStore';
 import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
-import { QueryService, SchemaService } from '../bindings/dhub/internal/services';
+import { QueryService, SchemaService, ConnectionService } from '../bindings/dhub/internal/services';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
 import { ConsoleList } from './components/layout/ConsoleList';
 import { SqlWorksheet } from './components/editor/SqlWorksheet';
@@ -64,6 +64,7 @@ export function App() {
     activeDatabase,
     activeSchema,
     connections,
+    setConnections,
     treeDatabases,
     setTreeDatabases,
     setActiveConnection,
@@ -309,10 +310,20 @@ export function App() {
     }
 
     try {
-      const conn = connections.find((c) => c.id === connId);
-      const isMySQL = conn?.driver === 'mysql';
+      let connList = connections;
+      if (connList.length === 0) {
+        try {
+          const fetched = await ConnectionService.ListConnections();
+          if (fetched && fetched.length > 0) {
+            connList = fetched as any;
+            setConnections(connList);
+          }
+        } catch {}
+      }
+      const conn = connList.find((c) => c.id === connId);
+      const isMySQL = (conn?.driver || tab.driver) === 'mysql';
       const targetDb = tab.database || conn?.databaseName || 'main';
-      const targetSchema = tab.schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
+      const targetSchema = tab.schema || ((conn?.driver || tab.driver) === 'postgres' ? 'public' : targetDb);
 
       // 1. Fetch table structure for primary keys & detailed column definitions (size, nullability, comment, etc.)
       let primaryKeys: string[] = tableDataByTab[tab.id]?.primaryKeys || [];
@@ -340,9 +351,9 @@ export function App() {
 
       const quotedTable = isMySQL ? `\`${tab.table}\`` : `"${tab.table}"`;
       const fullTablePath =
-        conn?.driver === 'mysql' && targetDb && targetDb !== 'main'
+        isMySQL && targetDb && targetDb !== 'main'
           ? `\`${targetDb}\`.\`${tab.table}\``
-          : conn?.driver === 'postgres' && targetSchema
+          : (conn?.driver || tab.driver) === 'postgres' && targetSchema
           ? `"${targetSchema}"."${tab.table}"`
           : quotedTable;
 
