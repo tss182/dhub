@@ -14,8 +14,12 @@ import {
   Sparkles,
   Database,
   ChevronDown,
+  Pencil,
+  Save,
+  RefreshCw,
 } from 'lucide-react';
-import { ConnectionConfig } from '../../types/domain';
+import { ConnectionConfig, ColumnMeta } from '../../types/domain';
+import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
@@ -24,6 +28,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 export interface ColumnDefinition {
   id: string;
   name: string;
+  originalName?: string;
   dataType: string;
   lengthOrValues: string;
   isPrimaryKey: boolean;
@@ -42,19 +47,23 @@ export interface IndexColumnConfig {
 export interface IndexDefinition {
   id: string;
   name: string;
+  originalName?: string;
   type: 'INDEX' | 'UNIQUE' | 'FULLTEXT' | 'SPATIAL';
   method: string;
   columns: IndexColumnConfig[];
   comment?: string;
 }
 
-interface CreateTableModalProps {
+export interface CreateTableModalProps {
   isOpen: boolean;
+  mode?: 'create' | 'edit';
+  initialTableName?: string;
   connection: ConnectionConfig | null;
   database: string;
   schema?: string;
   onClose: () => void;
   onTableCreated?: (tableName: string) => void;
+  onTableUpdated?: (tableName: string) => void;
 }
 
 interface TypeGroup {
@@ -379,14 +388,307 @@ const AddColumnToIndexDropdown: React.FC<AddColumnToIndexDropdownProps> = ({ col
   );
 };
 
+function parseColumnType(typeStr: string): { baseType: string; lengthOrValues: string } {
+  if (!typeStr) return { baseType: 'VARCHAR', lengthOrValues: '255' };
+  const clean = typeStr.trim();
+  const parenIdx = clean.indexOf('(');
+  if (parenIdx !== -1) {
+    const closeParenIdx = clean.lastIndexOf(')');
+    const base = clean.substring(0, parenIdx).trim().toUpperCase();
+    const lenOrVals = closeParenIdx > parenIdx ? clean.substring(parenIdx + 1, closeParenIdx).trim() : '';
+    return { baseType: base, lengthOrValues: lenOrVals };
+  }
+  const parts = clean.split(/\s+/);
+  return { baseType: parts[0].toUpperCase(), lengthOrValues: '' };
+}
+
+function generateAlterSql({
+  driver,
+  database,
+  targetSchema,
+  initialTableName,
+  newTableName,
+  originalColumns,
+  columns,
+  originalIndexes,
+  indexes,
+  originalPrimaryKeys,
+  originalTableComment,
+  tableComment,
+}: {
+  driver: string;
+  database: string;
+  targetSchema: string;
+  initialTableName: string;
+  newTableName: string;
+  originalColumns: ColumnMeta[];
+  columns: ColumnDefinition[];
+  originalIndexes: IndexMeta[];
+  indexes: IndexDefinition[];
+  originalPrimaryKeys: string[];
+  originalTableComment: string;
+  tableComment: string;
+}): string {
+  const statements: string[] = [];
+  const cleanTable = newTableName.trim() || initialTableName;
+  const isMySQL = driver === 'mysql';
+  const isPostgres = driver === 'postgres';
+
+  const dbPrefix = isMySQL && database && database !== 'main' ? `\`${database}\`.` : '';
+  const schemaPrefix = isPostgres && targetSchema ? `"${targetSchema}".` : '';
+  const tableTarget = isMySQL
+    ? `${dbPrefix}\`${initialTableName}\``
+    : isPostgres
+    ? `${schemaPrefix}"${initialTableName}"`
+    : `"${initialTableName}"`;
+
+  const validNewCols = columns.filter((c) => c.name.trim().length > 0);
+
+  if (isMySQL) {
+    // A. Dropped columns
+    originalColumns.forEach((orig) => {
+      const stillExists = validNewCols.some(
+        (c) => c.originalName === orig.name || c.name.trim().toLowerCase() === orig.name.toLowerCase()
+      );
+      if (!stillExists) {
+        statements.push(`ALTER TABLE ${tableTarget} DROP COLUMN \`${orig.name}\`;`);
+      }
+    });
+
+    // B. Added & Changed columns
+    validNewCols.forEach((col) => {
+      const colName = col.name.trim();
+      let colDef = `\`${colName}\` ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) {
+        colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (col.isNotNull || col.isPrimaryKey) {
+        colDef += ' NOT NULL';
+      } else {
+        colDef += ' NULL';
+      }
+      if (col.isAutoIncrement) {
+        colDef += ' AUTO_INCREMENT';
+      }
+      if (col.defaultValue.trim()) {
+        const val = col.defaultValue.trim();
+        if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
+          colDef += ` DEFAULT ${val}`;
+        } else if (val.startsWith("'") && val.endsWith("'")) {
+          colDef += ` DEFAULT ${val}`;
+        } else {
+          colDef += ` DEFAULT '${val}'`;
+        }
+      }
+      if (col.comment.trim()) {
+        colDef += ` COMMENT '${col.comment.trim().replace(/'/g, "\\'")}'`;
+      }
+
+      const origMatch = originalColumns.find(
+        (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
+      );
+
+      if (!origMatch) {
+        statements.push(`ALTER TABLE ${tableTarget} ADD COLUMN ${colDef};`);
+      } else {
+        const origParsed = parseColumnType(origMatch.dataType);
+        const nameChanged = origMatch.name !== colName;
+        const typeChanged =
+          origParsed.baseType !== col.dataType.toUpperCase() ||
+          origParsed.lengthOrValues !== col.lengthOrValues.trim();
+        const nullChanged = origMatch.isNullable === col.isNotNull;
+        const autoIncrChanged = Boolean(origMatch.isAutoIncrement) !== Boolean(col.isAutoIncrement);
+        const defaultChanged = (origMatch.defaultValue || '') !== col.defaultValue.trim();
+        const commentChanged = (origMatch.comment || '') !== col.comment.trim();
+
+        if (nameChanged || typeChanged || nullChanged || autoIncrChanged || defaultChanged || commentChanged) {
+          statements.push(`ALTER TABLE ${tableTarget} CHANGE COLUMN \`${origMatch.name}\` ${colDef};`);
+        }
+      }
+    });
+
+    // C. Primary Keys
+    const newPKs = validNewCols.filter((c) => c.isPrimaryKey).map((c) => c.name.trim());
+    const origPKs = [...originalPrimaryKeys];
+    const pksChanged =
+      newPKs.length !== origPKs.length ||
+      !newPKs.every((name) => origPKs.includes(name)) ||
+      !origPKs.every((name) => newPKs.includes(name));
+
+    if (pksChanged) {
+      if (origPKs.length > 0) {
+        statements.push(`ALTER TABLE ${tableTarget} DROP PRIMARY KEY;`);
+      }
+      if (newPKs.length > 0) {
+        statements.push(`ALTER TABLE ${tableTarget} ADD PRIMARY KEY (${newPKs.map((k) => `\`${k}\``).join(', ')});`);
+      }
+    }
+
+    // D. Indexes
+    const origNonPKIdxs = originalIndexes.filter((idx) => !idx.isPrimary && idx.name !== 'PRIMARY');
+    origNonPKIdxs.forEach((origIdx) => {
+      const stillExists = indexes.some(
+        (idx) => idx.originalName === origIdx.name || idx.name.trim() === origIdx.name
+      );
+      if (!stillExists) {
+        statements.push(`ALTER TABLE ${tableTarget} DROP INDEX \`${origIdx.name}\`;`);
+      }
+    });
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validNewCols.some((nc) => nc.name.trim() === c.name.trim()));
+      if (validCols.length === 0) return;
+
+      const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+      const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+
+      const colParts = validCols
+        .map((c) => {
+          let part = `\`${c.name.trim()}\``;
+          if (c.length && c.length.trim()) part += `(${c.length.trim()})`;
+          if (c.order === 'DESC') part += ' DESC';
+          return part;
+        })
+        .join(', ');
+
+      let idxKeyword = 'KEY';
+      if (idx.type === 'UNIQUE') idxKeyword = 'UNIQUE KEY';
+      else if (idx.type === 'FULLTEXT') idxKeyword = 'FULLTEXT KEY';
+      else if (idx.type === 'SPATIAL') idxKeyword = 'SPATIAL KEY';
+
+      let idxDef = `ADD ${idxKeyword} \`${idxName}\` (${colParts})`;
+      if (idx.method && (idx.method === 'BTREE' || idx.method === 'HASH')) {
+        idxDef += ` USING ${idx.method}`;
+      }
+      if (idx.comment && idx.comment.trim()) {
+        idxDef += ` COMMENT '${idx.comment.trim().replace(/'/g, "\\'")}'`;
+      }
+
+      const origIdxMatch = origNonPKIdxs.find(
+        (o) => o.name === idx.originalName || o.name === idx.name.trim()
+      );
+
+      if (!origIdxMatch) {
+        statements.push(`ALTER TABLE ${tableTarget} ${idxDef};`);
+      } else {
+        const colsMatch =
+          origIdxMatch.columns &&
+          origIdxMatch.columns.length === validCols.length &&
+          origIdxMatch.columns.every((c, i) => c === validCols[i].name.trim());
+        const nameMatch = origIdxMatch.name === idxName;
+        const typeMatch = (origIdxMatch.isUnique ? 'UNIQUE' : 'INDEX') === idx.type;
+
+        if (!colsMatch || !nameMatch || !typeMatch) {
+          statements.push(`ALTER TABLE ${tableTarget} DROP INDEX \`${origIdxMatch.name}\`;`);
+          statements.push(`ALTER TABLE ${tableTarget} ${idxDef};`);
+        }
+      }
+    });
+
+    if (tableComment.trim() !== (originalTableComment || '').trim()) {
+      statements.push(`ALTER TABLE ${tableTarget} COMMENT = '${tableComment.trim().replace(/'/g, "\\'")}';`);
+    }
+
+    if (cleanTable !== initialTableName) {
+      statements.push(`ALTER TABLE ${tableTarget} RENAME TO \`${cleanTable}\`;`);
+    }
+  } else if (isPostgres) {
+    originalColumns.forEach((orig) => {
+      const stillExists = validNewCols.some(
+        (c) => c.originalName === orig.name || c.name.trim().toLowerCase() === orig.name.toLowerCase()
+      );
+      if (!stillExists) {
+        statements.push(`ALTER TABLE ${tableTarget} DROP COLUMN "${orig.name}";`);
+      }
+    });
+
+    validNewCols.forEach((col) => {
+      const colName = col.name.trim();
+      const origMatch = originalColumns.find(
+        (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
+      );
+      let colDef = `"${colName}" ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) colDef += `(${col.lengthOrValues.trim()})`;
+
+      if (!origMatch) {
+        if (col.isNotNull || col.isPrimaryKey) colDef += ' NOT NULL';
+        if (col.defaultValue.trim()) colDef += ` DEFAULT ${col.defaultValue.trim()}`;
+        statements.push(`ALTER TABLE ${tableTarget} ADD COLUMN ${colDef};`);
+      } else {
+        if (origMatch.name !== colName) {
+          statements.push(`ALTER TABLE ${tableTarget} RENAME COLUMN "${origMatch.name}" TO "${colName}";`);
+        }
+        if (origMatch.dataType.toUpperCase() !== col.dataType.toUpperCase()) {
+          statements.push(`ALTER TABLE ${tableTarget} ALTER COLUMN "${colName}" TYPE ${col.dataType.toUpperCase()};`);
+        }
+        if (origMatch.isNullable === col.isNotNull) {
+          statements.push(
+            `ALTER TABLE ${tableTarget} ALTER COLUMN "${colName}" ${col.isNotNull ? 'SET NOT NULL' : 'DROP NOT NULL'};`
+          );
+        }
+      }
+    });
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validNewCols.some((nc) => nc.name.trim() === c.name.trim()));
+      if (validCols.length === 0) return;
+      const idxName = idx.name.trim() || `idx_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+      const uniqueKw = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+      const methodKw = idx.method ? ` USING ${idx.method}` : '';
+      const cols = validCols.map((c) => `"${c.name.trim()}" ${c.order}`).join(', ');
+      statements.push(`CREATE ${uniqueKw}INDEX IF NOT EXISTS "${idxName}" ON ${tableTarget}${methodKw} (${cols});`);
+    });
+
+    if (cleanTable !== initialTableName) {
+      statements.push(`ALTER TABLE ${tableTarget} RENAME TO "${cleanTable}";`);
+    }
+  } else {
+    validNewCols.forEach((col) => {
+      const colName = col.name.trim();
+      const origMatch = originalColumns.find(
+        (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
+      );
+      if (!origMatch) {
+        let colDef = `"${colName}" ${col.dataType.toUpperCase()}`;
+        if (col.isNotNull || col.isPrimaryKey) colDef += ' NOT NULL DEFAULT ""';
+        statements.push(`ALTER TABLE "${initialTableName}" ADD COLUMN ${colDef};`);
+      } else if (origMatch.name !== colName) {
+        statements.push(`ALTER TABLE "${initialTableName}" RENAME COLUMN "${origMatch.name}" TO "${colName}";`);
+      }
+    });
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim());
+      if (validCols.length === 0) return;
+      const idxName = idx.name.trim() || `idx_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+      const uniqueKw = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+      const cols = validCols.map((c) => `"${c.name.trim()}" ${c.order}`).join(', ');
+      statements.push(`CREATE ${uniqueKw}INDEX IF NOT EXISTS "${idxName}" ON "${cleanTable}" (${cols});`);
+    });
+
+    if (cleanTable !== initialTableName) {
+      statements.push(`ALTER TABLE "${initialTableName}" RENAME TO "${cleanTable}";`);
+    }
+  }
+
+  if (statements.length === 0) {
+    return `-- No changes detected for table "${initialTableName}"`;
+  }
+  return statements.join('\n');
+}
+
 export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   isOpen,
+  mode = 'create',
+  initialTableName = '',
   connection,
   database,
   schema,
   onClose,
   onTableCreated,
+  onTableUpdated,
 }) => {
+  const isEditMode = mode === 'edit';
   const [tableName, setTableName] = useState('');
   const [tableComment, setTableComment] = useState('');
   const [engine, setEngine] = useState('InnoDB');
@@ -398,6 +700,13 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [showSqlPreview, setShowSqlPreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
+
+  // States for Edit Mode tracking
+  const [originalColumns, setOriginalColumns] = useState<ColumnMeta[]>([]);
+  const [originalIndexes, setOriginalIndexes] = useState<IndexMeta[]>([]);
+  const [originalPrimaryKeys, setOriginalPrimaryKeys] = useState<string[]>([]);
+  const [originalTableComment, setOriginalTableComment] = useState('');
+  const [isLoadingStructure, setIsLoadingStructure] = useState(false);
 
   const driver = connection?.driver || 'mysql';
   const targetSchema = schema || (driver === 'postgres' ? 'public' : database);
@@ -438,20 +747,117 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     ];
   }, [driver]);
 
-  // Reset and initialize with 1 empty column row when modal opens
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+
+    setShowSqlPreview(false);
+    setCopiedSql(false);
+    setActiveSubTab('columns');
+
+    if (isEditMode && initialTableName && connection) {
+      setIsLoadingStructure(true);
+      setTableName(initialTableName);
+      SchemaService.GetTableStructure(
+        connection.id,
+        database || connection.databaseName || 'main',
+        targetSchema,
+        initialTableName
+      )
+        .then((structure) => {
+          if (!structure) return;
+          if (structure.engine) setEngine(structure.engine);
+          if (structure.collation) setCollation(structure.collation);
+          const cmt = structure.comment || '';
+          setTableComment(cmt);
+          setOriginalTableComment(cmt);
+
+          const cols = structure.columns || [];
+          setOriginalColumns(cols);
+          const pks = structure.primaryKeys || [];
+          setOriginalPrimaryKeys(pks);
+
+          const mappedCols: ColumnDefinition[] = cols.map((col, idx) => {
+            const parsed = parseColumnType(col.dataType);
+            return {
+              id: 'col-' + idx + '-' + col.name,
+              name: col.name,
+              originalName: col.name,
+              dataType: parsed.baseType,
+              lengthOrValues: parsed.lengthOrValues,
+              isPrimaryKey: Boolean(col.isPrimaryKey || pks.includes(col.name)),
+              isAutoIncrement: Boolean(col.isAutoIncrement),
+              isNotNull: !col.isNullable,
+              defaultValue: col.defaultValue || '',
+              comment: col.comment || '',
+            };
+          });
+          setColumns(
+            mappedCols.length > 0
+              ? mappedCols
+              : [
+                  {
+                    id: 'col-1',
+                    name: '',
+                    dataType: driver === 'sqlite' ? 'INTEGER' : driver === 'postgres' ? 'BIGINT' : 'INT',
+                    lengthOrValues: '',
+                    isPrimaryKey: false,
+                    isAutoIncrement: false,
+                    isNotNull: false,
+                    defaultValue: '',
+                    comment: '',
+                  },
+                ]
+          );
+
+          const idxs = (structure.indexes || []).filter(
+            (idx) => !idx.isPrimary && idx.name !== 'PRIMARY'
+          );
+          setOriginalIndexes(idxs);
+          const mappedIdxs: IndexDefinition[] = idxs.map((idx, i) => {
+            let idxType: 'INDEX' | 'UNIQUE' | 'FULLTEXT' | 'SPATIAL' = 'INDEX';
+            if (idx.isUnique) idxType = 'UNIQUE';
+            else if (idx.type === 'FULLTEXT') idxType = 'FULLTEXT';
+            else if (idx.type === 'SPATIAL') idxType = 'SPATIAL';
+
+            return {
+              id: 'idx-' + i + '-' + idx.name,
+              name: idx.name,
+              originalName: idx.name,
+              type: idxType,
+              method: idx.method ? idx.method.toUpperCase() : 'BTREE',
+              columns: (idx.columns || []).map((colName) => ({
+                name: colName,
+                order: 'ASC',
+                length: '',
+              })),
+              comment: idx.comment || '',
+            };
+          });
+          setIndexes(mappedIdxs);
+        })
+        .catch((err) => {
+          console.error('Failed to load table structure:', err);
+          alertError(
+            err?.message || 'Failed to fetch table structure',
+            'Error Loading Structure'
+          );
+        })
+        .finally(() => {
+          setIsLoadingStructure(false);
+        });
+    } else {
       setTableName('');
       setTableComment('');
       setEngine('InnoDB');
       setCharset('utf8mb4');
       setCollation('utf8mb4_unicode_ci');
-      setShowSqlPreview(false);
-      setCopiedSql(false);
       setIndexes([]);
-      setActiveSubTab('columns');
+      setOriginalColumns([]);
+      setOriginalIndexes([]);
+      setOriginalPrimaryKeys([]);
+      setOriginalTableComment('');
+      setIsLoadingStructure(false);
 
-      // Default column is empty as requested: "colom default kosong"
       setColumns([
         {
           id: 'col-1',
@@ -466,7 +872,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         },
       ]);
     }
-  }, [isOpen, driver]);
+  }, [isOpen, isEditMode, initialTableName, connection, database, targetSchema, driver]);
 
   // Handle ESC key
   useEffect(() => {
@@ -644,6 +1050,23 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
   // Generate DDL SQL string with complete composite indexing support
   const generatedSql = useMemo(() => {
+    if (isEditMode) {
+      return generateAlterSql({
+        driver,
+        database,
+        targetSchema,
+        initialTableName,
+        newTableName: tableName,
+        originalColumns,
+        columns,
+        originalIndexes,
+        indexes,
+        originalPrimaryKeys,
+        originalTableComment,
+        tableComment,
+      });
+    }
+
     const cleanTable = tableName.trim();
     if (!cleanTable) {
       return '-- Enter table name to generate DDL statement';
@@ -844,7 +1267,24 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
       return statements.join('\n\n');
     }
-  }, [tableName, columns, indexes, database, targetSchema, engine, charset, collation, tableComment, driver]);
+  }, [
+    tableName,
+    columns,
+    indexes,
+    database,
+    targetSchema,
+    engine,
+    charset,
+    collation,
+    tableComment,
+    driver,
+    isEditMode,
+    initialTableName,
+    originalColumns,
+    originalIndexes,
+    originalPrimaryKeys,
+    originalTableComment,
+  ]);
 
   const handleCopySql = () => {
     if (!generatedSql) return;
@@ -853,8 +1293,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     setTimeout(() => setCopiedSql(false), 1500);
   };
 
-  const handleCreateTable = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateTable = async () => {
     if (!connection) return;
 
     const cleanTable = tableName.trim();
@@ -942,6 +1381,98 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     }
   };
 
+  const handleEditTable = async () => {
+    if (!connection) return;
+    const cleanTable = tableName.trim();
+    if (!cleanTable) {
+      alertWarning('Please enter a valid table name.', 'Missing Table Name');
+      return;
+    }
+
+    if (!generatedSql || generatedSql.startsWith('-- No changes')) {
+      alertWarning('No structure changes detected to apply.', 'No Changes');
+      return;
+    }
+
+    // Validate column names
+    const validCols = columns.filter((c) => c.name.trim().length > 0);
+    if (validCols.length === 0) {
+      alertWarning('Please define at least one column with a valid name.', 'Missing Column Names');
+      return;
+    }
+
+    // Check for duplicate column names
+    const nameSet = new Set<string>();
+    for (const c of validCols) {
+      const lower = c.name.trim().toLowerCase();
+      if (nameSet.has(lower)) {
+        alertWarning(`Duplicate column name detected: "${c.name.trim()}".`, 'Duplicate Column Name');
+        return;
+      }
+      nameSet.add(lower);
+    }
+
+    setIsSubmitting(true);
+    try {
+      const execId = 'alter-table-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: connection.id,
+        database: database || connection.databaseName || 'main',
+        schema: targetSchema,
+        sql: generatedSql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      // Refresh database objects in Explorer
+      const schemaKey = `${connection.id}:${database}:${targetSchema}`;
+      try {
+        const objects = await SchemaService.GetObjects(connection.id, database, targetSchema);
+        if (objects) {
+          useConnectionStore.getState().setTreeObjects(schemaKey, objects as any);
+        }
+      } catch {}
+
+      // Refresh workbench table tab if open
+      const workbenchTabs = useWorkbenchStore.getState().tabs;
+      const matchingTab = workbenchTabs.find(
+        (t) => t.type === 'table_data' && (t.table === initialTableName || t.table === cleanTable)
+      );
+      if (matchingTab) {
+        if (cleanTable !== initialTableName) {
+          useWorkbenchStore.getState().renameTab(matchingTab.id, cleanTable);
+        }
+        useWorkbenchStore.getState().refreshTab(matchingTab.id);
+      }
+
+      alertSuccess(
+        `Structure for table "${cleanTable}" has been updated successfully.`,
+        'Table Structure Updated'
+      );
+
+      onTableUpdated?.(cleanTable);
+      onClose();
+    } catch (err: any) {
+      alertError(
+        err?.message || String(err),
+        'Failed to Update Table Structure',
+        generatedSql
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isEditMode) {
+      await handleEditTable();
+    } else {
+      await handleCreateTable();
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -958,11 +1489,16 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         <div className="flex h-14 items-center justify-between border-b border-[#272932] px-6 bg-[#16171f] shrink-0">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
-              <Table className="h-5 w-5" />
+              {isEditMode ? <Pencil className="h-4 w-4" /> : <Table className="h-5 w-5" />}
             </div>
             <div>
               <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <span>Create New Table</span>
+                <span>{isEditMode ? 'Edit Table Structure' : 'Create New Table'}</span>
+                {isEditMode && initialTableName && (
+                  <span className="font-mono text-xs px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/50">
+                    {initialTableName}
+                  </span>
+                )}
               </h2>
               <div className="flex items-center gap-2 text-[11px] text-zinc-400 font-mono">
                 <span className="flex items-center gap-1 text-zinc-300">
@@ -993,7 +1529,13 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <form onSubmit={handleCreateTable} className="flex-1 flex flex-col min-h-0">
+        {isLoadingStructure ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400">
+            <RefreshCw className="h-6 w-6 animate-spin text-emerald-400" />
+            <span className="text-xs">Loading structure for table &ldquo;{initialTableName}&rdquo;...</span>
+          </div>
+        ) : (
+          <form onSubmit={handleSave} className="flex-1 flex flex-col min-h-0">
           {/* Top Bar: Table Name & Options */}
           <div className="p-5 border-b border-[#272932] bg-[#181920]/70 flex flex-wrap items-center gap-4 shrink-0">
             {/* Table Name */}
@@ -1591,13 +2133,18 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
               <button
                 type="submit"
-                disabled={isSubmitting || !tableName.trim()}
+                disabled={isSubmitting || !tableName.trim() || isLoadingStructure}
                 className="flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:pointer-events-none text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
               >
                 {isSubmitting ? (
                   <>
                     <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    <span>Creating Table...</span>
+                    <span>{isEditMode ? 'Saving Changes...' : 'Creating Table...'}</span>
+                  </>
+                ) : isEditMode ? (
+                  <>
+                    <Check className="h-3.5 w-3.5" />
+                    <span>Save Changes</span>
                   </>
                 ) : (
                   <>
@@ -1609,7 +2156,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
             </div>
           </div>
         </form>
+        )}
       </div>
     </div>
   );
 };
+
+export { CreateTableModal as TableStructureModal };

@@ -35,6 +35,9 @@ export interface IndexMeta {
     "columns": string[] | null;
     "isUnique": boolean;
     "isPrimary": boolean;
+    "type"?: string;
+    "method"?: string;
+    "comment"?: string;
 }
 
 export interface ObjectSummary {
@@ -102,4 +105,7 @@ export interface TableStructure {
     "foreignKeys": ForeignKeyMeta[] | null;
     "indexes": IndexMeta[] | null;
     "ddl": string;
+    "engine"?: string;
+    "collation"?: string;
+    "comment"?: string;
 }
