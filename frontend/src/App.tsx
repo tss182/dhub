@@ -822,7 +822,7 @@ export function App() {
         loadTableData(activeTab);
       }
     } catch (e: any) {
-      alert('Submit failed: ' + (e?.message || String(e)));
+      alert('Apply failed: ' + (e?.message || String(e)));
     }
   };
 
@@ -887,7 +887,7 @@ export function App() {
           <button
             onClick={() => useSettingsStore.getState().openSettings()}
             className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
-            title="Open Settings & Preferences (Ctrl+,)"
+            title={`Open Settings & Preferences (${isMac ? 'Cmd+,' : 'Ctrl+,'})`}
           >
             <SettingsIcon className="h-3.5 w-3.5" />
             <span>Settings</span>
@@ -1471,7 +1471,7 @@ export function App() {
                 }}
                 className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm"
               >
-                Execute DML
+                Apply Changes
               </button>
             </div>
           </div>
