@@ -42,7 +42,48 @@ function debouncedSaveWorksheet(record: ConsoleRecord, delayMs = 400) {
   }, delayMs);
 }
 
-// Flush pending console saves when window is closing
+const TAB_STORAGE_KEY = 'dhub_open_tabs';
+const ACTIVE_TAB_STORAGE_KEY = 'dhub_active_tab_id';
+
+function getSavedTabs(): { tabs: WorkbenchTab[]; activeTabId: string | null } {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { tabs: [], activeTabId: null };
+  }
+  try {
+    const savedTabsRaw = localStorage.getItem(TAB_STORAGE_KEY);
+    const savedActiveId = localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
+    if (!savedTabsRaw) {
+      return { tabs: [], activeTabId: null };
+    }
+    const parsed = JSON.parse(savedTabsRaw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return { tabs: [], activeTabId: null };
+    }
+    const activeId = parsed.some((t: any) => t && t.id === savedActiveId)
+      ? savedActiveId
+      : parsed[0]?.id || null;
+    return { tabs: parsed, activeTabId: activeId };
+  } catch (e) {
+    console.warn('Failed to parse saved tabs from localStorage:', e);
+    return { tabs: [], activeTabId: null };
+  }
+}
+
+function saveTabsToStorage(tabs: WorkbenchTab[], activeTabId: string | null) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(tabs));
+    if (activeTabId) {
+      localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
+    } else {
+      localStorage.removeItem(ACTIVE_TAB_STORAGE_KEY);
+    }
+  } catch (e) {
+    console.warn('Failed to persist tabs to localStorage:', e);
+  }
+}
+
+// Flush pending console saves and tabs state when window is closing
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     for (const id of Object.keys(contentSaveTimeouts)) {
@@ -53,6 +94,8 @@ if (typeof window !== 'undefined') {
         persistWorksheet(target);
       }
     }
+    const { tabs, activeTabId } = useWorkbenchStore.getState();
+    saveTabsToStorage(tabs, activeTabId);
   });
 }
 
@@ -101,9 +144,11 @@ interface WorkbenchState {
   setConnectionDialogOpen: (open: boolean, editingId?: string | null) => void;
 }
 
+const initialTabState = getSavedTabs();
+
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
-  tabs: [],
-  activeTabId: null,
+  tabs: initialTabState.tabs,
+  activeTabId: initialTabState.activeTabId,
   activeBottomTab: 'result',
   isBottomPanelOpen: true,
   isRightPanelOpen: true,
@@ -128,28 +173,30 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
           updatedAt: w.updatedAt ? new Date(w.updatedAt).getTime() : Date.now(),
         }));
 
-        const { tabs, activeTabId } = get();
-        let nextTabs = tabs;
-        let nextActiveId = activeTabId;
+        const { tabs } = get();
 
-        // If tabs are empty, restore all saved consoles as tabs with the first one active
-        if (tabs.length === 0 && loaded.length > 0) {
-          nextTabs = loaded.map((c) => ({
-            id: c.id,
-            type: 'worksheet' as const,
-            title: c.title,
-            connectionId: c.connectionId,
-            database: c.database,
-            schema: c.schema,
-            content: c.content,
-          }));
-          nextActiveId = loaded[0].id;
-        }
+        // If user already had open worksheet tabs, sync their latest contents & titles from SQLite
+        const updatedTabs = tabs.map((t) => {
+          if (t.type === 'worksheet') {
+            const match = loaded.find((c) => c.id === t.id);
+            if (match) {
+              return {
+                ...t,
+                title: match.title,
+                content: match.content,
+                database: match.database || t.database,
+                schema: match.schema || t.schema,
+                connectionId: match.connectionId || t.connectionId,
+              };
+            }
+          }
+          return t;
+        });
 
+        // NOTE: If tabs was empty on startup, keep it empty. Do not force-open all consoles!
         set({
           consoles: loaded,
-          tabs: nextTabs,
-          activeTabId: nextActiveId,
+          tabs: updatedTabs,
           hasLoadedConsoles: true,
         });
       } else {
@@ -408,3 +455,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   setConnectionDialogOpen: (isConnectionDialogOpen, editingConnectionId = null) =>
     set({ isConnectionDialogOpen, editingConnectionId }),
 }));
+
+// Automatically persist open tabs and active tab to localStorage on any state changes
+if (typeof window !== 'undefined') {
+  useWorkbenchStore.subscribe((state) => {
+    saveTabsToStorage(state.tabs, state.activeTabId);
+  });
+}
