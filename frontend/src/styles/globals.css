@@ -51,6 +51,10 @@
 
 /* Select & Options dark defaults */
 select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-color: #101115;
   color: #ffffff;
 }
 select option,
