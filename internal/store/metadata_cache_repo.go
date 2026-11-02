@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 
@@ -72,14 +73,23 @@ func (s *LocalStore) GetCachedObjects(ctx context.Context, connectionID, databas
 
 func (s *LocalStore) SearchEverywhere(ctx context.Context, connectionID, queryStr string, limit int) ([]CachedObject, error) {
 	if limit <= 0 {
-		limit = 30
+		limit = 50
 	}
-	query := `SELECT connection_id, database_name, schema_name, object_type, object_name, columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
-		FROM schema_cache WHERE connection_id = ? AND (object_name LIKE ? OR columns_json LIKE ?)
-		LIMIT ?`
-
 	likeQuery := "%" + queryStr + "%"
-	rows, err := s.db.QueryContext(ctx, query, connectionID, likeQuery, likeQuery, limit)
+	var rows *sql.Rows
+	var err error
+
+	if connectionID != "" {
+		query := `SELECT connection_id, database_name, schema_name, object_type, object_name, columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
+			FROM schema_cache WHERE connection_id = ? AND (object_name LIKE ? OR columns_json LIKE ?)
+			ORDER BY object_name ASC LIMIT ?`
+		rows, err = s.db.QueryContext(ctx, query, connectionID, likeQuery, likeQuery, limit)
+	} else {
+		query := `SELECT connection_id, database_name, schema_name, object_type, object_name, columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
+			FROM schema_cache WHERE (object_name LIKE ? OR columns_json LIKE ?)
+			ORDER BY object_name ASC LIMIT ?`
+		rows, err = s.db.QueryContext(ctx, query, likeQuery, likeQuery, limit)
+	}
 	if err != nil {
 		return nil, err
 	}

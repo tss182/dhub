@@ -96,7 +96,7 @@ func (s *SchemaService) GetCachedSchema(connectionID, database, schema string) (
 }
 
 func (s *SchemaService) SearchEverywhere(connectionID, query string) ([]store.CachedObject, error) {
-	return s.store.SearchEverywhere(context.Background(), connectionID, query, 30)
+	return s.store.SearchEverywhere(context.Background(), connectionID, query, 100)
 }
 
 func (s *SchemaService) RefreshSchema(connectionID, database, schema string) (string, error) {

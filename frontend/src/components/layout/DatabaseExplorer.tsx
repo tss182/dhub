@@ -619,9 +619,9 @@ export const DatabaseExplorer: React.FC = () => {
                     )}
                     <span
                       className="h-2 w-2 rounded-full shrink-0"
-                      style={{ backgroundColor: c.colorTag || '#3b82f6' }}
+                      style={{ backgroundColor: c.colorTag || '#71717a' }}
                     />
-                    <Database className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                    <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                     <span className="truncate">{c.name}</span>
                     <span className="text-[9px] text-zinc-500 font-mono uppercase bg-[#14151a] px-1 rounded shrink-0">
                       {c.driver}
@@ -759,7 +759,7 @@ export const DatabaseExplorer: React.FC = () => {
                                   })
                                 }
                                 className={`group/db flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
-                                  isDbActive ? 'bg-[#22242c] text-blue-300 font-medium' : ''
+                                  isDbActive ? 'bg-[#22242c] text-zinc-100 font-medium' : ''
                                 }`}
                               >
                                 {isDbExpanded ? (
@@ -768,7 +768,7 @@ export const DatabaseExplorer: React.FC = () => {
                                   <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
                                 )}
                                 <Database
-                                  className={`h-3 w-3 shrink-0 ${isDbActive ? 'text-blue-400' : 'text-zinc-400'}`}
+                                  className="h-3 w-3 shrink-0 text-zinc-400"
                                 />
                                 <span className="truncate flex-1">{dbName}</span>
                                 {filterLower && hasMatchingObject && !dbMatches && (
