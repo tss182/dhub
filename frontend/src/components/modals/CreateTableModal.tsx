@@ -657,9 +657,9 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-150 select-none"
       onClick={onClose}
     >
-      {/* Modal Container: wider width as requested */}
+      {/* Modal Container: wider width and taller height */}
       <div
-        className="w-[96vw] max-w-[1400px] rounded-2xl border border-[#2b2e3a] bg-[#14151a] shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-zinc-200"
+        className="w-[96vw] max-w-[1400px] h-[88vh] min-h-[550px] max-h-[94vh] rounded-2xl border border-[#2b2e3a] bg-[#14151a] shadow-2xl overflow-hidden flex flex-col text-zinc-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
