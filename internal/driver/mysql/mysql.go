@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -191,6 +192,23 @@ func (m *MySQLDriver) GenerateDMLPreview(schema, table string, changes []driver.
 	return statements, nil
 }
 
+var isoDateTimeRegex = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:Z|[+-]\d{2}:?\d{2})?$`)
+
+func normalizeMySQLValue(v any) any {
+	if v == nil {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return v
+	}
+	trimmed := strings.TrimSpace(s)
+	if match := isoDateTimeRegex.FindStringSubmatch(trimmed); len(match) == 3 {
+		return match[1] + " " + match[2]
+	}
+	return v
+}
+
 func (m *MySQLDriver) ApplyChanges(ctx context.Context, schema, table string, changes []driver.RowChange) (int64, error) {
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -213,7 +231,7 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, schema, table string, ch
 			for k, v := range c.Changes {
 				cols = append(cols, fmt.Sprintf("`%s`", k))
 				placeholders = append(placeholders, "?")
-				vals = append(vals, v)
+				vals = append(vals, normalizeMySQLValue(v))
 			}
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 			if len(cols) == 0 {
@@ -230,12 +248,12 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, schema, table string, ch
 			vals := []any{}
 			for k, v := range c.Changes {
 				sets = append(sets, fmt.Sprintf("`%s` = ?", k))
-				vals = append(vals, v)
+				vals = append(vals, normalizeMySQLValue(v))
 			}
 			where := []string{}
 			for k, v := range c.PrimaryKey {
 				where = append(where, fmt.Sprintf("`%s` = ?", k))
-				vals = append(vals, v)
+				vals = append(vals, normalizeMySQLValue(v))
 			}
 			stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -249,7 +267,7 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, schema, table string, ch
 			vals := []any{}
 			for k, v := range c.PrimaryKey {
 				where = append(where, fmt.Sprintf("`%s` = ?", k))
-				vals = append(vals, v)
+				vals = append(vals, normalizeMySQLValue(v))
 			}
 			stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", prefix, strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -268,6 +286,7 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, schema, table string, ch
 }
 
 func formatSQLVal(v any) string {
+	v = normalizeMySQLValue(v)
 	if v == nil {
 		return "NULL"
 	}

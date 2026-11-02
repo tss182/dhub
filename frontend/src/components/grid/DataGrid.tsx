@@ -108,18 +108,24 @@ function normalizeDateCommitValue(val: string, inputType: 'date' | 'datetime-loc
   if (!trimmed) return null;
 
   if (inputType === 'datetime-local') {
-    let s = trimmed.replace('T', ' ');
+    let s = trimmed.replace('T', ' ').replace(/Z$/, '').trim();
+    s = s.replace(/([+-]\d{2}:?\d{2})$/, '').trim();
     if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) {
       s += ':00';
     }
     return s;
   }
   if (inputType === 'date') {
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
     return trimmed;
   }
   if (inputType === 'time') {
-    if (/^\d{2}:\d{2}$/.test(trimmed)) {
-      return trimmed + ':00';
+    const match = trimmed.match(/(\d{2}:\d{2}(?::\d{2})?)/);
+    if (match) {
+      let t = match[1];
+      if (/^\d{2}:\d{2}$/.test(t)) t += ':00';
+      return t;
     }
     return trimmed;
   }
@@ -457,7 +463,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
       if (staged && staged.type === 'insert') {
         columns.forEach((col) => {
           if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
-            initialValues[col.name] = staged.changes[col.name];
+            const rawVal = staged.changes[col.name];
+            if (rawVal !== undefined && rawVal !== null) {
+              const inputType = getColumnInputType(col.dataType);
+              const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
+              initialValues[col.name] = val !== null ? val : rawVal;
+            }
           }
         });
       }
@@ -468,12 +479,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
         const staged = latestStaged[targetRowIndex];
         columns.forEach((col, idx) => {
           if (!col.isAutoIncrement) {
-            const val =
+            const rawVal =
               staged?.type === 'update' && staged.changes[col.name] !== undefined
                 ? staged.changes[col.name]
                 : sourceRow[idx];
-            if (val !== undefined && val !== null) {
-              initialValues[col.name] = val;
+            if (rawVal !== undefined && rawVal !== null) {
+              const inputType = getColumnInputType(col.dataType);
+              const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
+              initialValues[col.name] = val !== null ? val : rawVal;
             }
           }
         });
@@ -1117,7 +1130,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                             {col.isAutoIncrement ? '(Auto)' : 'NULL'}
                           </span>
                         ) : (
-                          String(displayVal)
+                          colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
                         )}
                       </td>
                     );
@@ -1212,7 +1225,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                           ) : displayVal === null || displayVal === undefined ? (
                             <span className="text-zinc-600 italic">NULL</span>
                           ) : (
-                            String(displayVal)
+                            colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
                           )}
                         </td>
                       );
