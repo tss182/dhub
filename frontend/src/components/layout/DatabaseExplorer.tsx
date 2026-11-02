@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import { ConnectionConfig, ObjectSummary } from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning } from '../../stores/useAlertStore';
-import { CreateTableModal } from '../modals/CreateTableModal';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -58,6 +57,8 @@ export const DatabaseExplorer: React.FC = () => {
     closeTabsMatching,
     refreshTab,
     setConnectionDialogOpen,
+    openCreateTableModal,
+    openEditTableModal,
   } = useWorkbenchStore();
 
   const [filterText, setFilterText] = useState('');
@@ -87,26 +88,8 @@ export const DatabaseExplorer: React.FC = () => {
     collation: 'utf8mb4_unicode_ci',
   });
 
-  // Create Table Dialog state
-  const [createTableModal, setCreateTableModal] = useState<{
-    isOpen: boolean;
-    connection: ConnectionConfig | null;
-    database: string;
-    schema: string;
-  }>({
-    isOpen: false,
-    connection: null,
-    database: '',
-    schema: '',
-  });
-
   const handleOpenCreateTable = (conn: ConnectionConfig, database: string, schema?: string) => {
-    setCreateTableModal({
-      isOpen: true,
-      connection: conn,
-      database: database || conn.databaseName || 'main',
-      schema: schema || (conn.driver === 'postgres' ? 'public' : database || 'main'),
-    });
+    openCreateTableModal(conn, database, schema);
   };
 
   const closeContextMenu = () => {
@@ -460,24 +443,7 @@ export const DatabaseExplorer: React.FC = () => {
   };
 
   const handleEditTableStructure = (conn: ConnectionConfig, db: string, schema: string, tableName: string) => {
-    let sql = '';
-    if (conn.driver === 'mysql') {
-      sql = `-- View Structure & DDL for ${tableName}\nSHOW CREATE TABLE \`${tableName}\`;\nDESCRIBE \`${tableName}\`;\n`;
-    } else if (conn.driver === 'postgres') {
-      sql = `-- Columns structure for ${tableName}\nSELECT column_name, data_type, is_nullable, column_default\nFROM information_schema.columns\nWHERE table_schema = '${schema}' AND table_name = '${tableName}'\nORDER BY ordinal_position;\n`;
-    } else {
-      sql = `-- SQLite Table DDL for ${tableName}\nSELECT sql FROM sqlite_master WHERE name = '${tableName}';\nPRAGMA table_info("${tableName}");\n`;
-    }
-
-    openTab({
-      id: `console-ddl-${Date.now()}`,
-      type: 'worksheet',
-      title: `${tableName}_structure.sql`,
-      connectionId: conn.id,
-      database: db,
-      schema: schema,
-      content: sql,
-    });
+    openEditTableModal(conn, db, schema, tableName);
   };
 
   const handleRefreshTable = async (connId: string, db: string, schema: string, tableName: string) => {
@@ -1140,8 +1106,8 @@ export const DatabaseExplorer: React.FC = () => {
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >
-                <Code2 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Edit Structure (DDL)...</span>
+                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Edit Table Structure...</span>
               </button>
 
               <button
@@ -1365,20 +1331,6 @@ export const DatabaseExplorer: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Create Table Dialog */}
-      <CreateTableModal
-        isOpen={createTableModal.isOpen}
-        connection={createTableModal.connection}
-        database={createTableModal.database}
-        schema={createTableModal.schema}
-        onClose={() => setCreateTableModal((prev) => ({ ...prev, isOpen: false }))}
-        onTableCreated={(tableName) => {
-          if (createTableModal.connection) {
-            handleRefreshDatabase(createTableModal.connection.id, createTableModal.database);
-          }
-        }}
-      />
     </div>
   );
 };

@@ -97,7 +97,25 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		Indexes:     []driver.IndexMeta{},
 	}
 
-	colQuery := `SELECT column_name, data_type, is_nullable, column_key, column_default, extra
+	// 1. Fetch table options (Engine, Collation, Comment)
+	tblQuery := `SELECT engine, table_collation, table_comment
+		FROM information_schema.tables
+		WHERE table_schema = ? AND table_name = ?`
+	var engine, collation, tblComment *string
+	if err := m.db.QueryRowContext(ctx, tblQuery, database, table).Scan(&engine, &collation, &tblComment); err == nil {
+		if engine != nil {
+			structure.Engine = *engine
+		}
+		if collation != nil {
+			structure.Collation = *collation
+		}
+		if tblComment != nil {
+			structure.Comment = *tblComment
+		}
+	}
+
+	// 2. Fetch columns with accurate types, defaults, and comments
+	colQuery := `SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment
 		FROM information_schema.columns
 		WHERE table_schema = ? AND table_name = ?
 		ORDER BY ordinal_position`
@@ -108,9 +126,9 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 	defer rows.Close()
 
 	for rows.Next() {
-		var name, dataType, isNullable, colKey, extra string
-		var dflt *string
-		if err := rows.Scan(&name, &dataType, &isNullable, &colKey, &dflt, &extra); err == nil {
+		var name, colType, dataType, isNullable, colKey, extra string
+		var dflt, colComment *string
+		if err := rows.Scan(&name, &colType, &dataType, &isNullable, &colKey, &dflt, &extra, &colComment); err == nil {
 			isPk := colKey == "PRI"
 			if isPk {
 				structure.PrimaryKeys = append(structure.PrimaryKeys, name)
@@ -119,14 +137,76 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 			if dflt != nil {
 				defVal = *dflt
 			}
+			cmt := ""
+			if colComment != nil {
+				cmt = *colComment
+			}
 			structure.Columns = append(structure.Columns, driver.ColumnMeta{
 				Name:         name,
-				DataType:     dataType,
+				DataType:     colType,
 				RawType:      dataType,
 				IsNullable:   isNullable == "YES",
 				IsPrimaryKey: isPk,
 				IsAutoIncr:   strings.Contains(strings.ToLower(extra), "auto_increment"),
 				DefaultValue: defVal,
+				Comment:      cmt,
+			})
+		}
+	}
+
+	// 3. Fetch Indexes (including composite indexes)
+	idxQuery := `SELECT index_name, non_unique, column_name, seq_in_index, index_type, comment
+		FROM information_schema.statistics
+		WHERE table_schema = ? AND table_name = ?
+		ORDER BY index_name, seq_in_index`
+	idxRows, err := m.db.QueryContext(ctx, idxQuery, database, table)
+	if err == nil {
+		defer idxRows.Close()
+		type rawIdx struct {
+			name     string
+			isUnique bool
+			isPk     bool
+			columns  []string
+			idxType  string
+			comment  string
+		}
+		idxMap := make(map[string]*rawIdx)
+		var idxOrder []string
+
+		for idxRows.Next() {
+			var idxName, colName, idxType string
+			var nonUnique, seq int
+			var idxComment *string
+			if err := idxRows.Scan(&idxName, &nonUnique, &colName, &seq, &idxType, &idxComment); err == nil {
+				if _, exists := idxMap[idxName]; !exists {
+					cmt := ""
+					if idxComment != nil {
+						cmt = *idxComment
+					}
+					idxMap[idxName] = &rawIdx{
+						name:     idxName,
+						isUnique: nonUnique == 0,
+						isPk:     idxName == "PRIMARY",
+						columns:  []string{},
+						idxType:  idxType,
+						comment:  cmt,
+					}
+					idxOrder = append(idxOrder, idxName)
+				}
+				idxMap[idxName].columns = append(idxMap[idxName].columns, colName)
+			}
+		}
+
+		for _, name := range idxOrder {
+			item := idxMap[name]
+			structure.Indexes = append(structure.Indexes, driver.IndexMeta{
+				Name:      item.name,
+				Columns:   item.columns,
+				IsUnique:  item.isUnique,
+				IsPrimary: item.isPk,
+				Type:      item.idxType,
+				Method:    item.idxType,
+				Comment:   item.comment,
 			})
 		}
 	}

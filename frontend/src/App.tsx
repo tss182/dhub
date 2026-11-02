@@ -11,6 +11,7 @@ import { ConnectionDialog } from './components/modals/ConnectionDialog';
 import { SearchEverywhere } from './components/modals/SearchEverywhere';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { AlertModal } from './components/modals/AlertModal';
+import { TableStructureModal } from './components/modals/CreateTableModal';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
@@ -59,6 +60,9 @@ export function App() {
     setSearchEverywhereOpen,
     setConnectionDialogOpen,
     tabRefreshTrigger,
+    tableStructureModal,
+    openEditTableModal,
+    closeTableStructureModal,
   } = useWorkbenchStore();
 
   const {
@@ -1055,6 +1059,22 @@ export function App() {
                   <div className="flex items-center gap-2">
                     <Table className="h-3.5 w-3.5 text-emerald-400" />
                     <span className="font-semibold text-xs text-white">{activeTab.table}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                        openEditTableModal(
+                          conn,
+                          activeTab.database || 'main',
+                          activeTab.schema || 'main',
+                          activeTab.table
+                        );
+                      }}
+                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                      title="Edit Table Structure"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
                     <span className="text-zinc-600">/</span>
                     <span className="font-mono text-[11px] text-zinc-400">{activeTab.database || 'main'}</span>
                     <span className="text-zinc-600">•</span>
@@ -1552,6 +1572,15 @@ export function App() {
       <SearchEverywhere />
       <SettingsModal />
       <AlertModal />
+      <TableStructureModal
+        isOpen={tableStructureModal.isOpen}
+        mode={tableStructureModal.mode}
+        initialTableName={tableStructureModal.tableName}
+        connection={tableStructureModal.conn}
+        database={tableStructureModal.database}
+        schema={tableStructureModal.schema}
+        onClose={closeTableStructureModal}
+      />
 
       {/* Status Bar */}
       <footer className="flex h-6 items-center justify-between border-t border-[#272932] px-3 text-[11px] bg-[#121317] text-zinc-500 font-mono">

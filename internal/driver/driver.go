@@ -38,6 +38,9 @@ type IndexMeta struct {
 	Columns   []string `json:"columns"`
 	IsUnique  bool     `json:"isUnique"`
 	IsPrimary bool     `json:"isPrimary"`
+	Type      string   `json:"type,omitempty"`
+	Method    string   `json:"method,omitempty"`
+	Comment   string   `json:"comment,omitempty"`
 }
 
 type ObjectSummary struct {
@@ -57,6 +60,9 @@ type TableStructure struct {
 	ForeignKeys []ForeignKeyMeta `json:"foreignKeys"`
 	Indexes     []IndexMeta      `json:"indexes"`
 	DDL         string           `json:"ddl"`
+	Engine      string           `json:"engine,omitempty"`
+	Collation   string           `json:"collation,omitempty"`
+	Comment     string           `json:"comment,omitempty"`
 }
 
 type QueryRequest struct {

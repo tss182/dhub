@@ -99,6 +99,15 @@ if (typeof window !== 'undefined') {
   });
 }
 
+export interface TableStructureModalConfig {
+  isOpen: boolean;
+  mode: 'create' | 'edit';
+  conn: any;
+  database: string;
+  schema?: string;
+  tableName?: string;
+}
+
 interface WorkbenchState {
   tabs: WorkbenchTab[];
   activeTabId: string | null;
@@ -111,6 +120,7 @@ interface WorkbenchState {
   tabRefreshTrigger: Record<string, number>;
   consoles: ConsoleRecord[];
   hasLoadedConsoles: boolean;
+  tableStructureModal: TableStructureModalConfig;
 
   loadConsoles: () => Promise<void>;
   openTab: (tab: WorkbenchTab) => void;
@@ -142,6 +152,9 @@ interface WorkbenchState {
   setRightPanelOpen: (open: boolean) => void;
   setSearchEverywhereOpen: (open: boolean) => void;
   setConnectionDialogOpen: (open: boolean, editingId?: string | null) => void;
+  openCreateTableModal: (conn: any, database: string, schema?: string) => void;
+  openEditTableModal: (conn: any, database: string, schema?: string, tableName?: string) => void;
+  closeTableStructureModal: () => void;
 }
 
 const initialTabState = getSavedTabs();
@@ -158,6 +171,49 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   tabRefreshTrigger: {},
   consoles: [],
   hasLoadedConsoles: false,
+  tableStructureModal: {
+    isOpen: false,
+    mode: 'create',
+    conn: null,
+    database: '',
+    schema: '',
+    tableName: '',
+  },
+
+  openCreateTableModal: (conn, database, schema) => {
+    set({
+      tableStructureModal: {
+        isOpen: true,
+        mode: 'create',
+        conn,
+        database,
+        schema: schema || (conn?.driver === 'postgres' ? 'public' : database),
+        tableName: '',
+      },
+    });
+  },
+
+  openEditTableModal: (conn, database, schema, tableName) => {
+    set({
+      tableStructureModal: {
+        isOpen: true,
+        mode: 'edit',
+        conn,
+        database,
+        schema: schema || (conn?.driver === 'postgres' ? 'public' : database),
+        tableName: tableName || '',
+      },
+    });
+  },
+
+  closeTableStructureModal: () => {
+    set((state) => ({
+      tableStructureModal: {
+        ...state.tableStructureModal,
+        isOpen: false,
+      },
+    }));
+  },
 
   loadConsoles: async () => {
     try {
