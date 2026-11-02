@@ -156,6 +156,7 @@ interface DataGridProps {
   onLoadMore?: () => void;
   onRefresh?: () => void;
   whereClause?: string;
+  errorMessage?: string | null;
   onApplyWhere?: (whereClause: string) => void;
   isTableTab?: boolean;
   sortConfigs?: SortConfig[];
@@ -179,6 +180,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onLoadMore,
   onRefresh,
   whereClause = '',
+  errorMessage,
   onApplyWhere,
   isTableTab = false,
   sortConfigs = [],
@@ -914,7 +916,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   onApplyWhere?.(whereInput);
                 }
               }}
-              className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] pl-3 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+              className={`w-full h-7 rounded bg-[#101115] border pl-3 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none transition-colors ${
+                errorMessage
+                  ? 'border-rose-500/80 focus:border-rose-500 ring-1 ring-rose-500/30'
+                  : 'border-[#2b2e3a] focus:border-blue-500'
+              }`}
             />
             {whereInput && (
               <button
@@ -955,6 +961,28 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <span>Reset</span>
             </button>
           )}
+        </div>
+      )}
+
+      {/* Error Banner when query or WHERE filter fails */}
+      {errorMessage && (
+        <div className="flex items-center justify-between px-3.5 py-2 bg-rose-950/40 border-b border-rose-900/60 text-xs font-mono text-rose-300 select-text">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+            <span className="truncate">{errorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setWhereInput('');
+              onApplyWhere?.('');
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-xs font-sans font-medium transition-colors shrink-0 ml-3 cursor-pointer shadow-xs"
+            title="Clear WHERE filter and reload data"
+          >
+            <RotateCcw className="h-3 w-3" />
+            <span>Reset Filter</span>
+          </button>
         </div>
       )}
 
@@ -1130,7 +1158,30 @@ export const DataGrid: React.FC<DataGridProps> = ({
             {displayedRows.length === 0 && insertedChanges.length === 0 ? (
               <tr>
                 <td colSpan={columns.length + 1} className="py-12 text-center text-zinc-500 font-sans">
-                  No data to display
+                  {errorMessage ? (
+                    <div className="max-w-lg mx-auto flex flex-col items-center gap-2.5 text-rose-400/90 font-mono text-xs select-text">
+                      <div className="flex items-center gap-2 font-semibold text-rose-300">
+                        <AlertCircle className="h-4 w-4 text-rose-400" />
+                        <span>Query Execution Error</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 leading-relaxed max-w-md">
+                        {errorMessage}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setWhereInput('');
+                          onApplyWhere?.('');
+                        }}
+                        className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-sans font-medium transition-colors cursor-pointer shadow-sm"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>Reset WHERE Filter</span>
+                      </button>
+                    </div>
+                  ) : (
+                    'No data to display'
+                  )}
                 </td>
               </tr>
             ) : (

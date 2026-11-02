@@ -311,6 +311,9 @@ export function App() {
       }));
     }
 
+    let primaryKeys: string[] = tableDataByTab[tab.id]?.primaryKeys || [];
+    let structureColumns: ColumnMeta[] = tableDataByTab[tab.id]?.columns || [];
+
     try {
       let connList = connections;
       if (connList.length === 0) {
@@ -328,8 +331,6 @@ export function App() {
       const targetSchema = tab.schema || ((conn?.driver || tab.driver) === 'postgres' ? 'public' : targetDb);
 
       // 1. Fetch table structure for primary keys & detailed column definitions (size, nullability, comment, etc.)
-      let primaryKeys: string[] = tableDataByTab[tab.id]?.primaryKeys || [];
-      let structureColumns: ColumnMeta[] = tableDataByTab[tab.id]?.columns || [];
       if (primaryKeys.length === 0 || structureColumns.length === 0 || !structureColumns[0]?.dataType?.includes('(')) {
         try {
           const structure = await SchemaService.GetTableStructure(
@@ -495,9 +496,9 @@ export function App() {
       setTableDataByTab((prev) => ({
         ...prev,
         [tab.id]: {
-          columns: prev[tab.id]?.columns || [],
+          columns: structureColumns.length > 0 ? structureColumns : (prev[tab.id]?.columns || []),
           rows: prev[tab.id]?.rows || [],
-          primaryKeys: prev[tab.id]?.primaryKeys || [],
+          primaryKeys: primaryKeys.length > 0 ? primaryKeys : (prev[tab.id]?.primaryKeys || []),
           isLoading: false,
           isLoadingMore: false,
           error: e?.message || String(e),
@@ -1062,6 +1063,19 @@ export function App() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
+                    {tableDataByTab[activeTab.id]?.whereClause && (
+                      <button
+                        onClick={() => {
+                          const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                          loadTableData(activeTab, 0, currentSize, false, 1, '');
+                        }}
+                        className="flex items-center gap-1 h-6 px-2 rounded text-[11px] text-rose-400 hover:text-white hover:bg-rose-900/40 border border-rose-800/40 transition-colors cursor-pointer"
+                        title="Reset WHERE filter to show all rows"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        <span>Reset Filter</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => loadTableData(activeTab)}
                       disabled={tableDataByTab[activeTab.id]?.isLoading}
@@ -1074,14 +1088,10 @@ export function App() {
                 </div>
 
                 <div className="flex-1 min-h-0">
-                  {tableDataByTab[activeTab.id]?.isLoading && (!tableDataByTab[activeTab.id]?.rows || tableDataByTab[activeTab.id]?.rows.length === 0) ? (
+                  {tableDataByTab[activeTab.id]?.isLoading && (!tableDataByTab[activeTab.id]?.rows || tableDataByTab[activeTab.id]?.rows.length === 0) && !tableDataByTab[activeTab.id]?.error ? (
                     <div className="flex h-full items-center justify-center text-xs text-zinc-400 gap-2">
                       <RefreshCw className="h-4 w-4 animate-spin text-blue-400" />
                       <span>Loading rows from `{activeTab.table}`...</span>
-                    </div>
-                  ) : tableDataByTab[activeTab.id]?.error ? (
-                    <div className="p-4 m-4 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40">
-                      Failed to load table: {tableDataByTab[activeTab.id]?.error}
                     </div>
                   ) : (
                     <DataGrid
@@ -1095,6 +1105,7 @@ export function App() {
                       page={tableDataByTab[activeTab.id]?.page || 1}
                       pageSize={tableDataByTab[activeTab.id]?.pageSize || 100}
                       whereClause={tableDataByTab[activeTab.id]?.whereClause}
+                      errorMessage={tableDataByTab[activeTab.id]?.error}
                       onApplyWhere={(whereText) => {
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
                         loadTableData(activeTab, 0, currentSize, false, 1, whereText);
