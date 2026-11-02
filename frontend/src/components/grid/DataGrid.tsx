@@ -66,8 +66,8 @@ interface DataGridProps {
   whereClause?: string;
   onApplyWhere?: (whereClause: string) => void;
   isTableTab?: boolean;
-  sortConfig?: SortConfig | null;
-  onSortChange?: (column: string, direction: 'asc' | 'desc' | null) => void;
+  sortConfigs?: SortConfig[];
+  onSortChange?: (sortConfigs: SortConfig[]) => void;
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({
@@ -89,34 +89,61 @@ export const DataGrid: React.FC<DataGridProps> = ({
   whereClause = '',
   onApplyWhere,
   isTableTab = false,
-  sortConfig = null,
+  sortConfigs = [],
   onSortChange,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
-  const [localSort, setLocalSort] = useState<SortConfig | null>(sortConfig || null);
+  const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
 
   useEffect(() => {
     setWhereInput(whereClause || '');
   }, [whereClause]);
 
   useEffect(() => {
-    setLocalSort(sortConfig || null);
-  }, [sortConfig]);
+    setLocalSortConfigs(sortConfigs || []);
+  }, [sortConfigs]);
 
-  const handleToggleSort = (colName: string) => {
-    let nextDir: 'asc' | 'desc' | null = 'asc';
-    if (localSort?.column === colName) {
-      if (localSort.direction === 'asc') {
-        nextDir = 'desc';
-      } else if (localSort.direction === 'desc') {
-        nextDir = null;
+  const handleToggleSort = (colName: string, e?: React.MouseEvent) => {
+    const existingIdx = localSortConfigs.findIndex((s) => s.column === colName);
+    let nextConfigs: SortConfig[] = [];
+
+    // Optional Alt or Ctrl key to sort exclusively by this single column
+    const isSingleExclusive = e && (e.altKey || (e.ctrlKey && !e.shiftKey));
+
+    if (isSingleExclusive) {
+      if (existingIdx === -1) {
+        nextConfigs = [{ column: colName, direction: 'asc' }];
+      } else if (localSortConfigs[existingIdx].direction === 'asc') {
+        nextConfigs = [{ column: colName, direction: 'desc' }];
+      } else {
+        nextConfigs = [];
+      }
+    } else {
+      if (existingIdx === -1) {
+        // Multi-sort: Append to the end. The first clicked remains first (priority 1), next is priority 2, etc.
+        nextConfigs = [...localSortConfigs, { column: colName, direction: 'asc' }];
+      } else {
+        const existing = localSortConfigs[existingIdx];
+        if (existing.direction === 'asc') {
+          // Switch to desc in-place (keeps its priority index)
+          nextConfigs = localSortConfigs.map((s, idx) =>
+            idx === existingIdx ? { ...s, direction: 'desc' as const } : s
+          );
+        } else {
+          // 3rd click: remove from sort list; remaining sorted columns shift up in priority
+          nextConfigs = localSortConfigs.filter((_, idx) => idx !== existingIdx);
+        }
       }
     }
 
-    const nextSort = nextDir ? { column: colName, direction: nextDir } : null;
-    setLocalSort(nextSort);
-    onSortChange?.(colName, nextDir);
+    setLocalSortConfigs(nextConfigs);
+    onSortChange?.(nextConfigs);
+  };
+
+  const handleClearAllSort = () => {
+    setLocalSortConfigs([]);
+    onSortChange?.([]);
   };
 
   const [hoveredCol, setHoveredCol] = useState<{
@@ -276,36 +303,44 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   // Sort rows client-side (when onSortChange is not provided, e.g. query console results)
   const sortedRows = useMemo(() => {
-    if (onSortChange || !localSort) return filteredRows;
-
-    const colIdx = columns.findIndex((c) => c.name === localSort.column);
-    if (colIdx === -1) return filteredRows;
-
-    const colMeta = columns[colIdx];
-    const rawType = (colMeta?.rawType || colMeta?.dataType || '').toLowerCase();
-    const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
+    if (onSortChange || localSortConfigs.length === 0) return filteredRows;
 
     return [...filteredRows].sort((rowA, rowB) => {
-      const valA = rowA[colIdx];
-      const valB = rowB[colIdx];
+      for (const sortItem of localSortConfigs) {
+        const colIdx = columns.findIndex((c) => c.name === sortItem.column);
+        if (colIdx === -1) continue;
 
-      if (valA === null || valA === undefined) return localSort.direction === 'asc' ? 1 : -1;
-      if (valB === null || valB === undefined) return localSort.direction === 'asc' ? -1 : 1;
+        const valA = rowA[colIdx];
+        const valB = rowB[colIdx];
 
-      if (isNum) {
-        const numA = Number(valA);
-        const numB = Number(valB);
-        if (!isNaN(numA) && !isNaN(numB)) {
-          return localSort.direction === 'asc' ? numA - numB : numB - numA;
+        if (valA === valB) continue;
+        if (valA === null || valA === undefined) return sortItem.direction === 'asc' ? 1 : -1;
+        if (valB === null || valB === undefined) return sortItem.direction === 'asc' ? -1 : 1;
+
+        const colMeta = columns[colIdx];
+        const rawType = (colMeta?.rawType || colMeta?.dataType || '').toLowerCase();
+        const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
+
+        let cmp = 0;
+        if (isNum) {
+          const numA = Number(valA);
+          const numB = Number(valB);
+          if (!isNaN(numA) && !isNaN(numB)) {
+            cmp = numA - numB;
+          } else {
+            cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+          }
+        } else {
+          cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        if (cmp !== 0) {
+          return sortItem.direction === 'asc' ? cmp : -cmp;
         }
       }
-
-      const strA = String(valA);
-      const strB = String(valB);
-      const cmp = strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
-      return localSort.direction === 'asc' ? cmp : -cmp;
+      return 0;
     });
-  }, [filteredRows, localSort, onSortChange, columns]);
+  }, [filteredRows, localSortConfigs, onSortChange, columns]);
 
   const isMultiPageInMemory = sortedRows.length > localPageSize;
 
@@ -450,8 +485,52 @@ export const DataGrid: React.FC<DataGridProps> = ({
           )}
         </div>
 
-        {/* Toolbar Right: Filter Input + View Mode Toggle */}
-        <div className="flex items-center gap-3">
+        {/* Toolbar Right: Active Multi-Sort Chips + Quick Filter */}
+        <div className="flex items-center gap-2.5">
+          {localSortConfigs.length > 0 && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#101115] border border-[#2b2e3a] text-[11px] font-mono select-none">
+              <span className="text-[10px] uppercase font-bold text-zinc-500 font-sans tracking-wider">
+                Order:
+              </span>
+              <div className="flex items-center gap-1">
+                {localSortConfigs.map((sc, idx) => (
+                  <span
+                    key={sc.column}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1e2029] border border-blue-500/30 text-[10px] text-zinc-200"
+                    title={`#${idx + 1} priority: ${sc.column} (${sc.direction.toUpperCase()})`}
+                  >
+                    <span className="flex items-center justify-center h-3 w-3 rounded-full bg-blue-600 text-white text-[8px] font-bold">
+                      {idx + 1}
+                    </span>
+                    <span className="text-zinc-100 font-medium">{sc.column}</span>
+                    <span className="text-blue-400 font-bold">{sc.direction.toUpperCase()}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const next = localSortConfigs.filter((_, i) => i !== idx);
+                        setLocalSortConfigs(next);
+                        onSortChange?.(next);
+                      }}
+                      className="text-zinc-500 hover:text-rose-400 cursor-pointer ml-0.5"
+                      title={`Remove ${sc.column} from sort`}
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={handleClearAllSort}
+                className="text-[10px] text-zinc-400 hover:text-rose-400 hover:underline cursor-pointer ml-1"
+                title="Clear all column sorting"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
           {/* Quick Filter */}
           <div className="relative flex items-center">
             <Search className="h-3 w-3 text-zinc-500 absolute left-2 pointer-events-none" />
@@ -549,21 +628,24 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <th className="w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r border-[#272932]">#</th>
               {columns.map((col) => {
                 const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
-                const isSorted = localSort?.column === col.name;
+                const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
+                const isSorted = sortIndex !== -1;
+                const sortItem = isSorted ? localSortConfigs[sortIndex] : null;
+
                 return (
                   <th
                     key={col.name}
-                    onClick={() => handleToggleSort(col.name)}
+                    onClick={(e) => handleToggleSort(col.name, e)}
                     onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
                     onMouseLeave={handleColMouseLeave}
                     className="px-3 py-1.5 text-left font-semibold border-r border-[#272932] text-zinc-200 group/th select-none hover:bg-[#1c1d28] transition-colors cursor-pointer"
-                    title={`Click to sort by ${col.name} (${
-                      isSorted
-                        ? localSort.direction === 'asc'
-                          ? 'Ascending -> Click for Descending'
-                          : 'Descending -> Click to Reset'
-                        : 'Unsorted -> Click for Ascending'
-                    })`}
+                    title={
+                      isSorted && sortItem
+                        ? `Sort priority #${sortIndex + 1} (${sortItem.direction.toUpperCase()}). Click to switch to ${
+                            sortItem.direction === 'asc' ? 'DESC' : 'remove sort'
+                          }.`
+                        : `Click to add ${col.name} to multi-sort (Priority #${localSortConfigs.length + 1})`
+                    }
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 truncate">
@@ -580,24 +662,25 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
                       {/* Sort Indicator / Button */}
                       <div className="flex items-center shrink-0">
-                        {isSorted ? (
-                          localSort.direction === 'asc' ? (
-                            <span
-                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
-                              title={`${col.name} sorted Ascending (Click for Descending)`}
-                            >
+                        {isSorted && sortItem ? (
+                          <span
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
+                          >
+                            {sortItem.direction === 'asc' ? (
                               <ArrowUp className="h-3 w-3" />
-                              <span className="text-[9px] font-bold">ASC</span>
-                            </span>
-                          ) : (
-                            <span
-                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
-                              title={`${col.name} sorted Descending (Click to reset sort)`}
-                            >
+                            ) : (
                               <ArrowDown className="h-3 w-3" />
-                              <span className="text-[9px] font-bold">DESC</span>
-                            </span>
-                          )
+                            )}
+                            <span className="text-[9px] font-bold">{sortItem.direction.toUpperCase()}</span>
+                            {localSortConfigs.length > 1 && (
+                              <span
+                                className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-blue-500 text-white text-[9px] font-bold font-mono ml-0.5"
+                                title={`Sort priority #${sortIndex + 1}`}
+                              >
+                                {sortIndex + 1}
+                              </span>
+                            )}
+                          </span>
                         ) : (
                           <span title={`Click to sort by ${col.name}`}>
                             <ArrowUpDown className="h-3 w-3 text-zinc-500 opacity-0 group-hover/th:opacity-75 transition-opacity" />
