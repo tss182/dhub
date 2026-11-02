@@ -28,8 +28,8 @@ interface SettingsState extends SettingsValues {
 const SETTINGS_STORAGE_KEY = 'dhub_settings_v1';
 
 const DEFAULT_SETTINGS: SettingsValues = {
-  dataViewMode: 'paged', // Default to paged/pagination as requested
-  defaultPageSize: 100,  // Default batch size 100
+  dataViewMode: 'infinite', // Default to infinite (Lazy Load)
+  defaultPageSize: 100,     // Default batch size 100
   editorFontSize: 13,
   wordWrap: false,
   showMinimap: false,

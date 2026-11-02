@@ -229,7 +229,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (viewMode !== 'infinite') return;
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
     if (hasMore && !isLoadingMore && onLoadMore) {
-      if (scrollHeight - scrollTop - clientHeight < 120) {
+      if (scrollHeight - scrollTop - clientHeight < 250) {
         onLoadMore();
       }
     }

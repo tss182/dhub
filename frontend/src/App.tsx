@@ -347,8 +347,10 @@ export function App() {
           .catch(() => {});
       }
 
-      // 3. Query table data with LIMIT and OFFSET (default limit 100)
-      const sql = `SELECT * FROM ${quotedTable} LIMIT ${limit} OFFSET ${offset};`;
+      // 3. Query table data with LIMIT and OFFSET
+      // Fetch limit + 1 so we can accurately determine if hasMore is true
+      const fetchLimit = limit + 1;
+      const sql = `SELECT * FROM ${quotedTable} LIMIT ${fetchLimit} OFFSET ${offset};`;
 
       const execId = 'exec-tab-' + Date.now();
       const res = await QueryService.ExecuteQuery({
@@ -357,8 +359,8 @@ export function App() {
         database: targetDb,
         schema: targetSchema,
         sql,
-        limit,
-        offset,
+        limit: fetchLimit,
+        offset: 0, // SQL already applied OFFSET ${offset}, so Go MUST NOT skip rows!
       } as any);
 
       if (res) {
@@ -367,8 +369,9 @@ export function App() {
             ? primaryKeys
             : (res.columns || []).filter((c: any) => (c as any).isPrimaryKey).map((c: any) => c.name);
 
-        const fetchedRows = (res.rows as any) || [];
-        const hasMore = fetchedRows.length >= limit;
+        const rawRows = (res.rows as any) || [];
+        const hasMore = rawRows.length > limit;
+        const fetchedRows = hasMore ? rawRows.slice(0, limit) : rawRows;
 
         setTableDataByTab((prev) => {
           const prevRows = append ? prev[tab.id]?.rows || [] : [];
