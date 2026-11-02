@@ -49,3 +49,186 @@
   background: #3c3f4e;
 }
 
+/* Light Theme CSS Variables & Overrides */
+html[data-theme="light"],
+[data-theme="light"] {
+  --bg-canvas: #f8fafc;
+  --bg-island: #ffffff;
+  --bg-island-hover: #f1f5f9;
+  --border-island: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-muted: #64748b;
+  color-scheme: light;
+}
+
+[data-theme="light"] {
+  /* Canvas & Darkest Backgrounds */
+  .bg-\[\#121317\],
+  .bg-\[\#101115\],
+  .bg-\[\#0e0f14\] {
+    background-color: #f8fafc !important;
+  }
+
+  /* Header, Modals & Island Base */
+  .bg-\[\#14151a\],
+  .bg-\[\#16171f\] {
+    background-color: #ffffff !important;
+  }
+
+  /* Middle Surfaces, Sidebars, Cards, Inactive Tabs */
+  .bg-\[\#181920\],
+  .bg-\[\#191a20\],
+  .bg-\[\#1c1d28\],
+  .bg-\[\#1e2027\],
+  .bg-\[\#1e2029\],
+  .bg-\[\#1f2129\],
+  .bg-\[\#20222a\],
+  .bg-\[\#20222b\] {
+    background-color: #f1f5f9 !important;
+  }
+
+  .bg-\[\#181920\]\/95 {
+    background-color: rgba(255, 255, 255, 0.98) !important;
+  }
+  .bg-\[\#14151a\]\/60 {
+    background-color: rgba(241, 245, 249, 0.8) !important;
+  }
+
+  /* Active Tab in Light Mode */
+  div[class*="border-blue-500"].bg-\[\#191a20\] {
+    background-color: #ffffff !important;
+    color: #2563eb !important;
+  }
+
+  /* Inputs, Selects, and Textareas */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    color: #0f172a !important;
+    background-color: #ffffff !important;
+  }
+
+  /* Upper Surfaces, Hover Buttons, Badges */
+  .bg-\[\#22242c\],
+  .bg-\[\#252834\],
+  .bg-\[\#272932\],
+  .bg-\[\#282a35\],
+  .bg-\[\#2a2d37\],
+  .bg-\[\#2a2d38\],
+  .bg-\[\#2b2d37\],
+  .bg-\[\#2b2d38\],
+  .bg-\[\#2b2e3b\],
+  .bg-\[\#2c303c\],
+  .bg-\[\#2d303b\],
+  .bg-\[\#2e3242\],
+  .bg-\[\#303342\] {
+    background-color: #e2e8f0 !important;
+  }
+
+  /* Hover overrides */
+  .hover\:bg-\[\#20222a\]:hover,
+  .hover\:bg-\[\#20222b\]:hover,
+  .hover\:bg-\[\#22242c\]:hover,
+  .hover\:bg-\[\#252834\]:hover,
+  .hover\:bg-\[\#2a2d38\]:hover,
+  .hover\:bg-\[\#2b2d37\]:hover,
+  .hover\:bg-\[\#2b2d38\]:hover,
+  .hover\:bg-\[\#2c2f3a\]:hover,
+  .hover\:bg-\[\#2e3242\]:hover,
+  .hover\:bg-\[\#1c1d28\]:hover {
+    background-color: #e2e8f0 !important;
+  }
+
+  /* Borders */
+  .border-\[\#22242c\],
+  .border-\[\#232530\],
+  .border-\[\#272932\],
+  .border-\[\#2b2e3a\],
+  .border-\[\#2d303d\],
+  .border-\[\#2d303e\],
+  .border-\[\#2d303f\],
+  .border-\[\#2e313d\],
+  .border-\[\#2e313f\],
+  .border-\[\#3b3e4f\],
+  .border-\[\#3b3f52\] {
+    border-color: #cbd5e1 !important;
+  }
+
+  /* Text Colors */
+  .text-zinc-100 {
+    color: #0f172a !important;
+  }
+  .text-zinc-200 {
+    color: #1e293b !important;
+  }
+  .text-zinc-300 {
+    color: #334155 !important;
+  }
+  .text-zinc-400 {
+    color: #475569 !important;
+  }
+  .text-zinc-500 {
+    color: #64748b !important;
+  }
+  .text-zinc-600 {
+    color: #94a3b8 !important;
+  }
+
+  /* Hover text colors for non-accent buttons */
+  .hover\:text-white:hover {
+    color: #0f172a !important;
+  }
+  .group-hover\:text-white:hover,
+  .group:hover .group-hover\:text-white {
+    color: #0f172a !important;
+  }
+  .hover\:text-zinc-200:hover {
+    color: #0f172a !important;
+  }
+
+  /* Active blue/emerald/rose states should preserve their readable text */
+  .bg-blue-600,
+  .bg-emerald-600,
+  .bg-rose-600,
+  .hover\:bg-blue-600:hover,
+  .hover\:bg-emerald-600:hover,
+  .hover\:bg-rose-600:hover {
+    color: #ffffff !important;
+  }
+  .hover\:bg-blue-600:hover *,
+  .hover\:bg-emerald-600:hover *,
+  .hover\:bg-rose-600:hover * {
+    color: #ffffff !important;
+  }
+
+  /* Row states for Light Mode Data Grid */
+  tr.bg-blue-600\/15 {
+    background-color: #eff6ff !important;
+  }
+  tr.bg-emerald-950\/25 {
+    background-color: #ecfdf5 !important;
+  }
+  tr.bg-rose-950\/20 {
+    background-color: #fff1f2 !important;
+  }
+  td.bg-blue-900\/30 {
+    background-color: #dbeafe !important;
+    color: #1e40af !important;
+  }
+
+  /* HTML5 Pickers (Date / Time) */
+  [color-scheme\:dark] {
+    color-scheme: light !important;
+  }
+
+  /* Custom Light Scrollbars */
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}

@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 
 export type DataViewMode = 'infinite' | 'paged';
+export type ThemeMode = 'dark' | 'light';
 
 interface SettingsValues {
+  theme: ThemeMode;
   dataViewMode: DataViewMode;
   defaultPageSize: number;
   editorFontSize: number;
@@ -12,11 +14,12 @@ interface SettingsValues {
 
 interface SettingsState extends SettingsValues {
   isSettingsOpen: boolean;
-  activeSettingsTab: 'datagrid' | 'editor' | 'about';
-  openSettings: (tab?: 'datagrid' | 'editor' | 'about') => void;
+  activeSettingsTab: 'appearance' | 'datagrid' | 'editor' | 'about';
+  openSettings: (tab?: 'appearance' | 'datagrid' | 'editor' | 'about') => void;
   closeSettings: () => void;
   toggleSettings: () => void;
-  setActiveSettingsTab: (tab: 'datagrid' | 'editor' | 'about') => void;
+  setActiveSettingsTab: (tab: 'appearance' | 'datagrid' | 'editor' | 'about') => void;
+  setTheme: (theme: ThemeMode) => void;
   setDataViewMode: (mode: DataViewMode) => void;
   setDefaultPageSize: (size: number) => void;
   setEditorFontSize: (size: number) => void;
@@ -28,6 +31,7 @@ interface SettingsState extends SettingsValues {
 const SETTINGS_STORAGE_KEY = 'dhub_settings_v1';
 
 const DEFAULT_SETTINGS: SettingsValues = {
+  theme: 'dark',
   dataViewMode: 'infinite', // Default to infinite (Lazy Load)
   defaultPageSize: 100,     // Default batch size 100
   editorFontSize: 13,
@@ -35,12 +39,26 @@ const DEFAULT_SETTINGS: SettingsValues = {
   showMinimap: false,
 };
 
+function applyThemeToDocument(theme: ThemeMode) {
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-theme', theme);
+    if (theme === 'light') {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    }
+  }
+}
+
 function loadStoredSettings(): SettingsValues {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
+        theme: parsed.theme === 'light' ? 'light' : 'dark',
         dataViewMode: parsed.dataViewMode === 'infinite' ? 'infinite' : 'paged',
         defaultPageSize: typeof parsed.defaultPageSize === 'number' && parsed.defaultPageSize > 0 ? parsed.defaultPageSize : DEFAULT_SETTINGS.defaultPageSize,
         editorFontSize: typeof parsed.editorFontSize === 'number' ? parsed.editorFontSize : DEFAULT_SETTINGS.editorFontSize,
@@ -65,16 +83,23 @@ function persistSettings(values: Partial<SettingsValues>) {
 }
 
 const initialValues = loadStoredSettings();
+applyThemeToDocument(initialValues.theme);
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   ...initialValues,
   isSettingsOpen: false,
-  activeSettingsTab: 'datagrid',
+  activeSettingsTab: 'appearance',
 
-  openSettings: (tab = 'datagrid') => set({ isSettingsOpen: true, activeSettingsTab: tab }),
+  openSettings: (tab = 'appearance') => set({ isSettingsOpen: true, activeSettingsTab: tab }),
   closeSettings: () => set({ isSettingsOpen: false }),
   toggleSettings: () => set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
   setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),
+
+  setTheme: (theme) => {
+    applyThemeToDocument(theme);
+    persistSettings({ theme });
+    set({ theme });
+  },
 
   setDataViewMode: (mode) => {
     persistSettings({ dataViewMode: mode });
@@ -109,6 +134,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     } catch {
       // ignore
     }
+    applyThemeToDocument(DEFAULT_SETTINGS.theme);
     set({ ...DEFAULT_SETTINGS });
   },
 }));

@@ -12,13 +12,17 @@ import {
   Sparkles,
   Command,
   Hash,
+  Palette,
+  Moon,
+  Sun,
 } from 'lucide-react';
-import { useSettingsStore, DataViewMode } from '../../stores/useSettingsStore';
+import { useSettingsStore } from '../../stores/useSettingsStore';
 
 export const SettingsModal: React.FC = () => {
   const {
     isSettingsOpen,
     activeSettingsTab,
+    theme,
     dataViewMode,
     defaultPageSize,
     editorFontSize,
@@ -26,6 +30,7 @@ export const SettingsModal: React.FC = () => {
     showMinimap,
     closeSettings,
     setActiveSettingsTab,
+    setTheme,
     setDataViewMode,
     setDefaultPageSize,
     setEditorFontSize,
@@ -85,7 +90,7 @@ export const SettingsModal: React.FC = () => {
                 Settings & Preferences
               </h2>
               <p className="text-[11px] text-zinc-400">
-                Konfigurasi tampilan data, editor SQL, dan preferensi aplikasi
+                Configure theme appearance, data grid display, SQL editor, and preferences
               </p>
             </div>
           </div>
@@ -106,6 +111,18 @@ export const SettingsModal: React.FC = () => {
         <div className="flex flex-1 min-h-0">
           {/* Settings Left Navigation */}
           <div className="w-48 border-r border-[#272932] bg-[#14151a]/60 p-2.5 flex flex-col gap-1 shrink-0">
+            <button
+              onClick={() => setActiveSettingsTab('appearance')}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
+                activeSettingsTab === 'appearance'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#20222b]'
+              }`}
+            >
+              <Palette className="h-4 w-4" />
+              <span>Appearance</span>
+            </button>
+
             <button
               onClick={() => setActiveSettingsTab('datagrid')}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
@@ -145,17 +162,119 @@ export const SettingsModal: React.FC = () => {
 
           {/* Settings Main Panel */}
           <div className="flex-1 p-5 overflow-y-auto min-h-0 text-xs">
+            {/* Appearance Tab */}
+            {activeSettingsTab === 'appearance' && (
+              <div className="space-y-6">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
+                      Theme Mode
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Choose between dark mode and light mode interface styles.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Option: Dark Mode */}
+                    <div
+                      onClick={() => setTheme('dark')}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        theme === 'dark'
+                          ? 'bg-blue-600/10 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/50'
+                          : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`p-1.5 rounded-lg ${
+                                theme === 'dark'
+                                  ? 'bg-blue-600 text-white'
+                                  : 'bg-[#282a35] text-zinc-400'
+                              }`}
+                            >
+                              <Moon className="h-4 w-4" />
+                            </div>
+                            <span className="font-semibold text-xs text-zinc-100">Dark Mode</span>
+                          </div>
+                          {theme === 'dark' && (
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
+                              <Check className="h-3 w-3 stroke-[3]" />
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-zinc-400">
+                          Obsidian dark interface optimized for low-light environments and reduced eye strain.
+                        </p>
+                      </div>
+                      <div className="mt-3 pt-2.5 border-t border-[#2d303e] text-[10px] font-mono text-zinc-400">
+                        Default • VS Dark Editor
+                      </div>
+                    </div>
+
+                    {/* Option: Light Mode */}
+                    <div
+                      onClick={() => setTheme('light')}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        theme === 'light'
+                          ? 'bg-blue-600/10 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/50'
+                          : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`p-1.5 rounded-lg ${
+                                theme === 'light'
+                                  ? 'bg-blue-600 text-white'
+                                  : 'bg-[#282a35] text-zinc-400'
+                              }`}
+                            >
+                              <Sun className="h-4 w-4" />
+                            </div>
+                            <span className="font-semibold text-xs text-zinc-100">Light Mode</span>
+                          </div>
+                          {theme === 'light' && (
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
+                              <Check className="h-3 w-3 stroke-[3]" />
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-zinc-400">
+                          Crisp, clean high-contrast light interface designed for bright workspaces.
+                        </p>
+                      </div>
+                      <div className="mt-3 pt-2.5 border-t border-[#2d303e] text-[10px] font-mono text-zinc-400">
+                        Daylight • Clean High-Contrast
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg bg-blue-950/20 border border-blue-900/30 p-3 text-[11px] text-blue-300/90 leading-relaxed flex items-start gap-2">
+                  <Sparkles className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                  <span>
+                    Your theme preference is saved automatically and persists across sessions.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Data Grid Tab */}
             {activeSettingsTab === 'datagrid' && (
               <div className="space-y-6">
                 {/* 1. Data Display Mode: Lazy Load vs Pagination */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
-                      Mode Penampilan Data (Data View Mode)
+                      Data Display Mode
                     </label>
                   </div>
                   <p className="text-[11px] text-zinc-400 mb-3">
-                    Pilih apakah tabel data dan query result dimuat menggunakan halaman (Pagination) atau continuous scrolling (Lazy Load).
+                    Choose whether tables and query results use page numbers (Pagination) or continuous scrolling (Lazy Load).
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -180,7 +299,7 @@ export const SettingsModal: React.FC = () => {
                             >
                               <Layers className="h-4 w-4" />
                             </div>
-                            <span className="font-semibold text-xs text-zinc-100">Pagination (Pages)</span>
+                            <span className="font-semibold text-xs text-zinc-100">Pagination</span>
                           </div>
                           {dataViewMode === 'paged' && (
                             <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
@@ -189,11 +308,11 @@ export const SettingsModal: React.FC = () => {
                           )}
                         </div>
                         <p className="text-[11px] leading-relaxed text-zinc-400">
-                          Data dibagi ke dalam halaman bernomor (Page 1, 2, 3...) dengan tombol navigasi First, Prev, Next, Last.
+                          Data is split into numbered pages (Page 1, 2, 3...) with First, Prev, Next, and Last controls.
                         </p>
                       </div>
                       <div className="mt-3 pt-2.5 border-t border-[#2d303e] text-[10px] font-mono text-zinc-400">
-                        Rekomendasi untuk dataset besar
+                        Recommended for large datasets
                       </div>
                     </div>
 
@@ -218,7 +337,7 @@ export const SettingsModal: React.FC = () => {
                             >
                               <ArrowDownCircle className="h-4 w-4" />
                             </div>
-                            <span className="font-semibold text-xs text-zinc-100">Lazy Load (Scroll)</span>
+                            <span className="font-semibold text-xs text-zinc-100">Lazy Load (Infinite)</span>
                           </div>
                           {dataViewMode === 'infinite' && (
                             <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
@@ -227,11 +346,11 @@ export const SettingsModal: React.FC = () => {
                           )}
                         </div>
                         <p className="text-[11px] leading-relaxed text-zinc-400">
-                          Scroll ke bawah secara continuous. Baris data tambahan otomatis diambil dari server saat kursor mendekati bawah.
+                          Continuous scrolling. Extra rows are fetched automatically as you scroll down.
                         </p>
                       </div>
                       <div className="mt-3 pt-2.5 border-t border-[#2d303e] text-[10px] font-mono text-zinc-400">
-                        Cocok untuk eksplorasi cepat & audit
+                        Best for rapid browsing & audit
                       </div>
                     </div>
                   </div>
@@ -243,14 +362,14 @@ export const SettingsModal: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
-                      Default Batch / Page Size (Ukuran Data per Halaman)
+                      Default Batch / Page Size
                     </label>
                     <span className="font-mono text-blue-400 font-semibold bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded text-[11px]">
                       {defaultPageSize} rows / batch
                     </span>
                   </div>
                   <p className="text-[11px] text-zinc-400 mb-3">
-                    Tentukan jumlah baris data default yang akan diambil per query atau per halaman (misal 50 atau 100 baris).
+                    Define the default number of rows fetched per query batch or page (e.g., 50 or 100 rows).
                   </p>
 
                   {/* Preset Pills */}
@@ -305,12 +424,13 @@ export const SettingsModal: React.FC = () => {
                 <div className="rounded-lg bg-blue-950/20 border border-blue-900/30 p-3 text-[11px] text-blue-300/90 leading-relaxed flex items-start gap-2">
                   <Sparkles className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
                   <span>
-                    Pengaturan ini berlaku otomatis untuk tab baru dan query berikutnya. Mode lazy load & pagination tidak lagi perlu diatur manual pada setiap tabel.
+                    These settings apply automatically to new tabs and subsequent queries.
                   </span>
                 </div>
               </div>
             )}
 
+            {/* SQL Worksheet Tab */}
             {activeSettingsTab === 'editor' && (
               <div className="space-y-6">
                 <div>
@@ -318,7 +438,7 @@ export const SettingsModal: React.FC = () => {
                     Editor Font Size
                   </label>
                   <p className="text-[11px] text-zinc-400 mb-3">
-                    Ukuran teks pada editor SQL Monaco Worksheet.
+                    Font size for the Monaco SQL Worksheet editor.
                   </p>
                   <div className="flex gap-2">
                     {[12, 13, 14, 16].map((size) => (
@@ -345,7 +465,7 @@ export const SettingsModal: React.FC = () => {
                     Word Wrap
                   </label>
                   <p className="text-[11px] text-zinc-400 mb-3">
-                    Bungkus baris teks panjang secara otomatis agar tidak perlu scroll horizontal pada editor SQL.
+                    Wrap long code lines automatically to prevent horizontal scrolling in the editor.
                   </p>
                   <button
                     type="button"
@@ -362,6 +482,7 @@ export const SettingsModal: React.FC = () => {
               </div>
             )}
 
+            {/* About & Shortcuts Tab */}
             {activeSettingsTab === 'about' && (
               <div className="space-y-5">
                 <div>
@@ -463,4 +584,3 @@ export const SettingsModal: React.FC = () => {
     </div>
   );
 };
-

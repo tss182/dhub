@@ -44,6 +44,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const editorFontSize = useSettingsStore((s) => s.editorFontSize);
   const wordWrap = useSettingsStore((s) => s.wordWrap);
   const showMinimap = useSettingsStore((s) => s.showMinimap);
+  const theme = useSettingsStore((s) => s.theme);
 
   // Keep fresh references to avoid stale closure issues inside Monaco addCommand callback
   const onExecuteRef = useRef(onExecute);
@@ -262,7 +263,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         <Editor
           height="100%"
           defaultLanguage="sql"
-          theme="vs-dark"
+          theme={theme === 'light' ? 'vs' : 'vs-dark'}
           value={sql}
           onChange={(v) => onChange(v ?? '')}
           onMount={handleEditorDidMount}
