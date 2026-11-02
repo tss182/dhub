@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { ConnectionConfig } from '../../types/domain';
+import { alertWarning } from '../../stores/useAlertStore';
 
 interface ConsoleListProps {
   onRename: (id: string, currentTitle: string) => void;
@@ -206,7 +207,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
               if (activeConn) {
                 handleCreateForConnection(activeConn);
               } else {
-                alert('Silakan pilih atau tambahkan koneksi di Database Explorer terlebih dahulu.');
+                alertWarning('Silakan pilih atau tambahkan koneksi di Database Explorer terlebih dahulu.', 'Pilih Koneksi');
               }
             }}
             className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"

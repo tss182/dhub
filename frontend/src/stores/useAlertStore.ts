@@ -100,3 +100,4 @@ export const alertWarning = (message: string, title?: string, details?: string) 
 
 export const alertInfo = (message: string, title?: string, details?: string) =>
   useAlertStore.getState().showAlert({ type: 'info', message, title, details });
+
