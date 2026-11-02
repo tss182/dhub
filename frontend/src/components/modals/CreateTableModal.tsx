@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   Table,
@@ -13,6 +13,7 @@ import {
   Copy,
   Sparkles,
   Database,
+  ChevronDown,
 } from 'lucide-react';
 import { ConnectionConfig } from '../../types/domain';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
@@ -49,18 +50,22 @@ interface TypeGroup {
 const MYSQL_TYPE_GROUPS: TypeGroup[] = [
   {
     group: 'Numeric',
-    types: ['INT', 'BIGINT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'DECIMAL', 'FLOAT', 'DOUBLE', 'BOOLEAN'],
+    types: ['INT', 'BIGINT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'DECIMAL', 'FLOAT', 'DOUBLE'],
   },
   {
-    group: 'String & Text',
-    types: ['VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'ENUM'],
+    group: 'String / Text',
+    types: ['VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'TINYTEXT', 'ENUM'],
   },
   {
-    group: 'Date & Time',
+    group: 'Date / Time',
     types: ['DATETIME', 'TIMESTAMP', 'DATE', 'TIME', 'YEAR'],
   },
   {
-    group: 'JSON & Binary',
+    group: 'Boolean / Logical',
+    types: ['BOOLEAN', 'BIT'],
+  },
+  {
+    group: 'JSON / Binary',
     types: ['JSON', 'BLOB', 'LONGBLOB', 'BINARY', 'VARBINARY'],
   },
 ];
@@ -68,18 +73,22 @@ const MYSQL_TYPE_GROUPS: TypeGroup[] = [
 const POSTGRES_TYPE_GROUPS: TypeGroup[] = [
   {
     group: 'Numeric',
-    types: ['INTEGER', 'BIGINT', 'SMALLINT', 'NUMERIC', 'REAL', 'DOUBLE PRECISION', 'BOOLEAN', 'SERIAL', 'BIGSERIAL'],
+    types: ['INTEGER', 'BIGINT', 'SMALLINT', 'NUMERIC', 'REAL', 'DOUBLE PRECISION', 'SERIAL', 'BIGSERIAL'],
   },
   {
-    group: 'String & Text',
+    group: 'String / Text',
     types: ['VARCHAR', 'TEXT', 'CHAR'],
   },
   {
-    group: 'Date & Time',
+    group: 'Date / Time',
     types: ['TIMESTAMP', 'TIMESTAMPTZ', 'DATE', 'TIME', 'INTERVAL'],
   },
   {
-    group: 'JSON & Binary',
+    group: 'Boolean',
+    types: ['BOOLEAN'],
+  },
+  {
+    group: 'JSON / UUID / Binary',
     types: ['JSON', 'JSONB', 'UUID', 'BYTEA'],
   },
 ];
@@ -87,9 +96,213 @@ const POSTGRES_TYPE_GROUPS: TypeGroup[] = [
 const SQLITE_TYPE_GROUPS: TypeGroup[] = [
   {
     group: 'Standard Types',
-    types: ['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NUMERIC', 'VARCHAR', 'DATETIME', 'BOOLEAN'],
+    types: ['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NUMERIC'],
+  },
+  {
+    group: 'Common Types',
+    types: ['VARCHAR', 'DATETIME', 'BOOLEAN'],
   },
 ];
+
+interface CustomSelectOption {
+  value: string;
+  label: string;
+}
+
+interface CustomSelectProps {
+  value: string;
+  onChange: (value: string) => void;
+  options: CustomSelectOption[];
+  className?: string;
+}
+
+const CustomSelect: React.FC<CustomSelectProps> = ({ value, onChange, options, className = '' }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const selectedOption = options.find((o) => o.value === value) || { value, label: value };
+
+  return (
+    <div className={`relative ${className}`} ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full h-8 rounded-lg bg-[#101115] hover:bg-[#16171f] border border-[#2b2e3a] hover:border-[#3b3e4f] px-2.5 text-xs font-mono font-medium text-white flex items-center justify-between gap-1.5 transition-colors cursor-pointer select-none"
+      >
+        <span className="truncate text-white font-medium">{selectedOption.label}</span>
+        <ChevronDown
+          className={`h-3 w-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
+            isOpen ? 'rotate-180 text-blue-400' : ''
+          }`}
+        />
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 min-w-full rounded-lg border border-[#2b2e3a] bg-[#16171f] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+          {options.map((opt) => {
+            const isSelected = opt.value === value;
+            return (
+              <div
+                key={opt.value}
+                onClick={() => {
+                  onChange(opt.value);
+                  setIsOpen(false);
+                }}
+                className={`flex items-center justify-between px-2.5 py-1.5 rounded text-xs font-mono transition-colors cursor-pointer ${
+                  isSelected
+                    ? 'bg-blue-600 text-white font-bold'
+                    : 'text-zinc-200 hover:bg-[#252834] hover:text-white'
+                }`}
+              >
+                <span>{opt.label}</span>
+                {isSelected && <Check className="h-3 w-3 text-white shrink-0" />}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface CustomTypeSelectProps {
+  value: string;
+  onChange: (newType: string) => void;
+  typeGroups: TypeGroup[];
+}
+
+const CustomTypeSelect: React.FC<CustomTypeSelectProps> = ({ value, onChange, typeGroups }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [filterText, setFilterText] = useState('');
+  const [openUpwards, setOpenUpwards] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const handleToggle = () => {
+    if (!isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUpwards(spaceBelow < 280);
+    }
+    setIsOpen(!isOpen);
+    setFilterText('');
+  };
+
+  const filteredGroups = useMemo(() => {
+    if (!filterText.trim()) return typeGroups;
+    const query = filterText.trim().toUpperCase();
+    return typeGroups
+      .map((g) => ({
+        group: g.group,
+        types: g.types.filter((t) => t.toUpperCase().includes(query)),
+      }))
+      .filter((g) => g.types.length > 0);
+  }, [typeGroups, filterText]);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="w-full h-7 rounded bg-[#101115] hover:bg-[#16171f] border border-[#2b2e3a] hover:border-[#3b3e4f] px-2 text-xs font-mono font-semibold text-white flex items-center justify-between gap-1 transition-colors cursor-pointer select-none"
+        title="Select Data Type"
+      >
+        <span className="truncate text-white">{value || 'SELECT TYPE'}</span>
+        <ChevronDown
+          className={`h-3 w-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
+            isOpen ? 'rotate-180 text-blue-400' : ''
+          }`}
+        />
+      </button>
+
+      {isOpen && (
+        <div
+          className={`absolute left-0 w-64 max-h-72 overflow-y-auto rounded-lg border border-[#2b2e3a] bg-[#16171f] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100 ${
+            openUpwards ? 'bottom-full mb-1' : 'top-full mt-1'
+          }`}
+        >
+          {/* Quick search input */}
+          <div className="p-1 pb-1.5 border-b border-[#272932] sticky top-0 bg-[#16171f] z-10">
+            <input
+              type="text"
+              autoFocus
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder="Search type..."
+              className="w-full h-6 px-2 text-[11px] font-mono rounded bg-[#101115] border border-[#2d303f] text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          <div className="py-1">
+            {filteredGroups.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-zinc-500 italic text-center">
+                No matching type
+              </div>
+            ) : (
+              filteredGroups.map((grp) => (
+                <div key={grp.group} className="mb-1.5 last:mb-0">
+                  <div className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400 bg-[#121317] rounded mb-0.5 select-none">
+                    {grp.group}
+                  </div>
+                  <div className="space-y-0.5">
+                    {grp.types.map((t) => {
+                      const isSelected = t.toUpperCase() === value.toUpperCase();
+                      return (
+                        <div
+                          key={t}
+                          onClick={() => {
+                            onChange(t);
+                            setIsOpen(false);
+                          }}
+                          className={`flex items-center justify-between px-2.5 py-1 rounded text-xs font-mono cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-blue-600 text-white font-bold'
+                              : 'text-zinc-200 hover:bg-[#252834] hover:text-white'
+                          }`}
+                        >
+                          <span>{t}</span>
+                          {isSelected && <Check className="h-3 w-3 text-white shrink-0" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   isOpen,
@@ -523,58 +736,58 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               </div>
             )}
 
-            {/* MySQL Engine & Charset options with white font */}
+            {/* MySQL Engine & Charset options with custom dropdowns */}
             {driver === 'mysql' && (
               <>
                 <div className="w-36">
                   <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                     Engine
                   </label>
-                  <select
+                  <CustomSelect
                     value={engine}
-                    onChange={(e) => setEngine(e.target.value)}
-                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2.5 text-xs font-mono font-medium text-white focus:border-blue-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value="InnoDB" className="bg-[#181920] text-white">InnoDB</option>
-                    <option value="MyISAM" className="bg-[#181920] text-white">MyISAM</option>
-                    <option value="MEMORY" className="bg-[#181920] text-white">MEMORY</option>
-                  </select>
+                    onChange={setEngine}
+                    options={[
+                      { value: 'InnoDB', label: 'InnoDB' },
+                      { value: 'MyISAM', label: 'MyISAM' },
+                      { value: 'MEMORY', label: 'MEMORY' },
+                    ]}
+                  />
                 </div>
 
                 <div className="w-36">
                   <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                     Charset
                   </label>
-                  <select
+                  <CustomSelect
                     value={charset}
-                    onChange={(e) => {
-                      setCharset(e.target.value);
-                      if (e.target.value === 'utf8mb4') setCollation('utf8mb4_unicode_ci');
-                      if (e.target.value === 'utf8') setCollation('utf8_general_ci');
+                    onChange={(newVal) => {
+                      setCharset(newVal);
+                      if (newVal === 'utf8mb4') setCollation('utf8mb4_unicode_ci');
+                      if (newVal === 'utf8') setCollation('utf8_general_ci');
                     }}
-                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2.5 text-xs font-mono font-medium text-white focus:border-blue-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value="utf8mb4" className="bg-[#181920] text-white">utf8mb4</option>
-                    <option value="utf8" className="bg-[#181920] text-white">utf8</option>
-                    <option value="latin1" className="bg-[#181920] text-white">latin1</option>
-                  </select>
+                    options={[
+                      { value: 'utf8mb4', label: 'utf8mb4' },
+                      { value: 'utf8', label: 'utf8' },
+                      { value: 'latin1', label: 'latin1' },
+                    ]}
+                  />
                 </div>
 
-                <div className="w-44">
+                <div className="w-48">
                   <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                     Collation
                   </label>
-                  <select
+                  <CustomSelect
                     value={collation}
-                    onChange={(e) => setCollation(e.target.value)}
-                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2.5 text-xs font-mono font-medium text-white focus:border-blue-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value="utf8mb4_unicode_ci" className="bg-[#181920] text-white">utf8mb4_unicode_ci</option>
-                    <option value="utf8mb4_general_ci" className="bg-[#181920] text-white">utf8mb4_general_ci</option>
-                    <option value="utf8mb4_0900_ai_ci" className="bg-[#181920] text-white">utf8mb4_0900_ai_ci</option>
-                    <option value="utf8_general_ci" className="bg-[#181920] text-white">utf8_general_ci</option>
-                    <option value="utf8_unicode_ci" className="bg-[#181920] text-white">utf8_unicode_ci</option>
-                  </select>
+                    onChange={setCollation}
+                    options={[
+                      { value: 'utf8mb4_unicode_ci', label: 'utf8mb4_unicode_ci' },
+                      { value: 'utf8mb4_general_ci', label: 'utf8mb4_general_ci' },
+                      { value: 'utf8mb4_0900_ai_ci', label: 'utf8mb4_0900_ai_ci' },
+                      { value: 'utf8_general_ci', label: 'utf8_general_ci' },
+                      { value: 'utf8_unicode_ci', label: 'utf8_unicode_ci' },
+                    ]}
+                  />
                 </div>
               </>
             )}
@@ -653,33 +866,25 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       </div>
                     </td>
 
-                    {/* Data Type Select Dropdown */}
+                    {/* Data Type Custom Dropdown */}
                     <td className="px-2 py-1.5 border-r border-[#20222a]">
-                      <select
+                      <CustomTypeSelect
                         value={col.dataType}
-                        onChange={(e) => {
-                          const newType = e.target.value;
+                        typeGroups={typeGroups}
+                        onChange={(newType) => {
                           let autoLen = col.lengthOrValues;
                           if (newType === 'VARCHAR' && !col.lengthOrValues) autoLen = '255';
                           if (newType === 'CHAR' && !col.lengthOrValues) autoLen = '50';
                           if (newType === 'DECIMAL' && !col.lengthOrValues) autoLen = '10,2';
-                          if (['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DATETIME', 'TIMESTAMP', 'TEXT', 'JSON', 'BOOLEAN'].includes(newType) && (col.lengthOrValues === '255' || col.lengthOrValues === '50')) {
+                          if (
+                            ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DATETIME', 'TIMESTAMP', 'TEXT', 'JSON', 'BOOLEAN'].includes(newType) &&
+                            (col.lengthOrValues === '255' || col.lengthOrValues === '50')
+                          ) {
                             autoLen = '';
                           }
                           handleUpdateColumn(col.id, { dataType: newType, lengthOrValues: autoLen });
                         }}
-                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs font-mono font-semibold text-white focus:border-blue-500 focus:outline-none cursor-pointer"
-                      >
-                        {typeGroups.map((grp) => (
-                          <optgroup key={grp.group} label={grp.group} className="bg-[#181920] text-zinc-400 font-sans font-bold">
-                            {grp.types.map((t) => (
-                              <option key={t} value={t} className="bg-[#181920] text-white font-mono font-normal">
-                                {t}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </select>
+                      />
                     </td>
 
                     {/* Length / Values */}
