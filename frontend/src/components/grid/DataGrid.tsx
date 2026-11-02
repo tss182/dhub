@@ -20,6 +20,7 @@ import {
   ArrowDownCircle,
   Filter,
   Key,
+  Hash,
   Info,
   ArrowUp,
   ArrowDown,
@@ -236,6 +237,46 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setLocalSortConfigs([]);
     onSortChange?.([]);
   };
+
+  const [hoveredCol, setHoveredCol] = useState<{
+    col: ColumnMeta;
+    isPK: boolean;
+    details: { baseType: string; size: string | null; extra: string | null };
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const hoverTimeoutRef = useRef<any>(null);
+
+  const handleColMouseEnter = (e: React.MouseEvent, col: ColumnMeta, isPK: boolean) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const tooltipWidth = 240;
+    const x = Math.min(Math.max(8, rect.left), window.innerWidth - tooltipWidth - 16);
+    const y = rect.bottom + 4;
+    const details = parseColumnTypeDetails(col.dataType);
+
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredCol({
+        col,
+        isPK,
+        details,
+        x,
+        y,
+      });
+    }, 120);
+  };
+
+  const handleColMouseLeave = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    setHoveredCol(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
 
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colIndex: number } | null>(null);
   const [editVal, setEditVal] = useState<string>('');
@@ -937,6 +978,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   <th
                     key={col.name}
                     onClick={(e) => handleToggleSort(col.name, e)}
+                    onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
+                    onMouseLeave={handleColMouseLeave}
                     className="px-3 py-1.5 text-left font-semibold border-r border-[#272932] text-zinc-200 group/th select-none hover:bg-[#1c1d28] transition-colors cursor-pointer"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -1359,6 +1402,92 @@ export const DataGrid: React.FC<DataGridProps> = ({
           )}
         </div>
       </div>
+
+      {/* Column Hover Metadata Popover Card */}
+      {hoveredCol && (
+        <div
+          className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl p-3 text-xs font-sans min-w-[220px] max-w-[320px] animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: hoveredCol.y, left: hoveredCol.x }}
+        >
+          {/* Header: Name + PK Badge */}
+          <div className="flex items-center justify-between gap-2 border-b border-[#272932] pb-2 mb-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {hoveredCol.isPK ? (
+                <Key className="h-3.5 w-3.5 text-amber-400 fill-amber-400/30 shrink-0" />
+              ) : (
+                <Hash className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+              )}
+              <span className="font-bold text-zinc-100 truncate text-[13px]">{hoveredCol.col.name}</span>
+            </div>
+            {hoveredCol.isPK && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono shrink-0">
+                PRIMARY KEY
+              </span>
+            )}
+          </div>
+
+          {/* Metadata Rows */}
+          <div className="space-y-1.5 text-[11px]">
+            {/* Data Type */}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-zinc-500">Data Type:</span>
+              <span className="font-mono font-medium text-blue-400 uppercase bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-900/40">
+                {hoveredCol.col.dataType || 'UNKNOWN'}
+              </span>
+            </div>
+
+            {/* Size / Length if extracted */}
+            {hoveredCol.details.size && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-zinc-500">Length / Size:</span>
+                <span className="font-mono text-zinc-300">{hoveredCol.details.size}</span>
+              </div>
+            )}
+
+            {/* Nullable */}
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-zinc-500">Nullable:</span>
+              <span
+                className={`font-mono text-[10px] ${
+                  hoveredCol.col.isNullable ? 'text-zinc-400' : 'text-amber-400/90 font-semibold'
+                }`}
+              >
+                {hoveredCol.col.isNullable ? 'YES (NULL)' : 'NO (NOT NULL)'}
+              </span>
+            </div>
+
+            {/* Auto Increment */}
+            {hoveredCol.col.isAutoIncrement && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-zinc-500">Extra:</span>
+                <span className="font-mono text-emerald-400 text-[10px]">auto_increment</span>
+              </div>
+            )}
+
+            {/* Default Value */}
+            {hoveredCol.col.defaultValue !== undefined && hoveredCol.col.defaultValue !== '' && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-zinc-500">Default:</span>
+                <span className="font-mono text-zinc-400 truncate max-w-[150px]">
+                  {hoveredCol.col.defaultValue}
+                </span>
+              </div>
+            )}
+
+            {/* Comment / Description */}
+            {hoveredCol.col.comment && (
+              <div className="mt-2 pt-2 border-t border-[#272932]">
+                <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-0.5">
+                  Description
+                </div>
+                <div className="text-zinc-300 text-[11px] leading-relaxed italic">
+                  {hoveredCol.col.comment}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Cancel Changes Confirmation Modal */}
       {showCancelConfirm && (
