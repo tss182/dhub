@@ -333,7 +333,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                             onContextMenu={(e) => handleConsoleContextMenu(e, record)}
                             className={`group flex flex-col p-2 rounded cursor-pointer border transition-colors ${
                               isTabActive
-                                ? 'bg-[#22242c] border-blue-500/60 text-white'
+                                ? 'bg-[#22242c] border-zinc-500/60 text-white'
                                 : 'bg-[#191a20]/80 border-transparent hover:bg-[#22242c]/50 text-zinc-300'
                             }`}
                           >
@@ -341,7 +341,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                 <FileCode
                                   className={`h-3.5 w-3.5 shrink-0 ${
-                                    isTabActive ? 'text-blue-400' : 'text-zinc-400'
+                                    isTabActive ? 'text-zinc-200' : 'text-zinc-400'
                                   }`}
                                 />
                                 <span className="font-medium truncate text-xs">{record.title}</span>

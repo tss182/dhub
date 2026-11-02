@@ -109,9 +109,10 @@ html[data-theme="light"],
   }
 
   /* Active Tab in Light Mode */
+  div[class*="border-zinc-400"].bg-\[\#191a20\],
   div[class*="border-blue-500"].bg-\[\#191a20\] {
     background-color: #ffffff !important;
-    color: #2563eb !important;
+    color: #0f172a !important;
   }
 
   /* Inputs, Selects, and Textareas */

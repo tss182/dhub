@@ -8,7 +8,7 @@ BIN_DIR ?= bin
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings
+.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings update-assets
 .PHONY: build-mac build-mac-bin build-mac-dmg build-deb build-rpm build-appimage build-windows build-windows-installer
 
 help:
@@ -84,6 +84,10 @@ build-windows-installer: build\:windows\:installer
 bindings:
 	@echo "==> Generating Wails bindings..."
 	$(WAILS) task common:generate:bindings
+
+update-assets:
+	@echo "==> Updating build assets from build/config.yml..."
+	$(WAILS) task common:update:build-assets
 
 clean:
 	@echo "==> Cleaning build artifacts..."

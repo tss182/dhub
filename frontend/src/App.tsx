@@ -885,31 +885,12 @@ export function App() {
     });
   };
 
-  const currentConn = connections.find((c) => c.id === activeConnectionId);
-
   return (
     <div className="flex h-screen w-screen flex-col bg-[#121317] text-zinc-300 font-sans select-none overflow-hidden">
       {/* Top Titlebar / Islands Header */}
       <header className="flex h-11 items-center justify-between border-b border-[#272932] px-4 bg-[#14151a]">
         <div className="flex items-center gap-3">
           <DHubLogo variant="full" size={26} />
-
-          <div className="h-4 w-[1px] bg-[#272932]" />
-
-          {/* Quick Active Connection Indicator */}
-          <div
-            onClick={() => setConnectionDialogOpen(true, activeConnectionId)}
-            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs border border-[#272932] cursor-pointer hover:border-zinc-500 transition-colors"
-          >
-            <span
-              className="h-2 w-2 rounded-full"
-              style={{ backgroundColor: currentConn?.colorTag || '#71717a' }}
-            />
-            <span className="font-medium text-zinc-200">
-              {currentConn ? currentConn.name : 'Select Connection'}
-            </span>
-            <ChevronDown className="h-3 w-3 text-zinc-500" />
-          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -918,7 +899,7 @@ export function App() {
             onClick={toggleRightPanel}
             className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
               isRightPanelOpen
-                ? 'bg-blue-600/20 border-blue-500 text-blue-300 font-medium'
+                ? 'bg-[#22242c] border-zinc-500 text-zinc-100 font-medium'
                 : 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
             }`}
             title="Toggle Consoles List Panel"
@@ -979,12 +960,12 @@ export function App() {
                 onContextMenu={(e) => handleTabContextMenu(e, tab)}
                 className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t text-xs cursor-pointer border-t-2 transition-colors ${
                   activeTabId === tab.id
-                    ? 'bg-[#191a20] border-blue-500 text-white font-medium'
+                    ? 'bg-[#191a20] border-zinc-400 text-white font-medium'
                     : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#191a20]/50'
                 }`}
               >
                 {tab.type === 'worksheet' ? (
-                  <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                  <FileCode className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                 ) : (
                   <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                 )}
@@ -1218,7 +1199,7 @@ export function App() {
                             }}
                             className={`text-xs pb-1 border-b-2 font-medium cursor-pointer transition-colors whitespace-nowrap ${
                               isSelected
-                                ? 'border-blue-500 text-white font-semibold'
+                                ? 'border-zinc-400 text-white font-semibold'
                                 : 'border-transparent text-zinc-500 hover:text-zinc-300'
                             }`}
                           >
@@ -1231,7 +1212,7 @@ export function App() {
                         onClick={() => setActiveBottomTab('result')}
                         className={`text-xs pb-1 border-b-2 font-medium cursor-pointer ${
                           activeBottomTab === 'result'
-                            ? 'border-blue-500 text-white'
+                            ? 'border-zinc-400 text-white'
                             : 'border-transparent text-zinc-500 hover:text-zinc-300'
                         }`}
                       >
@@ -1242,7 +1223,7 @@ export function App() {
                       onClick={() => setActiveBottomTab('output')}
                       className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
                         activeBottomTab === 'output'
-                          ? 'border-blue-500 text-white'
+                          ? 'border-zinc-400 text-white'
                           : 'border-transparent text-zinc-500 hover:text-zinc-300'
                       }`}
                     >

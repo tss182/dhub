@@ -1,131 +1,339 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
 import { Search, Table, Database, Terminal, FileCode, Settings as SettingsIcon } from 'lucide-react';
 
+interface SearchResultItem {
+  id: string;
+  kind: 'table' | 'view' | 'console' | 'connection';
+  title: string;
+  subtitle: string;
+  badge: string;
+  connectionId?: string;
+  database?: string;
+  schema?: string;
+  table?: string;
+  consoleData?: any;
+}
+
 export const SearchEverywhere: React.FC = () => {
-  const { isSearchEverywhereOpen, setSearchEverywhereOpen, openTab } = useWorkbenchStore();
-  const { activeConnectionId } = useConnectionStore();
+  const { isSearchEverywhereOpen, setSearchEverywhereOpen, openTab, consoles } = useWorkbenchStore();
+  const { connections, treeObjects, setActiveConnection } = useConnectionStore();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<SearchResultItem[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isSearchEverywhereOpen) {
+      setQuery('');
+      setResults([]);
+      setSelectedIndex(0);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [isSearchEverywhereOpen]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Double Shift detection or Ctrl+Shift+N
-      if (e.key === 'Shift') {
-        // Handled via custom hook or global listener
-      }
-      if (e.key === 'Escape' && isSearchEverywhereOpen) {
+      if (!isSearchEverywhereOpen) return;
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
         setSearchEverywhereOpen(false);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex((prev) => (results.length > 0 ? (prev + 1) % results.length : 0));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex((prev) => (results.length > 0 ? (prev - 1 + results.length) % results.length : 0));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (results[selectedIndex]) {
+          handleSelectItem(results[selectedIndex]);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSearchEverywhereOpen]);
+  }, [isSearchEverywhereOpen, results, selectedIndex]);
+
+  // Scroll active item into view
+  useEffect(() => {
+    if (listRef.current) {
+      const activeEl = listRef.current.children[selectedIndex] as HTMLElement | undefined;
+      activeEl?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedIndex]);
 
   useEffect(() => {
-    if (!query.trim() || !activeConnectionId) {
+    const cleanQuery = query.trim();
+    if (!cleanQuery) {
       setResults([]);
+      setSelectedIndex(0);
       return;
     }
+
     const timer = setTimeout(async () => {
       try {
-        const matches = await SchemaService.SearchEverywhere(activeConnectionId, query);
-        setResults(matches || []);
+        const qLower = cleanQuery.toLowerCase();
+        const items: SearchResultItem[] = [];
+
+        // 1. Search cached schema objects across ALL connections from backend
+        // Passing "" as connectionID instructs backend to query across all connections
+        let backendMatches: any[] = [];
+        try {
+          const resp = await SchemaService.SearchEverywhere('', cleanQuery);
+          backendMatches = resp || [];
+        } catch (err) {
+          console.error('Backend search everywhere error:', err);
+        }
+
+        // 2. Search matching tables / views from in-memory treeObjects
+        const memoryMatches: any[] = [];
+        Object.entries(treeObjects).forEach(([key, objs]) => {
+          // Key format: "connId:db:schema"
+          const parts = key.split(':');
+          const connId = parts[0] || '';
+          const dbName = parts[1] || '';
+          const schemaName = parts[2] || '';
+          (objs || []).forEach((o: any) => {
+            if (o.name && o.name.toLowerCase().includes(qLower)) {
+              memoryMatches.push({
+                connectionId: connId,
+                databaseName: dbName,
+                schemaName: schemaName,
+                objectType: o.type || 'table',
+                objectName: o.name,
+              });
+            }
+          });
+        });
+
+        // Deduplicate database objects
+        const seenObjKeys = new Set<string>();
+        for (const item of [...backendMatches, ...memoryMatches]) {
+          const k = `${item.connectionId}:${item.databaseName}:${item.schemaName}:${item.objectName}`;
+          if (!seenObjKeys.has(k)) {
+            seenObjKeys.add(k);
+            const conn = connections.find((c) => c.id === item.connectionId);
+            const connPrefix = conn?.name ? `${conn.name} › ` : '';
+            const dbPath = item.databaseName ? `${item.databaseName}${item.schemaName ? '.' + item.schemaName : ''}` : '';
+            const isView = item.objectType?.toLowerCase() === 'view';
+
+            items.push({
+              id: `obj-${k}`,
+              kind: isView ? 'view' : 'table',
+              title: item.objectName,
+              subtitle: `${connPrefix}${dbPath}`,
+              badge: isView ? 'VIEW' : 'TABLE',
+              connectionId: item.connectionId,
+              database: item.databaseName,
+              schema: item.schemaName,
+              table: item.objectName,
+            });
+          }
+        }
+
+        // 3. Search query consoles
+        const matchingConsoles = consoles.filter((c) => c.title.toLowerCase().includes(qLower));
+        for (const c of matchingConsoles) {
+          const conn = connections.find((cn) => cn.id === c.connectionId);
+          items.unshift({
+            id: `console-${c.id}`,
+            kind: 'console',
+            title: c.title,
+            subtitle: `${conn?.name || 'Console'} › Worksheet`,
+            badge: 'CONSOLE',
+            connectionId: c.connectionId,
+            database: c.database,
+            schema: c.schema,
+            consoleData: c,
+          });
+        }
+
+        // 4. Search connections themselves
+        const matchingConns = connections.filter((c) => c.name.toLowerCase().includes(qLower));
+        for (const c of matchingConns) {
+          items.push({
+            id: `conn-${c.id}`,
+            kind: 'connection',
+            title: c.name,
+            subtitle: `${c.driver} (${c.host || c.databaseName || 'local'})`,
+            badge: 'CONNECTION',
+            connectionId: c.id,
+            database: c.databaseName,
+          });
+        }
+
+        setResults(items);
+        setSelectedIndex(0);
       } catch (e) {
-        console.error(e);
+        console.error('Search everywhere failed:', e);
       }
-    }, 150);
+    }, 120);
+
     return () => clearTimeout(timer);
-  }, [query, activeConnectionId]);
+  }, [query, treeObjects, consoles, connections]);
+
+  const handleSelectItem = (item: SearchResultItem) => {
+    setSearchEverywhereOpen(false);
+
+    if (item.kind === 'console' && item.consoleData) {
+      openTab({
+        id: item.consoleData.id,
+        type: 'worksheet',
+        title: item.consoleData.title,
+        content: item.consoleData.content,
+        connectionId: item.consoleData.connectionId,
+        database: item.consoleData.database,
+        schema: item.consoleData.schema,
+      });
+      return;
+    }
+
+    if (item.kind === 'table' || item.kind === 'view') {
+      openTab({
+        id: `table-${item.connectionId}-${item.database}-${item.table}`,
+        type: 'table_data',
+        title: item.title,
+        connectionId: item.connectionId || '',
+        database: item.database || '',
+        schema: item.schema || '',
+        table: item.table || '',
+      });
+      return;
+    }
+
+    if (item.kind === 'connection' && item.connectionId) {
+      const conn = connections.find((c) => c.id === item.connectionId);
+      if (conn) {
+        setActiveConnection(conn.id, conn.databaseName || 'main', conn.driver === 'postgres' ? 'public' : 'main');
+      }
+    }
+  };
 
   if (!isSearchEverywhereOpen) return null;
 
+  const isSettingsMatch =
+    query.trim() &&
+    ('settings'.includes(query.toLowerCase()) ||
+      'preferences'.includes(query.toLowerCase()) ||
+      'config'.includes(query.toLowerCase()) ||
+      'pagination'.includes(query.toLowerCase()) ||
+      'lazy'.includes(query.toLowerCase()));
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/60 backdrop-blur-xs">
-      <div className="w-[620px] rounded-lg bg-[#191a20] border border-[#272932] shadow-2xl overflow-hidden text-xs">
+    <div
+      onClick={() => setSearchEverywhereOpen(false)}
+      className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/60 backdrop-blur-xs"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[640px] rounded-lg bg-[#191a20] border border-[#272932] shadow-2xl overflow-hidden text-xs"
+      >
         {/* Search Input Bar */}
-        <div className="flex items-center gap-2 border-b border-[#272932] px-3 py-2.5 bg-[#14151a]">
-          <Search className="h-4 w-4 text-blue-400 shrink-0" />
+        <div className="flex items-center gap-2 border-b border-[#272932] px-3.5 py-2.5 bg-[#14151a]">
+          <Search className="h-4 w-4 text-zinc-400 shrink-0" />
           <input
+            ref={inputRef}
             type="text"
-            autoFocus
-            placeholder="Search tables, columns, symbols everywhere..."
+            placeholder="Search all connections, tables, views, consoles everywhere..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
           />
+          <span className="text-[10px] text-zinc-500 font-mono">
+            {connections.length} {connections.length === 1 ? 'connection' : 'connections'}
+          </span>
           <kbd className="rounded bg-[#22242c] px-1.5 py-0.5 text-[10px] text-zinc-400 font-mono">
             ESC
           </kbd>
         </div>
 
         {/* Results List */}
-        <div className="max-h-80 overflow-auto p-2">
-          {query &&
-            ('settings'.includes(query.toLowerCase()) ||
-              'preferences'.includes(query.toLowerCase()) ||
-              'config'.includes(query.toLowerCase()) ||
-              'pagination'.includes(query.toLowerCase()) ||
-              'lazy'.includes(query.toLowerCase())) && (
-              <div
-                onClick={() => {
-                  setSearchEverywhereOpen(false);
-                  useSettingsStore.getState().openSettings();
-                }}
-                className="flex items-center justify-between rounded px-3 py-2 hover:bg-[#22242c] cursor-pointer text-zinc-300 hover:text-white border-b border-[#272932] mb-1"
-              >
-                <div className="flex items-center gap-2">
-                  <SettingsIcon className="h-3.5 w-3.5 text-blue-400" />
-                  <span className="font-semibold text-zinc-200">Open Settings & Preferences</span>
-                  <span className="text-zinc-500 text-[11px]">Configure Lazy Load, Pagination & Batch size</span>
-                </div>
-                <span className="text-[10px] uppercase tracking-wider text-blue-400 bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-900/40">
-                  Action
-                </span>
+        <div ref={listRef} className="max-h-96 overflow-auto p-1.5">
+          {isSettingsMatch && (
+            <div
+              onClick={() => {
+                setSearchEverywhereOpen(false);
+                useSettingsStore.getState().openSettings();
+              }}
+              className="flex items-center justify-between rounded px-3 py-2 hover:bg-[#22242c] cursor-pointer text-zinc-300 hover:text-white border-b border-[#272932] mb-1"
+            >
+              <div className="flex items-center gap-2">
+                <SettingsIcon className="h-3.5 w-3.5 text-zinc-400" />
+                <span className="font-semibold text-zinc-200">Open Settings & Preferences</span>
+                <span className="text-zinc-500 text-[11px]">Configure Lazy Load, Pagination & Batch size</span>
               </div>
-            )}
+              <span className="text-[10px] uppercase tracking-wider text-zinc-300 bg-[#22242c] px-1.5 py-0.5 rounded border border-[#272932]">
+                Action
+              </span>
+            </div>
+          )}
 
           {results.length === 0 ? (
-            <div className="py-6 text-center text-zinc-500 text-xs">
-              {query ? 'No matching database symbols found' : 'Type to search tables, views, and schemas'}
+            <div className="py-8 text-center text-zinc-500 text-xs">
+              {query ? 'No matching symbols found across all connections' : 'Type to search tables, views, consoles, and connections...'}
             </div>
           ) : (
-            results.map((item, idx) => (
-              <div
-                key={idx}
-                onClick={() => {
-                  openTab({
-                    id: `table-${item.connectionId}-${item.databaseName}-${item.objectName}`,
-                    type: 'table_data',
-                    title: item.objectName,
-                    connectionId: item.connectionId,
-                    database: item.databaseName,
-                    schema: item.schemaName,
-                    table: item.objectName,
-                  });
-                  setSearchEverywhereOpen(false);
-                }}
-                className="flex items-center justify-between rounded px-3 py-2 hover:bg-[#22242c] cursor-pointer text-zinc-300 hover:text-white"
-              >
-                <div className="flex items-center gap-2">
-                  <Table className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="font-semibold text-zinc-200">{item.objectName}</span>
-                  <span className="text-zinc-500 text-[11px] font-mono">
-                    {item.databaseName}.{item.schemaName}
+            results.map((item, idx) => {
+              const isSelected = idx === selectedIndex;
+              const conn = item.connectionId ? connections.find((c) => c.id === item.connectionId) : null;
+
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => handleSelectItem(item)}
+                  onMouseEnter={() => setSelectedIndex(idx)}
+                  className={`flex items-center justify-between rounded px-3 py-2 cursor-pointer transition-colors ${
+                    isSelected ? 'bg-[#22242c] text-white ring-1 ring-zinc-700/60' : 'text-zinc-300 hover:bg-[#1f2026]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
+                    {item.kind === 'table' && <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+                    {item.kind === 'view' && <Table className="h-3.5 w-3.5 text-teal-400 shrink-0" />}
+                    {item.kind === 'console' && <FileCode className="h-3.5 w-3.5 text-amber-400 shrink-0" />}
+                    {item.kind === 'connection' && <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />}
+
+                    <span className="font-medium text-zinc-100 truncate">{item.title}</span>
+
+                    {conn && (
+                      <span className="flex items-center gap-1 text-[11px] text-zinc-400 font-mono shrink-0">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: conn.colorTag || '#71717a' }}
+                        />
+                        <span className="text-zinc-400">{conn.name}</span>
+                      </span>
+                    )}
+
+                    <span className="text-zinc-500 text-[11px] font-mono truncate">
+                      {item.subtitle}
+                    </span>
+                  </div>
+
+                  <span className="text-[9px] uppercase tracking-wider text-zinc-400 bg-[#121317] px-1.5 py-0.5 rounded border border-[#272932] shrink-0 font-mono">
+                    {item.badge}
                   </span>
                 </div>
-                <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-[#121317] px-1.5 py-0.5 rounded border border-[#272932]">
-                  {item.objectType}
-                </span>
-              </div>
-            ))
+              );
+            })
           )}
+        </div>
+
+        {/* Footer shortcuts hint */}
+        <div className="flex items-center justify-between border-t border-[#272932] px-3 py-1.5 bg-[#14151a] text-[10px] text-zinc-500 font-mono">
+          <div className="flex items-center gap-3">
+            <span>↑↓ Navigate</span>
+            <span>↵ Select</span>
+            <span>ESC Close</span>
+          </div>
+          <span>Search Everywhere (All Connections)</span>
         </div>
       </div>
     </div>
   );
 };
-
