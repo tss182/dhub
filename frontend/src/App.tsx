@@ -560,7 +560,7 @@ export function App() {
       .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
     const targetConnId = currentTab?.connectionId || useConnectionStore.getState().activeConnectionId;
     if (!targetConnId) {
-      alertWarning('Silakan pilih atau tambahkan koneksi di Database Explorer terlebih dahulu.', 'Pilih Koneksi Database');
+      alertWarning('Please select or add a connection in Database Explorer first.', 'No Active Connection');
       return;
     }
     const currentConns = useConnectionStore.getState().connections;
@@ -812,8 +812,8 @@ export function App() {
       setDmlPreview(sqls ?? []);
     } catch (e: any) {
       alertError(
-        'Terjadi kendala saat membuat preview query DML untuk perubahan yang dipilih.',
-        'Gagal Preview SQL',
+        'An error occurred while generating SQL DML preview for staged changes.',
+        'SQL Preview Failed',
         e?.message || String(e)
       );
     }
@@ -834,8 +834,8 @@ export function App() {
       );
       useAlertStore.getState().showAlert({
         type: 'success',
-        title: 'Perubahan Berhasil Diterapkan',
-        message: `Berhasil menerapkan ${affected} perubahan pada tabel "${activeTab.table}".`,
+        title: 'Changes Applied Successfully',
+        message: `Successfully applied ${affected} change(s) to table "${activeTab.table}".`,
       });
       useGridEditStore.getState().revertTabChanges(activeTab.id);
       // Refresh table data
@@ -845,8 +845,8 @@ export function App() {
     } catch (e: any) {
       useAlertStore.getState().showAlert({
         type: 'error',
-        title: 'Gagal Menerapkan Perubahan',
-        message: 'Database menolak perubahan data atau terjadi error saat eksekusi query DML.',
+        title: 'Failed to Apply Changes',
+        message: 'The database rejected the changes or encountered an error during DML execution.',
         details: e?.message || String(e),
       });
     }
