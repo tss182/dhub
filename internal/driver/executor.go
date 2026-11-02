@@ -97,6 +97,14 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 				for vIdx, v := range values {
 					if b, ok := v.([]byte); ok {
 						rowValues[vIdx] = string(b)
+					} else if t, ok := v.(time.Time); ok {
+						if t.Nanosecond() != 0 {
+							rowValues[vIdx] = t.Format("2006-01-02 15:04:05.000000")
+						} else if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && strings.EqualFold(columns[vIdx].DataType, "date") {
+							rowValues[vIdx] = t.Format("2006-01-02")
+						} else {
+							rowValues[vIdx] = t.Format("2006-01-02 15:04:05")
+						}
 					} else {
 						rowValues[vIdx] = v
 					}
