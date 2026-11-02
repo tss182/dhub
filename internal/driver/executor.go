@@ -33,7 +33,7 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 		limit = 100
 	}
 	offset := req.Offset
-	if offset < 0 {
+	if offset < 0 || strings.Contains(strings.ToUpper(req.SQL), " OFFSET ") {
 		offset = 0
 	}
 
