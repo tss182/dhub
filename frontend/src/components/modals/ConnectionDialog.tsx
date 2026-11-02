@@ -159,7 +159,7 @@ export const ConnectionDialog: React.FC = () => {
       setActiveConnection(id, databaseName || 'main', 'main');
       setConnectionDialogOpen(false);
     } catch (e: any) {
-      alertError(e?.message || String(e), 'Gagal Menyimpan Koneksi');
+      alertError(e?.message || String(e), 'Failed to Save Connection');
     } finally {
       setIsLoading(false);
     }
@@ -183,7 +183,7 @@ export const ConnectionDialog: React.FC = () => {
       }
       setConnectionDialogOpen(false);
     } catch (e: any) {
-      alertError(e?.message || String(e), 'Gagal Menghapus Koneksi');
+      alertError(e?.message || String(e), 'Failed to Delete Connection');
     } finally {
       setIsLoading(false);
     }

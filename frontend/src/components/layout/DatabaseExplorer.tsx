@@ -222,7 +222,7 @@ export const DatabaseExplorer: React.FC = () => {
         }
       }
     } catch (e: any) {
-      alertError(e?.message || String(e), 'Gagal Menghapus Koneksi');
+      alertError(e?.message || String(e), 'Failed to Delete Connection');
     }
   };
 
@@ -240,7 +240,7 @@ export const DatabaseExplorer: React.FC = () => {
       const objects = (await SchemaService.GetObjects(connId, dbName, targetSchema)) ?? [];
       setTreeObjects(schemaKey, objects as any);
     } catch (err: any) {
-      alertError(err?.message || String(err), 'Gagal Memuat Database');
+      alertError(err?.message || String(err), 'Failed to Refresh Database');
     }
   };
 
@@ -261,10 +261,10 @@ export const DatabaseExplorer: React.FC = () => {
         .then(async () => {
           const dbs = (await SchemaService.GetDatabases(conn.id)) ?? [];
           setTreeDatabases(conn.id, dbs);
-          alertSuccess(`Database berhasil diubah namanya menjadi "${newName.trim()}"`, 'Database Berhasil Diubah');
+          alertSuccess(`Database successfully renamed to "${newName.trim()}"`, 'Database Renamed');
         })
         .catch((err: any) => {
-          alertError(err?.message || String(err), 'Gagal Mengubah Nama Database');
+          alertError(err?.message || String(err), 'Failed to Rename Database');
         });
     } else if (conn.driver === 'mysql') {
       // Open a query console pre-populated with ALTER DATABASE statement
@@ -279,13 +279,13 @@ export const DatabaseExplorer: React.FC = () => {
         content: `-- Modify Character Set / Collation for Database: ${dbName}\nALTER DATABASE \`${dbName}\` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;\n`,
       });
     } else {
-      alertInfo('Database SQLite merupakan file lokal dan tidak mendukung modifikasi database server.', 'Informasi SQLite');
+      alertInfo('SQLite databases are local files and do not support database modification queries.', 'SQLite Information');
     }
   };
 
   const handleDeleteDatabase = async (conn: ConnectionConfig, dbName: string) => {
     if (conn.driver === 'sqlite') {
-      alertInfo('SQLite menggunakan file database lokal. Untuk menghapusnya, hapus koneksi atau hapus file dari disk Anda.', 'Informasi SQLite');
+      alertInfo('SQLite uses a local database file. To remove it, delete the connection or delete the file from your disk.', 'SQLite Information');
       return;
     }
 
@@ -326,7 +326,7 @@ export const DatabaseExplorer: React.FC = () => {
       const dbs = (await SchemaService.GetDatabases(conn.id)) ?? [];
       setTreeDatabases(conn.id, dbs);
     } catch (err: any) {
-      alertError(err?.message || String(err), 'Gagal Menghapus Database');
+      alertError(err?.message || String(err), 'Failed to Drop Database');
     }
   };
 
@@ -427,7 +427,7 @@ export const DatabaseExplorer: React.FC = () => {
         })
         .catch(() => {});
     } catch (err: any) {
-      alertError(err?.message || String(err), `Gagal Menghapus ${keyword}`);
+      alertError(err?.message || String(err), `Failed to Drop ${keyword}`);
     }
   };
 

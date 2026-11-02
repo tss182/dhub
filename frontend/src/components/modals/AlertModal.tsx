@@ -137,7 +137,7 @@ export const AlertModal: React.FC = () => {
                 {title}
               </h3>
               <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-500">
-                {type === 'confirm' ? 'Konfirmasi Tindakan' : `${type.toUpperCase()} NOTIFICATION`}
+                {type === 'confirm' ? 'ACTION REQUIRED' : `${type.toUpperCase()} NOTIFICATION`}
               </span>
             </div>
           </div>
@@ -149,7 +149,7 @@ export const AlertModal: React.FC = () => {
               closeAlert();
             }}
             className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-[#20222a] transition-colors cursor-pointer"
-            title="Tutup (Esc)"
+            title="Close (Esc)"
           >
             <X className="h-4 w-4" />
           </button>
@@ -164,22 +164,22 @@ export const AlertModal: React.FC = () => {
         {details && (
           <div className="relative rounded-xl border border-rose-900/40 bg-[#0e0f14] p-3 text-xs font-mono text-rose-300/90 max-h-48 overflow-y-auto space-y-1.5 shadow-inner">
             <div className="flex items-center justify-between text-[10px] text-zinc-500 uppercase tracking-wider font-sans border-b border-rose-950/60 pb-1.5">
-              <span>Detail Informasi Error</span>
+              <span>Error Details</span>
               <button
                 type="button"
                 onClick={handleCopy}
                 className="flex items-center gap-1 text-zinc-400 hover:text-white transition-colors cursor-pointer"
-                title="Salin pesan error"
+                title="Copy error details"
               >
                 {copied ? (
                   <>
                     <Check className="h-3 w-3 text-emerald-400" />
-                    <span className="text-emerald-400">Tersalin</span>
+                    <span className="text-emerald-400">Copied</span>
                   </>
                 ) : (
                   <>
                     <Copy className="h-3 w-3" />
-                    <span>Salin</span>
+                    <span>Copy</span>
                   </>
                 )}
               </button>

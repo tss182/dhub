@@ -38,17 +38,17 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
   message: '',
   details: undefined,
   confirmLabel: 'OK',
-  cancelLabel: 'Batal',
+  cancelLabel: 'Cancel',
   isDanger: false,
   onConfirm: undefined,
   onCancel: undefined,
 
   showAlert: (options) => {
     const type = options.type || 'info';
-    let defaultTitle = 'Informasi';
-    if (type === 'success') defaultTitle = 'Berhasil';
-    if (type === 'error') defaultTitle = 'Terjadi Kesalahan';
-    if (type === 'warning') defaultTitle = 'Peringatan';
+    let defaultTitle = 'Information';
+    if (type === 'success') defaultTitle = 'Success';
+    if (type === 'error') defaultTitle = 'Error';
+    if (type === 'warning') defaultTitle = 'Warning';
 
     set({
       isOpen: true,
@@ -56,8 +56,8 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
       title: options.title || defaultTitle,
       message: options.message,
       details: options.details,
-      confirmLabel: options.confirmLabel || (type === 'error' ? 'Tutup' : 'OK'),
-      cancelLabel: options.cancelLabel || 'Batal',
+      confirmLabel: options.confirmLabel || (type === 'error' ? 'Close' : 'OK'),
+      cancelLabel: options.cancelLabel || 'Cancel',
       isDanger: options.isDanger || false,
       onConfirm: options.onConfirm,
       onCancel: options.onCancel,
@@ -68,11 +68,11 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
     set({
       isOpen: true,
       type: 'confirm',
-      title: options.title || 'Konfirmasi',
+      title: options.title || 'Confirmation',
       message: options.message,
       details: options.details,
-      confirmLabel: options.confirmLabel || 'Ya, Lanjutkan',
-      cancelLabel: options.cancelLabel || 'Batal',
+      confirmLabel: options.confirmLabel || 'Proceed',
+      cancelLabel: options.cancelLabel || 'Cancel',
       isDanger: options.isDanger ?? true,
       onConfirm: options.onConfirm,
       onCancel: options.onCancel,

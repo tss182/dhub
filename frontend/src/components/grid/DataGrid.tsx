@@ -817,7 +817,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <button
                 onClick={() => setShowCancelConfirm(true)}
                 className="flex h-7 w-7 items-center justify-center rounded bg-rose-950/40 border border-rose-800/60 hover:bg-rose-900/60 text-rose-400 hover:text-white transition-colors cursor-pointer"
-                title="Batalkan Perubahan (Esc)"
+                title="Revert Staged Changes (Esc)"
               >
                 <X className="h-4 w-4 text-rose-400" />
               </button>
@@ -1518,13 +1518,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-semibold text-zinc-100">
-                  Batalkan Perubahan?
+                  Discard Staged Changes?
                 </h3>
                 <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
-                  Terdapat <span className="font-semibold text-rose-300 font-mono">{stagedCount}</span> perubahan yang belum disimpan. Semua penambahan, pengeditan, atau penghapusan baris yang belum diapply akan dibatalkan.
+                  There are <span className="font-semibold text-rose-300 font-mono">{stagedCount}</span> unsaved change(s). All pending row additions, edits, or deletions will be reverted to database values.
                 </p>
                 <p className="text-xs text-zinc-400 mt-1">
-                  Lanjut batalkan perubahan atau tidak?
+                  Are you sure you want to discard these changes?
                 </p>
               </div>
             </div>
@@ -1535,7 +1535,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 onClick={() => setShowCancelConfirm(false)}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
               >
-                <span>Batal (Kembali)</span>
+                <span>Keep Changes</span>
                 <kbd className="text-[10px] text-zinc-500 font-mono bg-[#14151a] px-1 rounded border border-[#2d303f]">Esc</kbd>
               </button>
               <button
@@ -1551,7 +1551,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 }}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors cursor-pointer shadow-sm"
               >
-                <span>Ya, Lanjut Batalkan</span>
+                <span>Discard Changes</span>
                 <kbd className="text-[10px] text-rose-200 font-mono bg-rose-700/60 px-1 rounded">↵ Enter</kbd>
               </button>
             </div>

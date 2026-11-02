@@ -207,7 +207,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
               if (activeConn) {
                 handleCreateForConnection(activeConn);
               } else {
-                alertWarning('Silakan pilih atau tambahkan koneksi di Database Explorer terlebih dahulu.', 'Pilih Koneksi');
+                alertWarning('Please select or add a connection in Database Explorer first.', 'No Active Connection');
               }
             }}
             className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
