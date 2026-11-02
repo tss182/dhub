@@ -819,37 +819,65 @@ export function App() {
     }
   };
 
-  const handleSubmitChanges = async () => {
+  const handleSubmitChanges = async (skipConfirm = false) => {
     if (!activeTab || activeTab.type !== 'table_data' || !activeConnectionId) return;
     const staged = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
     const changeList = Object.values(staged);
     if (changeList.length === 0) return;
 
-    try {
-      const affected = await QueryService.SubmitChanges(
-        activeConnectionId,
-        activeTab.database || activeTab.schema || 'main',
-        activeTab.table || '',
-        changeList as any
-      );
-      useAlertStore.getState().showAlert({
-        type: 'success',
-        title: 'Changes Applied Successfully',
-        message: `Successfully applied ${affected} change(s) to table "${activeTab.table}".`,
-      });
-      useGridEditStore.getState().revertTabChanges(activeTab.id);
-      // Refresh table data
-      if (activeTab.table) {
-        loadTableData(activeTab);
+    const executeApply = async () => {
+      try {
+        const affected = await QueryService.SubmitChanges(
+          activeConnectionId,
+          activeTab.database || activeTab.schema || 'main',
+          activeTab.table || '',
+          changeList as any
+        );
+        useAlertStore.getState().showAlert({
+          type: 'success',
+          title: 'Changes Applied Successfully',
+          message: `Successfully applied ${affected} change(s) to table "${activeTab.table}".`,
+        });
+        useGridEditStore.getState().revertTabChanges(activeTab.id);
+        // Refresh table data
+        if (activeTab.table) {
+          loadTableData(activeTab);
+        }
+      } catch (e: any) {
+        useAlertStore.getState().showAlert({
+          type: 'error',
+          title: 'Failed to Apply Changes',
+          message: 'The database rejected the changes or encountered an error during DML execution.',
+          details: e?.message || String(e),
+        });
       }
-    } catch (e: any) {
-      useAlertStore.getState().showAlert({
-        type: 'error',
-        title: 'Failed to Apply Changes',
-        message: 'The database rejected the changes or encountered an error during DML execution.',
-        details: e?.message || String(e),
-      });
+    };
+
+    if (skipConfirm) {
+      await executeApply();
+      return;
     }
+
+    const inserts = changeList.filter((c) => c.type === 'insert').length;
+    const updates = changeList.filter((c) => c.type === 'update').length;
+    const deletes = changeList.filter((c) => c.type === 'delete').length;
+
+    const summaryParts: string[] = [];
+    if (inserts > 0) summaryParts.push(`${inserts} new row(s) to INSERT`);
+    if (updates > 0) summaryParts.push(`${updates} row(s) to UPDATE`);
+    if (deletes > 0) summaryParts.push(`${deletes} row(s) to DELETE`);
+
+    useAlertStore.getState().showConfirm({
+      title: 'Apply Staged Changes?',
+      message: `Are you sure you want to apply ${changeList.length} staged change(s) to table "${activeTab.table}"?`,
+      details: summaryParts.join(' • '),
+      confirmLabel: 'Apply Changes',
+      cancelLabel: 'Cancel',
+      confirmVariant: 'emerald',
+      onConfirm: () => {
+        executeApply();
+      },
+    });
   };
 
   const currentConn = connections.find((c) => c.id === activeConnectionId);

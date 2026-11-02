@@ -17,9 +17,10 @@ import {
   Code2,
   Copy,
   ExternalLink,
+  X,
 } from 'lucide-react';
 import { ConnectionConfig, ObjectSummary } from '../../types/domain';
-import { alertSuccess, alertError, alertInfo } from '../../stores/useAlertStore';
+import { alertSuccess, alertError, alertInfo, alertWarning } from '../../stores/useAlertStore';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -68,6 +69,21 @@ export const DatabaseExplorer: React.FC = () => {
     x: 0,
     y: 0,
     type: 'empty',
+  });
+
+  // Create Database Dialog state
+  const [createDbModal, setCreateDbModal] = useState<{
+    isOpen: boolean;
+    connection: ConnectionConfig | null;
+    dbName: string;
+    charset: string;
+    collation: string;
+  }>({
+    isOpen: false,
+    connection: null,
+    dbName: '',
+    charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci',
   });
 
   const closeContextMenu = () => {
@@ -229,6 +245,81 @@ export const DatabaseExplorer: React.FC = () => {
   const handleEditConnection = (connId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     setConnectionDialogOpen(true, connId);
+  };
+
+  const handleOpenCreateDatabase = (conn: ConnectionConfig) => {
+    if (conn.driver === 'sqlite') {
+      alertInfo(
+        'SQLite uses a local database file. To create a new SQLite database, add a new connection pointing to your desired SQLite file path.',
+        'SQLite Database'
+      );
+      return;
+    }
+    setCreateDbModal({
+      isOpen: true,
+      connection: conn,
+      dbName: '',
+      charset: conn.driver === 'mysql' ? 'utf8mb4' : 'UTF8',
+      collation: conn.driver === 'mysql' ? 'utf8mb4_unicode_ci' : '',
+    });
+  };
+
+  const handleConfirmCreateDatabase = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!createDbModal.connection || !createDbModal.dbName.trim()) return;
+
+    const conn = createDbModal.connection;
+    const dbName = createDbModal.dbName.trim();
+
+    // Validate identifier (letters, numbers, underscore, dash, dollar sign)
+    if (!/^[a-zA-Z0-9_$-]+$/.test(dbName)) {
+      alertWarning(
+        'Database name can only contain letters, numbers, underscores, dashes, and dollar signs.',
+        'Invalid Database Name'
+      );
+      return;
+    }
+
+    let sql = '';
+    if (conn.driver === 'mysql') {
+      sql = `CREATE DATABASE \`${dbName}\` CHARACTER SET ${createDbModal.charset || 'utf8mb4'} COLLATE ${createDbModal.collation || 'utf8mb4_unicode_ci'};`;
+    } else if (conn.driver === 'postgres') {
+      sql = `CREATE DATABASE "${dbName}" ENCODING '${createDbModal.charset || 'UTF8'}';`;
+    }
+
+    try {
+      const execId = 'create-db-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: conn.driver === 'mysql' ? (conn.databaseName || 'mysql') : 'postgres',
+        schema: 'public',
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      // Re-fetch connection databases
+      const dbs = (await SchemaService.GetDatabases(conn.id)) ?? [];
+      const safeDbs = dbs.length > 0 ? dbs : [dbName];
+      setTreeDatabases(conn.id, safeDbs);
+
+      // Expand node if not expanded
+      if (!expandedNodes[conn.id]) {
+        toggleNode(conn.id);
+      }
+
+      setCreateDbModal({
+        isOpen: false,
+        connection: null,
+        dbName: '',
+        charset: 'utf8mb4',
+        collation: 'utf8mb4_unicode_ci',
+      });
+      alertSuccess(`Database "${dbName}" has been created successfully.`, 'Database Created');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Create Database');
+    }
   };
 
   // Database handlers
@@ -800,6 +891,30 @@ export const DatabaseExplorer: React.FC = () => {
                 type="button"
                 onClick={() => {
                   closeContextMenu();
+                  handleOpenCreateDatabase(contextMenu.connection!);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>New Database...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleNewConsole(contextMenu.connection!.id, contextMenu.connection!.databaseName);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>New Query Console</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
                   handleEditConnection(contextMenu.connection!.id);
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -818,18 +933,6 @@ export const DatabaseExplorer: React.FC = () => {
               >
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>Refresh Connection</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleNewConsole(contextMenu.connection!.id, contextMenu.connection!.databaseName);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>New Query Console</span>
               </button>
 
               <div className="my-1 border-t border-[#272932]" />
@@ -1041,6 +1144,133 @@ export const DatabaseExplorer: React.FC = () => {
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {/* Create Database Dialog */}
+      {createDbModal.isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() =>
+            setCreateDbModal((prev) => ({ ...prev, isOpen: false }))
+          }
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-[#2b2e3a] bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-400">
+                  <Database className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-zinc-100">
+                    Create New Database
+                  </h3>
+                  <p className="text-[11px] text-zinc-500 font-mono">
+                    Connection: {createDbModal.connection?.name} ({createDbModal.connection?.driver?.toUpperCase()})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setCreateDbModal((prev) => ({ ...prev, isOpen: false }))
+                }
+                className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-[#20222a] transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleConfirmCreateDatabase} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                  Database Name <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  placeholder="e.g. sales_db"
+                  value={createDbModal.dbName}
+                  onChange={(e) =>
+                    setCreateDbModal((prev) => ({ ...prev, dbName: e.target.value }))
+                  }
+                  className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                />
+              </div>
+
+              {createDbModal.connection?.driver === 'mysql' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                      Character Set
+                    </label>
+                    <input
+                      type="text"
+                      value={createDbModal.charset}
+                      onChange={(e) =>
+                        setCreateDbModal((prev) => ({ ...prev, charset: e.target.value }))
+                      }
+                      className="w-full rounded bg-[#101115] border border-[#2b2e3a] px-2.5 py-1.5 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                      Collation
+                    </label>
+                    <input
+                      type="text"
+                      value={createDbModal.collation}
+                      onChange={(e) =>
+                        setCreateDbModal((prev) => ({ ...prev, collation: e.target.value }))
+                      }
+                      className="w-full rounded bg-[#101115] border border-[#2b2e3a] px-2.5 py-1.5 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {createDbModal.connection?.driver === 'postgres' && (
+                <div>
+                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                    Encoding
+                  </label>
+                  <input
+                    type="text"
+                    value={createDbModal.charset}
+                    onChange={(e) =>
+                      setCreateDbModal((prev) => ({ ...prev, charset: e.target.value }))
+                    }
+                    className="w-full rounded bg-[#101115] border border-[#2b2e3a] px-2.5 py-1.5 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCreateDbModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!createDbModal.dbName.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+                >
+                  Create Database
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
