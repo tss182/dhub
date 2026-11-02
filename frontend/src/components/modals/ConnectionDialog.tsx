@@ -3,6 +3,7 @@ import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { ConnectionService } from '../../../bindings/dhub/internal/services';
 import { X, CheckCircle, AlertCircle, Database, Trash2 } from 'lucide-react';
+import { alertError } from '../../stores/useAlertStore';
 
 export const ConnectionDialog: React.FC = () => {
   const { isConnectionDialogOpen, setConnectionDialogOpen, editingConnectionId } = useWorkbenchStore();
@@ -158,7 +159,7 @@ export const ConnectionDialog: React.FC = () => {
       setActiveConnection(id, databaseName || 'main', 'main');
       setConnectionDialogOpen(false);
     } catch (e: any) {
-      alert('Save failed: ' + (e?.message || String(e)));
+      alertError(e?.message || String(e), 'Gagal Menyimpan Koneksi');
     } finally {
       setIsLoading(false);
     }
@@ -182,7 +183,7 @@ export const ConnectionDialog: React.FC = () => {
       }
       setConnectionDialogOpen(false);
     } catch (e: any) {
-      alert('Delete failed: ' + (e?.message || String(e)));
+      alertError(e?.message || String(e), 'Gagal Menghapus Koneksi');
     } finally {
       setIsLoading(false);
     }

@@ -10,6 +10,8 @@ import { DataGrid } from './components/grid/DataGrid';
 import { ConnectionDialog } from './components/modals/ConnectionDialog';
 import { SearchEverywhere } from './components/modals/SearchEverywhere';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { AlertModal } from './components/modals/AlertModal';
+import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
 import {
@@ -558,7 +560,7 @@ export function App() {
       .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
     const targetConnId = currentTab?.connectionId || useConnectionStore.getState().activeConnectionId;
     if (!targetConnId) {
-      alert('Please select or add a connection in Database Explorer first!');
+      alertWarning('Silakan pilih atau tambahkan koneksi di Database Explorer terlebih dahulu.', 'Pilih Koneksi Database');
       return;
     }
     const currentConns = useConnectionStore.getState().connections;
@@ -809,7 +811,11 @@ export function App() {
       );
       setDmlPreview(sqls ?? []);
     } catch (e: any) {
-      alert('Failed to preview SQL: ' + (e?.message || String(e)));
+      alertError(
+        'Terjadi kendala saat membuat preview query DML untuk perubahan yang dipilih.',
+        'Gagal Preview SQL',
+        e?.message || String(e)
+      );
     }
   };
 
@@ -826,14 +832,23 @@ export function App() {
         activeTab.table || '',
         changeList as any
       );
-      alert(`Successfully applied ${affected} change(s)!`);
+      useAlertStore.getState().showAlert({
+        type: 'success',
+        title: 'Perubahan Berhasil Diterapkan',
+        message: `Berhasil menerapkan ${affected} perubahan pada tabel "${activeTab.table}".`,
+      });
       useGridEditStore.getState().revertTabChanges(activeTab.id);
       // Refresh table data
       if (activeTab.table) {
         loadTableData(activeTab);
       }
     } catch (e: any) {
-      alert('Apply failed: ' + (e?.message || String(e)));
+      useAlertStore.getState().showAlert({
+        type: 'error',
+        title: 'Gagal Menerapkan Perubahan',
+        message: 'Database menolak perubahan data atau terjadi error saat eksekusi query DML.',
+        details: e?.message || String(e),
+      });
     }
   };
 
@@ -1497,6 +1512,7 @@ export function App() {
       <ConnectionDialog />
       <SearchEverywhere />
       <SettingsModal />
+      <AlertModal />
 
       {/* Status Bar */}
       <footer className="flex h-6 items-center justify-between border-t border-[#272932] px-3 text-[11px] bg-[#121317] text-zinc-500 font-mono">
