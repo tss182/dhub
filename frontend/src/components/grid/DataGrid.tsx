@@ -559,23 +559,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
     <div data-grid-container="true" className="flex h-full flex-col bg-[#191a20] text-xs select-text">
       {/* Table Toolbar */}
       <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <button
             onClick={handleAddRow}
-            className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-300 transition-colors cursor-pointer"
-            title="Add New Row (Staged Insert)"
+            className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
+            title="Add New Row"
           >
-            <Plus className="h-3.5 w-3.5 text-emerald-400" />
-            <span>Add Row</span>
+            <Plus className="h-4 w-4 text-emerald-400" />
           </button>
 
           <button
             onClick={handleDuplicateRow}
-            className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-300 transition-colors cursor-pointer"
+            className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
             title={`Duplicate Selected Row (${modKey}+D)`}
           >
             <Copy className="h-3.5 w-3.5 text-sky-400" />
-            <span>Duplicate</span>
           </button>
 
           <button
@@ -612,23 +610,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 stageRowDelete(tabId, 0, pkMap, originalRowValues);
               }
             }}
-            className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-300 transition-colors cursor-pointer"
+            className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
             title="Delete Selected Row"
           >
             <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-            <span>Delete</span>
           </button>
 
-          <div className="h-4 w-[1px] bg-[#272932] mx-1" />
+          <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
 
           {onRefresh && (
             <button
               onClick={onRefresh}
-              className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-400 hover:text-white transition-colors cursor-pointer"
-              title="Refresh / Reload data"
+              className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-400 hover:text-white transition-colors cursor-pointer"
+              title="Reload / Refresh Data"
             >
-              <RefreshCw className="h-3 w-3" />
-              <span>Reload</span>
+              <RefreshCw className="h-3.5 w-3.5" />
             </button>
           )}
 

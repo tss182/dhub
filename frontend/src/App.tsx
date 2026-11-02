@@ -1011,11 +1011,10 @@ export function App() {
                     <button
                       onClick={() => loadTableData(activeTab)}
                       disabled={tableDataByTab[activeTab.id]?.isLoading}
-                      className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
                       title="Reload Table Data"
                     >
-                      <RefreshCw className={`h-3 w-3 ${tableDataByTab[activeTab.id]?.isLoading ? 'animate-spin' : ''}`} />
-                      <span>Reload</span>
+                      <RefreshCw className={`h-3.5 w-3.5 ${tableDataByTab[activeTab.id]?.isLoading ? 'animate-spin' : ''}`} />
                     </button>
                   </div>
                 </div>
