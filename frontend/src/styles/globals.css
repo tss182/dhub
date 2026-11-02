@@ -49,6 +49,16 @@
   background: #3c3f4e;
 }
 
+/* Select & Options dark defaults */
+select {
+  color: #ffffff;
+}
+select option,
+select optgroup {
+  background-color: #181920;
+  color: #ffffff;
+}
+
 /* Light Theme CSS Variables & Overrides */
 html[data-theme="light"],
 [data-theme="light"] {
@@ -104,6 +114,12 @@ html[data-theme="light"],
   input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea {
+    color: #0f172a !important;
+    background-color: #ffffff !important;
+  }
+
+  select option,
+  select optgroup {
     color: #0f172a !important;
     background-color: #ffffff !important;
   }

@@ -41,60 +41,54 @@ interface CreateTableModalProps {
   onTableCreated?: (tableName: string) => void;
 }
 
-const MYSQL_TYPES = [
-  'INT',
-  'BIGINT',
-  'TINYINT',
-  'SMALLINT',
-  'VARCHAR',
-  'CHAR',
-  'TEXT',
-  'MEDIUMTEXT',
-  'LONGTEXT',
-  'DATETIME',
-  'TIMESTAMP',
-  'DATE',
-  'TIME',
-  'DECIMAL',
-  'FLOAT',
-  'DOUBLE',
-  'BOOLEAN',
-  'JSON',
-  'BLOB',
-  'ENUM',
+interface TypeGroup {
+  group: string;
+  types: string[];
+}
+
+const MYSQL_TYPE_GROUPS: TypeGroup[] = [
+  {
+    group: 'Numeric',
+    types: ['INT', 'BIGINT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'DECIMAL', 'FLOAT', 'DOUBLE', 'BOOLEAN'],
+  },
+  {
+    group: 'String & Text',
+    types: ['VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'ENUM'],
+  },
+  {
+    group: 'Date & Time',
+    types: ['DATETIME', 'TIMESTAMP', 'DATE', 'TIME', 'YEAR'],
+  },
+  {
+    group: 'JSON & Binary',
+    types: ['JSON', 'BLOB', 'LONGBLOB', 'BINARY', 'VARBINARY'],
+  },
 ];
 
-const POSTGRES_TYPES = [
-  'VARCHAR',
-  'TEXT',
-  'INTEGER',
-  'BIGINT',
-  'SMALLINT',
-  'BOOLEAN',
-  'TIMESTAMP',
-  'TIMESTAMPTZ',
-  'DATE',
-  'TIME',
-  'NUMERIC',
-  'REAL',
-  'DOUBLE PRECISION',
-  'JSON',
-  'JSONB',
-  'UUID',
-  'BYTEA',
-  'SERIAL',
-  'BIGSERIAL',
+const POSTGRES_TYPE_GROUPS: TypeGroup[] = [
+  {
+    group: 'Numeric',
+    types: ['INTEGER', 'BIGINT', 'SMALLINT', 'NUMERIC', 'REAL', 'DOUBLE PRECISION', 'BOOLEAN', 'SERIAL', 'BIGSERIAL'],
+  },
+  {
+    group: 'String & Text',
+    types: ['VARCHAR', 'TEXT', 'CHAR'],
+  },
+  {
+    group: 'Date & Time',
+    types: ['TIMESTAMP', 'TIMESTAMPTZ', 'DATE', 'TIME', 'INTERVAL'],
+  },
+  {
+    group: 'JSON & Binary',
+    types: ['JSON', 'JSONB', 'UUID', 'BYTEA'],
+  },
 ];
 
-const SQLITE_TYPES = [
-  'INTEGER',
-  'TEXT',
-  'REAL',
-  'BLOB',
-  'NUMERIC',
-  'VARCHAR',
-  'DATETIME',
-  'BOOLEAN',
+const SQLITE_TYPE_GROUPS: TypeGroup[] = [
+  {
+    group: 'Standard Types',
+    types: ['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NUMERIC', 'VARCHAR', 'DATETIME', 'BOOLEAN'],
+  },
 ];
 
 export const CreateTableModal: React.FC<CreateTableModalProps> = ({
@@ -118,13 +112,13 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const driver = connection?.driver || 'mysql';
   const targetSchema = schema || (driver === 'postgres' ? 'public' : database);
 
-  const availableTypes = useMemo(() => {
-    if (driver === 'postgres') return POSTGRES_TYPES;
-    if (driver === 'sqlite') return SQLITE_TYPES;
-    return MYSQL_TYPES;
+  const typeGroups = useMemo(() => {
+    if (driver === 'postgres') return POSTGRES_TYPE_GROUPS;
+    if (driver === 'sqlite') return SQLITE_TYPE_GROUPS;
+    return MYSQL_TYPE_GROUPS;
   }, [driver]);
 
-  // Reset and initialize default starter columns when modal opens
+  // Reset and initialize with 1 empty column row when modal opens
   useEffect(() => {
     if (isOpen) {
       setTableName('');
@@ -135,116 +129,20 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       setShowSqlPreview(false);
       setCopiedSql(false);
 
-      if (driver === 'sqlite') {
-        setColumns([
-          {
-            id: 'col-1',
-            name: 'id',
-            dataType: 'INTEGER',
-            lengthOrValues: '',
-            isPrimaryKey: true,
-            isAutoIncrement: true,
-            isNotNull: true,
-            defaultValue: '',
-            comment: '',
-          },
-          {
-            id: 'col-2',
-            name: 'created_at',
-            dataType: 'DATETIME',
-            lengthOrValues: '',
-            isPrimaryKey: false,
-            isAutoIncrement: false,
-            isNotNull: true,
-            defaultValue: 'CURRENT_TIMESTAMP',
-            comment: '',
-          },
-          {
-            id: 'col-3',
-            name: 'updated_at',
-            dataType: 'DATETIME',
-            lengthOrValues: '',
-            isPrimaryKey: false,
-            isAutoIncrement: false,
-            isNotNull: true,
-            defaultValue: 'CURRENT_TIMESTAMP',
-            comment: '',
-          },
-        ]);
-      } else if (driver === 'postgres') {
-        setColumns([
-          {
-            id: 'col-1',
-            name: 'id',
-            dataType: 'BIGSERIAL',
-            lengthOrValues: '',
-            isPrimaryKey: true,
-            isAutoIncrement: false,
-            isNotNull: true,
-            defaultValue: '',
-            comment: '',
-          },
-          {
-            id: 'col-2',
-            name: 'created_at',
-            dataType: 'TIMESTAMP',
-            lengthOrValues: '',
-            isPrimaryKey: false,
-            isAutoIncrement: false,
-            isNotNull: true,
-            defaultValue: 'CURRENT_TIMESTAMP',
-            comment: '',
-          },
-          {
-            id: 'col-3',
-            name: 'updated_at',
-            dataType: 'TIMESTAMP',
-            lengthOrValues: '',
-            isPrimaryKey: false,
-            isAutoIncrement: false,
-            isNotNull: true,
-            defaultValue: 'CURRENT_TIMESTAMP',
-            comment: '',
-          },
-        ]);
-      } else {
-        // MySQL / MariaDB
-        setColumns([
-          {
-            id: 'col-1',
-            name: 'id',
-            dataType: 'BIGINT',
-            lengthOrValues: '',
-            isPrimaryKey: true,
-            isAutoIncrement: true,
-            isNotNull: true,
-            defaultValue: '',
-            comment: '',
-          },
-          {
-            id: 'col-2',
-            name: 'created_at',
-            dataType: 'DATETIME',
-            lengthOrValues: '',
-            isPrimaryKey: false,
-            isAutoIncrement: false,
-            isNotNull: true,
-            defaultValue: 'CURRENT_TIMESTAMP',
-            comment: '',
-          },
-          {
-            id: 'col-3',
-            name: 'updated_at',
-            dataType: 'DATETIME',
-            lengthOrValues: '',
-            isPrimaryKey: false,
-            isAutoIncrement: false,
-            isNotNull: true,
-            defaultValue: 'CURRENT_TIMESTAMP',
-            comment: '',
-          },
-        ]);
-      }
+      // Default column is empty as requested: "colom default kosong"
+      setColumns([
+        {
+          id: 'col-1',
+          name: '',
+          dataType: driver === 'sqlite' ? 'INTEGER' : driver === 'postgres' ? 'BIGINT' : 'INT',
+          lengthOrValues: '',
+          isPrimaryKey: false,
+          isAutoIncrement: false,
+          isNotNull: false,
+          defaultValue: '',
+          comment: '',
+        },
+      ]);
     }
   }, [isOpen, driver]);
 
@@ -546,8 +444,9 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-150 select-none"
       onClick={onClose}
     >
+      {/* Modal Container: wider width as requested */}
       <div
-        className="w-full max-w-5xl rounded-2xl border border-[#2b2e3a] bg-[#14151a] shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-zinc-200"
+        className="w-[96vw] max-w-[1400px] rounded-2xl border border-[#2b2e3a] bg-[#14151a] shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-zinc-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -604,7 +503,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                 placeholder="e.g. users, products, orders"
                 value={tableName}
                 onChange={(e) => setTableName(e.target.value)}
-                className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 text-xs font-mono text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
               />
             </div>
 
@@ -619,31 +518,31 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   placeholder="Optional description..."
                   value={tableComment}
                   onChange={(e) => setTableComment(e.target.value)}
-                  className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 text-xs text-zinc-200 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                  className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 text-xs text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
                 />
               </div>
             )}
 
-            {/* MySQL Engine & Charset options */}
+            {/* MySQL Engine & Charset options with white font */}
             {driver === 'mysql' && (
               <>
-                <div className="w-28">
-                  <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                <div className="w-36">
+                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                     Engine
                   </label>
                   <select
                     value={engine}
                     onChange={(e) => setEngine(e.target.value)}
-                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none cursor-pointer"
+                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2.5 text-xs font-mono font-medium text-white focus:border-blue-500 focus:outline-none cursor-pointer"
                   >
-                    <option value="InnoDB">InnoDB</option>
-                    <option value="MyISAM">MyISAM</option>
-                    <option value="MEMORY">MEMORY</option>
+                    <option value="InnoDB" className="bg-[#181920] text-white">InnoDB</option>
+                    <option value="MyISAM" className="bg-[#181920] text-white">MyISAM</option>
+                    <option value="MEMORY" className="bg-[#181920] text-white">MEMORY</option>
                   </select>
                 </div>
 
-                <div className="w-32">
-                  <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                <div className="w-36">
+                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                     Charset
                   </label>
                   <select
@@ -653,11 +552,28 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       if (e.target.value === 'utf8mb4') setCollation('utf8mb4_unicode_ci');
                       if (e.target.value === 'utf8') setCollation('utf8_general_ci');
                     }}
-                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2 text-xs font-mono text-zinc-200 focus:border-blue-500 focus:outline-none cursor-pointer"
+                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2.5 text-xs font-mono font-medium text-white focus:border-blue-500 focus:outline-none cursor-pointer"
                   >
-                    <option value="utf8mb4">utf8mb4</option>
-                    <option value="utf8">utf8</option>
-                    <option value="latin1">latin1</option>
+                    <option value="utf8mb4" className="bg-[#181920] text-white">utf8mb4</option>
+                    <option value="utf8" className="bg-[#181920] text-white">utf8</option>
+                    <option value="latin1" className="bg-[#181920] text-white">latin1</option>
+                  </select>
+                </div>
+
+                <div className="w-44">
+                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                    Collation
+                  </label>
+                  <select
+                    value={collation}
+                    onChange={(e) => setCollation(e.target.value)}
+                    className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-2.5 text-xs font-mono font-medium text-white focus:border-blue-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="utf8mb4_unicode_ci" className="bg-[#181920] text-white">utf8mb4_unicode_ci</option>
+                    <option value="utf8mb4_general_ci" className="bg-[#181920] text-white">utf8mb4_general_ci</option>
+                    <option value="utf8mb4_0900_ai_ci" className="bg-[#181920] text-white">utf8mb4_0900_ai_ci</option>
+                    <option value="utf8_general_ci" className="bg-[#181920] text-white">utf8_general_ci</option>
+                    <option value="utf8_unicode_ci" className="bg-[#181920] text-white">utf8_unicode_ci</option>
                   </select>
                 </div>
               </>
@@ -691,9 +607,9 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               <thead className="sticky top-0 bg-[#181920] border-b border-[#272932] shadow-xs z-10 select-none">
                 <tr className="text-zinc-400 font-semibold text-[11px]">
                   <th className="w-10 px-2 py-2 text-center border-r border-[#272932]">#</th>
-                  <th className="w-48 px-3 py-2 border-r border-[#272932]">Column Name *</th>
-                  <th className="w-40 px-3 py-2 border-r border-[#272932]">Data Type</th>
-                  <th className="w-24 px-3 py-2 border-r border-[#272932]">Length/Values</th>
+                  <th className="w-56 px-3 py-2 border-r border-[#272932]">Column Name *</th>
+                  <th className="w-48 px-3 py-2 border-r border-[#272932]">Data Type</th>
+                  <th className="w-32 px-3 py-2 border-r border-[#272932]">Length/Values</th>
                   <th className="w-16 px-2 py-2 text-center border-r border-[#272932]" title="Primary Key">PK</th>
                   {driver === 'mysql' && (
                     <th className="w-16 px-2 py-2 text-center border-r border-[#272932]" title="Auto Increment">AI</th>
@@ -704,7 +620,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   <th className="w-20 px-2 py-2 text-center border-r border-[#272932]" title="Not Nullable">Not Null</th>
                   <th className="w-44 px-3 py-2 border-r border-[#272932]">Default Value</th>
                   <th className="px-3 py-2 border-r border-[#272932]">Comment</th>
-                  <th className="w-20 px-2 py-2 text-center">Actions</th>
+                  <th className="w-24 px-2 py-2 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#20222a] font-mono">
@@ -732,29 +648,38 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           placeholder="column_name"
                           value={col.name}
                           onChange={(e) => handleUpdateColumn(col.id, { name: e.target.value })}
-                          className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                          className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
                         />
                       </div>
                     </td>
 
-                    {/* Data Type */}
+                    {/* Data Type Select Dropdown */}
                     <td className="px-2 py-1.5 border-r border-[#20222a]">
-                      <div className="relative">
-                        <input
-                          type="text"
-                          list={`types-${col.id}`}
-                          value={col.dataType}
-                          onChange={(e) =>
-                            handleUpdateColumn(col.id, { dataType: e.target.value.toUpperCase() })
+                      <select
+                        value={col.dataType}
+                        onChange={(e) => {
+                          const newType = e.target.value;
+                          let autoLen = col.lengthOrValues;
+                          if (newType === 'VARCHAR' && !col.lengthOrValues) autoLen = '255';
+                          if (newType === 'CHAR' && !col.lengthOrValues) autoLen = '50';
+                          if (newType === 'DECIMAL' && !col.lengthOrValues) autoLen = '10,2';
+                          if (['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DATETIME', 'TIMESTAMP', 'TEXT', 'JSON', 'BOOLEAN'].includes(newType) && (col.lengthOrValues === '255' || col.lengthOrValues === '50')) {
+                            autoLen = '';
                           }
-                          className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs font-semibold text-blue-400 focus:border-blue-500 focus:outline-none"
-                        />
-                        <datalist id={`types-${col.id}`}>
-                          {availableTypes.map((t) => (
-                            <option key={t} value={t} />
-                          ))}
-                        </datalist>
-                      </div>
+                          handleUpdateColumn(col.id, { dataType: newType, lengthOrValues: autoLen });
+                        }}
+                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs font-mono font-semibold text-white focus:border-blue-500 focus:outline-none cursor-pointer"
+                      >
+                        {typeGroups.map((grp) => (
+                          <optgroup key={grp.group} label={grp.group} className="bg-[#181920] text-zinc-400 font-sans font-bold">
+                            {grp.types.map((t) => (
+                              <option key={t} value={t} className="bg-[#181920] text-white font-mono font-normal">
+                                {t}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
                     </td>
 
                     {/* Length / Values */}
@@ -764,7 +689,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         placeholder="e.g. 255"
                         value={col.lengthOrValues}
                         onChange={(e) => handleUpdateColumn(col.id, { lengthOrValues: e.target.value })}
-                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
                       />
                     </td>
 
@@ -817,7 +742,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         placeholder="NULL or 'value'"
                         value={col.defaultValue}
                         onChange={(e) => handleUpdateColumn(col.id, { defaultValue: e.target.value })}
-                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-zinc-200 placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
                       />
                     </td>
 
@@ -828,7 +753,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         placeholder="Optional comment..."
                         value={col.comment}
                         onChange={(e) => handleUpdateColumn(col.id, { comment: e.target.value })}
-                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-zinc-300 placeholder-zinc-600 focus:border-blue-500 focus:outline-none font-sans"
+                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none font-sans"
                       />
                     </td>
 
@@ -839,7 +764,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           type="button"
                           onClick={() => handleMoveColumn(idx, 'up')}
                           disabled={idx === 0}
-                          className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                          className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
                           title="Move Up"
                         >
                           <ArrowUp className="h-3 w-3" />
@@ -848,7 +773,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           type="button"
                           onClick={() => handleMoveColumn(idx, 'down')}
                           disabled={idx === columns.length - 1}
-                          className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                          className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
                           title="Move Down"
                         >
                           <ArrowDown className="h-3 w-3" />
@@ -856,7 +781,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <button
                           type="button"
                           onClick={() => handleRemoveColumn(col.id)}
-                          className="p-1 rounded text-rose-500/80 hover:text-rose-400 hover:bg-rose-950/30 cursor-pointer ml-1"
+                          className="p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 cursor-pointer ml-1"
                           title="Delete Column"
                         >
                           <Trash2 className="h-3 w-3" />
@@ -949,4 +874,3 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     </div>
   );
 };
-
