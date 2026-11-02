@@ -113,7 +113,7 @@ export function App() {
         pageSize: number;
         page: number;
         whereClause?: string;
-        sortConfig?: { column: string; direction: 'asc' | 'desc' } | null;
+        sortConfigs?: { column: string; direction: 'asc' | 'desc' }[];
       }
     >
   >({});
@@ -269,14 +269,14 @@ export function App() {
     append = false,
     page = 1,
     newWhereClause?: string,
-    newSortConfig?: { column: string; direction: 'asc' | 'desc' } | null
+    newSortConfigs?: { column: string; direction: 'asc' | 'desc' }[]
   ) => {
     const connId = tab.connectionId || activeConnectionId;
     if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
 
     const prevTabData = tableDataByTab[tab.id];
     const whereClause = newWhereClause !== undefined ? newWhereClause : (prevTabData?.whereClause ?? '');
-    const sortConfig = newSortConfig !== undefined ? newSortConfig : (prevTabData?.sortConfig ?? null);
+    const sortConfigs = newSortConfigs !== undefined ? newSortConfigs : (prevTabData?.sortConfigs ?? []);
     const filtersChanged = newWhereClause !== undefined;
 
     if (append) {
@@ -303,7 +303,7 @@ export function App() {
           pageSize: limit,
           page,
           whereClause,
-          sortConfig,
+          sortConfigs,
         },
       }));
     }
@@ -351,11 +351,14 @@ export function App() {
       const cleanCustom = trimmedCustom.replace(/^where\s+/i, '').trim();
       const combinedWhere = cleanCustom ? ` WHERE (${cleanCustom})` : '';
 
-      // 2b. Build ORDER BY clause
+      // 2b. Build ORDER BY clause (multi-column sort: first added column has primary priority)
       let orderByClause = '';
-      if (sortConfig && sortConfig.column && sortConfig.direction) {
-        const quotedSortCol = isMySQL ? `\`${sortConfig.column}\`` : `"${sortConfig.column}"`;
-        orderByClause = ` ORDER BY ${quotedSortCol} ${sortConfig.direction.toUpperCase()}`;
+      if (sortConfigs && sortConfigs.length > 0) {
+        const orderParts = sortConfigs.map((sc) => {
+          const quotedSortCol = isMySQL ? `\`${sc.column}\`` : `"${sc.column}"`;
+          return `${quotedSortCol} ${sc.direction.toUpperCase()}`;
+        });
+        orderByClause = ` ORDER BY ${orderParts.join(', ')}`;
       }
 
       // 3. Fetch total row count in background (on initial load or when filters change)
@@ -462,12 +465,14 @@ export function App() {
               pageSize: limit,
               page: append ? prev[tab.id]?.page || 1 : page,
               whereClause,
-              sortConfig,
+              sortConfigs,
             },
           };
         });
         const filterNotice = cleanCustom ? ' (filtered by WHERE condition)' : '';
-        const sortNotice = sortConfig ? ` [sorted by ${sortConfig.column} ${sortConfig.direction.toUpperCase()}]` : '';
+        const sortNotice = sortConfigs.length > 0
+          ? ` [sorted by: ${sortConfigs.map((s, idx) => `#${idx + 1} ${s.column} ${s.direction.toUpperCase()}`).join(', ')}]`
+          : '';
         setStatusMessage(
           `Loaded ${fetchedRows.length} rows (${offset + fetchedRows.length} total) from ${tab.table}${filterNotice}${sortNotice}`
         );
@@ -487,7 +492,7 @@ export function App() {
           pageSize: limit,
           page: append ? prev[tab.id]?.page || 1 : page,
           whereClause,
-          sortConfig,
+          sortConfigs,
         },
       }));
       setStatusMessage(`Error loading ${tab.table}: ${e?.message || String(e)}`);
@@ -1042,11 +1047,10 @@ export function App() {
                         loadTableData(activeTab, 0, currentSize, false, 1, whereText);
                       }}
                       isTableTab={true}
-                      sortConfig={tableDataByTab[activeTab.id]?.sortConfig}
-                      onSortChange={(colName, dir) => {
+                      sortConfigs={tableDataByTab[activeTab.id]?.sortConfigs || []}
+                      onSortChange={(newSorts) => {
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        const nextSort = dir ? { column: colName, direction: dir } : null;
-                        loadTableData(activeTab, 0, currentSize, false, 1, undefined, nextSort);
+                        loadTableData(activeTab, 0, currentSize, false, 1, undefined, newSorts);
                       }}
                       onPageChange={(newPage) => {
                         const size = tableDataByTab[activeTab.id]?.pageSize || 100;
