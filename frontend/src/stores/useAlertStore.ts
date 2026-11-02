@@ -10,6 +10,7 @@ export interface AlertModalOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   isDanger?: boolean;
+  confirmVariant?: 'emerald' | 'rose' | 'blue';
   onConfirm?: () => void;
   onCancel?: () => void;
 }
@@ -23,6 +24,7 @@ interface AlertStoreState {
   confirmLabel: string;
   cancelLabel: string;
   isDanger: boolean;
+  confirmVariant?: 'emerald' | 'rose' | 'blue';
   onConfirm?: () => void;
   onCancel?: () => void;
 
@@ -40,6 +42,7 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
   confirmLabel: 'OK',
   cancelLabel: 'Cancel',
   isDanger: false,
+  confirmVariant: undefined,
   onConfirm: undefined,
   onCancel: undefined,
 
@@ -59,6 +62,7 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
       confirmLabel: options.confirmLabel || (type === 'error' ? 'Close' : 'OK'),
       cancelLabel: options.cancelLabel || 'Cancel',
       isDanger: options.isDanger || false,
+      confirmVariant: options.confirmVariant,
       onConfirm: options.onConfirm,
       onCancel: options.onCancel,
     });
@@ -73,7 +77,8 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
       details: options.details,
       confirmLabel: options.confirmLabel || 'Proceed',
       cancelLabel: options.cancelLabel || 'Cancel',
-      isDanger: options.isDanger ?? true,
+      isDanger: options.isDanger ?? false,
+      confirmVariant: options.confirmVariant || (options.isDanger ? 'rose' : 'blue'),
       onConfirm: options.onConfirm,
       onCancel: options.onCancel,
     });

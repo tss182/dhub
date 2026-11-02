@@ -21,6 +21,7 @@ export const AlertModal: React.FC = () => {
     confirmLabel,
     cancelLabel,
     isDanger,
+    confirmVariant,
     onConfirm,
     onCancel,
     closeAlert,
@@ -101,14 +102,17 @@ export const AlertModal: React.FC = () => {
   };
 
   const getConfirmBtnStyle = () => {
-    if (type === 'error') {
-      return 'bg-[#252834] hover:bg-[#2e3242] border border-[#3b3f52] text-zinc-200';
-    }
-    if (type === 'success') {
+    if (confirmVariant === 'emerald' || type === 'success') {
       return 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/40 shadow-sm';
     }
-    if (type === 'confirm' && isDanger) {
+    if (confirmVariant === 'rose' || (type === 'confirm' && isDanger)) {
       return 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-950/40 shadow-sm';
+    }
+    if (confirmVariant === 'blue') {
+      return 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-950/40 shadow-sm';
+    }
+    if (type === 'error') {
+      return 'bg-[#252834] hover:bg-[#2e3242] border border-[#3b3f52] text-zinc-200';
     }
     if (type === 'warning') {
       return 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-950/40 shadow-sm';
