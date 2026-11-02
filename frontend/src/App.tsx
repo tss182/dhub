@@ -113,7 +113,7 @@ export function App() {
         pageSize: number;
         page: number;
         whereClause?: string;
-        columnFilters?: Record<string, { op: string; value: string }>;
+        sortConfig?: { column: string; direction: 'asc' | 'desc' } | null;
       }
     >
   >({});
@@ -269,15 +269,15 @@ export function App() {
     append = false,
     page = 1,
     newWhereClause?: string,
-    newColumnFilters?: Record<string, { op: string; value: string }>
+    newSortConfig?: { column: string; direction: 'asc' | 'desc' } | null
   ) => {
     const connId = tab.connectionId || activeConnectionId;
     if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
 
     const prevTabData = tableDataByTab[tab.id];
     const whereClause = newWhereClause !== undefined ? newWhereClause : (prevTabData?.whereClause ?? '');
-    const columnFilters = newColumnFilters !== undefined ? newColumnFilters : (prevTabData?.columnFilters ?? {});
-    const filtersChanged = newWhereClause !== undefined || newColumnFilters !== undefined;
+    const sortConfig = newSortConfig !== undefined ? newSortConfig : (prevTabData?.sortConfig ?? null);
+    const filtersChanged = newWhereClause !== undefined;
 
     if (append) {
       setTableDataByTab((prev) => ({
@@ -303,7 +303,7 @@ export function App() {
           pageSize: limit,
           page,
           whereClause,
-          columnFilters,
+          sortConfig,
         },
       }));
     }
@@ -339,56 +339,24 @@ export function App() {
       }
 
       const quotedTable = isMySQL ? `\`${tab.table}\`` : `"${tab.table}"`;
+      const fullTablePath =
+        conn?.driver === 'mysql' && targetDb && targetDb !== 'main'
+          ? `\`${targetDb}\`.\`${tab.table}\``
+          : conn?.driver === 'postgres' && targetSchema
+          ? `"${targetSchema}"."${tab.table}"`
+          : quotedTable;
 
-      // 2. Build combined SQL WHERE clause
-      const whereParts: string[] = [];
-
-      // 2a. Custom WHERE text entered by user (e.g. name like '%user' and id = '1')
+      // 2. Build SQL WHERE clause
       const trimmedCustom = (whereClause || '').trim();
-      if (trimmedCustom) {
-        const cleanCustom = trimmedCustom.replace(/^where\s+/i, '').trim();
-        if (cleanCustom) {
-          whereParts.push(`(${cleanCustom})`);
-        }
+      const cleanCustom = trimmedCustom.replace(/^where\s+/i, '').trim();
+      const combinedWhere = cleanCustom ? ` WHERE (${cleanCustom})` : '';
+
+      // 2b. Build ORDER BY clause
+      let orderByClause = '';
+      if (sortConfig && sortConfig.column && sortConfig.direction) {
+        const quotedSortCol = isMySQL ? `\`${sortConfig.column}\`` : `"${sortConfig.column}"`;
+        orderByClause = ` ORDER BY ${quotedSortCol} ${sortConfig.direction.toUpperCase()}`;
       }
-
-      // 2b. Column filters (supports multi-column filtering)
-      Object.entries(columnFilters || {}).forEach(([colName, filter]: [string, any]) => {
-        if (!filter || !filter.op) return;
-        const quotedCol = isMySQL ? `\`${colName}\`` : `"${colName}"`;
-        const colMeta = (tableDataByTab[tab.id]?.columns || []).find((c) => c.name === colName);
-        const rawType = (colMeta?.rawType || colMeta?.dataType || '').toLowerCase();
-        const isNumeric = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
-
-        if (filter.op === 'IS NULL') {
-          whereParts.push(`(${quotedCol} IS NULL)`);
-        } else if (filter.op === 'IS NOT NULL') {
-          whereParts.push(`(${quotedCol} IS NOT NULL)`);
-        } else if (filter.value !== undefined && filter.value !== '') {
-          const escapedVal = String(filter.value).replace(/'/g, "''");
-          if (filter.op === 'LIKE') {
-            const hasWildcard = escapedVal.includes('%') || escapedVal.includes('_');
-            const likeVal = hasWildcard ? escapedVal : `%${escapedVal}%`;
-            whereParts.push(`(${quotedCol} LIKE '${likeVal}')`);
-          } else if (filter.op === 'NOT LIKE') {
-            const hasWildcard = escapedVal.includes('%') || escapedVal.includes('_');
-            const likeVal = hasWildcard ? escapedVal : `%${escapedVal}%`;
-            whereParts.push(`(${quotedCol} NOT LIKE '${likeVal}')`);
-          } else if (['>', '<', '>=', '<='].includes(filter.op)) {
-            const finalVal = isNumeric && !isNaN(Number(escapedVal)) ? escapedVal : `'${escapedVal}'`;
-            whereParts.push(`(${quotedCol} ${filter.op} ${finalVal})`);
-          } else if (filter.op === '!=') {
-            const finalVal = isNumeric && !isNaN(Number(escapedVal)) ? escapedVal : `'${escapedVal}'`;
-            whereParts.push(`(${quotedCol} != ${finalVal})`);
-          } else {
-            // Default '='
-            const finalVal = isNumeric && !isNaN(Number(escapedVal)) ? escapedVal : `'${escapedVal}'`;
-            whereParts.push(`(${quotedCol} = ${finalVal})`);
-          }
-        }
-      });
-
-      const combinedWhere = whereParts.length > 0 ? ` WHERE ${whereParts.join(' AND ')}` : '';
 
       // 3. Fetch total row count in background (on initial load or when filters change)
       if (!append && (filtersChanged || tableDataByTab[tab.id]?.totalCount === undefined)) {
@@ -397,14 +365,14 @@ export function App() {
           connectionId: connId,
           database: targetDb,
           schema: targetSchema,
-          sql: `SELECT COUNT(*) FROM ${quotedTable}${combinedWhere};`,
+          sql: `SELECT COUNT(*) FROM ${fullTablePath}${combinedWhere};`,
           limit: 1,
           offset: 0,
         } as any)
           .then((countRes) => {
             const countVal = countRes?.rows?.[0]?.[0];
             const num = typeof countVal === 'number' ? countVal : parseInt(String(countVal), 10);
-            if (!isNaN(num)) {
+            if (!isNaN(num) && num >= 0) {
               setTableDataByTab((prev) => ({
                 ...prev,
                 [tab.id]: {
@@ -414,12 +382,14 @@ export function App() {
               }));
             }
           })
-          .catch(() => {});
+          .catch((err) => {
+            console.warn('Count query failed:', err);
+          });
       }
 
-      // 4. Query table data with LIMIT, OFFSET and WHERE
+      // 4. Query table data with LIMIT, OFFSET, WHERE and ORDER BY
       const fetchLimit = limit + 1;
-      const sql = `SELECT * FROM ${quotedTable}${combinedWhere} LIMIT ${fetchLimit} OFFSET ${offset};`;
+      const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause} LIMIT ${fetchLimit} OFFSET ${offset};`;
 
       const execId = 'exec-tab-' + Date.now();
       const res = await QueryService.ExecuteQuery({
@@ -441,6 +411,7 @@ export function App() {
         const rawRows = (res.rows as any) || [];
         const hasMore = rawRows.length > limit;
         const fetchedRows = hasMore ? rawRows.slice(0, limit) : rawRows;
+        const currentEnd = offset + fetchedRows.length;
 
         // Merge columns: prefer structureColumns because they contain full types, size, nullable, comments, etc.
         let finalCols: ColumnMeta[] = (res.columns as any) || [];
@@ -469,6 +440,14 @@ export function App() {
         setTableDataByTab((prev) => {
           const prevRows = append ? prev[tab.id]?.rows || [] : [];
           const combinedRows = [...prevRows, ...fetchedRows];
+          const prevTotal = prev[tab.id]?.totalCount;
+          // If we reached the end (!hasMore), the total count is at least currentEnd
+          const knownTotal = !hasMore
+            ? Math.max(prevTotal || 0, currentEnd)
+            : prevTotal !== undefined
+            ? Math.max(prevTotal, currentEnd)
+            : undefined;
+
           return {
             ...prev,
             [tab.id]: {
@@ -478,18 +457,19 @@ export function App() {
               isLoading: false,
               isLoadingMore: false,
               error: null,
-              totalCount: prev[tab.id]?.totalCount,
+              totalCount: knownTotal,
               hasMore,
               pageSize: limit,
               page: append ? prev[tab.id]?.page || 1 : page,
               whereClause,
-              columnFilters,
+              sortConfig,
             },
           };
         });
-        const filterNotice = whereParts.length > 0 ? ` (filtered by ${whereParts.length} condition(s))` : '';
+        const filterNotice = cleanCustom ? ' (filtered by WHERE condition)' : '';
+        const sortNotice = sortConfig ? ` [sorted by ${sortConfig.column} ${sortConfig.direction.toUpperCase()}]` : '';
         setStatusMessage(
-          `Loaded ${fetchedRows.length} rows (${offset + fetchedRows.length} total) from ${tab.table}${filterNotice}`
+          `Loaded ${fetchedRows.length} rows (${offset + fetchedRows.length} total) from ${tab.table}${filterNotice}${sortNotice}`
         );
       }
     } catch (e: any) {
@@ -507,7 +487,7 @@ export function App() {
           pageSize: limit,
           page: append ? prev[tab.id]?.page || 1 : page,
           whereClause,
-          columnFilters,
+          sortConfig,
         },
       }));
       setStatusMessage(`Error loading ${tab.table}: ${e?.message || String(e)}`);
@@ -1057,12 +1037,17 @@ export function App() {
                       page={tableDataByTab[activeTab.id]?.page || 1}
                       pageSize={tableDataByTab[activeTab.id]?.pageSize || 100}
                       whereClause={tableDataByTab[activeTab.id]?.whereClause}
-                      columnFilters={tableDataByTab[activeTab.id]?.columnFilters}
-                      onApplyFilters={(whereClause, colFilters) => {
+                      onApplyWhere={(whereText) => {
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        loadTableData(activeTab, 0, currentSize, false, 1, whereClause, colFilters);
+                        loadTableData(activeTab, 0, currentSize, false, 1, whereText);
                       }}
                       isTableTab={true}
+                      sortConfig={tableDataByTab[activeTab.id]?.sortConfig}
+                      onSortChange={(colName, dir) => {
+                        const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        const nextSort = dir ? { column: colName, direction: dir } : null;
+                        loadTableData(activeTab, 0, currentSize, false, 1, undefined, nextSort);
+                      }}
                       onPageChange={(newPage) => {
                         const size = tableDataByTab[activeTab.id]?.pageSize || 100;
                         loadTableData(activeTab, (newPage - 1) * size, size, false, newPage);
