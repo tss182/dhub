@@ -393,7 +393,19 @@ export const SettingsModal: React.FC = () => {
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Execute Query</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+Enter
+                        Ctrl+Enter / ⌘Enter
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Apply Grid Changes</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+S / ⌘S
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Duplicate Row</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+D / ⌘D
                       </kbd>
                     </div>
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
@@ -405,7 +417,7 @@ export const SettingsModal: React.FC = () => {
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Close Active Tab</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+W
+                        Ctrl+W / ⌘W
                       </kbd>
                     </div>
                   </div>

@@ -7,6 +7,9 @@ import { Play, Square, Database, Terminal, ChevronDown, Check } from 'lucide-rea
 import { ConnectionConfig } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
+const modKey = isMac ? 'Cmd' : 'Ctrl';
+
 interface SqlWorksheetProps {
   sql: string;
   connection?: ConnectionConfig;
@@ -101,11 +104,14 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
-    // Shortcut Ctrl+Enter to execute statement at cursor with fresh database ref
+    // Shortcut Ctrl+Enter / Cmd+Enter to execute statement at cursor with fresh database ref
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       const stmt = extractActiveStatement();
       if (stmt) onExecuteRef.current(stmt, databaseRef.current);
     });
+
+    // Intercept Ctrl+S / Cmd+S in editor to prevent browser save dialog
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {});
 
     // Auto-complete provider
     monaco.languages.registerCompletionItemProvider('sql', {
@@ -155,7 +161,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             <button
               onClick={() => onExecute(extractActiveStatement(), database)}
               className="flex items-center gap-1.5 rounded bg-emerald-600/90 px-2.5 py-1 font-medium text-white hover:bg-emerald-500 transition-colors shadow-sm cursor-pointer"
-              title="Execute Statement at Cursor (Ctrl+Enter)"
+              title={`Execute Statement at Cursor (${modKey}+Enter)`}
             >
               <Play className="h-3.5 w-3.5 fill-current" />
               <span>Run</span>
@@ -164,7 +170,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             <button
               onClick={onCancel}
               className="flex items-center gap-1.5 rounded bg-rose-600/90 px-2.5 py-1 font-medium text-white hover:bg-rose-500 transition-colors shadow-sm cursor-pointer"
-              title="Stop Execution (Ctrl+F2)"
+              title={`Stop Execution (${modKey}+F2)`}
             >
               <Square className="h-3.5 w-3.5 fill-current" />
               <span>Stop</span>
@@ -247,7 +253,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
         <div className="flex items-center gap-2 text-zinc-400">
           <Terminal className="h-3.5 w-3.5 text-zinc-500" />
-          <span className="text-[11px] text-zinc-400">Ctrl+Enter to Execute</span>
+          <span className="text-[11px] text-zinc-400">{modKey}+Enter to Execute</span>
         </div>
       </div>
 

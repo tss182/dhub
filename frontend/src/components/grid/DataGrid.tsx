@@ -25,7 +25,11 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  Copy,
 } from 'lucide-react';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
+const modKey = isMac ? 'Cmd' : 'Ctrl';
 
 function parseColumnTypeDetails(dataType?: string) {
   if (!dataType) return { baseType: 'UNKNOWN', size: null, extra: null };
@@ -328,6 +332,115 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setEditingCell(null);
   };
 
+  const handleApplyChanges = () => {
+    if (editingCell) {
+      handleFinishEdit();
+    }
+    const currentStaged = useGridEditStore.getState().stagedByTab[tabId] || {};
+    const count = Object.keys(currentStaged).length;
+    if (count > 0 && onSubmitChanges) {
+      onSubmitChanges();
+    }
+  };
+
+  const handleDuplicateRow = () => {
+    if (editingCell) {
+      handleFinishEdit();
+    }
+
+    let targetRowIndex = selectedRowIndex;
+    if (targetRowIndex === null) {
+      if (insertedChanges.length > 0) {
+        targetRowIndex = insertedChanges[0].rowIndex;
+      } else if (rows.length > 0) {
+        targetRowIndex = 0;
+      } else {
+        return;
+      }
+    }
+
+    const newRowId = -Date.now();
+    const initialValues: Record<string, unknown> = {};
+    const latestStaged = useGridEditStore.getState().stagedByTab[tabId] || {};
+
+    if (targetRowIndex < 0) {
+      // Duplicating a staged insert row
+      const staged = latestStaged[targetRowIndex];
+      if (staged && staged.type === 'insert') {
+        columns.forEach((col) => {
+          if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
+            initialValues[col.name] = staged.changes[col.name];
+          }
+        });
+      }
+    } else {
+      // Duplicating an existing database row
+      const sourceRow = rows[targetRowIndex];
+      if (sourceRow) {
+        const staged = latestStaged[targetRowIndex];
+        columns.forEach((col, idx) => {
+          if (!col.isAutoIncrement) {
+            const val =
+              staged?.type === 'update' && staged.changes[col.name] !== undefined
+                ? staged.changes[col.name]
+                : sourceRow[idx];
+            if (val !== undefined && val !== null) {
+              initialValues[col.name] = val;
+            }
+          }
+        });
+      }
+    }
+
+    stageRowInsert(tabId, newRowId, initialValues);
+    setSelectedRowIndex(newRowId);
+
+    // Auto-focus first editable column of the newly duplicated row
+    const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
+    const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
+    if (columns.length > 0) {
+      setTimeout(() => {
+        const val = initialValues[columns[targetColIdx].name];
+        handleStartEdit(newRowId, targetColIdx, val !== undefined && val !== null ? String(val) : '');
+      }, 50);
+    }
+  };
+
+  // Keyboard shortcuts: Apply (Ctrl+S / Cmd+S), Duplicate (Ctrl+D / Cmd+D)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMod = isMac ? e.metaKey : e.ctrlKey;
+      if (!isMod) return;
+
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('.monaco-editor')) return;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') &&
+        !target.closest?.('[data-grid-container]')
+      ) {
+        return;
+      }
+
+      // Shortcut: Apply (Ctrl+S on Linux/Win, Cmd+S on macOS)
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        handleApplyChanges();
+        return;
+      }
+
+      // Shortcut: Duplicate (Ctrl+D on Linux/Win, Cmd+D on macOS)
+      if (e.key === 'd' || e.key === 'D') {
+        e.preventDefault();
+        handleDuplicateRow();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [tabId, isMac, editingCell, editVal, columns, rows, selectedRowIndex, insertedChanges, onSubmitChanges]);
+
   // Filter rows client-side
   const filteredRows = useMemo(() => {
     if (!filterText) return rows;
@@ -443,7 +556,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#191a20] text-xs select-text">
+    <div data-grid-container="true" className="flex h-full flex-col bg-[#191a20] text-xs select-text">
       {/* Table Toolbar */}
       <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
         <div className="flex items-center gap-2">
@@ -454,6 +567,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
           >
             <Plus className="h-3.5 w-3.5 text-emerald-400" />
             <span>Add Row</span>
+          </button>
+
+          <button
+            onClick={handleDuplicateRow}
+            className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-300 transition-colors cursor-pointer"
+            title={`Duplicate Selected Row (${modKey}+D)`}
+          >
+            <Copy className="h-3.5 w-3.5 text-sky-400" />
+            <span>Duplicate</span>
           </button>
 
           <button
@@ -522,20 +644,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
               </button>
 
               <button
-                onClick={onSubmitChanges}
+                onClick={handleApplyChanges}
                 className="flex items-center gap-1 rounded bg-emerald-600 text-white hover:bg-emerald-500 px-2.5 py-1 font-medium transition-colors cursor-pointer shadow-sm"
-                title="Submit Changes (Ctrl+Enter)"
+                title={`Apply Changes (${modKey}+S)`}
               >
                 <Check className="h-3.5 w-3.5" />
-                <span>Submit ({stagedCount})</span>
+                <span>Apply ({stagedCount})</span>
               </button>
 
               <button
                 onClick={() => revertTabChanges(tabId)}
-                className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2d37] px-2 py-1 text-zinc-400 transition-colors cursor-pointer"
+                className="flex items-center gap-1 rounded bg-rose-950/40 border border-rose-800/60 hover:bg-rose-900/60 text-rose-300 hover:text-white px-2 py-1 transition-colors cursor-pointer"
                 title="Revert Staged Changes"
               >
-                <RotateCcw className="h-3.5 w-3.5" />
+                <RotateCcw className="h-3.5 w-3.5 text-rose-400" />
                 <span>Revert</span>
               </button>
             </>

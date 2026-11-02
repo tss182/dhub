@@ -434,7 +434,8 @@ export const DatabaseExplorer: React.FC = () => {
     const targetSchema = schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
     const count = tabs.filter((t) => t.type === 'worksheet').length + 1;
 
-    let content = `-- Query Console for ${targetDb}\n-- Ctrl+Enter to execute\n\n`;
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
+    let content = `-- Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n`;
     if (tableName) {
       const quoted = conn?.driver === 'mysql' ? `\`${tableName}\`` : `"${tableName}"`;
       content += `SELECT * FROM ${quoted} LIMIT 100;\n`;
