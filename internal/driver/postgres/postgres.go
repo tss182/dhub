@@ -238,7 +238,11 @@ func (p *PostgresDriver) GenerateDMLPreview(schema, table string, changes []driv
 				cols = append(cols, fmt.Sprintf(`"%s"`, k))
 				vals = append(vals, formatSQLVal(v))
 			}
-			statements = append(statements, fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s);`, prefix, strings.Join(cols, ", "), strings.Join(vals, ", ")))
+			stmt := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s);`, prefix, strings.Join(cols, ", "), strings.Join(vals, ", "))
+			if len(cols) == 0 {
+				stmt = fmt.Sprintf(`INSERT INTO %s DEFAULT VALUES;`, prefix)
+			}
+			statements = append(statements, stmt)
 		case "update":
 			sets := []string{}
 			for k, v := range c.Changes {
@@ -287,6 +291,9 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, schema, table string,
 				idx++
 			}
 			stmt := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`, prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
+			if len(cols) == 0 {
+				stmt = fmt.Sprintf(`INSERT INTO %s DEFAULT VALUES`, prefix)
+			}
 			res, err := tx.ExecContext(ctx, stmt, vals...)
 			if err != nil {
 				return 0, err
