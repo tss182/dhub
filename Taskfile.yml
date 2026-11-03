@@ -39,6 +39,16 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
+  build:windows:msix:
+    summary: Builds the Windows app and creates an MSIX package (bin/dhub-<arch>.msix)
+    cmds:
+      - task: windows:create:msix:package
+        vars:
+          ARCH: '{{.ARCH}}'
+          CERT_PATH: '{{.CERT_PATH}}'
+          PUBLISHER: '{{.PUBLISHER}}'
+          USE_MSIX_TOOL: '{{.USE_MSIX_TOOL}}'
+
   install:msix:tools:
     summary: Installs tools required for Windows MSIX packaging
     cmds:
