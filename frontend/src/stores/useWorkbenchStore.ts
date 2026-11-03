@@ -125,6 +125,7 @@ interface WorkbenchState {
   activeBottomTab: 'result' | 'output' | 'history' | 'explain';
   isBottomPanelOpen: boolean;
   isRightPanelOpen: boolean;
+  isLeftPanelOpen: boolean;
   isSearchEverywhereOpen: boolean;
   isConnectionDialogOpen: boolean;
   editingConnectionId: string | null;
@@ -163,6 +164,8 @@ interface WorkbenchState {
   toggleBottomPanel: () => void;
   toggleRightPanel: () => void;
   setRightPanelOpen: (open: boolean) => void;
+  toggleLeftPanel: () => void;
+  setLeftPanelOpen: (open: boolean) => void;
   setSearchEverywhereOpen: (open: boolean) => void;
   setConnectionDialogOpen: (open: boolean, editingId?: string | null) => void;
   openCreateTableModal: (conn: any, database: string, schema?: string) => void;
@@ -178,6 +181,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   activeBottomTab: 'result',
   isBottomPanelOpen: true,
   isRightPanelOpen: true,
+  isLeftPanelOpen: (() => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('dhub_left_sidebar_open');
+      if (saved !== null) return saved === 'true';
+    }
+    return true;
+  })(),
   isSearchEverywhereOpen: false,
   isConnectionDialogOpen: false,
   editingConnectionId: null,
@@ -544,6 +554,22 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set((state) => ({ isRightPanelOpen: !state.isRightPanelOpen })),
 
   setRightPanelOpen: (isRightPanelOpen) => set({ isRightPanelOpen }),
+
+  toggleLeftPanel: () =>
+    set((state) => {
+      const next = !state.isLeftPanelOpen;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('dhub_left_sidebar_open', String(next));
+      }
+      return { isLeftPanelOpen: next };
+    }),
+
+  setLeftPanelOpen: (isLeftPanelOpen) => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('dhub_left_sidebar_open', String(isLeftPanelOpen));
+    }
+    set({ isLeftPanelOpen });
+  },
 
   setSearchEverywhereOpen: (isSearchEverywhereOpen) =>
     set({ isSearchEverywhereOpen }),

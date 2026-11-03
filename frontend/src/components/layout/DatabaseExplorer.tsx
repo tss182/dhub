@@ -23,6 +23,7 @@ import {
   Check,
   Download,
   Upload,
+  PanelLeftClose,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -55,7 +56,11 @@ const FOLDER_COLORS = [
   { label: 'Zinc', value: '#71717a' },
 ];
 
-export const DatabaseExplorer: React.FC = () => {
+interface DatabaseExplorerProps {
+  onCollapse?: () => void;
+}
+
+export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }) => {
   const {
     connections,
     folders,
@@ -1389,6 +1394,15 @@ export const DatabaseExplorer: React.FC = () => {
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
+          {onCollapse && (
+            <button
+              onClick={onCollapse}
+              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+              title="Minimize Sidebar (Ctrl+B)"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

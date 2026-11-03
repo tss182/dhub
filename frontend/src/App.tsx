@@ -34,6 +34,8 @@ import {
   RefreshCw,
   Pencil,
   Copy,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 
@@ -44,6 +46,7 @@ export function App() {
     activeBottomTab,
     isBottomPanelOpen,
     isRightPanelOpen,
+    isLeftPanelOpen,
     consoles,
     hasLoadedConsoles,
     loadConsoles,
@@ -61,6 +64,7 @@ export function App() {
     setActiveBottomTab,
     toggleBottomPanel,
     toggleRightPanel,
+    toggleLeftPanel,
     setSearchEverywhereOpen,
     setConnectionDialogOpen,
     tabRefreshTrigger,
@@ -226,7 +230,7 @@ export function App() {
     updateOverflowTabs();
     const raf = requestAnimationFrame(updateOverflowTabs);
     return () => cancelAnimationFrame(raf);
-  }, [tabs.length, leftSidebarWidth, rightSidebarWidth, isRightPanelOpen, updateOverflowTabs]);
+  }, [tabs.length, leftSidebarWidth, rightSidebarWidth, isRightPanelOpen, isLeftPanelOpen, updateOverflowTabs]);
 
   useEffect(() => {
     const bar = tabBarContainerRef.current;
@@ -406,6 +410,13 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
         e.preventDefault();
         setSearchEverywhereOpen(true);
+        return;
+      }
+
+      // Toggle Left Explorer: Ctrl+B / Cmd+B
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        toggleLeftPanel();
         return;
       }
 
@@ -1133,7 +1144,22 @@ export function App() {
     <div className="flex h-screen w-screen flex-col bg-[#121317] text-zinc-300 font-sans select-none overflow-hidden">
       {/* Top Titlebar / Islands Header */}
       <header className="flex h-11 items-center justify-between border-b border-[#272932] px-4 bg-[#14151a]">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleLeftPanel}
+            className={`flex items-center justify-center h-7 w-7 rounded border transition-colors cursor-pointer ${
+              isLeftPanelOpen
+                ? 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
+                : 'bg-[#22242c] border-blue-500/50 text-blue-400 hover:text-blue-300'
+            }`}
+            title={isLeftPanelOpen ? `Minimize Explorer (${isMac ? '⌘B' : 'Ctrl+B'})` : `Expand Explorer (${isMac ? '⌘B' : 'Ctrl+B'})`}
+          >
+            {isLeftPanelOpen ? (
+              <PanelLeftClose className="h-4 w-4" />
+            ) : (
+              <PanelLeftOpen className="h-4 w-4" />
+            )}
+          </button>
           <DHubLogo variant="full" size={26} />
         </div>
 
@@ -1182,29 +1208,54 @@ export function App() {
       {/* Main Workspace Body */}
       <div className="flex flex-1 min-h-0">
         {/* Left Sidebar: Database Explorer */}
-        <div
-          style={{ width: `${leftSidebarWidth}px` }}
-          className="h-full shrink-0 overflow-hidden"
-        >
-          <DatabaseExplorer />
-        </div>
+        {isLeftPanelOpen ? (
+          <>
+            <div
+              style={{ width: `${leftSidebarWidth}px` }}
+              className="h-full shrink-0 overflow-hidden"
+            >
+              <DatabaseExplorer onCollapse={toggleLeftPanel} />
+            </div>
 
-        {/* Left Sidebar Resizer Handle */}
-        <div
-          onMouseDown={handleLeftResizerMouseDown}
-          onDoubleClick={() => {
-            const defaultW = 256;
-            setLeftSidebarWidth(defaultW);
-            localStorage.setItem('dhub_left_sidebar_w', String(defaultW));
-            WorkspaceService.SaveSetting('dhub_left_sidebar_w', String(defaultW)).catch(() => {});
-          }}
-          className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-r border-[#272932] ${
-            isDraggingLeftResizer ? 'bg-blue-600' : ''
-          }`}
-          title="Drag to resize Database Explorer (Double-click to reset)"
-        >
-          <div className="w-0.5 h-8 rounded-full bg-zinc-700 group-hover:bg-blue-200 transition-colors" />
-        </div>
+            {/* Left Sidebar Resizer Handle */}
+            <div
+              onMouseDown={handleLeftResizerMouseDown}
+              onDoubleClick={() => {
+                const defaultW = 256;
+                setLeftSidebarWidth(defaultW);
+                localStorage.setItem('dhub_left_sidebar_w', String(defaultW));
+                WorkspaceService.SaveSetting('dhub_left_sidebar_w', String(defaultW)).catch(() => {});
+              }}
+              className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-r border-[#272932] ${
+                isDraggingLeftResizer ? 'bg-blue-600' : ''
+              }`}
+              title="Drag to resize Database Explorer (Double-click to reset)"
+            >
+              <div className="w-0.5 h-8 rounded-full bg-zinc-700 group-hover:bg-blue-200 transition-colors" />
+            </div>
+          </>
+        ) : (
+          /* Minimized Left Sidebar Strip */
+          <div className="h-full w-9 shrink-0 bg-[#16171d] border-r border-[#272932] flex flex-col items-center py-2 select-none z-10">
+            <button
+              onClick={toggleLeftPanel}
+              className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-[#22242c] transition-colors cursor-pointer"
+              title={`Expand Database Explorer (${isMac ? '⌘B' : 'Ctrl+B'})`}
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </button>
+            <div
+              onClick={toggleLeftPanel}
+              className="mt-6 flex flex-1 flex-col items-center cursor-pointer group"
+              title="Click to expand Database Explorer"
+            >
+              <Database className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-3" />
+              <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl] rotate-180">
+                EXPLORER
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Center Workbench: Tabs + Editor/Grid + Services Bottom Panel */}
         <div className="flex-1 flex flex-col min-w-0 bg-[#14151a]">
