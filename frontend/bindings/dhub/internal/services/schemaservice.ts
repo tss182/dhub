@@ -24,6 +24,9 @@ export function GetDatabases(connectionID: string): $CancellablePromise<string[]
     return $Call.ByID(3186786585, connectionID);
 }
 
+/**
+ * GetDefaultBackupPath returns the default .sql backup file path for a database.
+ */
 export function GetDefaultBackupPath(database: string): $CancellablePromise<string> {
     return $Call.ByID(2922436839, database);
 }

@@ -327,7 +327,7 @@ export const DatabaseExplorer: React.FC = () => {
 
   const handleBrowseRestoreFile = async (): Promise<void> => {
     try {
-      const chosen: string | string[] = await Dialogs.OpenFile({
+      const chosen: any = await Dialogs.OpenFile({
         Title: `Select SQL File to Restore (${backupRestoreModal.database || 'Database'})`,
         CanChooseFiles: true,
         AllowsMultipleSelection: false,
@@ -363,7 +363,7 @@ export const DatabaseExplorer: React.FC = () => {
 
     // Prompt user immediately to pick the .sql file to restore
     try {
-      const chosen: string | string[] = await Dialogs.OpenFile({
+      const chosen: any = await Dialogs.OpenFile({
         Title: `Select SQL File to Restore into [${database}]`,
         CanChooseFiles: true,
         AllowsMultipleSelection: false,

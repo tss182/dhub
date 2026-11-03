@@ -48,7 +48,7 @@ type ConnectionFolder struct {
 	Color     string    `json:"color"`
 	ParentID  *string   `json:"parentId"`
 	SortOrder int       `json:"sortOrder"`
-	CreatedAt time.Time `json:"createdAt"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
 }
 
 type ConnectionLayoutUpdate struct {
