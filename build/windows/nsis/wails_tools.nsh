@@ -8,16 +8,16 @@
     !define INFO_PROJECTNAME "dhub"
 !endif
 !ifndef INFO_COMPANYNAME
-    !define INFO_COMPANYNAME "asdev"
+    !define INFO_COMPANYNAME "ASDEV"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "My Product"
+    !define INFO_PRODUCTNAME "DHUB"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.1.0"
 !endif
 !ifndef INFO_COPYRIGHT
-    !define INFO_COPYRIGHT "© 2026, asdev"
+    !define INFO_COPYRIGHT "(c) 2026, ASDEV"
 !endif
 !ifndef PRODUCT_EXECUTABLE
     !define PRODUCT_EXECUTABLE "${INFO_PROJECTNAME}.exe"
