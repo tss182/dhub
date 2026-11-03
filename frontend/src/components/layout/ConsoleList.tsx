@@ -48,6 +48,57 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
   const [filterText, setFilterText] = useState('');
   const [expandedConns, setExpandedConns] = useState<Record<string, boolean>>({});
 
+  // Hover Tooltip state for long connection and console names
+  const [hoveredItem, setHoveredItem] = useState<{
+    kind: 'connection' | 'console';
+    title: string;
+    badge: string;
+    subtitle?: string;
+    colorTag?: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const hoverTimeoutRef = React.useRef<any>(null);
+
+  const handleItemMouseEnter = (
+    e: React.MouseEvent,
+    item: {
+      kind: 'connection' | 'console';
+      title: string;
+      badge: string;
+      subtitle?: string;
+      colorTag?: string;
+    }
+  ) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const tooltipWidth = 280;
+    const x =
+      rect.left - tooltipWidth - 8 > 8
+        ? rect.left - tooltipWidth - 8
+        : Math.max(8, window.innerWidth - tooltipWidth - 12);
+    const y = Math.max(8, Math.min(rect.top - 2, window.innerHeight - 90));
+
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredItem({
+        ...item,
+        x,
+        y,
+      });
+    }, 120);
+  };
+
+  const handleItemMouseLeave = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    setHoveredItem(null);
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
+
   // Context Menu state
   const [contextMenu, setContextMenu] = useState<{
     isOpen: boolean;
@@ -240,7 +291,10 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
       </div>
 
       {/* Connections with their attached Consoles */}
-      <div className="flex-1 overflow-auto p-2 space-y-2">
+      <div
+        onScroll={handleItemMouseLeave}
+        className="flex-1 overflow-auto p-2 space-y-2"
+      >
         {connections.length === 0 ? (
           <div className="py-8 text-center text-zinc-500">
             <p className="text-[11px]">No connections configured</p>
@@ -268,10 +322,26 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
               <div key={conn.id} className="rounded bg-[#14151a]/40 border border-[#272932]/70 overflow-hidden">
                 {/* Connection Header Row */}
                 <div
-                  onClick={() => toggleConnection(conn.id)}
-                  onContextMenu={(e) => handleConnectionContextMenu(e, conn)}
+                  onClick={() => {
+                    handleItemMouseLeave();
+                    toggleConnection(conn.id);
+                  }}
+                  onContextMenu={(e) => {
+                    handleItemMouseLeave();
+                    handleConnectionContextMenu(e, conn);
+                  }}
+                  onMouseEnter={(e) =>
+                    handleItemMouseEnter(e, {
+                      kind: 'connection',
+                      title: conn.name,
+                      badge: (conn.driver || 'DB').toUpperCase(),
+                      subtitle: `${connConsoles.length} console(s) • Right-click to add console`,
+                      colorTag: conn.colorTag || '#3b82f6',
+                    })
+                  }
+                  onMouseLeave={handleItemMouseLeave}
                   className="group flex items-center justify-between px-2 py-1.5 bg-[#191a20] hover:bg-[#22242c] cursor-pointer text-zinc-300 transition-colors"
-                  title="Right-click for options (Tambah Console)"
+                  title={`${conn.name} (${conn.driver.toUpperCase()})`}
                 >
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
                     {isExpanded ? (
@@ -289,7 +359,13 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  <div
+                    onMouseEnter={(e) => {
+                      e.stopPropagation();
+                      handleItemMouseLeave();
+                    }}
+                    className="flex items-center gap-1"
+                  >
                     <span className="text-[10px] text-zinc-500 font-mono px-1">
                       {connConsoles.length}
                     </span>
@@ -329,8 +405,24 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                         return (
                           <div
                             key={record.id}
-                            onClick={() => handleOpenConsole(record)}
-                            onContextMenu={(e) => handleConsoleContextMenu(e, record)}
+                            onClick={() => {
+                              handleItemMouseLeave();
+                              handleOpenConsole(record);
+                            }}
+                            onContextMenu={(e) => {
+                              handleItemMouseLeave();
+                              handleConsoleContextMenu(e, record);
+                            }}
+                            onMouseEnter={(e) =>
+                              handleItemMouseEnter(e, {
+                                kind: 'console',
+                                title: record.title,
+                                badge: isTabOpen ? 'OPEN' : 'CONSOLE',
+                                subtitle: `${conn.name} / ${record.database || 'main'}`,
+                              })
+                            }
+                            onMouseLeave={handleItemMouseLeave}
+                            title={`${record.title} (${record.database || 'main'})`}
                             className={`group flex flex-col p-2 rounded cursor-pointer border transition-colors ${
                               isTabActive
                                 ? 'bg-[#22242c] border-zinc-500/60 text-white'
@@ -354,7 +446,13 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                               </div>
 
                               {/* Hover actions */}
-                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div
+                                onMouseEnter={(e) => {
+                                  e.stopPropagation();
+                                  handleItemMouseLeave();
+                                }}
+                                className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -380,7 +478,10 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                             {/* Database info tag */}
                             <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500">
                               <Database className="h-2.5 w-2.5 text-blue-400 shrink-0" />
-                              <span className="font-mono text-zinc-400 truncate">
+                              <span
+                                className="font-mono text-zinc-400 truncate"
+                                title={record.database || 'main'}
+                              >
                                 {record.database || 'main'}
                               </span>
                             </div>
@@ -395,6 +496,44 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
           })
         )}
       </div>
+
+      {/* Floating Hover Tooltip Card for Full Name */}
+      {hoveredItem && !contextMenu.isOpen && (
+        <div
+          className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl px-3 py-2 text-xs font-sans min-w-[180px] max-w-[300px] animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: hoveredItem.y, left: hoveredItem.x }}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-1.5 min-w-0">
+              {hoveredItem.kind === 'connection' ? (
+                <span
+                  className="h-2.5 w-2.5 rounded-full shrink-0 mt-1"
+                  style={{ backgroundColor: hoveredItem.colorTag || '#3b82f6' }}
+                />
+              ) : (
+                <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
+              )}
+              <span className="font-mono font-semibold text-zinc-100 break-all leading-snug text-[12px]">
+                {hoveredItem.title}
+              </span>
+            </div>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold shrink-0 border ${
+                hoveredItem.badge === 'OPEN'
+                  ? 'bg-emerald-950/40 border-emerald-800/40 text-emerald-300'
+                  : 'bg-zinc-800/60 border-zinc-700 text-zinc-300'
+              }`}
+            >
+              {hoveredItem.badge}
+            </span>
+          </div>
+          {hoveredItem.subtitle && (
+            <div className="mt-1 pt-1 border-t border-[#272932] text-[10px] font-mono text-zinc-400 break-all">
+              {hoveredItem.subtitle}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Floating Context Menu */}
       {contextMenu.isOpen && (

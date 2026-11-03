@@ -65,6 +65,57 @@ export const DatabaseExplorer: React.FC = () => {
   const [loadingConnId, setLoadingConnId] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
+  // Hover Tooltip state for long connection, database, table, and view names
+  const [hoveredItem, setHoveredItem] = useState<{
+    kind: 'connection' | 'database' | 'table' | 'view';
+    title: string;
+    badge: string;
+    subtitle?: string;
+    colorTag?: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const hoverTimeoutRef = React.useRef<any>(null);
+
+  const handleItemMouseEnter = (
+    e: React.MouseEvent,
+    item: {
+      kind: 'connection' | 'database' | 'table' | 'view';
+      title: string;
+      badge: string;
+      subtitle?: string;
+      colorTag?: string;
+    }
+  ) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const tooltipMaxW = 320;
+    const x =
+      rect.right + 8 + tooltipMaxW < window.innerWidth
+        ? rect.right + 8
+        : Math.max(8, window.innerWidth - tooltipMaxW - 12);
+    const y = Math.max(8, Math.min(rect.top - 2, window.innerHeight - 90));
+
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredItem({
+        ...item,
+        x,
+        y,
+      });
+    }, 120);
+  };
+
+  const handleItemMouseLeave = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    setHoveredItem(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
+
   // Context Menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     isOpen: false,
@@ -545,8 +596,11 @@ export const DatabaseExplorer: React.FC = () => {
 
   return (
     <div
-      onContextMenu={(e) => openContextMenu(e, 'empty', {})}
-      className="flex h-full flex-col bg-[#191a20] border-r border-[#272932] text-xs relative select-none"
+      onContextMenu={(e) => {
+        handleItemMouseLeave();
+        openContextMenu(e, 'empty', {});
+      }}
+      className="flex h-full flex-col bg-[#191a20] text-xs relative select-none"
     >
       {/* Header */}
       <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3">
@@ -583,7 +637,10 @@ export const DatabaseExplorer: React.FC = () => {
       </div>
 
       {/* Connection & Table Tree */}
-      <div className="flex-1 overflow-auto p-2">
+      <div
+        onScroll={handleItemMouseLeave}
+        className="flex-1 overflow-auto p-2"
+      >
         {connections.length === 0 ? (
           <div className="py-8 text-center text-zinc-500">
             <p>No connections configured</p>
@@ -600,13 +657,33 @@ export const DatabaseExplorer: React.FC = () => {
             const isConnLoading = loadingConnId === c.id;
             const databases = treeDatabases[c.id] || (c.databaseName ? [c.databaseName] : []);
             const isSQLite = c.driver === 'sqlite';
+            const connSubtitle = isSQLite
+              ? (c.filePath || c.databaseName || 'SQLite File')
+              : `${c.host || 'localhost'}${c.port ? `:${c.port}` : ''}${c.databaseName ? ` / ${c.databaseName}` : ''}`;
 
             return (
               <div key={c.id} className="mb-1">
                 {/* Connection Node */}
                 <div
-                  onClick={() => handleExpandConnection(c.id)}
-                  onContextMenu={(e) => openContextMenu(e, 'connection', { connection: c })}
+                  onClick={() => {
+                    handleItemMouseLeave();
+                    handleExpandConnection(c.id);
+                  }}
+                  onContextMenu={(e) => {
+                    handleItemMouseLeave();
+                    openContextMenu(e, 'connection', { connection: c });
+                  }}
+                  onMouseEnter={(e) =>
+                    handleItemMouseEnter(e, {
+                      kind: 'connection',
+                      title: c.name,
+                      badge: (c.driver || 'DB').toUpperCase(),
+                      subtitle: connSubtitle,
+                      colorTag: c.colorTag || '#71717a',
+                    })
+                  }
+                  onMouseLeave={handleItemMouseLeave}
+                  title={`${c.name} (${c.driver.toUpperCase()})`}
                   className={`group flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
                     activeConnectionId === c.id ? 'bg-[#22242c] font-medium text-white' : ''
                   }`}
@@ -629,7 +706,13 @@ export const DatabaseExplorer: React.FC = () => {
                   </div>
 
                   {/* Actions on hover */}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div
+                    onMouseEnter={(e) => {
+                      e.stopPropagation();
+                      handleItemMouseLeave();
+                    }}
+                    className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
                     <button
                       type="button"
                       onClick={(e) => handleEditConnection(c.id, e)}
@@ -693,15 +776,29 @@ export const DatabaseExplorer: React.FC = () => {
                             {objects.map((obj) => (
                               <div
                                 key={obj.name}
-                                onClick={() => handleTableClick(c.id, 'main', 'main', obj.name)}
-                                onContextMenu={(e) =>
+                                onClick={() => {
+                                  handleItemMouseLeave();
+                                  handleTableClick(c.id, 'main', 'main', obj.name);
+                                }}
+                                onContextMenu={(e) => {
+                                  handleItemMouseLeave();
                                   openContextMenu(e, 'table', {
                                     connection: c,
                                     database: 'main',
                                     schema: 'main',
                                     table: obj,
+                                  });
+                                }}
+                                onMouseEnter={(e) =>
+                                  handleItemMouseEnter(e, {
+                                    kind: obj.type === 'view' ? 'view' : 'table',
+                                    title: obj.name,
+                                    badge: obj.type === 'view' ? 'VIEW' : 'TABLE',
+                                    subtitle: `${c.name} / main`,
                                   })
                                 }
+                                onMouseLeave={handleItemMouseLeave}
+                                title={obj.name}
                                 className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                               >
                                 {obj.type === 'view' ? (
@@ -750,14 +847,28 @@ export const DatabaseExplorer: React.FC = () => {
                             <div key={dbName} className="mb-0.5">
                               {/* Database Node */}
                               <div
-                                onClick={() => handleExpandDatabase(c.id, dbName)}
-                                onContextMenu={(e) =>
+                                onClick={() => {
+                                  handleItemMouseLeave();
+                                  handleExpandDatabase(c.id, dbName);
+                                }}
+                                onContextMenu={(e) => {
+                                  handleItemMouseLeave();
                                   openContextMenu(e, 'database', {
                                     connection: c,
                                     database: dbName,
                                     schema: targetSchema,
+                                  });
+                                }}
+                                onMouseEnter={(e) =>
+                                  handleItemMouseEnter(e, {
+                                    kind: 'database',
+                                    title: dbName,
+                                    badge: 'DATABASE',
+                                    subtitle: `${c.name} (${c.driver.toUpperCase()})`,
                                   })
                                 }
+                                onMouseLeave={handleItemMouseLeave}
+                                title={dbName}
                                 className={`group/db flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
                                   isDbActive ? 'bg-[#22242c] text-zinc-100 font-medium' : ''
                                 }`}
@@ -776,7 +887,13 @@ export const DatabaseExplorer: React.FC = () => {
                                     {matchingObjects.length} match
                                   </span>
                                 )}
-                                <div className="opacity-0 group-hover/db:opacity-100 flex items-center transition-opacity ml-1">
+                                <div
+                                  onMouseEnter={(e) => {
+                                    e.stopPropagation();
+                                    handleItemMouseLeave();
+                                  }}
+                                  className="opacity-0 group-hover/db:opacity-100 flex items-center transition-opacity ml-1"
+                                >
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -816,15 +933,29 @@ export const DatabaseExplorer: React.FC = () => {
                                     return (
                                       <div
                                         key={obj.name}
-                                        onClick={() => handleTableClick(c.id, dbName, targetSchema, obj.name)}
-                                        onContextMenu={(e) =>
+                                        onClick={() => {
+                                          handleItemMouseLeave();
+                                          handleTableClick(c.id, dbName, targetSchema, obj.name);
+                                        }}
+                                        onContextMenu={(e) => {
+                                          handleItemMouseLeave();
                                           openContextMenu(e, 'table', {
                                             connection: c,
                                             database: dbName,
                                             schema: targetSchema,
                                             table: obj,
+                                          });
+                                        }}
+                                        onMouseEnter={(e) =>
+                                          handleItemMouseEnter(e, {
+                                            kind: 'table',
+                                            title: obj.name,
+                                            badge: 'TABLE',
+                                            subtitle: `${c.name} / ${dbName}`,
                                           })
                                         }
+                                        onMouseLeave={handleItemMouseLeave}
+                                        title={obj.name}
                                         className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
                                           isMatch
                                             ? 'text-amber-300 bg-amber-950/20 font-medium'
@@ -852,15 +983,29 @@ export const DatabaseExplorer: React.FC = () => {
                                         return (
                                           <div
                                             key={obj.name}
-                                            onClick={() => handleTableClick(c.id, dbName, targetSchema, obj.name)}
-                                            onContextMenu={(e) =>
+                                            onClick={() => {
+                                              handleItemMouseLeave();
+                                              handleTableClick(c.id, dbName, targetSchema, obj.name);
+                                            }}
+                                            onContextMenu={(e) => {
+                                              handleItemMouseLeave();
                                               openContextMenu(e, 'table', {
                                                 connection: c,
                                                 database: dbName,
                                                 schema: targetSchema,
                                                 table: obj,
+                                              });
+                                            }}
+                                            onMouseEnter={(e) =>
+                                              handleItemMouseEnter(e, {
+                                                kind: 'view',
+                                                title: obj.name,
+                                                badge: 'VIEW',
+                                                subtitle: `${c.name} / ${dbName}`,
                                               })
                                             }
+                                            onMouseLeave={handleItemMouseLeave}
+                                            title={obj.name}
                                             className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
                                               isMatch
                                                 ? 'text-amber-300 bg-amber-950/20 font-medium'
@@ -892,6 +1037,55 @@ export const DatabaseExplorer: React.FC = () => {
           })
         )}
       </div>
+
+      {/* Floating Hover Tooltip Card for Full Name */}
+      {hoveredItem && !contextMenu.isOpen && (
+        <div
+          className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl px-3 py-2 text-xs font-sans min-w-[180px] max-w-[340px] animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: hoveredItem.y, left: hoveredItem.x }}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-1.5 min-w-0">
+              {hoveredItem.kind === 'connection' && (
+                <span
+                  className="h-2.5 w-2.5 rounded-full shrink-0 mt-1"
+                  style={{ backgroundColor: hoveredItem.colorTag || '#71717a' }}
+                />
+              )}
+              {hoveredItem.kind === 'database' && (
+                <Database className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
+              )}
+              {hoveredItem.kind === 'table' && (
+                <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
+              )}
+              {hoveredItem.kind === 'view' && (
+                <Eye className="h-3.5 w-3.5 text-purple-400 shrink-0 mt-0.5" />
+              )}
+              <span className="font-mono font-semibold text-zinc-100 break-all leading-snug text-[12px]">
+                {hoveredItem.title}
+              </span>
+            </div>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold shrink-0 border ${
+                hoveredItem.kind === 'table'
+                  ? 'bg-emerald-950/40 border-emerald-800/40 text-emerald-300'
+                  : hoveredItem.kind === 'view'
+                  ? 'bg-purple-950/40 border-purple-800/40 text-purple-300'
+                  : hoveredItem.kind === 'database'
+                  ? 'bg-blue-950/40 border-blue-800/40 text-blue-300'
+                  : 'bg-zinc-800/60 border-zinc-700 text-zinc-300'
+              }`}
+            >
+              {hoveredItem.badge}
+            </span>
+          </div>
+          {hoveredItem.subtitle && (
+            <div className="mt-1 pt-1 border-t border-[#272932] text-[10px] font-mono text-zinc-400 break-all">
+              {hoveredItem.subtitle}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Floating JetBrains-style Context Menu */}
       {contextMenu.isOpen && (

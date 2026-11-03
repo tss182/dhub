@@ -181,7 +181,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           <div className="h-4 w-[1px] bg-[#272932] mx-1" />
 
           {/* Fixed Connection Display - No connection switching */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1e2027] border border-[#2e313d] text-zinc-200">
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1e2027] border border-[#2e313d] text-zinc-200"
+            title={connection ? `${connection.name} (${connection.driver.toUpperCase()})` : 'Console'}
+          >
             <span
               className="h-2 w-2 rounded-full shrink-0"
               style={{ backgroundColor: connection?.colorTag || '#3b82f6' }}
@@ -204,7 +207,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               type="button"
               onClick={() => setIsDbOpen(!isDbOpen)}
               className="flex items-center gap-2 px-2.5 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-amber-300 font-mono text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-              title="Click to select database"
+              title={database ? `${database} (Click to switch database)` : 'Click to select database'}
             >
               <Database className="h-3.5 w-3.5 text-blue-400 shrink-0" />
               <span className="truncate max-w-[160px]">{database || 'Select Database'}</span>
@@ -216,7 +219,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             </button>
 
             {isDbOpen && (
-              <div className="absolute top-full left-0 mt-1 min-w-[210px] max-h-64 overflow-auto rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+              <div className="absolute top-full left-0 mt-1 min-w-[210px] max-w-[320px] max-h-64 overflow-auto rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
                 <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1 flex items-center justify-between">
                   <span>Databases</span>
                   <span className="font-mono text-zinc-500">{availableDatabases.length}</span>
@@ -235,6 +238,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                           onDatabaseChange?.(db);
                           setIsDbOpen(false);
                         }}
+                        title={db}
                         className={`flex items-center justify-between px-2.5 py-1.5 rounded cursor-pointer font-mono text-xs transition-colors ${
                           isSelected
                             ? 'bg-blue-600 text-white font-bold'
@@ -242,7 +246,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                         }`}
                       >
                         <span className="truncate">{db}</span>
-                        {isSelected && <Check className="h-3.5 w-3.5 text-white shrink-0" />}
+                        {isSelected && <Check className="h-3.5 w-3.5 text-white shrink-0 ml-2" />}
                       </div>
                     );
                   })
