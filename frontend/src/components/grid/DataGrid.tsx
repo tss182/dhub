@@ -752,36 +752,23 @@ export const DataGrid: React.FC<DataGridProps> = ({
     onPageSizeChange?.(newSize);
   };
 
+  // Only borders are tinted by environment; backgrounds stay neutral.
+  // Thick frame around the whole grid + tinted toolbars; grid body stays neutral.
   const gridContainerBg =
     envType === 'prod'
-      ? 'bg-[#1e1014]'
+      ? 'bg-[#191a20] border-[3px] border-[#7a3b3f]'
       : envType === 'dev'
-      ? 'bg-[#0e1d17]'
+      ? 'bg-[#191a20] border-[3px] border-[#2f6b52]'
       : 'bg-[#191a20]';
   const gridBarBg =
     envType === 'prod'
-      ? 'bg-[#170b0e] border-rose-900/50'
+      ? 'bg-[#5a2d31] border-[#7a3b3f]'
       : envType === 'dev'
-      ? 'bg-[#091511] border-emerald-900/50'
+      ? 'bg-[#244f3d] border-[#2f6b52]'
       : 'bg-[#14151a] border-[#272932]';
-  const gridTheadBg =
-    envType === 'prod'
-      ? 'bg-[#190c10]'
-      : envType === 'dev'
-      ? 'bg-[#0b1813]'
-      : 'bg-[#14151a]';
-  const gridCellBorder =
-    envType === 'prod'
-      ? 'border-rose-950/70'
-      : envType === 'dev'
-      ? 'border-emerald-950/70'
-      : 'border-[#272932]';
-  const gridRowClass =
-    envType === 'prod'
-      ? 'border-b border-rose-950/60 hover:bg-rose-950/35 transition-colors'
-      : envType === 'dev'
-      ? 'border-b border-emerald-950/60 hover:bg-emerald-950/35 transition-colors'
-      : 'border-b border-[#22242c] hover:bg-[#20222a] transition-colors';
+  const gridTheadBg = 'bg-[#14151a]';
+  const gridCellBorder = 'border-[#272932]';
+  const gridRowClass = 'border-b border-[#22242c] hover:bg-[#20222a] transition-colors';
 
   return (
     <div data-grid-container="true" className={`flex h-full flex-col ${gridContainerBg} text-xs select-text transition-colors`}>
