@@ -673,7 +673,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const getFormattedCopyText = (fmt?: CopyFormat) => {
-    const targetFormat = fmt || copyFormat;
+    const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
     if (!selectionRange || columns.length === 0) return '';
     const tbl = tableName || 'table_name';
 
@@ -1161,7 +1161,28 @@ WHERE ${whereClause};`);
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tabId, isMac, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm]);
+  }, [tabId, isMac, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm, copyFormat, tableName, primaryKeys]);
+
+  // Global clipboard copy event to ensure Ctrl+C always outputs the selected format
+  useEffect(() => {
+    const handleNativeCopy = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+      if (isTyping) return;
+
+      if (selectionRange && columns.length > 0) {
+        const text = getFormattedCopyText();
+        if (text) {
+          e.preventDefault();
+          e.clipboardData?.setData('text/plain', text);
+        }
+      }
+    };
+
+    window.addEventListener('copy', handleNativeCopy);
+    return () => window.removeEventListener('copy', handleNativeCopy);
+  }, [selectionRange, columns, visualRows, stagedChanges, tableName, primaryKeys, copyFormat]);
   const currentOffset = (currentPage - 1) * localPageSize;
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
   const endRow = currentOffset + displayedRows.length;
@@ -2124,68 +2145,11 @@ WHERE ${whereClause};`);
           >
             <div className="flex items-center gap-2">
               <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Copy ({COPY_FORMAT_LABELS[copyFormat]})</span>
+              <span>Copy</span>
             </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+C</kbd>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              const text = getFormattedCopyText('csv');
-              if (text) navigator.clipboard.writeText(text);
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <FileText className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Copy as CSV</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              const text = getFormattedCopyText('json');
-              if (text) navigator.clipboard.writeText(text);
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Code className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Copy as JSON</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              const text = getFormattedCopyText('sql_insert');
-              if (text) navigator.clipboard.writeText(text);
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Code className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
-              <span>Copy as SQL INSERT</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              const text = getFormattedCopyText('sql_update');
-              if (text) navigator.clipboard.writeText(text);
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-              <span>Copy as SQL UPDATE</span>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono">
+              <span className="text-sky-400 font-semibold uppercase">{COPY_FORMAT_LABELS[copyFormat] || 'CSV'}</span>
+              <kbd className="text-zinc-500 group-hover:text-white/80">{modKey}+C</kbd>
             </div>
           </button>          <div className="my-1 border-t border-[#272932]" />
 
