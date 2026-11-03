@@ -24,6 +24,7 @@ import {
   Download,
   Upload,
   PanelLeftClose,
+  FileCode,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -891,6 +892,33 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     navigator.clipboard.writeText(text).catch(() => {});
     setCopiedText(text);
     setTimeout(() => setCopiedText(null), 1500);
+  };
+
+  const handleCopyTableSchema = async (
+    conn: ConnectionConfig,
+    database: string,
+    schema: string,
+    tableName: string
+  ) => {
+    try {
+      const struct = await SchemaService.GetTableStructure(
+        conn.id,
+        database,
+        schema,
+        tableName
+      );
+      const ddl = struct?.ddl || '';
+      if (ddl) {
+        await navigator.clipboard.writeText(ddl);
+        setCopiedText(ddl);
+        setTimeout(() => setCopiedText(null), 1500);
+        alertSuccess(`Schema (DDL) for "${tableName}" copied to clipboard`);
+      } else {
+        alertWarning(`No DDL schema available for "${tableName}"`);
+      }
+    } catch (err: any) {
+      alertError('Failed to copy table schema: ' + (err?.message || String(err)));
+    }
   };
 
   const renderConnectionNode = (c: ConnectionConfig, currentFolderId: string | null) => {
@@ -2166,6 +2194,22 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               >
                 <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>Copy Table Name</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleCopyTableSchema(
+                    contextMenu.connection!,
+                    contextMenu.database || 'main',
+                    contextMenu.schema || 'main',
+                    contextMenu.table!.name
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Copy Table Schema (DDL)</span>
               </button>
 
               <div className="my-1 border-t border-[#272932]" />
