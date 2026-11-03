@@ -1,3 +1,9 @@
+export interface ConnectionFolder {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 export interface ConnectionConfig {
   id: string;
   folderId?: string;

@@ -29,6 +29,7 @@ import {
   Clock,
   Layers,
   ChevronDown,
+  ChevronsRight,
   RefreshCw,
   Pencil,
   Copy,
@@ -49,6 +50,8 @@ export function App() {
     closeTab,
     closeTabsMatching,
     setActiveTabId,
+    reorderTab,
+    swapTabs,
     updateTabContent,
     updateTabDatabase,
     updateTabConnection,
@@ -157,7 +160,7 @@ export function App() {
   });
   const [isDraggingRightResizer, setIsDraggingRightResizer] = useState(false);
 
-  // Hovered workbench tab tooltip state
+  // Hovered workbench tab popover state
   const [hoveredTab, setHoveredTab] = useState<{
     tab: WorkbenchTab;
     connName?: string;
@@ -165,6 +168,97 @@ export function App() {
     y: number;
   } | null>(null);
   const tabHoverTimeoutRef = React.useRef<any>(null);
+
+  // Overflow tabs (>> count) & dropdown state (no horizontal scrolling; only fitting tabs shown in tab bar)
+  const tabBarContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const tabDropdownRef = React.useRef<HTMLDivElement | null>(null);
+  const [visibleCount, setVisibleCount] = useState<number>(() => Math.max(1, tabs.length));
+  const [isTabDropdownOpen, setIsTabDropdownOpen] = useState(false);
+  const [tabDropdownSearch, setTabDropdownSearch] = useState('');
+  const [tabDropdownSelectedIndex, setTabDropdownSelectedIndex] = useState(0);
+  const [hoveredDropdownTab, setHoveredDropdownTab] = useState<{
+    tab: WorkbenchTab;
+    connName?: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<{
+    id: string;
+    position: 'before' | 'after';
+  } | null>(null);
+
+  const updateOverflowTabs = React.useCallback(() => {
+    const bar = tabBarContainerRef.current;
+    if (!bar || tabs.length === 0) {
+      setVisibleCount(0);
+      return;
+    }
+
+    const totalBarWidth = bar.clientWidth;
+    if (totalBarWidth <= 0) return;
+
+    const paddingX = 12; // px-1.5 (6px left + 6px right)
+    const gap = 4; // gap-1 (4px)
+    const triggerButtonReserve = 44; // space for >> {{count}} button
+    const tabSlotWidth = 124; // max-w-[124px] per tab
+
+    const maxWithoutTrigger = Math.max(
+      1,
+      Math.floor((totalBarWidth - paddingX + gap) / (tabSlotWidth + gap))
+    );
+
+    if (tabs.length <= maxWithoutTrigger) {
+      setVisibleCount(tabs.length);
+      return;
+    }
+
+    const maxAvail = Math.max(tabSlotWidth, totalBarWidth - triggerButtonReserve - paddingX);
+    const countWithTrigger = Math.min(
+      tabs.length - 1,
+      Math.max(1, Math.floor((maxAvail + gap) / (tabSlotWidth + gap)))
+    );
+    setVisibleCount(countWithTrigger);
+  }, [tabs.length]);
+
+  useEffect(() => {
+    updateOverflowTabs();
+    const raf = requestAnimationFrame(updateOverflowTabs);
+    return () => cancelAnimationFrame(raf);
+  }, [tabs.length, leftSidebarWidth, rightSidebarWidth, isRightPanelOpen, updateOverflowTabs]);
+
+  useEffect(() => {
+    const bar = tabBarContainerRef.current;
+    if (!bar || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      updateOverflowTabs();
+    });
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [updateOverflowTabs]);
+
+  // If the active tab is in the overflow list (e.g. newly opened tab), swap it with the last visible tab
+  useEffect(() => {
+    if (!activeTabId || visibleCount <= 0 || tabs.length <= visibleCount) return;
+    const activeIdx = tabs.findIndex((t) => t.id === activeTabId);
+    if (activeIdx >= visibleCount) {
+      const lastVisibleTab = tabs[visibleCount - 1];
+      if (lastVisibleTab && lastVisibleTab.id !== activeTabId) {
+        swapTabs(lastVisibleTab.id, activeTabId);
+      }
+    }
+  }, [activeTabId, visibleCount, tabs, swapTabs]);
+
+  const handleSelectOverflowTab = (targetTabId: string) => {
+    const clampedVisible = Math.min(visibleCount, tabs.length);
+    const lastVisibleTab = clampedVisible > 0 ? tabs[clampedVisible - 1] : undefined;
+    if (lastVisibleTab && lastVisibleTab.id !== targetTabId) {
+      swapTabs(lastVisibleTab.id, targetTabId);
+    }
+    setActiveTabId(targetTabId);
+    setIsTabDropdownOpen(false);
+    setHoveredDropdownTab(null);
+  };
 
   const handleTabMouseEnter = (e: React.MouseEvent, tab: WorkbenchTab) => {
     if (tabHoverTimeoutRef.current) clearTimeout(tabHoverTimeoutRef.current);
@@ -306,16 +400,30 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Listeners to close Tab Context Menu & escape Rename Modal
+  // Listeners to close Tab Context Menu, Tab Overflow Dropdown & escape Rename Modal
   useEffect(() => {
-    const handleClose = () => {
+    const handleClose = (e: MouseEvent) => {
       if (tabContextMenu.isOpen) {
         setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+      }
+      if (
+        isTabDropdownOpen &&
+        tabDropdownRef.current &&
+        !tabDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsTabDropdownOpen(false);
+        setHoveredDropdownTab(null);
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        handleClose();
+        if (tabContextMenu.isOpen) {
+          setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+        }
+        if (isTabDropdownOpen) {
+          setIsTabDropdownOpen(false);
+          setHoveredDropdownTab(null);
+        }
         if (renameModal.isOpen) {
           setRenameModal({ isOpen: false, id: '', title: '' });
         }
@@ -327,7 +435,7 @@ export function App() {
       window.removeEventListener('click', handleClose);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [tabContextMenu.isOpen, renameModal.isOpen]);
+  }, [tabContextMenu.isOpen, renameModal.isOpen, isTabDropdownOpen]);
 
   const handleTabContextMenu = (e: React.MouseEvent, tab: WorkbenchTab) => {
     e.preventDefault();
@@ -1057,57 +1165,311 @@ export function App() {
         {/* Center Workbench: Tabs + Editor/Grid + Services Bottom Panel */}
         <div className="flex-1 flex flex-col min-w-0 bg-[#14151a]">
           {/* Tab Bar */}
-          <div
-            onWheel={(e) => {
-              if (e.deltaY !== 0 || e.deltaX !== 0) {
-                e.currentTarget.scrollLeft += (e.deltaY !== 0 ? e.deltaY : -e.deltaX);
-              }
-            }}
-            onScroll={handleTabMouseLeave}
-            className="flex h-9 items-center border-b border-[#272932] bg-[#121317] px-2 gap-1 overflow-x-auto"
-          >
-            {tabs.map((tab) => (
+          {(() => {
+            const clampedVisibleCount = Math.max(0, Math.min(visibleCount, tabs.length));
+            const visibleTabs = tabs.slice(0, clampedVisibleCount);
+            const overflowTabs = tabs.slice(clampedVisibleCount);
+
+            return (
               <div
-                key={tab.id}
-                onClick={() => {
-                  handleTabMouseLeave();
-                  setActiveTabId(tab.id);
-                }}
-                onContextMenu={(e) => {
-                  handleTabMouseLeave();
-                  handleTabContextMenu(e, tab);
-                }}
-                onMouseEnter={(e) => handleTabMouseEnter(e, tab)}
-                onMouseLeave={handleTabMouseLeave}
-                className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t text-xs cursor-pointer border-t-2 transition-colors ${
-                  activeTabId === tab.id
-                    ? 'bg-[#191a20] border-zinc-400 text-white font-medium'
-                    : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#191a20]/50'
-                }`}
+                ref={tabBarContainerRef}
+                className="relative flex h-8 items-center border-b border-[#272932] bg-[#121317] shrink-0"
               >
-                {tab.type === 'worksheet' ? (
-                  <FileCode className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
-                ) : (
-                  <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                {/* Visible Tabs Strip (no horizontal scrolling, supports drag & drop reordering) */}
+                <div className="flex flex-1 min-w-0 h-full items-center px-1.5 gap-1 overflow-hidden">
+                  {visibleTabs.map((tab) => {
+                    const isDraggingThis = draggedTabId === tab.id;
+                    const isDropBefore =
+                      tabDropTarget?.id === tab.id && tabDropTarget.position === 'before';
+                    const isDropAfter =
+                      tabDropTarget?.id === tab.id && tabDropTarget.position === 'after';
+
+                    return (
+                      <div
+                        key={tab.id}
+                        draggable
+                        onDragStart={(e) => {
+                          handleTabMouseLeave();
+                          setDraggedTabId(tab.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          try {
+                            e.dataTransfer.setData('text/plain', tab.id);
+                          } catch {}
+                        }}
+                        onDragOver={(e) => {
+                          if (!draggedTabId || draggedTabId === tab.id) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.dataTransfer.dropEffect = 'move';
+                          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          const pos: 'before' | 'after' =
+                            e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+                          if (
+                            tabDropTarget?.id !== tab.id ||
+                            tabDropTarget?.position !== pos
+                          ) {
+                            setTabDropTarget({ id: tab.id, position: pos });
+                          }
+                        }}
+                        onDragLeave={(e) => {
+                          e.stopPropagation();
+                          if (tabDropTarget?.id === tab.id) {
+                            setTabDropTarget(null);
+                          }
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const sourceId =
+                            draggedTabId || e.dataTransfer.getData('text/plain');
+                          if (sourceId && sourceId !== tab.id) {
+                            const rect = (
+                              e.currentTarget as HTMLElement
+                            ).getBoundingClientRect();
+                            const pos: 'before' | 'after' =
+                              e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+                            reorderTab(sourceId, tab.id, pos);
+                          }
+                          setDraggedTabId(null);
+                          setTabDropTarget(null);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedTabId(null);
+                          setTabDropTarget(null);
+                        }}
+                        onClick={() => {
+                          handleTabMouseLeave();
+                          setActiveTabId(tab.id);
+                        }}
+                        onContextMenu={(e) => {
+                          handleTabMouseLeave();
+                          handleTabContextMenu(e, tab);
+                        }}
+                        onMouseEnter={(e) => handleTabMouseEnter(e, tab)}
+                        onMouseLeave={handleTabMouseLeave}
+                        className={`relative group shrink-0 max-w-[124px] flex items-center gap-1 px-2 py-1 rounded-t text-[11px] cursor-pointer border-t-2 transition-colors ${
+                          isDraggingThis ? 'opacity-40 ' : ''
+                        }${
+                          activeTabId === tab.id
+                            ? 'bg-[#191a20] border-zinc-400 text-white font-medium'
+                            : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#191a20]/50'
+                        }`}
+                      >
+                        {isDropBefore && (
+                          <div className="absolute -left-0.5 top-1 bottom-1 w-0.5 bg-blue-500 rounded-full z-20 pointer-events-none" />
+                        )}
+                        {tab.type === 'worksheet' ? (
+                          <FileCode className="h-3 w-3 text-zinc-400 shrink-0" />
+                        ) : (
+                          <Table className="h-3 w-3 text-emerald-400 shrink-0" />
+                        )}
+                        <span
+                          onDoubleClick={
+                            tab.type === 'worksheet'
+                              ? () => handleOpenRename(tab.id, tab.title)
+                              : undefined
+                          }
+                          className="truncate max-w-[84px]"
+                        >
+                          {tab.title}
+                        </span>
+                        <X
+                          className="h-2.5 w-2.5 text-zinc-500 hover:text-white ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleTabMouseLeave();
+                            closeTab(tab.id);
+                          }}
+                        />
+                        {isDropAfter && (
+                          <div className="absolute -right-0.5 top-1 bottom-1 w-0.5 bg-blue-500 rounded-full z-20 pointer-events-none" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Overflow Tabs Dropdown Trigger (>> {{count}}) — only shown when there are excess tabs */}
+                {overflowTabs.length > 0 && (
+                  <div ref={tabDropdownRef} className="relative h-full flex items-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleTabMouseLeave();
+                        setIsTabDropdownOpen((prev) => {
+                          const next = !prev;
+                          if (next) {
+                            setTabDropdownSearch('');
+                            setTabDropdownSelectedIndex(0);
+                          } else {
+                            setHoveredDropdownTab(null);
+                          }
+                          return next;
+                        });
+                      }}
+                      className={`flex h-full items-center gap-0.5 px-2 text-[11px] border-l border-[#272932] transition-colors cursor-pointer ${
+                        isTabDropdownOpen
+                          ? 'bg-[#22242c] text-white'
+                          : 'bg-[#121317] text-zinc-400 hover:text-zinc-100 hover:bg-[#191a20]'
+                      }`}
+                      title={`Show ${overflowTabs.length} hidden tab(s)`}
+                    >
+                      <ChevronsRight className="h-3 w-3 stroke-[2.2]" />
+                      <span className="text-[10px] font-mono leading-none translate-y-[2px] font-semibold">
+                        {overflowTabs.length}
+                      </span>
+                    </button>
+
+                    {isTabDropdownOpen && (() => {
+                      const q = tabDropdownSearch.trim().toLowerCase();
+                      const filteredOverflowTabs = overflowTabs.filter((t) => {
+                        if (!q) return true;
+                        const conn = connections.find((c) => c.id === t.connectionId);
+                        return (
+                          t.title.toLowerCase().includes(q) ||
+                          (t.database || '').toLowerCase().includes(q) ||
+                          (conn?.name || '').toLowerCase().includes(q)
+                        );
+                      });
+                      const safeIndex = Math.min(
+                        Math.max(0, tabDropdownSelectedIndex),
+                        Math.max(0, filteredOverflowTabs.length - 1)
+                      );
+
+                      return (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 top-full mt-0.5 z-50 w-72 rounded border border-[#3b3e4f] bg-[#1e2027] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+                        >
+                          {/* Top Filter Input */}
+                          <div className="p-1.5 border-b border-[#2e313d] bg-[#181920]">
+                            <input
+                              type="text"
+                              value={tabDropdownSearch}
+                              onChange={(e) => {
+                                setTabDropdownSearch(e.target.value);
+                                setTabDropdownSelectedIndex(0);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  setTabDropdownSelectedIndex((i) =>
+                                    filteredOverflowTabs.length > 0
+                                      ? (i + 1) % filteredOverflowTabs.length
+                                      : 0
+                                  );
+                                } else if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  setTabDropdownSelectedIndex((i) =>
+                                    filteredOverflowTabs.length > 0
+                                      ? (i - 1 + filteredOverflowTabs.length) %
+                                        filteredOverflowTabs.length
+                                      : 0
+                                  );
+                                } else if (
+                                  e.key === 'Enter' &&
+                                  filteredOverflowTabs[safeIndex]
+                                ) {
+                                  e.preventDefault();
+                                  const target = filteredOverflowTabs[safeIndex];
+                                  handleSelectOverflowTab(target.id);
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  setIsTabDropdownOpen(false);
+                                  setHoveredDropdownTab(null);
+                                }
+                              }}
+                              placeholder="Filter hidden tabs..."
+                              autoFocus
+                              className="w-full rounded-xs bg-[#121317] px-2 py-1 text-[11px] text-zinc-100 border border-[#323544] focus:border-blue-500 focus:outline-none"
+                            />
+                          </div>
+
+                          {/* Excess / Overflow Tabs List Only */}
+                          <div
+                            onMouseLeave={() => setHoveredDropdownTab(null)}
+                            className="max-h-80 overflow-y-auto divide-y divide-[#252730]/40"
+                          >
+                            {filteredOverflowTabs.length === 0 ? (
+                              <div className="px-3 py-4 text-center text-[11px] text-zinc-500">
+                                No matching tabs
+                              </div>
+                            ) : (
+                              filteredOverflowTabs.map((tab, idx) => {
+                                const conn = connections.find((c) => c.id === tab.connectionId);
+                                const isSelected = idx === safeIndex;
+
+                                return (
+                                  <div
+                                    key={tab.id}
+                                    onClick={() => handleSelectOverflowTab(tab.id)}
+                                    onMouseEnter={(e) => {
+                                      setTabDropdownSelectedIndex(idx);
+                                      const rect = (
+                                        e.currentTarget as HTMLElement
+                                      ).getBoundingClientRect();
+                                      const tooltipW = 260;
+                                      const preferRightX = rect.left + 32;
+                                      const x = Math.min(
+                                        Math.max(8, preferRightX),
+                                        window.innerWidth - tooltipW - 12
+                                      );
+                                      const y = Math.min(rect.bottom + 2, window.innerHeight - 90);
+                                      setHoveredDropdownTab({
+                                        tab,
+                                        connName: conn?.name,
+                                        x,
+                                        y,
+                                      });
+                                    }}
+                                    className={`group flex items-center justify-between gap-2 px-2 py-1 text-[11px] cursor-pointer transition-colors ${
+                                      isSelected
+                                        ? 'bg-[#2b4c7e]/70 text-white ring-1 ring-inset ring-blue-400/50'
+                                        : 'text-zinc-200 hover:bg-[#262934]'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                      {tab.type === 'worksheet' ? (
+                                        <FileCode className="h-3 w-3 text-blue-400 shrink-0" />
+                                      ) : (
+                                        <Table className="h-3 w-3 text-cyan-400 shrink-0" />
+                                      )}
+                                      <div className="truncate min-w-0 flex-1">
+                                        <span>{tab.title}</span>
+                                        {(conn?.name || tab.database) && (
+                                          <span className="text-zinc-400/80">
+                                            {' - '}
+                                            {conn?.name || tab.database}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setHoveredDropdownTab(null);
+                                        closeTab(tab.id);
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 text-zinc-400 hover:text-white transition-opacity shrink-0"
+                                      title="Close Tab"
+                                    >
+                                      <X className="h-2.5 w-2.5" />
+                                    </button>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 )}
-                <span
-                  onDoubleClick={tab.type === 'worksheet' ? () => handleOpenRename(tab.id, tab.title) : undefined}
-                  className="truncate max-w-[140px]"
-                  title={tab.type === 'worksheet' ? `${tab.title} (Double-click or right-click to rename)` : tab.title}
-                >
-                  {tab.title}
-                </span>
-                <X
-                  className="h-3 w-3 text-zinc-500 hover:text-white ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleTabMouseLeave();
-                    closeTab(tab.id);
-                  }}
-                />
               </div>
-            ))}
-          </div>
+            );
+          })()}
 
           {/* Active Tab View */}
           <div className="flex-1 min-h-0 flex flex-col">
@@ -1499,8 +1861,8 @@ export function App() {
         )}
       </div>
 
-      {/* Hovered Workbench Tab Tooltip Popover */}
-      {hoveredTab && !tabContextMenu.isOpen && (
+      {/* Hovered Workbench Tab Popover */}
+      {hoveredTab && !tabContextMenu.isOpen && !isTabDropdownOpen && (
         <div
           className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl px-3 py-2 text-xs font-sans min-w-[200px] max-w-[360px] animate-in fade-in zoom-in-95 duration-100"
           style={{ top: hoveredTab.y, left: hoveredTab.x }}
@@ -1532,6 +1894,35 @@ export function App() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Hovered Overflow Dropdown Item Tooltip */}
+      {isTabDropdownOpen && hoveredDropdownTab && (
+        <div
+          className="fixed z-60 pointer-events-none rounded border border-[#4a4e62] bg-[#2a2d38] shadow-2xl px-2.5 py-1.5 text-[11px] text-zinc-200 font-sans leading-relaxed"
+          style={{ top: hoveredDropdownTab.y, left: hoveredDropdownTab.x }}
+        >
+          <div>
+            <span className="text-zinc-400">
+              {hoveredDropdownTab.tab.type === 'worksheet' ? 'Console: ' : 'Table: '}
+            </span>
+            <span className="font-medium text-white">
+              {hoveredDropdownTab.tab.table || hoveredDropdownTab.tab.title}
+            </span>
+          </div>
+          {hoveredDropdownTab.tab.database && (
+            <div>
+              <span className="text-zinc-400">Database: </span>
+              <span className="text-zinc-200">{hoveredDropdownTab.tab.database}</span>
+            </div>
+          )}
+          {hoveredDropdownTab.connName && (
+            <div>
+              <span className="text-zinc-400">Connection: </span>
+              <span className="text-zinc-200">{hoveredDropdownTab.connName}</span>
+            </div>
+          )}
         </div>
       )}
 

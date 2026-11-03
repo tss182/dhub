@@ -5,6 +5,9 @@ import { ConnectionService, SchemaService, QueryService } from '../../../binding
 import {
   Database,
   Folder,
+  FolderOpen,
+  FolderPlus,
+  FolderInput,
   Table,
   Eye,
   ChevronRight,
@@ -18,24 +21,38 @@ import {
   Copy,
   ExternalLink,
   X,
+  Check,
 } from 'lucide-react';
-import { ConnectionConfig, ObjectSummary } from '../../types/domain';
+import { ConnectionConfig, ConnectionFolder, ObjectSummary } from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning } from '../../stores/useAlertStore';
 
 interface ContextMenuState {
   isOpen: boolean;
   x: number;
   y: number;
-  type: 'connection' | 'database' | 'table' | 'empty';
+  type: 'connection' | 'folder' | 'database' | 'table' | 'empty';
   connection?: ConnectionConfig;
+  folder?: ConnectionFolder;
   database?: string;
   schema?: string;
   table?: ObjectSummary;
 }
 
+const FOLDER_COLORS = [
+  { label: 'Blue', value: '#3b82f6' },
+  { label: 'Emerald', value: '#10b981' },
+  { label: 'Amber', value: '#f59e0b' },
+  { label: 'Purple', value: '#a855f7' },
+  { label: 'Rose', value: '#f43f5e' },
+  { label: 'Cyan', value: '#06b6d4' },
+  { label: 'Zinc', value: '#71717a' },
+];
+
 export const DatabaseExplorer: React.FC = () => {
   const {
     connections,
+    folders,
+    connectionFolders,
     activeConnectionId,
     activeDatabase,
     setConnections,
@@ -48,6 +65,14 @@ export const DatabaseExplorer: React.FC = () => {
     removeTreeObject,
     expandedNodes,
     toggleNode,
+    setNodeExpanded,
+    setPendingFolderIdForNewConn,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    moveConnectionToFolder,
+    reorderConnection,
+    reorderFolder,
   } = useConnectionStore();
 
   const {
@@ -65,9 +90,9 @@ export const DatabaseExplorer: React.FC = () => {
   const [loadingConnId, setLoadingConnId] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
-  // Hover Tooltip state for long connection, database, table, and view names
+  // Hover Tooltip state for long folder, connection, database, table, and view names
   const [hoveredItem, setHoveredItem] = useState<{
-    kind: 'connection' | 'database' | 'table' | 'view';
+    kind: 'folder' | 'connection' | 'database' | 'table' | 'view';
     title: string;
     badge: string;
     subtitle?: string;
@@ -80,7 +105,7 @@ export const DatabaseExplorer: React.FC = () => {
   const handleItemMouseEnter = (
     e: React.MouseEvent,
     item: {
-      kind: 'connection' | 'database' | 'table' | 'view';
+      kind: 'folder' | 'connection' | 'database' | 'table' | 'view';
       title: string;
       badge: string;
       subtitle?: string;
@@ -115,6 +140,97 @@ export const DatabaseExplorer: React.FC = () => {
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
     };
   }, []);
+
+  // Drag & Drop state for sorting and grouping connections/folders
+  const [draggedItem, setDraggedItem] = useState<{
+    type: 'connection' | 'folder';
+    id: string;
+  } | null>(null);
+
+  const [dropTarget, setDropTarget] = useState<{
+    type: 'connection' | 'folder-into' | 'folder-sort' | 'root-ungrouped';
+    id: string;
+    position?: 'before' | 'after';
+    folderId?: string | null;
+  } | null>(null);
+
+  // Create / Rename Folder Modal state
+  const [folderModal, setFolderModal] = useState<{
+    isOpen: boolean;
+    mode: 'create' | 'rename';
+    folderId: string | null;
+    name: string;
+    color: string;
+    moveConnectionIdAfterCreate?: string | null;
+  }>({
+    isOpen: false,
+    mode: 'create',
+    folderId: null,
+    name: '',
+    color: '#3b82f6',
+    moveConnectionIdAfterCreate: null,
+  });
+
+  const handleOpenCreateFolder = (moveConnId?: string | null) => {
+    setFolderModal({
+      isOpen: true,
+      mode: 'create',
+      folderId: null,
+      name: '',
+      color: '#3b82f6',
+      moveConnectionIdAfterCreate: moveConnId || null,
+    });
+  };
+
+  const handleOpenRenameFolder = (folder: ConnectionFolder, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setFolderModal({
+      isOpen: true,
+      mode: 'rename',
+      folderId: folder.id,
+      name: folder.name,
+      color: folder.color || '#3b82f6',
+      moveConnectionIdAfterCreate: null,
+    });
+  };
+
+  const handleFolderModalSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = folderModal.name.trim();
+    if (!clean) return;
+    if (folderModal.mode === 'create') {
+      const newFolderId = createFolder(clean, folderModal.color);
+      if (folderModal.moveConnectionIdAfterCreate) {
+        moveConnectionToFolder(folderModal.moveConnectionIdAfterCreate, newFolderId);
+      }
+    } else if (folderModal.mode === 'rename' && folderModal.folderId) {
+      renameFolder(folderModal.folderId, clean, folderModal.color);
+    }
+    setFolderModal({
+      isOpen: false,
+      mode: 'create',
+      folderId: null,
+      name: '',
+      color: '#3b82f6',
+      moveConnectionIdAfterCreate: null,
+    });
+  };
+
+  const handleDeleteFolder = (folder: ConnectionFolder, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const count = connections.filter((c) => connectionFolders[c.id] === folder.id).length;
+    const msg =
+      count > 0
+        ? `Delete folder "${folder.name}"?\n\n(${count} connection(s) inside will not be deleted and will be moved to Ungrouped.)`
+        : `Delete folder "${folder.name}"?`;
+    if (!confirm(msg)) return;
+    deleteFolder(folder.id);
+  };
+
+  const handleNewConnectionInFolder = (folderId: string | null) => {
+    setPendingFolderIdForNewConn(folderId);
+    setConnectionDialogOpen(true, null);
+  };
 
   // Context Menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
@@ -594,6 +710,429 @@ export const DatabaseExplorer: React.FC = () => {
     setTimeout(() => setCopiedText(null), 1500);
   };
 
+  const renderConnectionNode = (c: ConnectionConfig, currentFolderId: string | null) => {
+    const isConnExpanded = !!expandedNodes[c.id];
+    const isConnLoading = loadingConnId === c.id;
+    const databases = treeDatabases[c.id] || (c.databaseName ? [c.databaseName] : []);
+    const isSQLite = c.driver === 'sqlite';
+    const connSubtitle = isSQLite
+      ? (c.filePath || c.databaseName || 'SQLite File')
+      : `${c.host || 'localhost'}${c.port ? `:${c.port}` : ''}${c.databaseName ? ` / ${c.databaseName}` : ''}`;
+
+    const isBeingDragged = draggedItem?.type === 'connection' && draggedItem.id === c.id;
+    const isDropTargetBefore =
+      dropTarget?.type === 'connection' && dropTarget.id === c.id && dropTarget.position === 'before';
+    const isDropTargetAfter =
+      dropTarget?.type === 'connection' && dropTarget.id === c.id && dropTarget.position === 'after';
+
+    return (
+      <div
+        key={c.id}
+        className={`mb-1 relative transition-opacity ${isBeingDragged ? 'opacity-40' : ''}`}
+      >
+        {isDropTargetBefore && (
+          <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-blue-500 rounded-full z-20 pointer-events-none" />
+        )}
+
+        {/* Connection Node */}
+        <div
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            handleItemMouseLeave();
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', `conn:${c.id}`);
+            setDraggedItem({ type: 'connection', id: c.id });
+          }}
+          onDragEnd={() => {
+            setDraggedItem(null);
+            setDropTarget(null);
+          }}
+          onDragOver={(e) => {
+            if (!draggedItem || draggedItem.type !== 'connection' || draggedItem.id === c.id) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const pos: 'before' | 'after' =
+              e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+            setDropTarget({
+              type: 'connection',
+              id: c.id,
+              position: pos,
+              folderId: currentFolderId,
+            });
+          }}
+          onDragLeave={(e) => {
+            e.stopPropagation();
+            if (dropTarget?.type === 'connection' && dropTarget.id === c.id) {
+              setDropTarget(null);
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (draggedItem?.type === 'connection' && draggedItem.id !== c.id) {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const pos: 'before' | 'after' =
+                e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+              reorderConnection(draggedItem.id, c.id, pos, currentFolderId);
+            }
+            setDraggedItem(null);
+            setDropTarget(null);
+          }}
+          onClick={() => {
+            handleItemMouseLeave();
+            handleExpandConnection(c.id);
+          }}
+          onContextMenu={(e) => {
+            handleItemMouseLeave();
+            openContextMenu(e, 'connection', { connection: c });
+          }}
+          onMouseEnter={(e) =>
+            handleItemMouseEnter(e, {
+              kind: 'connection',
+              title: c.name,
+              badge: (c.driver || 'DB').toUpperCase(),
+              subtitle: connSubtitle,
+              colorTag: c.colorTag || '#71717a',
+            })
+          }
+          onMouseLeave={handleItemMouseLeave}
+          title={`${c.name} (${c.driver.toUpperCase()})`}
+          className={`group flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
+            activeConnectionId === c.id ? 'bg-[#22242c] font-medium text-white' : ''
+          }`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            {isConnExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+            )}
+            <span
+              className="h-2 w-2 rounded-full shrink-0"
+              style={{ backgroundColor: c.colorTag || '#71717a' }}
+            />
+            <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+            <span className="truncate">{c.name}</span>
+            <span className="text-[9px] text-zinc-500 font-mono uppercase bg-[#14151a] px-1 rounded shrink-0">
+              {c.driver}
+            </span>
+          </div>
+
+          {/* Actions on hover */}
+          <div
+            onMouseEnter={(e) => {
+              e.stopPropagation();
+              handleItemMouseLeave();
+            }}
+            className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <button
+              type="button"
+              onClick={(e) => handleEditConnection(c.id, e)}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
+              title="Edit Connection"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => handleRefreshConnection(c.id, e)}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
+              title="Refresh Connection"
+            >
+              <RefreshCw className={`h-3 w-3 ${isConnLoading ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => handleDeleteConnection(c.id, c.name, e)}
+              className="p-1 rounded text-zinc-400 hover:text-rose-400 hover:bg-[#2d303b]"
+              title="Delete Connection"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+
+        {isDropTargetAfter && (
+          <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-blue-500 rounded-full z-20 pointer-events-none" />
+        )}
+
+        {/* Sub Nodes */}
+        {isConnExpanded && (
+          <div className="ml-4 mt-1 border-l border-[#272932] pl-2 space-y-1">
+            {isConnLoading && databases.length === 0 && (
+              <div className="text-[11px] text-zinc-500 italic py-1">Connecting & loading databases...</div>
+            )}
+
+            {/* SQLite Direct Mode */}
+            {isSQLite ? (
+              (() => {
+                const schemaKey = `${c.id}:main:main`;
+                const objects = (treeObjects[schemaKey] || []).filter((o) =>
+                  !filterText ? true : o.name.toLowerCase().includes(filterText.toLowerCase())
+                );
+                return (
+                  <div>
+                    <div className="text-[11px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
+                      <div className="flex items-center gap-1">
+                        <Folder className="h-3 w-3" />
+                        <span>tables ({objects.length})</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenCreateTable(c, 'main', 'main');
+                        }}
+                        className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                        title="Create New Table"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {objects.map((obj) => (
+                      <div
+                        key={obj.name}
+                        onClick={() => {
+                          handleItemMouseLeave();
+                          handleTableClick(c.id, 'main', 'main', obj.name);
+                        }}
+                        onContextMenu={(e) => {
+                          handleItemMouseLeave();
+                          openContextMenu(e, 'table', {
+                            connection: c,
+                            database: 'main',
+                            schema: 'main',
+                            table: obj,
+                          });
+                        }}
+                        onMouseEnter={(e) =>
+                          handleItemMouseEnter(e, {
+                            kind: obj.type === 'view' ? 'view' : 'table',
+                            title: obj.name,
+                            badge: obj.type === 'view' ? 'VIEW' : 'TABLE',
+                            subtitle: `${c.name} / main`,
+                          })
+                        }
+                        onMouseLeave={handleItemMouseLeave}
+                        title={obj.name}
+                        className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                      >
+                        {obj.type === 'view' ? (
+                          <Eye className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+                        ) : (
+                          <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        )}
+                        <span className="truncate">{obj.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()
+            ) : (
+              /* Multi-Database Mode (MySQL / PostgreSQL) */
+              databases.length === 0 && !isConnLoading ? (
+                <div className="text-[11px] text-zinc-500 italic py-1">No databases found</div>
+              ) : (
+                databases.map((dbName) => {
+                  const filterLower = filterText.toLowerCase().trim();
+                  const targetSchema = c.driver === 'postgres' ? 'public' : dbName;
+                  const schemaKey = `${c.id}:${dbName}:${targetSchema}`;
+                  const allObjects = treeObjects[schemaKey] || [];
+
+                  const dbMatches = !filterLower || dbName.toLowerCase().includes(filterLower);
+                  const matchingObjects = filterLower
+                    ? allObjects.filter((o) => o.name.toLowerCase().includes(filterLower))
+                    : allObjects;
+                  const hasMatchingObject = matchingObjects.length > 0;
+
+                  if (filterLower && !dbMatches && !hasMatchingObject) {
+                    return null;
+                  }
+
+                  const isDbExpanded =
+                    !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
+                  const tables = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
+                    (o) => o.type !== 'view'
+                  );
+                  const views = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
+                    (o) => o.type === 'view'
+                  );
+                  const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
+
+                  return (
+                    <div key={dbName} className="mb-0.5">
+                      {/* Database Node */}
+                      <div
+                        onClick={() => {
+                          handleItemMouseLeave();
+                          handleExpandDatabase(c.id, dbName);
+                        }}
+                        onContextMenu={(e) => {
+                          handleItemMouseLeave();
+                          openContextMenu(e, 'database', {
+                            connection: c,
+                            database: dbName,
+                            schema: targetSchema,
+                          });
+                        }}
+                        onMouseEnter={(e) =>
+                          handleItemMouseEnter(e, {
+                            kind: 'database',
+                            title: dbName,
+                            badge: 'DATABASE',
+                            subtitle: `${c.name} (${c.driver.toUpperCase()})`,
+                          })
+                        }
+                        onMouseLeave={handleItemMouseLeave}
+                        title={dbName}
+                        className={`group/db flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
+                          isDbActive ? 'bg-[#22242c] text-zinc-100 font-medium' : ''
+                        }`}
+                      >
+                        {isDbExpanded ? (
+                          <ChevronDown className="h-3 w-3 text-zinc-500 shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
+                        )}
+                        <Database className="h-3 w-3 shrink-0 text-zinc-400" />
+                        <span className="truncate flex-1">{dbName}</span>
+                        <div
+                          onMouseEnter={(e) => {
+                            e.stopPropagation();
+                            handleItemMouseLeave();
+                          }}
+                          className="opacity-0 group-hover/db:opacity-100 flex items-center transition-opacity ml-1"
+                        >
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenCreateTable(c, dbName, targetSchema);
+                            }}
+                            className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
+                            title={`Create New Table in "${dbName}"`}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Tables & Views under this database */}
+                      {isDbExpanded && (
+                        <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
+                          <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
+                            <div className="flex items-center gap-1">
+                              <Folder className="h-2.5 w-2.5" />
+                              <span>tables ({tables.length})</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenCreateTable(c, dbName, targetSchema);
+                              }}
+                              className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                              title={`Create New Table in "${dbName}"`}
+                            >
+                              <Plus className="h-2.5 w-2.5" />
+                            </button>
+                          </div>
+                          {tables.map((obj) => (
+                            <div
+                              key={obj.name}
+                              onClick={() => {
+                                handleItemMouseLeave();
+                                handleTableClick(c.id, dbName, targetSchema, obj.name);
+                              }}
+                              onContextMenu={(e) => {
+                                handleItemMouseLeave();
+                                openContextMenu(e, 'table', {
+                                  connection: c,
+                                  database: dbName,
+                                  schema: targetSchema,
+                                  table: obj,
+                                });
+                              }}
+                              onMouseEnter={(e) =>
+                                handleItemMouseEnter(e, {
+                                  kind: 'table',
+                                  title: obj.name,
+                                  badge: 'TABLE',
+                                  subtitle: `${c.name} / ${dbName}`,
+                                })
+                              }
+                              onMouseLeave={handleItemMouseLeave}
+                              title={obj.name}
+                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                            >
+                              <Table className="h-3 w-3 shrink-0 text-emerald-400" />
+                              <span className="truncate">{obj.name}</span>
+                            </div>
+                          ))}
+
+                          {views.length > 0 && (
+                            <>
+                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                <Folder className="h-2.5 w-2.5" />
+                                <span>views ({views.length})</span>
+                              </div>
+                              {views.map((obj) => (
+                                <div
+                                  key={obj.name}
+                                  onClick={() => {
+                                    handleItemMouseLeave();
+                                    handleTableClick(c.id, dbName, targetSchema, obj.name);
+                                  }}
+                                  onContextMenu={(e) => {
+                                    handleItemMouseLeave();
+                                    openContextMenu(e, 'table', {
+                                      connection: c,
+                                      database: dbName,
+                                      schema: targetSchema,
+                                      table: obj,
+                                    });
+                                  }}
+                                  onMouseEnter={(e) =>
+                                    handleItemMouseEnter(e, {
+                                      kind: 'view',
+                                      title: obj.name,
+                                      badge: 'VIEW',
+                                      subtitle: `${c.name} / ${dbName}`,
+                                    })
+                                  }
+                                  onMouseLeave={handleItemMouseLeave}
+                                  title={obj.name}
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                >
+                                  <Eye className="h-3 w-3 shrink-0 text-purple-400" />
+                                  <span className="truncate">{obj.name}</span>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const validFolderIds = new Set(folders.map((f) => f.id));
+  const ungroupedConnections = connections.filter((c) => {
+    const fId = connectionFolders[c.id];
+    return !fId || !validFolderIds.has(fId);
+  });
+
   return (
     <div
       onContextMenu={(e) => {
@@ -609,11 +1148,18 @@ export const DatabaseExplorer: React.FC = () => {
         </span>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setConnectionDialogOpen(true, null)}
+            onClick={() => handleNewConnectionInFolder(null)}
             className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
             title="New Connection"
           >
             <Plus className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => handleOpenCreateFolder(null)}
+            className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+            title="New Folder / Group"
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={loadConnections}
@@ -639,413 +1185,302 @@ export const DatabaseExplorer: React.FC = () => {
       {/* Connection & Table Tree */}
       <div
         onScroll={handleItemMouseLeave}
+        onDragOver={(e) => {
+          if (draggedItem?.type === 'connection') {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            setDropTarget({ type: 'root-ungrouped', id: 'root' });
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target && dropTarget?.type === 'root-ungrouped') {
+            setDropTarget(null);
+          }
+        }}
+        onDrop={(e) => {
+          if (draggedItem?.type === 'connection') {
+            e.preventDefault();
+            moveConnectionToFolder(draggedItem.id, null);
+            setDraggedItem(null);
+            setDropTarget(null);
+          }
+        }}
         className="flex-1 overflow-auto p-2"
       >
-        {connections.length === 0 ? (
+        {connections.length === 0 && folders.length === 0 ? (
           <div className="py-8 text-center text-zinc-500">
             <p>No connections configured</p>
-            <button
-              onClick={() => setConnectionDialogOpen(true, null)}
-              className="mt-2 text-blue-400 hover:underline cursor-pointer"
-            >
-              Add Connection
-            </button>
+            <div className="flex items-center justify-center gap-3 mt-2">
+              <button
+                onClick={() => handleNewConnectionInFolder(null)}
+                className="text-blue-400 hover:underline cursor-pointer"
+              >
+                Add Connection
+              </button>
+              <span>•</span>
+              <button
+                onClick={() => handleOpenCreateFolder(null)}
+                className="text-zinc-400 hover:text-zinc-200 hover:underline cursor-pointer"
+              >
+                New Folder
+              </button>
+            </div>
           </div>
         ) : (
-          connections.map((c) => {
-            const isConnExpanded = !!expandedNodes[c.id];
-            const isConnLoading = loadingConnId === c.id;
-            const databases = treeDatabases[c.id] || (c.databaseName ? [c.databaseName] : []);
-            const isSQLite = c.driver === 'sqlite';
-            const connSubtitle = isSQLite
-              ? (c.filePath || c.databaseName || 'SQLite File')
-              : `${c.host || 'localhost'}${c.port ? `:${c.port}` : ''}${c.databaseName ? ` / ${c.databaseName}` : ''}`;
+          <>
+            {/* Folder Groups */}
+            {folders.map((folder) => {
+              const folderKey = `folder:${folder.id}`;
+              const isFolderExpanded = expandedNodes[folderKey] !== false;
+              const folderConns = connections.filter((c) => connectionFolders[c.id] === folder.id);
+              const isDropIntoFolder =
+                dropTarget?.type === 'folder-into' && dropTarget.id === folder.id;
+              const isFolderSortBefore =
+                dropTarget?.type === 'folder-sort' &&
+                dropTarget.id === folder.id &&
+                dropTarget.position === 'before';
+              const isFolderSortAfter =
+                dropTarget?.type === 'folder-sort' &&
+                dropTarget.id === folder.id &&
+                dropTarget.position === 'after';
+              const isFolderDragged =
+                draggedItem?.type === 'folder' && draggedItem.id === folder.id;
 
-            return (
-              <div key={c.id} className="mb-1">
-                {/* Connection Node */}
+              return (
                 <div
-                  onClick={() => {
-                    handleItemMouseLeave();
-                    handleExpandConnection(c.id);
-                  }}
-                  onContextMenu={(e) => {
-                    handleItemMouseLeave();
-                    openContextMenu(e, 'connection', { connection: c });
-                  }}
-                  onMouseEnter={(e) =>
-                    handleItemMouseEnter(e, {
-                      kind: 'connection',
-                      title: c.name,
-                      badge: (c.driver || 'DB').toUpperCase(),
-                      subtitle: connSubtitle,
-                      colorTag: c.colorTag || '#71717a',
-                    })
-                  }
-                  onMouseLeave={handleItemMouseLeave}
-                  title={`${c.name} (${c.driver.toUpperCase()})`}
-                  className={`group flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
-                    activeConnectionId === c.id ? 'bg-[#22242c] font-medium text-white' : ''
+                  key={folder.id}
+                  className={`mb-1.5 relative transition-opacity ${
+                    isFolderDragged ? 'opacity-40' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    {isConnExpanded ? (
-                      <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
-                    )}
-                    <span
-                      className="h-2 w-2 rounded-full shrink-0"
-                      style={{ backgroundColor: c.colorTag || '#71717a' }}
-                    />
-                    <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
-                    <span className="truncate">{c.name}</span>
-                    <span className="text-[9px] text-zinc-500 font-mono uppercase bg-[#14151a] px-1 rounded shrink-0">
-                      {c.driver}
-                    </span>
-                  </div>
+                  {isFolderSortBefore && (
+                    <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-blue-500 rounded-full z-20 pointer-events-none" />
+                  )}
 
-                  {/* Actions on hover */}
+                  {/* Folder Header Row */}
                   <div
-                    onMouseEnter={(e) => {
+                    draggable
+                    onDragStart={(e) => {
                       e.stopPropagation();
                       handleItemMouseLeave();
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', `folder:${folder.id}`);
+                      setDraggedItem({ type: 'folder', id: folder.id });
                     }}
-                    className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onDragEnd={() => {
+                      setDraggedItem(null);
+                      setDropTarget(null);
+                    }}
+                    onDragOver={(e) => {
+                      if (!draggedItem) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (draggedItem.type === 'connection') {
+                        setDropTarget({ type: 'folder-into', id: folder.id });
+                      } else if (draggedItem.type === 'folder' && draggedItem.id !== folder.id) {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const pos: 'before' | 'after' =
+                          e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                        setDropTarget({ type: 'folder-sort', id: folder.id, position: pos });
+                      }
+                    }}
+                    onDragLeave={(e) => {
+                      e.stopPropagation();
+                      if (
+                        (dropTarget?.type === 'folder-into' || dropTarget?.type === 'folder-sort') &&
+                        dropTarget.id === folder.id
+                      ) {
+                        setDropTarget(null);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (draggedItem?.type === 'connection') {
+                        moveConnectionToFolder(draggedItem.id, folder.id);
+                      } else if (
+                        draggedItem?.type === 'folder' &&
+                        draggedItem.id !== folder.id
+                      ) {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const pos: 'before' | 'after' =
+                          e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                        reorderFolder(draggedItem.id, folder.id, pos);
+                      }
+                      setDraggedItem(null);
+                      setDropTarget(null);
+                    }}
+                    onClick={() => {
+                      handleItemMouseLeave();
+                      setNodeExpanded(folderKey, !isFolderExpanded);
+                    }}
+                    onContextMenu={(e) => {
+                      handleItemMouseLeave();
+                      openContextMenu(e, 'folder', { folder });
+                    }}
+                    onMouseEnter={(e) =>
+                      handleItemMouseEnter(e, {
+                        kind: 'folder',
+                        title: folder.name,
+                        badge: 'FOLDER',
+                        subtitle: `${folderConns.length} connection(s) • Drag connections here`,
+                        colorTag: folder.color || '#3b82f6',
+                      })
+                    }
+                    onMouseLeave={handleItemMouseLeave}
+                    title={`${folder.name} (${folderConns.length} connections)`}
+                    className={`group/folder flex items-center justify-between px-2 py-1 rounded cursor-pointer transition-colors ${
+                      isDropIntoFolder
+                        ? 'bg-blue-600/25 ring-1 ring-blue-500 text-white'
+                        : 'hover:bg-[#22242c] text-zinc-200 font-medium'
+                    }`}
                   >
-                    <button
-                      type="button"
-                      onClick={(e) => handleEditConnection(c.id, e)}
-                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
-                      title="Edit Connection"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => handleRefreshConnection(c.id, e)}
-                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
-                      title="Refresh Connection"
-                    >
-                      <RefreshCw className={`h-3 w-3 ${isConnLoading ? 'animate-spin' : ''}`} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => handleDeleteConnection(c.id, c.name, e)}
-                      className="p-1 rounded text-zinc-400 hover:text-rose-400 hover:bg-[#2d303b]"
-                      title="Delete Connection"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Sub Nodes */}
-                {isConnExpanded && (
-                  <div className="ml-4 mt-1 border-l border-[#272932] pl-2 space-y-1">
-                    {isConnLoading && databases.length === 0 && (
-                      <div className="text-[11px] text-zinc-500 italic py-1">Connecting & loading databases...</div>
-                    )}
-
-                    {/* SQLite Direct Mode */}
-                    {isSQLite ? (
-                      (() => {
-                        const schemaKey = `${c.id}:main:main`;
-                        const objects = (treeObjects[schemaKey] || []).filter((o) =>
-                          !filterText ? true : o.name.toLowerCase().includes(filterText.toLowerCase())
-                        );
-                        return (
-                          <div>
-                            <div className="text-[11px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
-                              <div className="flex items-center gap-1">
-                                <Folder className="h-3 w-3" />
-                                <span>tables ({objects.length})</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOpenCreateTable(c, 'main', 'main');
-                                }}
-                                className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                title="Create New Table"
-                              >
-                                <Plus className="h-3 w-3" />
-                              </button>
-                            </div>
-                            {objects.map((obj) => (
-                              <div
-                                key={obj.name}
-                                onClick={() => {
-                                  handleItemMouseLeave();
-                                  handleTableClick(c.id, 'main', 'main', obj.name);
-                                }}
-                                onContextMenu={(e) => {
-                                  handleItemMouseLeave();
-                                  openContextMenu(e, 'table', {
-                                    connection: c,
-                                    database: 'main',
-                                    schema: 'main',
-                                    table: obj,
-                                  });
-                                }}
-                                onMouseEnter={(e) =>
-                                  handleItemMouseEnter(e, {
-                                    kind: obj.type === 'view' ? 'view' : 'table',
-                                    title: obj.name,
-                                    badge: obj.type === 'view' ? 'VIEW' : 'TABLE',
-                                    subtitle: `${c.name} / main`,
-                                  })
-                                }
-                                onMouseLeave={handleItemMouseLeave}
-                                title={obj.name}
-                                className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                              >
-                                {obj.type === 'view' ? (
-                                  <Eye className="h-3.5 w-3.5 text-purple-400 shrink-0" />
-                                ) : (
-                                  <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                                )}
-                                <span className="truncate">{obj.name}</span>
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      /* Multi-Database Mode (MySQL / PostgreSQL) */
-                      databases.length === 0 && !isConnLoading ? (
-                        <div className="text-[11px] text-zinc-500 italic py-1">No databases found</div>
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      {isFolderExpanded ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
                       ) : (
-                        databases.map((dbName) => {
-                          const filterLower = filterText.toLowerCase().trim();
-                          const targetSchema = c.driver === 'postgres' ? 'public' : dbName;
-                          const schemaKey = `${c.id}:${dbName}:${targetSchema}`;
-                          const allObjects = treeObjects[schemaKey] || [];
+                        <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+                      )}
+                      {isFolderExpanded ? (
+                        <FolderOpen
+                          className="h-3.5 w-3.5 shrink-0"
+                          style={{ color: folder.color || '#3b82f6' }}
+                        />
+                      ) : (
+                        <Folder
+                          className="h-3.5 w-3.5 shrink-0"
+                          style={{ color: folder.color || '#3b82f6' }}
+                        />
+                      )}
+                      <span className="truncate">{folder.name}</span>
+                      <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                        ({folderConns.length})
+                      </span>
+                    </div>
 
-                          const dbMatches = !filterLower || dbName.toLowerCase().includes(filterLower);
-                          const matchingObjects = filterLower
-                            ? allObjects.filter((o) => o.name.toLowerCase().includes(filterLower))
-                            : allObjects;
-                          const hasMatchingObject = matchingObjects.length > 0;
-
-                          if (filterLower && !dbMatches && !hasMatchingObject) {
-                            return null;
-                          }
-
-                          const isDbExpanded =
-                            !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
-                          const tables = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
-                            (o) => o.type !== 'view'
-                          );
-                          const views = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
-                            (o) => o.type === 'view'
-                          );
-                          const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
-
-                          return (
-                            <div key={dbName} className="mb-0.5">
-                              {/* Database Node */}
-                              <div
-                                onClick={() => {
-                                  handleItemMouseLeave();
-                                  handleExpandDatabase(c.id, dbName);
-                                }}
-                                onContextMenu={(e) => {
-                                  handleItemMouseLeave();
-                                  openContextMenu(e, 'database', {
-                                    connection: c,
-                                    database: dbName,
-                                    schema: targetSchema,
-                                  });
-                                }}
-                                onMouseEnter={(e) =>
-                                  handleItemMouseEnter(e, {
-                                    kind: 'database',
-                                    title: dbName,
-                                    badge: 'DATABASE',
-                                    subtitle: `${c.name} (${c.driver.toUpperCase()})`,
-                                  })
-                                }
-                                onMouseLeave={handleItemMouseLeave}
-                                title={dbName}
-                                className={`group/db flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
-                                  isDbActive ? 'bg-[#22242c] text-zinc-100 font-medium' : ''
-                                }`}
-                              >
-                                {isDbExpanded ? (
-                                  <ChevronDown className="h-3 w-3 text-zinc-500 shrink-0" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
-                                )}
-                                <Database
-                                  className="h-3 w-3 shrink-0 text-zinc-400"
-                                />
-                                <span className="truncate flex-1">{dbName}</span>
-                                {filterLower && hasMatchingObject && !dbMatches && (
-                                  <span className="text-[9px] text-amber-400 bg-amber-950/40 px-1 rounded font-mono">
-                                    {matchingObjects.length} match
-                                  </span>
-                                )}
-                                <div
-                                  onMouseEnter={(e) => {
-                                    e.stopPropagation();
-                                    handleItemMouseLeave();
-                                  }}
-                                  className="opacity-0 group-hover/db:opacity-100 flex items-center transition-opacity ml-1"
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleOpenCreateTable(c, dbName, targetSchema);
-                                    }}
-                                    className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
-                                    title={`Create New Table in "${dbName}"`}
-                                  >
-                                    <Plus className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {/* Tables & Views under this database */}
-                              {isDbExpanded && (
-                                <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
-                                  <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
-                                    <div className="flex items-center gap-1">
-                                      <Folder className="h-2.5 w-2.5" />
-                                      <span>tables ({tables.length})</span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenCreateTable(c, dbName, targetSchema);
-                                      }}
-                                      className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                      title={`Create New Table in "${dbName}"`}
-                                    >
-                                      <Plus className="h-2.5 w-2.5" />
-                                    </button>
-                                  </div>
-                                  {tables.map((obj) => {
-                                    const isMatch = filterLower && obj.name.toLowerCase().includes(filterLower);
-                                    return (
-                                      <div
-                                        key={obj.name}
-                                        onClick={() => {
-                                          handleItemMouseLeave();
-                                          handleTableClick(c.id, dbName, targetSchema, obj.name);
-                                        }}
-                                        onContextMenu={(e) => {
-                                          handleItemMouseLeave();
-                                          openContextMenu(e, 'table', {
-                                            connection: c,
-                                            database: dbName,
-                                            schema: targetSchema,
-                                            table: obj,
-                                          });
-                                        }}
-                                        onMouseEnter={(e) =>
-                                          handleItemMouseEnter(e, {
-                                            kind: 'table',
-                                            title: obj.name,
-                                            badge: 'TABLE',
-                                            subtitle: `${c.name} / ${dbName}`,
-                                          })
-                                        }
-                                        onMouseLeave={handleItemMouseLeave}
-                                        title={obj.name}
-                                        className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
-                                          isMatch
-                                            ? 'text-amber-300 bg-amber-950/20 font-medium'
-                                            : 'text-zinc-400 hover:text-white'
-                                        }`}
-                                      >
-                                        <Table
-                                          className={`h-3 w-3 shrink-0 ${
-                                            isMatch ? 'text-amber-400' : 'text-emerald-400'
-                                          }`}
-                                        />
-                                        <span className="truncate">{obj.name}</span>
-                                      </div>
-                                    );
-                                  })}
-
-                                  {views.length > 0 && (
-                                    <>
-                                      <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
-                                        <Folder className="h-2.5 w-2.5" />
-                                        <span>views ({views.length})</span>
-                                      </div>
-                                      {views.map((obj) => {
-                                        const isMatch = filterLower && obj.name.toLowerCase().includes(filterLower);
-                                        return (
-                                          <div
-                                            key={obj.name}
-                                            onClick={() => {
-                                              handleItemMouseLeave();
-                                              handleTableClick(c.id, dbName, targetSchema, obj.name);
-                                            }}
-                                            onContextMenu={(e) => {
-                                              handleItemMouseLeave();
-                                              openContextMenu(e, 'table', {
-                                                connection: c,
-                                                database: dbName,
-                                                schema: targetSchema,
-                                                table: obj,
-                                              });
-                                            }}
-                                            onMouseEnter={(e) =>
-                                              handleItemMouseEnter(e, {
-                                                kind: 'view',
-                                                title: obj.name,
-                                                badge: 'VIEW',
-                                                subtitle: `${c.name} / ${dbName}`,
-                                              })
-                                            }
-                                            onMouseLeave={handleItemMouseLeave}
-                                            title={obj.name}
-                                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] ${
-                                              isMatch
-                                                ? 'text-amber-300 bg-amber-950/20 font-medium'
-                                                : 'text-zinc-400 hover:text-white'
-                                            }`}
-                                          >
-                                            <Eye
-                                              className={`h-3 w-3 shrink-0 ${
-                                                isMatch ? 'text-amber-400' : 'text-purple-400'
-                                              }`}
-                                            />
-                                            <span className="truncate">{obj.name}</span>
-                                          </div>
-                                        );
-                                      })}
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      )
-                    )}
+                    {/* Hover actions on folder */}
+                    <div
+                      onMouseEnter={(e) => {
+                        e.stopPropagation();
+                        handleItemMouseLeave();
+                      }}
+                      className="flex items-center gap-0.5 opacity-0 group-hover/folder:opacity-100 transition-opacity"
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleNewConnectionInFolder(folder.id);
+                        }}
+                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
+                        title={`New Connection in "${folder.name}"`}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenRenameFolder(folder, e)}
+                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b]"
+                        title="Rename Folder"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteFolder(folder, e)}
+                        className="p-1 rounded text-zinc-400 hover:text-rose-400 hover:bg-[#2d303b]"
+                        title="Delete Folder"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
-                )}
-              </div>
-            );
-          })
+
+                  {isFolderSortAfter && (
+                    <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-blue-500 rounded-full z-20 pointer-events-none" />
+                  )}
+
+                  {/* Connections inside this Folder */}
+                  {isFolderExpanded && (
+                    <div
+                      onDragOver={(e) => {
+                        if (draggedItem?.type === 'connection') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDropTarget({ type: 'folder-into', id: folder.id });
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (draggedItem?.type === 'connection') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          moveConnectionToFolder(draggedItem.id, folder.id);
+                          setDraggedItem(null);
+                          setDropTarget(null);
+                        }
+                      }}
+                      className="ml-3.5 mt-0.5 border-l border-[#272932] pl-1.5 space-y-0.5"
+                    >
+                      {folderConns.length === 0 ? (
+                        <div className="px-2 py-1 text-[10px] text-zinc-500 italic">
+                          Empty folder (drag connection here)
+                        </div>
+                      ) : (
+                        folderConns.map((c) => renderConnectionNode(c, folder.id))
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Ungrouped Connections */}
+            {ungroupedConnections.map((c) => renderConnectionNode(c, null))}
+
+            {/* Drop zone to move connection out of folder back to root */}
+            {draggedItem?.type === 'connection' &&
+              connectionFolders[draggedItem.id] && (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDropTarget({ type: 'root-ungrouped', id: 'root' });
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    moveConnectionToFolder(draggedItem.id, null);
+                    setDraggedItem(null);
+                    setDropTarget(null);
+                  }}
+                  className={`mt-2 py-2 px-3 rounded border border-dashed text-center text-[11px] transition-colors ${
+                    dropTarget?.type === 'root-ungrouped'
+                      ? 'border-blue-500 bg-blue-600/15 text-blue-300 font-medium'
+                      : 'border-[#2e313d] text-zinc-500'
+                  }`}
+                >
+                  Drop here to remove from folder (Ungrouped)
+                </div>
+              )}
+          </>
         )}
       </div>
 
       {/* Floating Hover Tooltip Card for Full Name */}
-      {hoveredItem && !contextMenu.isOpen && (
+      {hoveredItem && !contextMenu.isOpen && !draggedItem && (
         <div
           className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl px-3 py-2 text-xs font-sans min-w-[180px] max-w-[340px] animate-in fade-in zoom-in-95 duration-100"
           style={{ top: hoveredItem.y, left: hoveredItem.x }}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-1.5 min-w-0">
+              {hoveredItem.kind === 'folder' && (
+                <Folder
+                  className="h-3.5 w-3.5 shrink-0 mt-0.5"
+                  style={{ color: hoveredItem.colorTag || '#3b82f6' }}
+                />
+              )}
               {hoveredItem.kind === 'connection' && (
                 <span
                   className="h-2.5 w-2.5 rounded-full shrink-0 mt-1"
@@ -1071,7 +1506,7 @@ export const DatabaseExplorer: React.FC = () => {
                   ? 'bg-emerald-950/40 border-emerald-800/40 text-emerald-300'
                   : hoveredItem.kind === 'view'
                   ? 'bg-purple-950/40 border-purple-800/40 text-purple-300'
-                  : hoveredItem.kind === 'database'
+                  : hoveredItem.kind === 'database' || hoveredItem.kind === 'folder'
                   ? 'bg-blue-950/40 border-blue-800/40 text-blue-300'
                   : 'bg-zinc-800/60 border-zinc-700 text-zinc-300'
               }`}
@@ -1090,13 +1525,14 @@ export const DatabaseExplorer: React.FC = () => {
       {/* Floating JetBrains-style Context Menu */}
       {contextMenu.isOpen && (
         <div
-          className="fixed z-50 min-w-[210px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-50 min-w-[220px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Menu Header */}
           <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 flex items-center justify-between">
             <span className="truncate">
+              {contextMenu.type === 'folder' && `Folder: ${contextMenu.folder?.name}`}
               {contextMenu.type === 'connection' && `Connection: ${contextMenu.connection?.name}`}
               {contextMenu.type === 'database' && `Database: ${contextMenu.database}`}
               {contextMenu.type === 'table' &&
@@ -1105,6 +1541,64 @@ export const DatabaseExplorer: React.FC = () => {
             </span>
             {copiedText && <span className="text-[9px] text-emerald-400 lowercase font-normal">copied!</span>}
           </div>
+
+          {/* Folder Menu Items */}
+          {contextMenu.type === 'folder' && contextMenu.folder && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const f = contextMenu.folder!;
+                  closeContextMenu();
+                  handleNewConnectionInFolder(f.id);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+              >
+                <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>New Connection in Folder...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleOpenCreateFolder(null);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <FolderPlus className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>New Folder / Group...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const f = contextMenu.folder!;
+                  closeContextMenu();
+                  handleOpenRenameFolder(f);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Rename Folder...</span>
+              </button>
+
+              <div className="my-1 border-t border-[#272932]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  const f = contextMenu.folder!;
+                  closeContextMenu();
+                  handleDeleteFolder(f);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                <span>Delete Folder</span>
+              </button>
+            </>
+          )}
 
           {/* Connection Menu Items */}
           {contextMenu.type === 'connection' && contextMenu.connection && (
@@ -1169,6 +1663,64 @@ export const DatabaseExplorer: React.FC = () => {
               >
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>Refresh Connection</span>
+              </button>
+
+              {/* Move to Folder / Group Section */}
+              <div className="my-1 border-t border-[#272932]" />
+              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                Folder / Group
+              </div>
+              {folders.map((f) => {
+                const isCurrent = connectionFolders[contextMenu.connection!.id] === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => {
+                      const connId = contextMenu.connection!.id;
+                      closeContextMenu();
+                      moveConnectionToFolder(connId, isCurrent ? null : f.id);
+                    }}
+                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Folder
+                        className="h-3.5 w-3.5 shrink-0"
+                        style={{ color: f.color || '#3b82f6' }}
+                      />
+                      <span className="truncate">{f.name}</span>
+                    </div>
+                    {isCurrent && <Check className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white shrink-0" />}
+                  </button>
+                );
+              })}
+
+              {connectionFolders[contextMenu.connection.id] && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const connId = contextMenu.connection!.id;
+                    closeContextMenu();
+                    moveConnectionToFolder(connId, null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-400 transition-colors text-left cursor-pointer group"
+                >
+                  <FolderInput className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Remove from Folder (Ungroup)</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  const connId = contextMenu.connection!.id;
+                  closeContextMenu();
+                  handleOpenCreateFolder(connId);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-blue-400 transition-colors text-left cursor-pointer group"
+              >
+                <FolderPlus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>New Folder with this Connection...</span>
               </button>
 
               <div className="my-1 border-t border-[#272932]" />
@@ -1375,13 +1927,27 @@ export const DatabaseExplorer: React.FC = () => {
                 type="button"
                 onClick={() => {
                   closeContextMenu();
-                  setConnectionDialogOpen(true, null);
+                  handleNewConnectionInFolder(null);
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >
                 <Plus className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>New Connection...</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleOpenCreateFolder(null);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <FolderPlus className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                <span>New Folder / Group...</span>
+              </button>
+
+              <div className="my-1 border-t border-[#2d303f]" />
 
               <button
                 type="button"
@@ -1396,6 +1962,123 @@ export const DatabaseExplorer: React.FC = () => {
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {/* Create / Rename Folder Modal */}
+      {folderModal.isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() =>
+            setFolderModal((prev) => ({ ...prev, isOpen: false }))
+          }
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-[#2b2e3a] bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border"
+                  style={{
+                    backgroundColor: `${folderModal.color}20`,
+                    borderColor: `${folderModal.color}50`,
+                    color: folderModal.color,
+                  }}
+                >
+                  <Folder className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-zinc-100">
+                    {folderModal.mode === 'create'
+                      ? 'New Folder / Group'
+                      : 'Rename Folder'}
+                  </h3>
+                  <p className="text-[11px] text-zinc-500">
+                    Organize and group your database connections
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setFolderModal((prev) => ({ ...prev, isOpen: false }))
+                }
+                className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-[#20222a] transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleFolderModalSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                  Folder Name <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  placeholder="e.g. Production, Staging, Analytics"
+                  value={folderModal.name}
+                  onChange={(e) =>
+                    setFolderModal((prev) => ({ ...prev, name: e.target.value }))
+                  }
+                  className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">
+                  Folder Color
+                </label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {FOLDER_COLORS.map((c) => {
+                    const isSelected = folderModal.color === c.value;
+                    return (
+                      <button
+                        key={c.value}
+                        type="button"
+                        onClick={() =>
+                          setFolderModal((prev) => ({ ...prev, color: c.value }))
+                        }
+                        title={c.label}
+                        className={`h-7 w-7 rounded-full flex items-center justify-center transition-all cursor-pointer border-2 ${
+                          isSelected
+                            ? 'scale-110 border-white shadow-md'
+                            : 'border-transparent opacity-75 hover:opacity-100'
+                        }`}
+                        style={{ backgroundColor: c.value }}
+                      >
+                        {isSelected && <Check className="h-3.5 w-3.5 text-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFolderModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!folderModal.name.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+                >
+                  {folderModal.mode === 'create' ? 'Create Folder' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

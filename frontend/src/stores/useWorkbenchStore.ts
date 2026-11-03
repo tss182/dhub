@@ -128,6 +128,8 @@ interface WorkbenchState {
   closeTabsMatching: (predicate: (tab: WorkbenchTab) => boolean) => void;
   refreshTab: (tabId: string) => void;
   setActiveTabId: (tabId: string) => void;
+  reorderTab: (draggedTabId: string, targetTabId: string, position: 'before' | 'after') => void;
+  swapTabs: (tabIdA: string, tabIdB: string) => void;
   updateTabContent: (tabId: string, content: string) => void;
   updateTabDatabase: (tabId: string, database: string, schema?: string) => void;
   updateTabConnection: (
@@ -317,6 +319,33 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   },
 
   setActiveTabId: (activeTabId) => set({ activeTabId }),
+
+  reorderTab: (draggedTabId, targetTabId, position) =>
+    set((state) => {
+      if (draggedTabId === targetTabId) return state;
+      const draggedTab = state.tabs.find((t) => t.id === draggedTabId);
+      if (!draggedTab) return state;
+      const remaining = state.tabs.filter((t) => t.id !== draggedTabId);
+      const targetIndex = remaining.findIndex((t) => t.id === targetTabId);
+      if (targetIndex === -1) return state;
+      const insertIndex = position === 'before' ? targetIndex : targetIndex + 1;
+      const nextTabs = [...remaining];
+      nextTabs.splice(insertIndex, 0, draggedTab);
+      return { tabs: nextTabs };
+    }),
+
+  swapTabs: (tabIdA, tabIdB) =>
+    set((state) => {
+      if (tabIdA === tabIdB) return state;
+      const idxA = state.tabs.findIndex((t) => t.id === tabIdA);
+      const idxB = state.tabs.findIndex((t) => t.id === tabIdB);
+      if (idxA === -1 || idxB === -1) return state;
+      const nextTabs = [...state.tabs];
+      const temp = nextTabs[idxA];
+      nextTabs[idxA] = nextTabs[idxB];
+      nextTabs[idxB] = temp;
+      return { tabs: nextTabs };
+    }),
 
   updateTabContent: (tabId, content) =>
     set((state) => {

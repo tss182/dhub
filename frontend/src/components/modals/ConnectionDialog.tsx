@@ -7,10 +7,21 @@ import { alertError } from '../../stores/useAlertStore';
 
 export const ConnectionDialog: React.FC = () => {
   const { isConnectionDialogOpen, setConnectionDialogOpen, editingConnectionId } = useWorkbenchStore();
-  const { connections, setConnections, setActiveConnection, activeConnectionId } = useConnectionStore();
+  const {
+    connections,
+    setConnections,
+    setActiveConnection,
+    activeConnectionId,
+    folders,
+    connectionFolders,
+    pendingFolderIdForNewConn,
+    setPendingFolderIdForNewConn,
+    moveConnectionToFolder,
+  } = useConnectionStore();
 
   const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql'>('sqlite');
   const [name, setName] = useState('');
+  const [folderId, setFolderId] = useState<string>('');
   const [filePath, setFilePath] = useState('/home/tss/.gemini/antigravity/dhub_demo.db');
   const [host, setHost] = useState('localhost');
   const [port, setPort] = useState(5432);
@@ -26,6 +37,7 @@ export const ConnectionDialog: React.FC = () => {
     if (!isConnectionDialogOpen) return;
 
     if (editingConnectionId) {
+      setFolderId(connectionFolders[editingConnectionId] || '');
       // Fetch full connection data from backend (including keyring password)
       ConnectionService.GetConnection(editingConnectionId).then((conn) => {
         if (conn) {
@@ -57,6 +69,7 @@ export const ConnectionDialog: React.FC = () => {
     } else {
       // Defaults for new connection
       setName('');
+      setFolderId(pendingFolderIdForNewConn || '');
       setDriver('sqlite');
       setFilePath('/home/tss/.gemini/antigravity/dhub_demo.db');
       setHost('localhost');
@@ -156,6 +169,8 @@ export const ConnectionDialog: React.FC = () => {
 
       const updated = await ConnectionService.ListConnections();
       setConnections(updated as any);
+      moveConnectionToFolder(id, folderId || null);
+      setPendingFolderIdForNewConn(null);
       setActiveConnection(id, databaseName || 'main', 'main');
       setConnectionDialogOpen(false);
     } catch (e: any) {
@@ -233,16 +248,35 @@ export const ConnectionDialog: React.FC = () => {
             </div>
           </div>
 
-          {/* Connection Name */}
-          <div>
-            <label className="block text-[11px] text-zinc-400 mb-1">Display Name</label>
-            <input
-              type="text"
-              placeholder={`e.g. Local ${driver.toUpperCase()}`}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
-            />
+          {/* Connection Name & Folder / Group */}
+          <div className={folders.length > 0 ? 'grid grid-cols-3 gap-2' : ''}>
+            <div className={folders.length > 0 ? 'col-span-2' : ''}>
+              <label className="block text-[11px] text-zinc-400 mb-1">Display Name</label>
+              <input
+                type="text"
+                placeholder={`e.g. Local ${driver.toUpperCase()}`}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            {folders.length > 0 && (
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">Folder / Group</label>
+                <select
+                  value={folderId}
+                  onChange={(e) => setFolderId(e.target.value)}
+                  className="w-full rounded bg-[#121317] border border-[#272932] px-2.5 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">None (Ungrouped)</option>
+                  {folders.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Specific Inputs based on Driver */}
