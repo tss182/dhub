@@ -488,7 +488,7 @@ export const SettingsModal: React.FC = () => {
                 <div>
                   <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    Modern high-performance Database Client & SQL IDE powered by Go + React.
+                    Modern high-performance Database Client & SQL IDE.
                   </p>
                   <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
                     <span>Version 0.1.0</span>

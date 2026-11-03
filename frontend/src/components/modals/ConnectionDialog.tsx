@@ -461,12 +461,12 @@ export const ConnectionDialog: React.FC = () => {
               <div>
                 <label className="block text-[11px] text-zinc-400 mb-1">
                   Database Name {driver === 'mysql' && (
-                    <span className="text-zinc-500 text-[10px] lowercase">(kosongkan untuk melihat semua database)</span>
+                    <span className="text-zinc-500 text-[10px] lowercase">(leave empty to show all databases)</span>
                   )}
                 </label>
                 <input
                   type="text"
-                  placeholder={driver === 'mysql' ? 'Opsional (kosongkan untuk list semua database)' : 'e.g. postgres'}
+                  placeholder={driver === 'mysql' ? 'Optional (leave empty to list all databases)' : 'e.g. postgres'}
                   value={databaseName}
                   onChange={(e) => setDatabaseName(e.target.value)}
                   className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"

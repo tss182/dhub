@@ -12,12 +12,20 @@ import * as driver$0 from "../driver/models.js";
 // @ts-ignore: Unused imports
 import * as store$0 from "../store/models.js";
 
+export function BackupDatabase(connectionID: string, database: string, filePath: string): $CancellablePromise<string> {
+    return $Call.ByID(2971308220, connectionID, database, filePath);
+}
+
 export function GetCachedSchema(connectionID: string, database: string, schema: string): $CancellablePromise<store$0.CachedObject[] | null> {
     return $Call.ByID(2457967532, connectionID, database, schema);
 }
 
 export function GetDatabases(connectionID: string): $CancellablePromise<string[] | null> {
     return $Call.ByID(3186786585, connectionID);
+}
+
+export function GetDefaultBackupPath(database: string): $CancellablePromise<string> {
+    return $Call.ByID(2922436839, database);
 }
 
 export function GetObjects(connectionID: string, database: string, schema: string): $CancellablePromise<driver$0.ObjectSummary[] | null> {
@@ -34,6 +42,10 @@ export function GetTableStructure(connectionID: string, database: string, schema
 
 export function RefreshSchema(connectionID: string, database: string, schema: string): $CancellablePromise<string> {
     return $Call.ByID(1656087921, connectionID, database, schema);
+}
+
+export function RestoreDatabase(connectionID: string, database: string, filePath: string): $CancellablePromise<string> {
+    return $Call.ByID(3541253238, connectionID, database, filePath);
 }
 
 export function SearchEverywhere(connectionID: string, query: string): $CancellablePromise<store$0.CachedObject[] | null> {
