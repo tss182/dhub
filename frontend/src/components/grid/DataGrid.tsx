@@ -364,7 +364,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const revertTabChanges = useGridEditStore((state) => state.revertTabChanges);
   const stagedCount = Object.keys(stagedChanges).length;
 
-  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  const [selectedRowIndex, setAnchorRow] = useState<number | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const setSelectedRowIndex = (idx: number | null) => {
+    setAnchorRow(idx);
+    setSelectedRows(idx === null ? new Set() : new Set([idx]));
+  };
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const insertedChanges = useMemo(() => {
@@ -446,61 +451,87 @@ export const DataGrid: React.FC<DataGridProps> = ({
       handleFinishEdit();
     }
 
-    let targetRowIndex = selectedRowIndex;
-    if (targetRowIndex === null) {
-      if (insertedChanges.length > 0) {
-        targetRowIndex = insertedChanges[0].rowIndex;
-      } else if (rows.length > 0) {
-        targetRowIndex = 0;
-      } else {
-        return;
+    let targets: number[];
+    if (selectedRows.size > 1) {
+      // Multi-select: duplicate every selected row (existing rows in grid order, then staged inserts)
+      targets = Array.from(selectedRows).sort((x, y) => (x < 0 && y < 0 ? y - x : x < 0 ? 1 : y < 0 ? -1 : x - y));
+    } else {
+      let targetRowIndex = selectedRowIndex;
+      if (targetRowIndex === null) {
+        if (insertedChanges.length > 0) {
+          targetRowIndex = insertedChanges[0].rowIndex;
+        } else if (rows.length > 0) {
+          targetRowIndex = 0;
+        } else {
+          return;
+        }
       }
+      targets = [targetRowIndex];
     }
 
-    const newRowId = -Date.now();
-    const initialValues: Record<string, unknown> = {};
     const latestStaged = useGridEditStore.getState().stagedByTab[tabId] || {};
 
-    if (targetRowIndex < 0) {
-      // Duplicating a staged insert row
-      const staged = latestStaged[targetRowIndex];
-      if (staged && staged.type === 'insert') {
-        columns.forEach((col) => {
-          if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
-            const rawVal = staged.changes[col.name];
-            if (rawVal !== undefined && rawVal !== null) {
-              const inputType = getColumnInputType(col.dataType);
-              const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
-              initialValues[col.name] = val !== null ? val : rawVal;
-            }
-          }
-        });
-      }
-    } else {
-      // Duplicating an existing database row
-      const sourceRow = rows[targetRowIndex];
-      if (sourceRow) {
+    const buildValues = (targetRowIndex: number) => {
+      const initialValues: Record<string, unknown> = {};
+      if (targetRowIndex < 0) {
+        // Duplicating a staged insert row
         const staged = latestStaged[targetRowIndex];
-        columns.forEach((col, idx) => {
-          if (!col.isAutoIncrement) {
-            const rawVal =
-              staged?.type === 'update' && staged.changes[col.name] !== undefined
-                ? staged.changes[col.name]
-                : sourceRow[idx];
-            if (rawVal !== undefined && rawVal !== null) {
-              const inputType = getColumnInputType(col.dataType);
-              const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
-              initialValues[col.name] = val !== null ? val : rawVal;
+        if (staged && staged.type === 'insert') {
+          columns.forEach((col) => {
+            if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
+              const rawVal = staged.changes[col.name];
+              if (rawVal !== undefined && rawVal !== null) {
+                const inputType = getColumnInputType(col.dataType);
+                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
+                initialValues[col.name] = val !== null ? val : rawVal;
+              }
             }
-          }
-        });
+          });
+        }
+      } else {
+        // Duplicating an existing database row
+        const sourceRow = rows[targetRowIndex];
+        if (sourceRow) {
+          const staged = latestStaged[targetRowIndex];
+          columns.forEach((col, idx) => {
+            if (!col.isAutoIncrement) {
+              const rawVal =
+                staged?.type === 'update' && staged.changes[col.name] !== undefined
+                  ? staged.changes[col.name]
+                  : sourceRow[idx];
+              if (rawVal !== undefined && rawVal !== null) {
+                const inputType = getColumnInputType(col.dataType);
+                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
+                initialValues[col.name] = val !== null ? val : rawVal;
+              }
+            }
+          });
+        }
       }
-    }
+      return initialValues;
+    };
 
-    stageRowInsert(tabId, newRowId, initialValues);
+    const baseId = Date.now();
+    const newIds: number[] = [];
+    let lastValues: Record<string, unknown> = {};
+    targets.forEach((t, i) => {
+      const newRowId = -(baseId + i);
+      lastValues = buildValues(t);
+      stageRowInsert(tabId, newRowId, lastValues);
+      newIds.push(newRowId);
+    });
+
+    const newRowId = newIds[newIds.length - 1];
+    if (newIds.length > 1) {
+      // Select all duplicated rows
+      setAnchorRow(newRowId);
+      setSelectedRows(new Set(newIds));
+      return;
+    }
     setSelectedRowIndex(newRowId);
 
     // Auto-focus first editable column of the newly duplicated row
+    const initialValues = lastValues;
     const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
     const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
     if (columns.length > 0) {
@@ -511,7 +542,54 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   };
 
+  // Row selection: click = single, Ctrl/Cmd+click = toggle, Shift+click = range
+  const handleRowClick = (e: React.MouseEvent, idx: number) => {
+    if (e.shiftKey) window.getSelection()?.removeAllRanges();
+    if (e.shiftKey && selectedRowIndex !== null) {
+      const order = [...insertedChanges.map((c) => c.rowIndex), ...displayedRows.map((_, i) =>
+        viewMode === 'paged' ? (currentPage - 1) * localPageSize + i : i)];
+      const a = order.indexOf(selectedRowIndex);
+      const b = order.indexOf(idx);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelectedRows(new Set(order.slice(lo, hi + 1)));
+        return;
+      }
+    }
+    if (e.ctrlKey || e.metaKey) {
+      setAnchorRow(idx);
+      setSelectedRows((prev) => {
+        const next = new Set(prev);
+        if (next.has(idx)) next.delete(idx);
+        else next.add(idx);
+        return next;
+      });
+      return;
+    }
+    setSelectedRowIndex(idx);
+  };
+
   const handleDeleteActiveRow = () => {
+    if (selectedRows.size > 1) {
+      selectedRows.forEach((idx) => {
+        if (idx < 0) {
+          stageRowDelete(tabId, idx, {}, {});
+          return;
+        }
+        const pkMap: Record<string, unknown> = {};
+        const originalRowValues: Record<string, unknown> = {};
+        columns.forEach((c, ci) => {
+          originalRowValues[c.name] = rows[idx]?.[ci];
+        });
+        primaryKeys.forEach((pk) => {
+          const ci = columns.findIndex((c) => c.name === pk);
+          if (ci !== -1) pkMap[pk] = rows[idx]?.[ci];
+        });
+        stageRowDelete(tabId, idx, pkMap, originalRowValues);
+      });
+      setSelectedRowIndex(null);
+      return;
+    }
     if (selectedRowIndex !== null) {
       if (selectedRowIndex < 0) {
         stageRowDelete(tabId, selectedRowIndex, {}, {});
@@ -636,7 +714,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tabId, isMac, editingCell, editVal, columns, rows, selectedRowIndex, insertedChanges, onSubmitChanges, stagedCount, showCancelConfirm]);
+  }, [tabId, isMac, editingCell, editVal, columns, rows, selectedRowIndex, selectedRows, insertedChanges, onSubmitChanges, stagedCount, showCancelConfirm]);
 
   // Filter rows client-side
   const filteredRows = useMemo(() => {
@@ -1015,7 +1093,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
         <table className="w-full border-collapse font-mono text-[12px] text-zinc-300">
           <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-10`}>
             <tr className={`border-b ${gridCellBorder}`}>
-              <th className={`w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r ${gridCellBorder}`}>#</th>
+              <th className={`w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r ${gridCellBorder}`}>
+                #
+              </th>
               {columns.map((col) => {
                 const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
                 const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
@@ -1079,14 +1159,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <tbody>
             {/* 1. Staged Inserted Rows (at top of grid for immediate visibility & editing) */}
             {insertedChanges.map((change, insIdx) => {
-              const isSelected = selectedRowIndex === change.rowIndex;
+              const isSelected = selectedRows.has(change.rowIndex);
               let rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
               if (isSelected) rowClass += ' ring-1 ring-emerald-400 bg-emerald-900/40';
 
               return (
                 <tr
                   key={change.rowIndex}
-                  onClick={() => setSelectedRowIndex(change.rowIndex)}
+                  onClick={(e) => handleRowClick(e, change.rowIndex)}
                   className={rowClass}
                 >
                   <td className="w-12 px-1 py-1 text-center border-r border-[#272932] select-none text-[11px] font-bold">
@@ -1216,7 +1296,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
                 const staged = stagedChanges[globalRowIndex];
                 const isDeleted = staged?.type === 'delete';
-                const isSelected = selectedRowIndex === globalRowIndex;
+                const isSelected = selectedRows.has(globalRowIndex);
 
                 let rowClass = gridRowClass;
                 if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
@@ -1225,7 +1305,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 return (
                   <tr
                     key={globalRowIndex}
-                    onClick={() => setSelectedRowIndex(globalRowIndex)}
+                    onClick={(e) => handleRowClick(e, globalRowIndex)}
                     className={rowClass}
                   >
                     <td className={`px-2 py-1 text-center text-zinc-500 border-r ${gridCellBorder} select-none text-[11px]`}>
@@ -1240,11 +1320,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       return (
                         <td
                           key={col.name}
-                          onClick={() => {
-                            if (!isEditing && !isDeleted) {
-                              setSelectedRowIndex(globalRowIndex);
-                            }
-                          }}
                           onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
                           className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs ${
                             hasColChange ? 'bg-blue-900/30 text-blue-200 font-medium' : ''
