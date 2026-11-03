@@ -387,7 +387,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                         handleCreateForConnection(conn);
                       }}
                       className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#2d303b] opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Tambah Console untuk koneksi ini"
+                      title="New Console for this connection"
                     >
                       <Plus className="h-3 w-3 text-emerald-400" />
                     </button>
@@ -405,7 +405,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                           onClick={() => handleCreateForConnection(conn)}
                           className="text-blue-400 hover:underline cursor-pointer not-italic text-[10px]"
                         >
-                          + Tambah Console
+                          + New Console
                         </button>
                       </div>
                     ) : (
@@ -574,7 +574,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >
                 <Plus className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
-                <span>Tambah Console (New Console)</span>
+                <span>New Query Console</span>
               </button>
 
               <button

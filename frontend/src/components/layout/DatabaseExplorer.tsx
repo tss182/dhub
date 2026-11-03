@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
+import { Dialogs } from '@wailsio/runtime';
 import {
   Database,
   Folder,
@@ -17,11 +18,11 @@ import {
   Pencil,
   Trash2,
   Terminal,
-  Code2,
   Copy,
-  ExternalLink,
   X,
   Check,
+  Download,
+  Upload,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -261,6 +262,167 @@ export const DatabaseExplorer: React.FC = () => {
     charset: 'utf8mb4',
     collation: 'utf8mb4_unicode_ci',
   });
+
+  // Backup / Restore Database Modal state
+  const [backupRestoreModal, setBackupRestoreModal] = useState<{
+    isOpen: boolean;
+    mode: 'backup' | 'restore';
+    connection: ConnectionConfig | null;
+    database: string;
+    filePath: string;
+    isProcessing: boolean;
+  }>({
+    isOpen: false,
+    mode: 'backup',
+    connection: null,
+    database: '',
+    filePath: '',
+    isProcessing: false,
+  });
+
+  const handleOpenBackupModal = async (conn: ConnectionConfig, database: string) => {
+    let defaultPath = `${database}_backup.sql`;
+    try {
+      const suggested = await SchemaService.GetDefaultBackupPath(database);
+      if (suggested) defaultPath = suggested;
+    } catch {}
+
+    setBackupRestoreModal({
+      isOpen: true,
+      mode: 'backup',
+      connection: conn,
+      database,
+      filePath: defaultPath,
+      isProcessing: false,
+    });
+  };
+
+  const handleBrowseBackupFile = async () => {
+    const dbName = backupRestoreModal.database || 'database';
+    const currentPath = backupRestoreModal.filePath || '';
+    const defaultFilename =
+      currentPath.split(/[\\/]/).pop() || `${dbName}_backup.sql`;
+    try {
+      const chosen = await Dialogs.SaveFile({
+        Title: `Save Database Backup (${dbName})`,
+        Filename: defaultFilename,
+        CanCreateDirectories: true,
+        Filters: [
+          {
+            DisplayName: 'SQL Backup File (*.sql)',
+            Pattern: '*.sql',
+          },
+        ],
+      });
+      if (chosen && typeof chosen === 'string' && chosen.trim()) {
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          filePath: chosen.trim(),
+        }));
+      }
+    } catch (e) {
+      console.warn('SaveFile dialog error:', e);
+    }
+  };
+
+  const handleBrowseRestoreFile = async (): Promise<void> => {
+    try {
+      const chosen: string | string[] = await Dialogs.OpenFile({
+        Title: `Select SQL File to Restore (${backupRestoreModal.database || 'Database'})`,
+        CanChooseFiles: true,
+        AllowsMultipleSelection: false,
+        Filters: [
+          {
+            DisplayName: 'SQL Backup File (*.sql)',
+            Pattern: '*.sql',
+          },
+        ],
+      });
+      const picked = Array.isArray(chosen) ? chosen[0] : chosen;
+      if (picked && typeof picked === 'string' && picked.trim()) {
+        const clean = picked.trim();
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          filePath: clean,
+        }));
+      }
+    } catch (e) {
+      console.warn('OpenFile dialog error:', e);
+    }
+  };
+
+  const handleOpenRestoreModal = async (conn: ConnectionConfig, database: string) => {
+    setBackupRestoreModal({
+      isOpen: true,
+      mode: 'restore',
+      connection: conn,
+      database,
+      filePath: '',
+      isProcessing: false,
+    });
+
+    // Prompt user immediately to pick the .sql file to restore
+    try {
+      const chosen: string | string[] = await Dialogs.OpenFile({
+        Title: `Select SQL File to Restore into [${database}]`,
+        CanChooseFiles: true,
+        AllowsMultipleSelection: false,
+        Filters: [
+          {
+            DisplayName: 'SQL Backup File (*.sql)',
+            Pattern: '*.sql',
+          },
+        ],
+      });
+      const picked = Array.isArray(chosen) ? chosen[0] : chosen;
+      if (picked && typeof picked === 'string' && picked.trim()) {
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          filePath: picked.trim(),
+        }));
+      }
+    } catch (e) {
+      console.warn('OpenFile dialog error:', e);
+    }
+  };
+
+  const handleConfirmBackupRestore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { mode, connection, database, filePath, isProcessing } = backupRestoreModal;
+    if (!connection || !database || isProcessing) return;
+
+    const cleanPath = filePath.trim();
+    if (!cleanPath) {
+      alertWarning(
+        mode === 'backup'
+          ? 'Please specify a target backup file path (.sql).'
+          : 'Please select a .sql file to restore first.',
+        mode === 'backup' ? 'Missing Backup Path' : 'Missing Restore File'
+      );
+      return;
+    }
+
+    setBackupRestoreModal((prev) => ({ ...prev, isProcessing: true }));
+
+    try {
+      if (mode === 'backup') {
+        const msg = await SchemaService.BackupDatabase(connection.id, database, cleanPath);
+        setBackupRestoreModal((prev) => ({ ...prev, isOpen: false, isProcessing: false }));
+        alertSuccess(msg, 'Database Backup Completed');
+      } else {
+        const msg = await SchemaService.RestoreDatabase(connection.id, database, cleanPath);
+        setBackupRestoreModal((prev) => ({ ...prev, isOpen: false, isProcessing: false }));
+        await handleRefreshDatabase(connection.id, database);
+        alertSuccess(msg, 'Database Restore Completed');
+      }
+    } catch (err: any) {
+      setBackupRestoreModal((prev) => ({ ...prev, isProcessing: false }));
+      alertError(
+        err?.message || String(err),
+        mode === 'backup' ? 'Database Backup Failed' : 'Database Restore Failed'
+      );
+    }
+  };
 
   const handleOpenCreateTable = (conn: ConnectionConfig, database: string, schema?: string) => {
     openCreateTableModal(conn, database, schema);
@@ -537,7 +699,6 @@ export const DatabaseExplorer: React.FC = () => {
         });
     } else if (conn.driver === 'mysql') {
       // Open a query console pre-populated with ALTER DATABASE statement
-      const consoleCount = tabs.filter((t) => t.type === 'worksheet').length + 1;
       openTab({
         id: `console-alter-${Date.now()}`,
         type: 'worksheet',
@@ -1856,6 +2017,40 @@ export const DatabaseExplorer: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const conn = contextMenu.connection!;
+                  const db = contextMenu.database!;
+                  closeContextMenu();
+                  handleOpenBackupModal(conn, db);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+              >
+                <Download className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                <span>
+                  Backup Database ({contextMenu.connection.driver === 'postgres' ? 'pg_dump' : 'mysqldump'})...
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const conn = contextMenu.connection!;
+                  const db = contextMenu.database!;
+                  closeContextMenu();
+                  handleOpenRestoreModal(conn, db);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group"
+              >
+                <Upload className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                <span>
+                  Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : 'mysql'})...
+                </span>
+              </button>
+
+              <div className="my-1 border-t border-[#272932]" />
+
+              <button
+                type="button"
+                onClick={() => {
                   closeContextMenu();
                   handleDeleteDatabase(contextMenu.connection!, contextMenu.database!);
                 }}
@@ -2289,6 +2484,201 @@ export const DatabaseExplorer: React.FC = () => {
                   Create Database
                 </button>
               </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Backup / Restore Database Modal */}
+      {backupRestoreModal.isOpen && (() => {
+        const brEnv = resolveConnectionEnv(backupRestoreModal.connection);
+        const isBackup = backupRestoreModal.mode === 'backup';
+        const drv = backupRestoreModal.connection?.driver || 'mysql';
+        const cliTool = isBackup
+          ? drv === 'postgres'
+            ? 'pg_dump'
+            : drv === 'sqlite'
+            ? 'sqlite3 .dump'
+            : 'mysqldump'
+          : drv === 'postgres'
+          ? 'psql'
+          : drv === 'sqlite'
+          ? 'sqlite3'
+          : 'mysql';
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+            onClick={() => {
+              if (!backupRestoreModal.isProcessing) {
+                setBackupRestoreModal((prev) => ({ ...prev, isOpen: false }));
+              }
+            }}
+          >
+            <div
+              className={`w-full max-w-lg rounded-2xl border bg-[#14151a] shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col overflow-hidden text-zinc-200 ${
+                brEnv === 'dev'
+                  ? 'border-emerald-700/60'
+                  : brEnv === 'prod'
+                  ? 'border-rose-700/60'
+                  : 'border-[#2b2e3a]'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div
+                className={`flex items-start justify-between gap-3 px-6 py-4 border-b ${
+                  brEnv === 'dev'
+                    ? 'bg-emerald-950/60 border-emerald-800/60'
+                    : brEnv === 'prod'
+                    ? 'bg-rose-950/60 border-rose-800/60'
+                    : 'bg-[#16171f] border-[#272932]'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${
+                      isBackup
+                        ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-400'
+                        : 'bg-amber-500/15 border-amber-500/35 text-amber-400'
+                    }`}
+                  >
+                    {isBackup ? (
+                      <Download className="h-5 w-5" />
+                    ) : (
+                      <Upload className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-zinc-100">
+                        {isBackup ? 'Backup Database' : 'Restore Database'}
+                      </h3>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#22242c] border border-[#323544] text-zinc-300">
+                        {cliTool}
+                      </span>
+                      {brEnv !== 'local' && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase font-mono border ${
+                            brEnv === 'dev'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          }`}
+                        >
+                          {brEnv === 'dev' ? 'DEV' : 'PROD'}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-400 font-mono mt-0.5">
+                      Database: <span className="text-zinc-200 font-semibold">{backupRestoreModal.database}</span> •{' '}
+                      {backupRestoreModal.connection?.name}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={backupRestoreModal.isProcessing}
+                  onClick={() =>
+                    setBackupRestoreModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-40"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <form onSubmit={handleConfirmBackupRestore} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                    {isBackup ? 'Backup File Location (.sql)' : 'SQL File to Restore (.sql)'}{' '}
+                    <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      required
+                      disabled={backupRestoreModal.isProcessing}
+                      placeholder={
+                        isBackup
+                          ? '/path/to/backup.sql'
+                          : 'Select a .sql file to restore...'
+                      }
+                      value={backupRestoreModal.filePath}
+                      onChange={(e) =>
+                        setBackupRestoreModal((prev) => ({
+                          ...prev,
+                          filePath: e.target.value,
+                        }))
+                      }
+                      className="flex-1 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                    />
+                    <button
+                      type="button"
+                      disabled={backupRestoreModal.isProcessing}
+                      onClick={
+                        isBackup ? handleBrowseBackupFile : handleBrowseRestoreFile
+                      }
+                      className="px-3 py-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-xs font-medium text-zinc-200 hover:text-white transition-colors cursor-pointer shrink-0"
+                    >
+                      {isBackup ? 'Browse...' : 'Choose File...'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-1.5">
+                    {isBackup
+                      ? `Exports schema and data of database "${backupRestoreModal.database}" using ${cliTool}.`
+                      : `Executes the .sql file into database "${backupRestoreModal.database}" using ${cliTool}.`}
+                  </p>
+                </div>
+
+                {!isBackup && brEnv === 'prod' && (
+                  <div className="rounded-lg bg-rose-950/40 border border-rose-800/60 px-3 py-2 text-[11px] text-rose-200">
+                    Warning: You are performing a <strong>Restore</strong> on a{' '}
+                    <strong>PRODUCTION</strong> connection. Please make sure the selected SQL file is correct.
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+                  <button
+                    type="button"
+                    disabled={backupRestoreModal.isProcessing}
+                    onClick={() =>
+                      setBackupRestoreModal((prev) => ({ ...prev, isOpen: false }))
+                    }
+                    className="px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 text-xs font-medium cursor-pointer transition-colors disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      backupRestoreModal.isProcessing ||
+                      !backupRestoreModal.filePath.trim()
+                    }
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm disabled:opacity-50 ${
+                      isBackup
+                        ? 'bg-emerald-600 hover:bg-emerald-500'
+                        : 'bg-amber-600 hover:bg-amber-500'
+                    }`}
+                  >
+                    {backupRestoreModal.isProcessing ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>{isBackup ? 'Backing up...' : 'Restoring...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        {isBackup ? (
+                          <Download className="h-3.5 w-3.5" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+                        <span>{isBackup ? 'Start Backup' : 'Restore Database'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </form>
             </div>
           </div>

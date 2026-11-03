@@ -1726,7 +1726,7 @@ export function App() {
                 <Terminal className="h-10 w-10 text-zinc-600 mb-3 stroke-[1.5]" />
                 <h3 className="text-sm font-semibold text-zinc-300">No Open Tabs</h3>
                 <p className="text-xs text-zinc-500 mt-1 max-w-sm">
-                  Pilih table dari Database Explorer atau klik kanan koneksi untuk membuat Query Console.
+                  Select a table from Database Explorer or right-click a connection to open a Query Console.
                 </p>
                 <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-400">
                   <span className="rounded bg-[#1e2027] border border-[#272932] px-2 py-0.5 font-mono">{searchShortcutLabel}</span>
