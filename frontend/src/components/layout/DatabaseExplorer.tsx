@@ -23,7 +23,13 @@ import {
   X,
   Check,
 } from 'lucide-react';
-import { ConnectionConfig, ConnectionFolder, ObjectSummary } from '../../types/domain';
+import {
+  ConnectionConfig,
+  ConnectionFolder,
+  ObjectSummary,
+  resolveConnectionEnv,
+  getConnectionEnvInfo,
+} from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning } from '../../stores/useAlertStore';
 
 interface ContextMenuState {
@@ -788,19 +794,38 @@ export const DatabaseExplorer: React.FC = () => {
             handleItemMouseLeave();
             openContextMenu(e, 'connection', { connection: c });
           }}
-          onMouseEnter={(e) =>
+          onMouseEnter={(e) => {
+            const envInfo = getConnectionEnvInfo(c);
             handleItemMouseEnter(e, {
               kind: 'connection',
               title: c.name,
-              badge: (c.driver || 'DB').toUpperCase(),
+              badge: envInfo.label
+                ? `${(c.driver || 'DB').toUpperCase()} • ${envInfo.label}`
+                : (c.driver || 'DB').toUpperCase(),
               subtitle: connSubtitle,
-              colorTag: c.colorTag || '#71717a',
-            })
-          }
+              colorTag: envInfo.color || undefined,
+            });
+          }}
           onMouseLeave={handleItemMouseLeave}
           title={`${c.name} (${c.driver.toUpperCase()})`}
-          className={`group flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
-            activeConnectionId === c.id ? 'bg-[#22242c] font-medium text-white' : ''
+          className={`group flex items-center justify-between px-2 py-1 rounded cursor-pointer transition-colors ${
+            (() => {
+              const env = resolveConnectionEnv(c);
+              const isActive = activeConnectionId === c.id;
+              if (env === 'dev') {
+                return isActive
+                  ? 'bg-emerald-950/50 text-emerald-100 font-medium border border-emerald-700/40'
+                  : 'text-zinc-300 hover:bg-emerald-950/30';
+              }
+              if (env === 'prod') {
+                return isActive
+                  ? 'bg-rose-950/50 text-rose-100 font-medium border border-rose-700/40'
+                  : 'text-zinc-300 hover:bg-rose-950/30';
+              }
+              return isActive
+                ? 'bg-[#22242c] font-medium text-white'
+                : 'text-zinc-300 hover:bg-[#22242c]';
+            })()
           }`}
         >
           <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -809,12 +834,36 @@ export const DatabaseExplorer: React.FC = () => {
             ) : (
               <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
             )}
-            <span
-              className="h-2 w-2 rounded-full shrink-0"
-              style={{ backgroundColor: c.colorTag || '#71717a' }}
+            {resolveConnectionEnv(c) !== 'local' && (
+              <span
+                className="h-2 w-2 rounded-full shrink-0"
+                style={{
+                  backgroundColor:
+                    resolveConnectionEnv(c) === 'dev' ? '#10b981' : '#ef4444',
+                }}
+              />
+            )}
+            <Database
+              className={`h-3.5 w-3.5 shrink-0 ${
+                resolveConnectionEnv(c) === 'dev'
+                  ? 'text-emerald-400'
+                  : resolveConnectionEnv(c) === 'prod'
+                  ? 'text-rose-400'
+                  : 'text-zinc-400'
+              }`}
             />
-            <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
             <span className="truncate">{c.name}</span>
+            {resolveConnectionEnv(c) !== 'local' && (
+              <span
+                className={`text-[9px] font-mono font-bold uppercase px-1 rounded shrink-0 ${
+                  resolveConnectionEnv(c) === 'dev'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                }`}
+              >
+                {resolveConnectionEnv(c) === 'dev' ? 'DEV' : 'PROD'}
+              </span>
+            )}
             <span className="text-[9px] text-zinc-500 font-mono uppercase bg-[#14151a] px-1 rounded shrink-0">
               {c.driver}
             </span>
@@ -2082,45 +2131,82 @@ export const DatabaseExplorer: React.FC = () => {
       )}
 
       {/* Create Database Dialog */}
-      {createDbModal.isOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-          onClick={() =>
-            setCreateDbModal((prev) => ({ ...prev, isOpen: false }))
-          }
-        >
+      {createDbModal.isOpen && (() => {
+        const dbModalEnv = resolveConnectionEnv(createDbModal.connection);
+        return (
           <div
-            className="w-full max-w-md rounded-2xl border border-[#2b2e3a] bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+            onClick={() =>
+              setCreateDbModal((prev) => ({ ...prev, isOpen: false }))
+            }
           >
-            {/* Header */}
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-400">
-                  <Database className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-zinc-100">
-                    Create New Database
-                  </h3>
-                  <p className="text-[11px] text-zinc-500 font-mono">
-                    Connection: {createDbModal.connection?.name} ({createDbModal.connection?.driver?.toUpperCase()})
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setCreateDbModal((prev) => ({ ...prev, isOpen: false }))
-                }
-                className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-[#20222a] transition-colors cursor-pointer"
+            <div
+              className={`w-full max-w-md rounded-2xl border bg-[#14151a] shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col overflow-hidden text-zinc-200 ${
+                dbModalEnv === 'dev'
+                  ? 'border-emerald-700/60'
+                  : dbModalEnv === 'prod'
+                  ? 'border-rose-700/60'
+                  : 'border-[#2b2e3a]'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div
+                className={`flex items-start justify-between gap-3 px-6 py-4 border-b ${
+                  dbModalEnv === 'dev'
+                    ? 'bg-emerald-950/60 border-emerald-800/60'
+                    : dbModalEnv === 'prod'
+                    ? 'bg-rose-950/60 border-rose-800/60'
+                    : 'bg-[#16171f] border-[#272932]'
+                }`}
               >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${
+                      dbModalEnv === 'dev'
+                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                        : dbModalEnv === 'prod'
+                        ? 'bg-rose-500/20 border-rose-500/40 text-rose-400'
+                        : 'bg-blue-500/15 border-blue-500/30 text-blue-400'
+                    }`}
+                  >
+                    <Database className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-zinc-100">
+                        Create New Database
+                      </h3>
+                      {dbModalEnv !== 'local' && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase font-mono border ${
+                            dbModalEnv === 'dev'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          }`}
+                        >
+                          {dbModalEnv === 'dev' ? 'DEV' : 'PROD'}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-400 font-mono">
+                      Connection: {createDbModal.connection?.name} ({createDbModal.connection?.driver?.toUpperCase()})
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCreateDbModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-            {/* Form */}
-            <form onSubmit={handleConfirmCreateDatabase} className="space-y-4">
+              {/* Form */}
+              <form onSubmit={handleConfirmCreateDatabase} className="p-6 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                   Database Name <span className="text-rose-400">*</span>
@@ -2203,10 +2289,11 @@ export const DatabaseExplorer: React.FC = () => {
                   Create Database
                 </button>
               </div>
-            </form>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

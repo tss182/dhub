@@ -4,7 +4,7 @@ import * as monaco from 'monaco-editor';
 
 loader.config({ monaco });
 import { Play, Square, Database, Terminal, ChevronDown, Check } from 'lucide-react';
-import { ConnectionConfig } from '../../types/domain';
+import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
@@ -153,10 +153,18 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     });
   };
 
+  const connEnv = resolveConnectionEnv(connection);
+  const toolbarBgClass =
+    connEnv === 'prod'
+      ? 'bg-rose-950/35 border-rose-900/50'
+      : connEnv === 'dev'
+      ? 'bg-emerald-950/35 border-emerald-900/50'
+      : 'bg-[#14151a] border-[#272932]';
+
   return (
     <div className="flex h-full flex-col bg-[#191a20]">
       {/* Worksheet Toolbar */}
-      <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 text-xs bg-[#14151a]">
+      <div className={`flex h-10 items-center justify-between border-b px-3 text-xs transition-colors ${toolbarBgClass}`}>
         <div className="flex items-center gap-2">
           {!isRunning ? (
             <button
@@ -182,16 +190,36 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
           {/* Fixed Connection Display - No connection switching */}
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#1e2027] border border-[#2e313d] text-zinc-200"
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-zinc-200 ${
+              connEnv === 'prod'
+                ? 'bg-rose-950/60 border-rose-700/60 text-rose-100'
+                : connEnv === 'dev'
+                ? 'bg-emerald-950/60 border-emerald-700/60 text-emerald-100'
+                : 'bg-[#1e2027] border-[#2e313d]'
+            }`}
             title={connection ? `${connection.name} (${connection.driver.toUpperCase()})` : 'Console'}
           >
-            <span
-              className="h-2 w-2 rounded-full shrink-0"
-              style={{ backgroundColor: connection?.colorTag || '#3b82f6' }}
-            />
+            {connEnv !== 'local' && (
+              <span
+                className={`h-2 w-2 rounded-full shrink-0 ${
+                  connEnv === 'prod' ? 'bg-rose-500' : 'bg-emerald-500'
+                }`}
+              />
+            )}
             <span className="font-semibold text-xs truncate max-w-[150px]">
               {connection ? connection.name : 'Console'}
             </span>
+            {connEnv !== 'local' && (
+              <span
+                className={`text-[9px] font-bold px-1 py-0.2 rounded border uppercase ${
+                  connEnv === 'prod'
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                }`}
+              >
+                {connEnv}
+              </span>
+            )}
             {connection?.driver && (
               <span className="text-[9px] text-zinc-400 font-mono uppercase bg-[#14151a] px-1 py-0.2 rounded border border-[#272932]">
                 {connection.driver}

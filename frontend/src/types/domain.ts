@@ -1,3 +1,5 @@
+export type ConnectionEnvType = 'local' | 'dev' | 'prod';
+
 export interface ConnectionFolder {
   id: string;
   name: string;
@@ -12,6 +14,7 @@ export interface ConnectionConfig {
   sortOrder?: number;
   name: string;
   driver: 'postgres' | 'mysql' | 'sqlite';
+  envType?: ConnectionEnvType;
   colorTag: string;
   isReadOnly: boolean;
   txMode: 'auto' | 'manual';
@@ -28,6 +31,49 @@ export interface ConnectionConfig {
   sshUser: string;
   sshAuthType: 'password' | 'key';
   sshKeyPath: string;
+}
+
+export function resolveConnectionEnv(
+  conn?: { envType?: string; colorTag?: string } | null
+): ConnectionEnvType {
+  if (!conn) return 'local';
+  const raw = (conn.envType || '').toLowerCase();
+  if (raw === 'dev' || raw === 'development') return 'dev';
+  if (raw === 'prod' || raw === 'production') return 'prod';
+  if (raw === 'local') return 'local';
+
+  const color = (conn.colorTag || '').toLowerCase();
+  if (color === '#10b981' || color === '#22c55e') return 'dev';
+  if (color === '#ef4444' || color === '#f43f5e') return 'prod';
+  return 'local';
+}
+
+export function getConnectionEnvInfo(
+  conn?: { envType?: string; colorTag?: string } | null
+) {
+  const envType = resolveConnectionEnv(conn);
+  if (envType === 'dev') {
+    return {
+      envType: 'dev' as const,
+      label: 'DEV',
+      fullLabel: 'Development',
+      color: '#10b981',
+    };
+  }
+  if (envType === 'prod') {
+    return {
+      envType: 'prod' as const,
+      label: 'PROD',
+      fullLabel: 'Production',
+      color: '#ef4444',
+    };
+  }
+  return {
+    envType: 'local' as const,
+    label: '',
+    fullLabel: 'Local',
+    color: '',
+  };
 }
 
 export interface ColumnMeta {

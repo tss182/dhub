@@ -27,6 +27,11 @@ export interface ConnectionConfig {
      * "postgres", "mysql", "sqlite"
      */
     "driver": string;
+
+    /**
+     * "local", "dev", "prod"
+     */
+    "envType": string;
     "colorTag": string;
     "isReadOnly": boolean;
     "txMode": string;
@@ -63,6 +68,21 @@ export interface ConnectionConfig {
     "sortOrder": number;
     "createdAt": string;
     "updatedAt": string;
+}
+
+export interface ConnectionFolder {
+    "id": string;
+    "name": string;
+    "color": string;
+    "parentId": string | null;
+    "sortOrder": number;
+    "createdAt"?: string;
+}
+
+export interface ConnectionLayoutUpdate {
+    "id": string;
+    "folderId": string | null;
+    "sortOrder": number;
 }
 
 export interface ConnectionFolder {
