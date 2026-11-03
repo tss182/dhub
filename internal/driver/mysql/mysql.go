@@ -211,6 +211,16 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
+	// 4. Fetch DDL
+	showQuery := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", database, table)
+	if database == "" {
+		showQuery = fmt.Sprintf("SHOW CREATE TABLE `%s`", table)
+	}
+	var tblName, ddlStr string
+	if err := m.db.QueryRowContext(ctx, showQuery).Scan(&tblName, &ddlStr); err == nil {
+		structure.DDL = ddlStr
+	}
+
 	return structure, nil
 }
 

@@ -34,6 +34,7 @@ import {
   RefreshCw,
   Pencil,
   Copy,
+  Check,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -192,6 +193,30 @@ export function App() {
     id: string;
     position: 'before' | 'after';
   } | null>(null);
+
+  const [copiedSchemaTabId, setCopiedSchemaTabId] = useState<string | null>(null);
+  const handleCopyCurrentTableSchema = async (tab: WorkbenchTab) => {
+    if (!tab.connectionId || !tab.table) return;
+    try {
+      const struct = await SchemaService.GetTableStructure(
+        tab.connectionId,
+        tab.database || 'main',
+        tab.schema || 'main',
+        tab.table
+      );
+      const ddl = struct?.ddl || '';
+      if (ddl) {
+        await navigator.clipboard.writeText(ddl);
+        setCopiedSchemaTabId(tab.id);
+        setTimeout(() => setCopiedSchemaTabId(null), 1500);
+        alertSuccess(`Schema (DDL) for "${tab.table}" copied to clipboard`);
+      } else {
+        alertWarning(`No DDL schema available for "${tab.table}"`);
+      }
+    } catch (err: any) {
+      alertError('Failed to copy table schema: ' + (err?.message || String(err)));
+    }
+  };
 
   const updateOverflowTabs = React.useCallback(() => {
     const bar = tabBarContainerRef.current;
@@ -1694,6 +1719,18 @@ export function App() {
                       title="Edit Table Structure"
                     >
                       <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyCurrentTableSchema(activeTab)}
+                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                      title="Copy Table Schema (DDL)"
+                    >
+                      {copiedSchemaTabId === activeTab.id ? (
+                        <Check className="h-3 w-3 text-emerald-400" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
                     </button>
                     <span className="text-zinc-600 shrink-0">/</span>
                     <span

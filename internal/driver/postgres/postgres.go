@@ -205,7 +205,52 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		}
 	}
 
+	// 4. Generate DDL
+	structure.DDL = generatePostgresDDL(schema, table, structure)
+
 	return structure, nil
+}
+
+func generatePostgresDDL(schema, table string, s *driver.TableStructure) string {
+	var sb strings.Builder
+	prefix := fmt.Sprintf(`"%s"."%s"`, schema, table)
+	if schema == "" || schema == "public" {
+		prefix = fmt.Sprintf(`"%s"`, table)
+	}
+	sb.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", prefix))
+
+	var defs []string
+	for _, c := range s.Columns {
+		def := fmt.Sprintf("  \"%s\" %s", c.Name, c.DataType)
+		if !c.IsNullable {
+			def += " NOT NULL"
+		}
+		if c.DefaultValue != "" {
+			def += " DEFAULT " + c.DefaultValue
+		}
+		defs = append(defs, def)
+	}
+
+	if len(s.PrimaryKeys) > 0 {
+		var pkCols []string
+		for _, pk := range s.PrimaryKeys {
+			pkCols = append(pkCols, fmt.Sprintf(`"%s"`, pk))
+		}
+		defs = append(defs, fmt.Sprintf("  CONSTRAINT \"%s_pkey\" PRIMARY KEY (%s)", table, strings.Join(pkCols, ", ")))
+	}
+
+	for _, fk := range s.ForeignKeys {
+		cName := fk.ConstraintName
+		if cName == "" {
+			cName = fmt.Sprintf("%s_%s_fkey", table, fk.ColumnName)
+		}
+		defs = append(defs, fmt.Sprintf("  CONSTRAINT \"%s\" FOREIGN KEY (\"%s\") REFERENCES \"%s\".\"%s\" (\"%s\")",
+			cName, fk.ColumnName, fk.RefSchema, fk.RefTable, fk.RefColumn))
+	}
+
+	sb.WriteString(strings.Join(defs, ",\n"))
+	sb.WriteString("\n);")
+	return sb.String()
 }
 
 func (p *PostgresDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {

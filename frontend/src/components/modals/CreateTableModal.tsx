@@ -8,6 +8,7 @@ import {
   ArrowUp,
   ArrowDown,
   Code,
+  FileCode,
   Check,
   AlertCircle,
   Copy,
@@ -677,6 +678,228 @@ function generateAlterSql({
   return statements.join('\n');
 }
 
+function generateCreateTableSql({
+  driver,
+  database,
+  targetSchema,
+  tableName,
+  columns,
+  indexes,
+  engine = 'InnoDB',
+  charset = 'utf8mb4',
+  collation = 'utf8mb4_unicode_ci',
+  tableComment = '',
+}: {
+  driver: string;
+  database?: string;
+  targetSchema?: string;
+  tableName: string;
+  columns: ColumnDefinition[];
+  indexes: IndexDefinition[];
+  engine?: string;
+  charset?: string;
+  collation?: string;
+  tableComment?: string;
+}): string {
+  const cleanTable = tableName.trim();
+  if (!cleanTable) {
+    return '-- Enter table name to generate DDL statement';
+  }
+
+  const lines: string[] = [];
+  const pkCols = columns.filter((c) => c.isPrimaryKey && c.name.trim());
+  const validColNames = columns.map((c) => c.name.trim()).filter(Boolean);
+
+  if (driver === 'mysql') {
+    const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
+    columns.forEach((col) => {
+      const cName = col.name.trim();
+      if (!cName) return;
+
+      let colDef = `  \`${cName}\` ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) {
+        colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (col.isNotNull || col.isPrimaryKey) {
+        colDef += ' NOT NULL';
+      } else {
+        colDef += ' NULL';
+      }
+      if (col.isAutoIncrement) {
+        colDef += ' AUTO_INCREMENT';
+      }
+      if (col.defaultValue.trim()) {
+        const val = col.defaultValue.trim();
+        if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
+          colDef += ` DEFAULT ${val}`;
+        } else if (val.startsWith("'") && val.endsWith("'")) {
+          colDef += ` DEFAULT ${val}`;
+        } else {
+          colDef += ` DEFAULT '${val}'`;
+        }
+      }
+      if (col.comment.trim()) {
+        colDef += ` COMMENT '${col.comment.trim().replace(/'/g, "\\'")}'`;
+      }
+      lines.push(colDef);
+    });
+
+    if (pkCols.length > 0) {
+      lines.push(`  PRIMARY KEY (${pkCols.map((c) => `\`${c.name.trim()}\``).join(', ')})`);
+    }
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+      if (validCols.length === 0) return;
+
+      const colParts = validCols
+        .map((c) => {
+          let part = `\`${c.name.trim()}\``;
+          if (c.length && c.length.trim()) part += `(${c.length.trim()})`;
+          if (c.order === 'DESC') part += ' DESC';
+          return part;
+        })
+        .join(', ');
+
+      const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+      const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+
+      let idxKeyword = 'KEY';
+      if (idx.type === 'UNIQUE') idxKeyword = 'UNIQUE KEY';
+      else if (idx.type === 'FULLTEXT') idxKeyword = 'FULLTEXT KEY';
+      else if (idx.type === 'SPATIAL') idxKeyword = 'SPATIAL KEY';
+
+      let idxDef = `  ${idxKeyword} \`${idxName}\` (${colParts})`;
+      if (idx.method && (idx.method === 'BTREE' || idx.method === 'HASH')) {
+        idxDef += ` USING ${idx.method}`;
+      }
+      if (idx.comment && idx.comment.trim()) {
+        idxDef += ` COMMENT '${idx.comment.trim().replace(/'/g, "\\'")}'`;
+      }
+      lines.push(idxDef);
+    });
+
+    let ddl = `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE=${engine} DEFAULT CHARSET=${charset} COLLATE=${collation}`;
+    if (tableComment.trim()) {
+      ddl += ` COMMENT='${tableComment.trim().replace(/'/g, "\\'")}'`;
+    }
+    return ddl + ';';
+  } else if (driver === 'postgres') {
+    const schemaPrefix = targetSchema ? `"${targetSchema}".` : '';
+    columns.forEach((col) => {
+      const cName = col.name.trim();
+      if (!cName) return;
+
+      let colDef = `  "${cName}" ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) {
+        colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (col.isNotNull || col.isPrimaryKey) {
+        colDef += ' NOT NULL';
+      }
+      if (col.defaultValue.trim()) {
+        const val = col.defaultValue.trim();
+        if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
+          colDef += ` DEFAULT ${val}`;
+        } else if (val.startsWith("'") && val.endsWith("'")) {
+          colDef += ` DEFAULT ${val}`;
+        } else {
+          colDef += ` DEFAULT '${val}'`;
+        }
+      }
+      lines.push(colDef);
+    });
+
+    if (pkCols.length > 0) {
+      lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
+    }
+
+    const statements: string[] = [];
+    statements.push(`CREATE TABLE ${schemaPrefix}"${cleanTable}" (\n${lines.join(',\n')}\n);`);
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+      if (validCols.length === 0) return;
+
+      const colParts = validCols
+        .map((c) => {
+          let part = `"${c.name.trim()}"`;
+          if (c.order === 'DESC') part += ' DESC';
+          return part;
+        })
+        .join(', ');
+
+      const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+      const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+      const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+      const methodClause = idx.method && ['BTREE', 'HASH', 'GIN', 'GIST'].includes(idx.method) ? ` USING ${idx.method}` : '';
+
+      statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON ${schemaPrefix}"${cleanTable}"${methodClause} (${colParts});`);
+    });
+
+    return statements.join('\n\n');
+  } else {
+    // SQLite
+    columns.forEach((col) => {
+      const cName = col.name.trim();
+      if (!cName) return;
+
+      let colDef = `  "${cName}" ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) {
+        colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (col.isPrimaryKey && pkCols.length === 1) {
+        colDef += ' PRIMARY KEY';
+        if (col.isAutoIncrement) {
+          colDef += ' AUTOINCREMENT';
+        }
+      } else if (col.isNotNull) {
+        colDef += ' NOT NULL';
+      }
+
+      if (col.defaultValue.trim()) {
+        const val = col.defaultValue.trim();
+        if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
+          colDef += ` DEFAULT ${val}`;
+        } else if (val.startsWith("'") && val.endsWith("'")) {
+          colDef += ` DEFAULT ${val}`;
+        } else {
+          colDef += ` DEFAULT '${val}'`;
+        }
+      }
+      lines.push(colDef);
+    });
+
+    if (pkCols.length > 1) {
+      lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
+    }
+
+    const statements: string[] = [];
+    statements.push(`CREATE TABLE "${cleanTable}" (\n${lines.join(',\n')}\n);`);
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+      if (validCols.length === 0) return;
+
+      const colParts = validCols
+        .map((c) => {
+          let part = `"${c.name.trim()}"`;
+          if (c.order === 'DESC') part += ' DESC';
+          return part;
+        })
+        .join(', ');
+
+      const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+      const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+      const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+
+      statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON "${cleanTable}" (${colParts});`);
+    });
+
+    return statements.join('\n\n');
+  }
+}
+
 export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   isOpen,
   mode = 'create',
@@ -696,10 +919,12 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [collation, setCollation] = useState('utf8mb4_unicode_ci');
   const [columns, setColumns] = useState<ColumnDefinition[]>([]);
   const [indexes, setIndexes] = useState<IndexDefinition[]>([]);
-  const [activeSubTab, setActiveSubTab] = useState<'columns' | 'indexes'>('columns');
+  const [activeSubTab, setActiveSubTab] = useState<'columns' | 'indexes' | 'ddl'>('columns');
   const [showSqlPreview, setShowSqlPreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
+  const [tableDDL, setTableDDL] = useState<string>('');
+  const [copiedDDL, setCopiedDDL] = useState(false);
 
   // States for Edit Mode tracking
   const [originalColumns, setOriginalColumns] = useState<ColumnMeta[]>([]);
@@ -752,6 +977,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
     setShowSqlPreview(false);
     setCopiedSql(false);
+    setTableDDL('');
+    setCopiedDDL(false);
     setActiveSubTab('columns');
 
     if (isEditMode && initialTableName && connection) {
@@ -765,6 +992,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       )
         .then((structure) => {
           if (!structure) return;
+          if (structure.ddl) setTableDDL(structure.ddl);
           if (structure.engine) setEngine(structure.engine);
           if (structure.collation) setCollation(structure.collation);
           const cmt = structure.comment || '';
@@ -1067,206 +1295,18 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       });
     }
 
-    const cleanTable = tableName.trim();
-    if (!cleanTable) {
-      return '-- Enter table name to generate DDL statement';
-    }
-
-    const lines: string[] = [];
-    const pkCols = columns.filter((c) => c.isPrimaryKey && c.name.trim());
-    const validColNames = columns.map((c) => c.name.trim()).filter(Boolean);
-
-    if (driver === 'mysql') {
-      const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
-      columns.forEach((col) => {
-        const cName = col.name.trim();
-        if (!cName) return;
-
-        let colDef = `  \`${cName}\` ${col.dataType.toUpperCase()}`;
-        if (col.lengthOrValues.trim()) {
-          colDef += `(${col.lengthOrValues.trim()})`;
-        }
-        if (col.isNotNull || col.isPrimaryKey) {
-          colDef += ' NOT NULL';
-        } else {
-          colDef += ' NULL';
-        }
-        if (col.isAutoIncrement) {
-          colDef += ' AUTO_INCREMENT';
-        }
-        if (col.defaultValue.trim()) {
-          const val = col.defaultValue.trim();
-          if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
-            colDef += ` DEFAULT ${val}`;
-          } else if (val.startsWith("'") && val.endsWith("'")) {
-            colDef += ` DEFAULT ${val}`;
-          } else {
-            colDef += ` DEFAULT '${val}'`;
-          }
-        }
-        if (col.comment.trim()) {
-          colDef += ` COMMENT '${col.comment.trim().replace(/'/g, "\\'")}'`;
-        }
-        lines.push(colDef);
-      });
-
-      if (pkCols.length > 0) {
-        lines.push(`  PRIMARY KEY (${pkCols.map((c) => `\`${c.name.trim()}\``).join(', ')})`);
-      }
-
-      // Add Indexes to MySQL CREATE TABLE
-      indexes.forEach((idx) => {
-        const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
-        if (validCols.length === 0) return;
-
-        const colParts = validCols
-          .map((c) => {
-            let part = `\`${c.name.trim()}\``;
-            if (c.length && c.length.trim()) part += `(${c.length.trim()})`;
-            if (c.order === 'DESC') part += ' DESC';
-            return part;
-          })
-          .join(', ');
-
-        const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
-        const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
-
-        let idxKeyword = 'KEY';
-        if (idx.type === 'UNIQUE') idxKeyword = 'UNIQUE KEY';
-        else if (idx.type === 'FULLTEXT') idxKeyword = 'FULLTEXT KEY';
-        else if (idx.type === 'SPATIAL') idxKeyword = 'SPATIAL KEY';
-
-        let idxDef = `  ${idxKeyword} \`${idxName}\` (${colParts})`;
-        if (idx.method && (idx.method === 'BTREE' || idx.method === 'HASH')) {
-          idxDef += ` USING ${idx.method}`;
-        }
-        if (idx.comment && idx.comment.trim()) {
-          idxDef += ` COMMENT '${idx.comment.trim().replace(/'/g, "\\'")}'`;
-        }
-        lines.push(idxDef);
-      });
-
-      let ddl = `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE=${engine} DEFAULT CHARSET=${charset} COLLATE=${collation}`;
-      if (tableComment.trim()) {
-        ddl += ` COMMENT='${tableComment.trim().replace(/'/g, "\\'")}'`;
-      }
-      return ddl + ';';
-    } else if (driver === 'postgres') {
-      const schemaPrefix = targetSchema ? `"${targetSchema}".` : '';
-      columns.forEach((col) => {
-        const cName = col.name.trim();
-        if (!cName) return;
-
-        let colDef = `  "${cName}" ${col.dataType.toUpperCase()}`;
-        if (col.lengthOrValues.trim()) {
-          colDef += `(${col.lengthOrValues.trim()})`;
-        }
-        if (col.isNotNull || col.isPrimaryKey) {
-          colDef += ' NOT NULL';
-        }
-        if (col.defaultValue.trim()) {
-          const val = col.defaultValue.trim();
-          if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
-            colDef += ` DEFAULT ${val}`;
-          } else if (val.startsWith("'") && val.endsWith("'")) {
-            colDef += ` DEFAULT ${val}`;
-          } else {
-            colDef += ` DEFAULT '${val}'`;
-          }
-        }
-        lines.push(colDef);
-      });
-
-      if (pkCols.length > 0) {
-        lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
-      }
-
-      const statements: string[] = [];
-      statements.push(`CREATE TABLE ${schemaPrefix}"${cleanTable}" (\n${lines.join(',\n')}\n);`);
-
-      // Add PostgreSQL CREATE INDEX statements
-      indexes.forEach((idx) => {
-        const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
-        if (validCols.length === 0) return;
-
-        const colParts = validCols
-          .map((c) => {
-            let part = `"${c.name.trim()}"`;
-            if (c.order === 'DESC') part += ' DESC';
-            return part;
-          })
-          .join(', ');
-
-        const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
-        const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
-        const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
-        const methodClause = idx.method && ['BTREE', 'HASH', 'GIN', 'GIST'].includes(idx.method) ? ` USING ${idx.method}` : '';
-
-        statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON ${schemaPrefix}"${cleanTable}"${methodClause} (${colParts});`);
-      });
-
-      return statements.join('\n\n');
-    } else {
-      // SQLite
-      columns.forEach((col) => {
-        const cName = col.name.trim();
-        if (!cName) return;
-
-        let colDef = `  "${cName}" ${col.dataType.toUpperCase()}`;
-        if (col.lengthOrValues.trim()) {
-          colDef += `(${col.lengthOrValues.trim()})`;
-        }
-        if (col.isPrimaryKey && pkCols.length === 1) {
-          colDef += ' PRIMARY KEY';
-          if (col.isAutoIncrement) {
-            colDef += ' AUTOINCREMENT';
-          }
-        } else if (col.isNotNull) {
-          colDef += ' NOT NULL';
-        }
-
-        if (col.defaultValue.trim()) {
-          const val = col.defaultValue.trim();
-          if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
-            colDef += ` DEFAULT ${val}`;
-          } else if (val.startsWith("'") && val.endsWith("'")) {
-            colDef += ` DEFAULT ${val}`;
-          } else {
-            colDef += ` DEFAULT '${val}'`;
-          }
-        }
-        lines.push(colDef);
-      });
-
-      if (pkCols.length > 1) {
-        lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
-      }
-
-      const statements: string[] = [];
-      statements.push(`CREATE TABLE "${cleanTable}" (\n${lines.join(',\n')}\n);`);
-
-      // Add SQLite CREATE INDEX statements
-      indexes.forEach((idx) => {
-        const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
-        if (validCols.length === 0) return;
-
-        const colParts = validCols
-          .map((c) => {
-            let part = `"${c.name.trim()}"`;
-            if (c.order === 'DESC') part += ' DESC';
-            return part;
-          })
-          .join(', ');
-
-        const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
-        const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
-        const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
-
-        statements.push(`CREATE ${isUnique}INDEX IF NOT EXISTS "${idxName}" ON "${cleanTable}" (${colParts});`);
-      });
-
-      return statements.join('\n\n');
-    }
+    return generateCreateTableSql({
+      driver,
+      database,
+      targetSchema,
+      tableName,
+      columns,
+      indexes,
+      engine,
+      charset,
+      collation,
+      tableComment,
+    });
   }, [
     tableName,
     columns,
@@ -1285,6 +1325,46 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     originalPrimaryKeys,
     originalTableComment,
   ]);
+
+  // Current or generated DDL for viewing in DDL tab
+  const effectiveDDL = useMemo(() => {
+    if (tableDDL && tableDDL.trim()) {
+      return tableDDL;
+    }
+    return generateCreateTableSql({
+      driver,
+      database,
+      targetSchema,
+      tableName: tableName.trim() || initialTableName,
+      columns,
+      indexes,
+      engine,
+      charset,
+      collation,
+      tableComment,
+    });
+  }, [
+    tableDDL,
+    driver,
+    database,
+    targetSchema,
+    tableName,
+    initialTableName,
+    columns,
+    indexes,
+    engine,
+    charset,
+    collation,
+    tableComment,
+  ]);
+
+  const handleCopyDDL = () => {
+    if (!effectiveDDL) return;
+    navigator.clipboard.writeText(effectiveDDL).catch(() => {});
+    setCopiedDDL(true);
+    setTimeout(() => setCopiedDDL(false), 1500);
+    alertSuccess('Table DDL copied to clipboard');
+  };
 
   const handleCopySql = () => {
     if (!generatedSql) return;
@@ -1700,6 +1780,19 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   {indexes.length}
                 </span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('ddl')}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  activeSubTab === 'ddl'
+                    ? 'bg-blue-600/15 text-blue-400 border border-blue-500/40 shadow-xs'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f212a] border border-transparent'
+                }`}
+              >
+                <FileCode className="h-3.5 w-3.5" />
+                <span>DDL</span>
+              </button>
             </div>
 
             {/* Contextual Action Button */}
@@ -1712,7 +1805,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                 <Plus className="h-3.5 w-3.5" />
                 <span>Add Column</span>
               </button>
-            ) : (
+            ) : activeSubTab === 'indexes' ? (
               <button
                 type="button"
                 onClick={handleAddIndex}
@@ -1720,6 +1813,19 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Add Index</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCopyDDL}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#22242c] hover:bg-[#2b2e3a] text-zinc-200 border border-[#2e313d] text-xs font-medium transition-colors cursor-pointer shadow-xs"
+              >
+                {copiedDDL ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5 text-zinc-400" />
+                )}
+                <span>{copiedDDL ? 'Copied!' : 'Copy DDL'}</span>
               </button>
             )}
           </div>
@@ -2105,6 +2211,52 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   </tbody>
                 </table>
               )}
+            </div>
+          )}
+
+          {/* Tab 3 Content: Table DDL Schema View */}
+          {activeSubTab === 'ddl' && (
+            <div className="flex-1 flex flex-col min-h-0 bg-[#121317] p-5 overflow-hidden">
+              <div className="flex items-center justify-between pb-3 select-none">
+                <div className="flex items-center gap-2">
+                  <FileCode className="h-4 w-4 text-blue-400" />
+                  <span className="text-xs font-semibold text-zinc-200">
+                    Table Schema Definition (CREATE TABLE DDL)
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#20222a] text-zinc-400 border border-[#2b2e3a]">
+                    {driver.toUpperCase()}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyDDL}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#282a36] text-zinc-200 border border-[#2d303f] text-xs font-medium transition-colors cursor-pointer shadow-xs"
+                >
+                  {copiedDDL ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                      <span className="text-emerald-400 font-semibold">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5 text-zinc-400" />
+                      <span>Copy DDL</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-auto rounded-lg border border-[#272932] bg-[#0d0e12] p-4">
+                {isLoadingStructure ? (
+                  <div className="flex h-full items-center justify-center text-xs text-zinc-500 font-mono">
+                    Loading table schema DDL...
+                  </div>
+                ) : (
+                  <pre className="font-mono text-xs text-blue-300 leading-relaxed select-text whitespace-pre-wrap break-all">
+                    {effectiveDDL}
+                  </pre>
+                )}
+              </div>
             </div>
           )}
 
