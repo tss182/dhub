@@ -144,6 +144,99 @@ export function App() {
     schema: '',
   });
 
+  // Left & Right sidebar resizable widths
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('dhub_left_sidebar_w');
+    return saved ? Math.max(180, Math.min(600, Number(saved))) : 256;
+  });
+  const [isDraggingLeftResizer, setIsDraggingLeftResizer] = useState(false);
+
+  const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('dhub_right_sidebar_w');
+    return saved ? Math.max(180, Math.min(600, Number(saved))) : 256;
+  });
+  const [isDraggingRightResizer, setIsDraggingRightResizer] = useState(false);
+
+  // Hovered workbench tab tooltip state
+  const [hoveredTab, setHoveredTab] = useState<{
+    tab: WorkbenchTab;
+    connName?: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const tabHoverTimeoutRef = React.useRef<any>(null);
+
+  const handleTabMouseEnter = (e: React.MouseEvent, tab: WorkbenchTab) => {
+    if (tabHoverTimeoutRef.current) clearTimeout(tabHoverTimeoutRef.current);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const tooltipWidth = 260;
+    const x = Math.min(Math.max(8, rect.left), window.innerWidth - tooltipWidth - 16);
+    const y = rect.bottom + 6;
+    const conn = connections.find((c) => c.id === tab.connectionId);
+
+    tabHoverTimeoutRef.current = setTimeout(() => {
+      setHoveredTab({
+        tab,
+        connName: conn?.name,
+        x,
+        y,
+      });
+    }, 150);
+  };
+
+  const handleTabMouseLeave = () => {
+    if (tabHoverTimeoutRef.current) clearTimeout(tabHoverTimeoutRef.current);
+    setHoveredTab(null);
+  };
+
+  const handleLeftResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingLeftResizer(true);
+    const startX = e.clientX;
+    const startWidth = leftSidebarWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const maxW = Math.max(220, Math.min(650, window.innerWidth - 360));
+      const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
+      setLeftSidebarWidth(newWidth);
+      localStorage.setItem('dhub_left_sidebar_w', String(newWidth));
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingLeftResizer(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleRightResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingRightResizer(true);
+    const startX = e.clientX;
+    const startWidth = rightSidebarWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = startX - moveEvent.clientX;
+      const maxW = Math.max(220, Math.min(650, window.innerWidth - 360));
+      const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
+      setRightSidebarWidth(newWidth);
+      localStorage.setItem('dhub_right_sidebar_w', String(newWidth));
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingRightResizer(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
   // Bottom panel resizable height
   const [bottomPanelHeight, setBottomPanelHeight] = useState<number>(() => {
     const saved = localStorage.getItem('dhub_bottom_panel_h');
@@ -938,8 +1031,27 @@ export function App() {
       {/* Main Workspace Body */}
       <div className="flex flex-1 min-h-0">
         {/* Left Sidebar: Database Explorer */}
-        <div className="w-64 min-w-48 max-w-80 h-full shrink-0">
+        <div
+          style={{ width: `${leftSidebarWidth}px` }}
+          className="h-full shrink-0 overflow-hidden"
+        >
           <DatabaseExplorer />
+        </div>
+
+        {/* Left Sidebar Resizer Handle */}
+        <div
+          onMouseDown={handleLeftResizerMouseDown}
+          onDoubleClick={() => {
+            const defaultW = 256;
+            setLeftSidebarWidth(defaultW);
+            localStorage.setItem('dhub_left_sidebar_w', String(defaultW));
+          }}
+          className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-r border-[#272932] ${
+            isDraggingLeftResizer ? 'bg-blue-600' : ''
+          }`}
+          title="Drag to resize Database Explorer (Double-click to reset)"
+        >
+          <div className="w-0.5 h-8 rounded-full bg-zinc-700 group-hover:bg-blue-200 transition-colors" />
         </div>
 
         {/* Center Workbench: Tabs + Editor/Grid + Services Bottom Panel */}
@@ -951,13 +1063,22 @@ export function App() {
                 e.currentTarget.scrollLeft += (e.deltaY !== 0 ? e.deltaY : -e.deltaX);
               }
             }}
+            onScroll={handleTabMouseLeave}
             className="flex h-9 items-center border-b border-[#272932] bg-[#121317] px-2 gap-1 overflow-x-auto"
           >
             {tabs.map((tab) => (
               <div
                 key={tab.id}
-                onClick={() => setActiveTabId(tab.id)}
-                onContextMenu={(e) => handleTabContextMenu(e, tab)}
+                onClick={() => {
+                  handleTabMouseLeave();
+                  setActiveTabId(tab.id);
+                }}
+                onContextMenu={(e) => {
+                  handleTabMouseLeave();
+                  handleTabContextMenu(e, tab);
+                }}
+                onMouseEnter={(e) => handleTabMouseEnter(e, tab)}
+                onMouseLeave={handleTabMouseLeave}
                 className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t text-xs cursor-pointer border-t-2 transition-colors ${
                   activeTabId === tab.id
                     ? 'bg-[#191a20] border-zinc-400 text-white font-medium'
@@ -980,6 +1101,7 @@ export function App() {
                   className="h-3 w-3 text-zinc-500 hover:text-white ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
                   onClick={(e) => {
                     e.stopPropagation();
+                    handleTabMouseLeave();
                     closeTab(tab.id);
                   }}
                 />
@@ -1037,9 +1159,14 @@ export function App() {
               <div className="flex-1 min-h-0 flex flex-col">
                 {/* Table Tab Bar with Table Name, Database, and Refresh Button */}
                 <div className="flex h-9 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
-                  <div className="flex items-center gap-2">
-                    <Table className="h-3.5 w-3.5 text-emerald-400" />
-                    <span className="font-semibold text-xs text-white">{activeTab.table}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    <span
+                      className="font-semibold text-xs text-white truncate max-w-[320px]"
+                      title={activeTab.table}
+                    >
+                      {activeTab.table}
+                    </span>
                     <button
                       type="button"
                       onClick={() => {
@@ -1051,15 +1178,20 @@ export function App() {
                           activeTab.table
                         );
                       }}
-                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
                       title="Edit Table Structure"
                     >
                       <Pencil className="h-3 w-3" />
                     </button>
-                    <span className="text-zinc-600">/</span>
-                    <span className="font-mono text-[11px] text-zinc-400">{activeTab.database || 'main'}</span>
-                    <span className="text-zinc-600">•</span>
-                    <span className="text-[11px] text-zinc-500 font-mono">
+                    <span className="text-zinc-600 shrink-0">/</span>
+                    <span
+                      className="font-mono text-[11px] text-zinc-400 truncate max-w-[200px]"
+                      title={activeTab.database || 'main'}
+                    >
+                      {activeTab.database || 'main'}
+                    </span>
+                    <span className="text-zinc-600 shrink-0">•</span>
+                    <span className="text-[11px] text-zinc-500 font-mono shrink-0">
                       {tableDataByTab[activeTab.id]?.rows?.length ?? 0} rows
                     </span>
                   </div>
@@ -1340,11 +1472,68 @@ export function App() {
 
         {/* Right Sidebar: Query Consoles List */}
         {isRightPanelOpen && (
-          <div className="w-64 min-w-56 max-w-80 h-full border-l border-[#272932] shrink-0">
-            <ConsoleList onRename={handleOpenRename} />
-          </div>
+          <>
+            {/* Right Sidebar Resizer Handle */}
+            <div
+              onMouseDown={handleRightResizerMouseDown}
+              onDoubleClick={() => {
+                const defaultW = 256;
+                setRightSidebarWidth(defaultW);
+                localStorage.setItem('dhub_right_sidebar_w', String(defaultW));
+              }}
+              className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-l border-[#272932] ${
+                isDraggingRightResizer ? 'bg-blue-600' : ''
+              }`}
+              title="Drag to resize Consoles Panel (Double-click to reset)"
+            >
+              <div className="w-0.5 h-8 rounded-full bg-zinc-700 group-hover:bg-blue-200 transition-colors" />
+            </div>
+
+            <div
+              style={{ width: `${rightSidebarWidth}px` }}
+              className="h-full shrink-0 overflow-hidden"
+            >
+              <ConsoleList onRename={handleOpenRename} />
+            </div>
+          </>
         )}
       </div>
+
+      {/* Hovered Workbench Tab Tooltip Popover */}
+      {hoveredTab && !tabContextMenu.isOpen && (
+        <div
+          className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl px-3 py-2 text-xs font-sans min-w-[200px] max-w-[360px] animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: hoveredTab.y, left: hoveredTab.x }}
+        >
+          <div className="flex items-start gap-2">
+            {hoveredTab.tab.type === 'worksheet' ? (
+              <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
+            ) : (
+              <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-zinc-100 break-all leading-snug">
+                {hoveredTab.tab.title}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px] text-zinc-400 font-mono">
+                <span className="px-1.5 py-0.2 rounded bg-[#22242c] border border-[#2e313d] uppercase text-zinc-300">
+                  {hoveredTab.tab.type === 'worksheet' ? 'SQL Console' : 'Table'}
+                </span>
+                {hoveredTab.connName && (
+                  <span className="text-zinc-400 truncate max-w-[140px]">
+                    {hoveredTab.connName}
+                  </span>
+                )}
+                {hoveredTab.tab.database && (
+                  <span className="text-amber-300/90 truncate max-w-[140px]">
+                    /{hoveredTab.tab.database}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Tab Context Menu */}
       {tabContextMenu.isOpen && tabContextMenu.tab && (
@@ -1543,9 +1732,12 @@ export function App() {
         </div>
       )}
 
-      {/* Resizing Backdrop Overlay */}
+      {/* Resizing Backdrop Overlays */}
       {isDraggingBottomResizer && (
         <div className="fixed inset-0 z-50 cursor-row-resize select-none" />
+      )}
+      {(isDraggingLeftResizer || isDraggingRightResizer) && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none" />
       )}
 
       {/* Modals */}
