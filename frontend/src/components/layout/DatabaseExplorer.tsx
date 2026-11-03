@@ -31,7 +31,7 @@ import {
   resolveConnectionEnv,
   getConnectionEnvInfo,
 } from '../../types/domain';
-import { alertSuccess, alertError, alertInfo, alertWarning } from '../../stores/useAlertStore';
+import { alertSuccess, alertError, alertInfo, alertWarning, confirmDialog } from '../../stores/useAlertStore';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -224,14 +224,20 @@ export const DatabaseExplorer: React.FC = () => {
     });
   };
 
-  const handleDeleteFolder = (folder: ConnectionFolder, e?: React.MouseEvent) => {
+  const handleDeleteFolder = async (folder: ConnectionFolder, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const count = connections.filter((c) => connectionFolders[c.id] === folder.id).length;
     const msg =
       count > 0
-        ? `Delete folder "${folder.name}"?\n\n(${count} connection(s) inside will not be deleted and will be moved to Ungrouped.)`
+        ? `Delete folder "${folder.name}"? (${count} connection(s) inside will not be deleted and will be moved to Ungrouped.)`
         : `Delete folder "${folder.name}"?`;
-    if (!confirm(msg)) return;
+    const okFolder = await confirmDialog({
+      title: 'Delete Folder',
+      message: msg,
+      confirmLabel: 'Delete',
+      isDanger: true,
+    });
+    if (!okFolder) return;
     deleteFolder(folder.id);
   };
 
@@ -563,7 +569,13 @@ export const DatabaseExplorer: React.FC = () => {
 
   const handleDeleteConnection = async (connId: string, name: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (!confirm(`Are you sure you want to delete connection "${name}"?`)) return;
+    const okDel = await confirmDialog({
+      title: 'Delete Connection',
+      message: `Are you sure you want to delete connection "${name}"?`,
+      confirmLabel: 'Delete',
+      isDanger: true,
+    });
+    if (!okDel) return;
     try {
       await ConnectionService.DeleteConnection(connId);
       closeTabsMatching((t) => t.connectionId === connId);
@@ -719,13 +731,13 @@ export const DatabaseExplorer: React.FC = () => {
       return;
     }
 
-    if (
-      !confirm(
-        `Are you sure you want to DROP database "${dbName}"?\n\nWARNING: This will permanently delete the database and all its tables and data. This action cannot be undone.`
-      )
-    ) {
-      return;
-    }
+    const okDrop = await confirmDialog({
+      title: 'Drop Database',
+      message: `Are you sure you want to DROP database "${dbName}"? This will permanently delete the database and all its tables and data. This action cannot be undone.`,
+      confirmLabel: 'Drop Database',
+      isDanger: true,
+    });
+    if (!okDrop) return;
 
     const sql =
       conn.driver === 'mysql'
@@ -800,13 +812,13 @@ export const DatabaseExplorer: React.FC = () => {
     const isView = obj.type === 'view';
     const keyword = isView ? 'VIEW' : 'TABLE';
 
-    if (
-      !confirm(
-        `Are you sure you want to DROP ${keyword.toLowerCase()} "${obj.name}"?\n\nWARNING: All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`
-      )
-    ) {
-      return;
-    }
+    const ok = await confirmDialog({
+      title: `Drop ${isView ? 'View' : 'Table'}`,
+      message: `Are you sure you want to DROP ${keyword.toLowerCase()} "${obj.name}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
+      confirmLabel: `Drop ${isView ? 'View' : 'Table'}`,
+      isDanger: true,
+    });
+    if (!ok) return;
 
     let sql = '';
     if (conn.driver === 'mysql') {

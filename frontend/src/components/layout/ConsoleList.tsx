@@ -18,7 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
-import { alertWarning } from '../../stores/useAlertStore';
+import { alertWarning, confirmDialog } from '../../stores/useAlertStore';
 
 interface ConsoleListProps {
   onRename: (id: string, currentTitle: string) => void;
@@ -180,9 +180,15 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
     }
   };
 
-  const handleDelete = (id: string, title: string, e?: React.MouseEvent) => {
+  const handleDelete = async (id: string, title: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (!confirm(`Are you sure you want to delete console "${title}"?`)) return;
+    const ok = await confirmDialog({
+      title: 'Delete Console',
+      message: `Are you sure you want to delete console "${title}"?`,
+      confirmLabel: 'Delete',
+      isDanger: true,
+    });
+    if (!ok) return;
     deleteConsole(id);
   };
 
