@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useWorkbenchStore } from './stores/useWorkbenchStore';
 import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
-import { QueryService, SchemaService, ConnectionService } from '../bindings/dhub/internal/services';
+import { QueryService, SchemaService, ConnectionService, WorkspaceService } from '../bindings/dhub/internal/services';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
 import { ConsoleList } from './components/layout/ConsoleList';
 import { SqlWorksheet } from './components/editor/SqlWorksheet';
@@ -288,17 +288,20 @@ export function App() {
     setIsDraggingLeftResizer(true);
     const startX = e.clientX;
     const startWidth = leftSidebarWidth;
+    let latestWidth = startWidth;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaX = moveEvent.clientX - startX;
       const maxW = Math.max(220, Math.min(650, window.innerWidth - 360));
       const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
+      latestWidth = newWidth;
       setLeftSidebarWidth(newWidth);
       localStorage.setItem('dhub_left_sidebar_w', String(newWidth));
     };
 
     const handleMouseUp = () => {
       setIsDraggingLeftResizer(false);
+      WorkspaceService.SaveSetting('dhub_left_sidebar_w', String(latestWidth)).catch(() => {});
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -312,17 +315,20 @@ export function App() {
     setIsDraggingRightResizer(true);
     const startX = e.clientX;
     const startWidth = rightSidebarWidth;
+    let latestWidth = startWidth;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaX = startX - moveEvent.clientX;
       const maxW = Math.max(220, Math.min(650, window.innerWidth - 360));
       const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
+      latestWidth = newWidth;
       setRightSidebarWidth(newWidth);
       localStorage.setItem('dhub_right_sidebar_w', String(newWidth));
     };
 
     const handleMouseUp = () => {
       setIsDraggingRightResizer(false);
+      WorkspaceService.SaveSetting('dhub_right_sidebar_w', String(latestWidth)).catch(() => {});
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -338,22 +344,46 @@ export function App() {
   });
   const [isDraggingBottomResizer, setIsDraggingBottomResizer] = useState(false);
 
+  // Load persisted panel dimensions from SQLite on mount
+  useEffect(() => {
+    WorkspaceService.GetSettings()
+      .then((settings) => {
+        if (!settings) return;
+        if (settings['dhub_left_sidebar_w']) {
+          const w = Math.max(180, Math.min(600, Number(settings['dhub_left_sidebar_w'])));
+          if (!Number.isNaN(w)) setLeftSidebarWidth(w);
+        }
+        if (settings['dhub_right_sidebar_w']) {
+          const w = Math.max(180, Math.min(600, Number(settings['dhub_right_sidebar_w'])));
+          if (!Number.isNaN(w)) setRightSidebarWidth(w);
+        }
+        if (settings['dhub_bottom_panel_h']) {
+          const h = Math.max(120, Math.min(800, Number(settings['dhub_bottom_panel_h'])));
+          if (!Number.isNaN(h)) setBottomPanelHeight(h);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const handleBottomResizerMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsDraggingBottomResizer(true);
     const startY = e.clientY;
     const startHeight = bottomPanelHeight;
+    let latestHeight = startHeight;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaY = startY - moveEvent.clientY;
       const maxH = Math.max(180, window.innerHeight - 160);
       const newHeight = Math.max(100, Math.min(maxH, startHeight + deltaY));
+      latestHeight = newHeight;
       setBottomPanelHeight(newHeight);
       localStorage.setItem('dhub_bottom_panel_h', String(newHeight));
     };
 
     const handleMouseUp = () => {
       setIsDraggingBottomResizer(false);
+      WorkspaceService.SaveSetting('dhub_bottom_panel_h', String(latestHeight)).catch(() => {});
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -1153,6 +1183,7 @@ export function App() {
             const defaultW = 256;
             setLeftSidebarWidth(defaultW);
             localStorage.setItem('dhub_left_sidebar_w', String(defaultW));
+            WorkspaceService.SaveSetting('dhub_left_sidebar_w', String(defaultW)).catch(() => {});
           }}
           className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-r border-[#272932] ${
             isDraggingLeftResizer ? 'bg-blue-600' : ''
@@ -1658,6 +1689,7 @@ export function App() {
                       const defaultH = 280;
                       setBottomPanelHeight(defaultH);
                       localStorage.setItem('dhub_bottom_panel_h', String(defaultH));
+                      WorkspaceService.SaveSetting('dhub_bottom_panel_h', String(defaultH)).catch(() => {});
                     }}
                     className={`group h-2 w-full bg-[#1e2027] hover:bg-blue-600/90 cursor-row-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-t border-b border-[#272932] ${
                       isDraggingBottomResizer ? 'bg-blue-600' : ''
@@ -1842,6 +1874,7 @@ export function App() {
                 const defaultW = 256;
                 setRightSidebarWidth(defaultW);
                 localStorage.setItem('dhub_right_sidebar_w', String(defaultW));
+                WorkspaceService.SaveSetting('dhub_right_sidebar_w', String(defaultW)).catch(() => {});
               }}
               className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-l border-[#272932] ${
                 isDraggingRightResizer ? 'bg-blue-600' : ''

@@ -69,17 +69,28 @@ function getSavedTabs(): { tabs: WorkbenchTab[]; activeTabId: string | null } {
   }
 }
 
+let tabsSqliteTimeout: ReturnType<typeof setTimeout> | null = null;
+
 function saveTabsToStorage(tabs: WorkbenchTab[], activeTabId: string | null) {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
-    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(tabs));
+    const serializedTabs = JSON.stringify(tabs);
+    localStorage.setItem(TAB_STORAGE_KEY, serializedTabs);
     if (activeTabId) {
       localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
     } else {
       localStorage.removeItem(ACTIVE_TAB_STORAGE_KEY);
     }
+
+    if (tabsSqliteTimeout) {
+      clearTimeout(tabsSqliteTimeout);
+    }
+    tabsSqliteTimeout = setTimeout(() => {
+      WorkspaceService.SaveSetting(TAB_STORAGE_KEY, serializedTabs).catch(() => {});
+      WorkspaceService.SaveSetting(ACTIVE_TAB_STORAGE_KEY, activeTabId || '').catch(() => {});
+    }, 350);
   } catch (e) {
-    console.warn('Failed to persist tabs to localStorage:', e);
+    console.warn('Failed to persist tabs:', e);
   }
 }
 
@@ -541,9 +552,30 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set({ isConnectionDialogOpen, editingConnectionId }),
 }));
 
-// Automatically persist open tabs and active tab to localStorage on any state changes
+// Automatically persist open tabs and active tab to SQLite & localStorage on any state changes
 if (typeof window !== 'undefined') {
   useWorkbenchStore.subscribe((state) => {
     saveTabsToStorage(state.tabs, state.activeTabId);
   });
+
+  WorkspaceService.GetSettings()
+    .then((settings) => {
+      if (!settings) return;
+      const currentTabs = useWorkbenchStore.getState().tabs;
+      if (currentTabs.length === 0 && settings[TAB_STORAGE_KEY]) {
+        try {
+          const parsed = JSON.parse(settings[TAB_STORAGE_KEY]);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const savedActiveId = settings[ACTIVE_TAB_STORAGE_KEY] || null;
+            const activeId = parsed.some((t: any) => t && t.id === savedActiveId)
+              ? savedActiveId
+              : parsed[0]?.id || null;
+            useWorkbenchStore.setState({ tabs: parsed, activeTabId: activeId });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    })
+    .catch(() => {});
 }

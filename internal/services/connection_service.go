@@ -28,6 +28,30 @@ func (s *ConnectionService) ListConnections() ([]store.ConnectionConfig, error) 
 	return s.store.ListConnections(context.Background())
 }
 
+func (s *ConnectionService) ListFolders() ([]store.ConnectionFolder, error) {
+	return s.store.ListFolders(context.Background())
+}
+
+func (s *ConnectionService) SaveFolder(folder store.ConnectionFolder) (string, error) {
+	return s.store.SaveFolder(context.Background(), folder)
+}
+
+func (s *ConnectionService) DeleteFolder(id string) error {
+	return s.store.DeleteFolder(context.Background(), id)
+}
+
+func (s *ConnectionService) MoveConnectionToFolder(connectionID string, folderID *string) error {
+	return s.store.MoveConnectionToFolder(context.Background(), connectionID, folderID)
+}
+
+func (s *ConnectionService) UpdateConnectionsLayout(items []store.ConnectionLayoutUpdate) error {
+	return s.store.UpdateConnectionsLayout(context.Background(), items)
+}
+
+func (s *ConnectionService) UpdateFoldersOrder(folderIDs []string) error {
+	return s.store.UpdateFoldersOrder(context.Background(), folderIDs)
+}
+
 func (s *ConnectionService) GetConnection(id string) (*store.ConnectionConfig, error) {
 	return s.store.GetConnection(context.Background(), id)
 }

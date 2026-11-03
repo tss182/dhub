@@ -50,6 +50,9 @@ export const ConnectionDialog: React.FC = () => {
           setDatabaseName(conn.databaseName || '');
           setFilePath(conn.filePath || '');
           setColorTag(conn.colorTag || '#3b82f6');
+          if (conn.folderId) {
+            setFolderId(conn.folderId);
+          }
         }
       }).catch((e) => {
         console.error('Failed to get connection for editing:', e);
@@ -139,8 +142,14 @@ export const ConnectionDialog: React.FC = () => {
   const handleSave = async () => {
     setIsLoading(true);
     try {
+      const existing = editingConnectionId
+        ? connections.find((c) => c.id === editingConnectionId)
+        : null;
+      const sortOrder = existing?.sortOrder ?? connections.length;
+
       const id = await ConnectionService.SaveConnection({
         id: editingConnectionId || '',
+        folderId: folderId || null,
         name: name || `${driver.toUpperCase()} Connection`,
         driver,
         colorTag,
@@ -164,7 +173,7 @@ export const ConnectionDialog: React.FC = () => {
         sshKeyPath: '',
         sshPassword: '',
         optionsJson: '{}',
-        sortOrder: 0,
+        sortOrder,
       } as any);
 
       const updated = await ConnectionService.ListConnections();

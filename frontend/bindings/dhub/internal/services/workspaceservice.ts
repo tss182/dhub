@@ -17,12 +17,20 @@ export function GetQueryHistory(connectionID: string, limit: number): $Cancellab
     return $Call.ByID(659553081, connectionID, limit);
 }
 
+export function GetSettings(): $CancellablePromise<{ [_ in string]?: string } | null> {
+    return $Call.ByID(522312764);
+}
+
 export function GetWorksheet(id: string): $CancellablePromise<store$0.Worksheet | null> {
     return $Call.ByID(3848255231, id);
 }
 
 export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[] | null> {
     return $Call.ByID(3290411218, connectionID);
+}
+
+export function SaveSetting(key: string, value: string): $CancellablePromise<void> {
+    return $Call.ByID(3044459230, key, value);
 }
 
 export function SaveWorksheet(ws: store$0.Worksheet): $CancellablePromise<string> {

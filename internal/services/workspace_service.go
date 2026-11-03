@@ -47,3 +47,11 @@ func (w *WorkspaceService) GetQueryHistory(connectionID string, limit int) ([]st
 	return w.store.GetRecentHistory(connectionID, limit)
 }
 
+func (w *WorkspaceService) GetSettings() (map[string]string, error) {
+	return w.store.GetSettings()
+}
+
+func (w *WorkspaceService) SaveSetting(key string, value string) error {
+	return w.store.SaveSetting(key, value)
+}
+

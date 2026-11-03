@@ -1,70 +1,20 @@
 import { create } from 'zustand';
 import { ConnectionConfig, ConnectionFolder, ObjectSummary } from '../types/domain';
+import { ConnectionService } from '../../bindings/dhub/internal/services';
 
-const FOLDERS_STORAGE_KEY = 'dhub_connection_folders_v1';
-const CONN_FOLDER_MAP_KEY = 'dhub_connection_folder_map_v1';
-const CONN_ORDER_KEY = 'dhub_connection_order_v1';
-
-function loadFoldersFromStorage(): ConnectionFolder[] {
-  if (typeof window === 'undefined' || !window.localStorage) return [];
-  try {
-    const raw = localStorage.getItem(FOLDERS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function loadConnFolderMap(): Record<string, string | null> {
-  if (typeof window === 'undefined' || !window.localStorage) return {};
-  try {
-    const raw = localStorage.getItem(CONN_FOLDER_MAP_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function loadConnOrder(): string[] {
-  if (typeof window === 'undefined' || !window.localStorage) return [];
-  try {
-    const raw = localStorage.getItem(CONN_ORDER_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveFolderState(
-  folders: ConnectionFolder[],
-  connectionFolders: Record<string, string | null>,
-  connectionOrder: string[]
-) {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    localStorage.setItem(FOLDERS_STORAGE_KEY, JSON.stringify(folders));
-    localStorage.setItem(CONN_FOLDER_MAP_KEY, JSON.stringify(connectionFolders));
-    localStorage.setItem(CONN_ORDER_KEY, JSON.stringify(connectionOrder));
-  } catch (e) {
-    console.warn('Failed to persist connection folders/order:', e);
-  }
-}
+const LEGACY_FOLDERS_KEY = 'dhub_connection_folders_v1';
+const LEGACY_CONN_FOLDER_MAP_KEY = 'dhub_connection_folder_map_v1';
+const LEGACY_CONN_ORDER_KEY = 'dhub_connection_order_v1';
 
 function sortConnectionsList(conns: ConnectionConfig[], order: string[]): ConnectionConfig[] {
   if (!order || order.length === 0) return conns;
   const orderMap = new Map<string, number>();
   order.forEach((id, idx) => orderMap.set(id, idx));
   return [...conns].sort((a, b) => {
-    const idxA = orderMap.has(a.id) ? orderMap.get(a.id)! : 999999;
-    const idxB = orderMap.has(b.id) ? orderMap.get(b.id)! : 999999;
+    const idxA = orderMap.has(a.id) ? orderMap.get(a.id)! : (a.sortOrder ?? 999999);
+    const idxB = orderMap.has(b.id) ? orderMap.get(b.id)! : (b.sortOrder ?? 999999);
     if (idxA !== idxB) return idxA - idxB;
-    return 0;
+    return (a.name || '').localeCompare(b.name || '');
   });
 }
 
@@ -84,6 +34,8 @@ interface ConnectionState {
   selectedTable: string | null;
 
   setConnections: (conns: ConnectionConfig[]) => void;
+  setFolders: (folders: ConnectionFolder[]) => void;
+  loadConnectionsAndFolders: () => Promise<ConnectionConfig[]>;
   setActiveConnection: (id: string, database?: string, schema?: string) => void;
   setTreeDatabases: (connId: string, databases: string[]) => void;
   removeTreeDatabase: (connId: string, database: string) => void;
@@ -94,7 +46,7 @@ interface ConnectionState {
   setSelectedTable: (table: string | null) => void;
   setLoading: (loading: boolean) => void;
 
-  // Folder & Ordering actions
+  // Folder & Ordering actions (persisted to SQLite)
   setPendingFolderIdForNewConn: (folderId: string | null) => void;
   createFolder: (name: string, color?: string) => string;
   renameFolder: (folderId: string, name: string, color?: string) => void;
@@ -113,44 +65,113 @@ interface ConnectionState {
   ) => void;
 }
 
-const initialFolders = loadFoldersFromStorage();
-const initialConnFolderMap = loadConnFolderMap();
-const initialConnOrder = loadConnOrder();
-const initialExpandedFolders: Record<string, boolean> = {};
-initialFolders.forEach((f) => {
-  initialExpandedFolders[`folder:${f.id}`] = true;
-});
-
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connections: [],
-  folders: initialFolders,
-  connectionFolders: initialConnFolderMap,
-  connectionOrder: initialConnOrder,
+  folders: [],
+  connectionFolders: {},
+  connectionOrder: [],
   pendingFolderIdForNewConn: null,
   activeConnectionId: null,
   activeDatabase: '',
   activeSchema: '',
   treeDatabases: {},
   treeObjects: {},
-  expandedNodes: initialExpandedFolders,
+  expandedNodes: {},
   isLoading: false,
   selectedTable: null,
 
-  setConnections: (rawConns) =>
+  setFolders: (folders) =>
     set((state) => {
-      const existingOrder = state.connectionOrder;
-      const newIds = rawConns.map((c) => c.id);
-      const mergedOrder = [
-        ...existingOrder.filter((id) => newIds.includes(id)),
-        ...newIds.filter((id) => !existingOrder.includes(id)),
-      ];
-      const sorted = sortConnectionsList(rawConns, mergedOrder);
-      saveFolderState(state.folders, state.connectionFolders, mergedOrder);
+      const nextExpanded = { ...state.expandedNodes };
+      folders.forEach((f) => {
+        if (nextExpanded[`folder:${f.id}`] === undefined) {
+          nextExpanded[`folder:${f.id}`] = true;
+        }
+      });
       return {
-        connections: sorted,
-        connectionOrder: mergedOrder,
+        folders,
+        expandedNodes: nextExpanded,
       };
     }),
+
+  setConnections: (rawConns) =>
+    set((state) => {
+      const list = rawConns || [];
+      const nextMap: Record<string, string | null> = {};
+      list.forEach((c) => {
+        if (c.folderId) {
+          nextMap[c.id] = c.folderId;
+        }
+      });
+      const order = list.map((c) => c.id);
+      return {
+        connections: list,
+        connectionFolders: nextMap,
+        connectionOrder: order,
+      };
+    }),
+
+  loadConnectionsAndFolders: async () => {
+    try {
+      let dbFolders = (await ConnectionService.ListFolders()) || [];
+      let dbConns = ((await ConnectionService.ListConnections()) || []) as unknown as ConnectionConfig[];
+
+      // One-time migration if legacy localStorage folders exist and SQLite has none yet
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const legacyFoldersRaw = localStorage.getItem(LEGACY_FOLDERS_KEY);
+        if (legacyFoldersRaw && dbFolders.length === 0) {
+          try {
+            const legacyFolders: ConnectionFolder[] = JSON.parse(legacyFoldersRaw) || [];
+            const legacyMap: Record<string, string | null> = JSON.parse(
+              localStorage.getItem(LEGACY_CONN_FOLDER_MAP_KEY) || '{}'
+            );
+            const legacyOrder: string[] = JSON.parse(
+              localStorage.getItem(LEGACY_CONN_ORDER_KEY) || '[]'
+            );
+
+            for (let i = 0; i < legacyFolders.length; i++) {
+              const f = legacyFolders[i];
+              await ConnectionService.SaveFolder({
+                id: f.id,
+                name: f.name,
+                color: f.color || '#3b82f6',
+                parentId: null,
+                sortOrder: i,
+              });
+            }
+
+            if (dbConns.length > 0) {
+              const orderedConns = sortConnectionsList(dbConns, legacyOrder);
+              await ConnectionService.UpdateConnectionsLayout(
+                orderedConns.map((c, idx) => ({
+                  id: c.id,
+                  folderId: legacyMap[c.id] || c.folderId || null,
+                  sortOrder: idx,
+                }))
+              );
+            }
+
+            localStorage.removeItem(LEGACY_FOLDERS_KEY);
+            localStorage.removeItem(LEGACY_CONN_FOLDER_MAP_KEY);
+            localStorage.removeItem(LEGACY_CONN_ORDER_KEY);
+
+            dbFolders = (await ConnectionService.ListFolders()) || [];
+            dbConns = ((await ConnectionService.ListConnections()) || []) as unknown as ConnectionConfig[];
+          } catch (e) {
+            console.warn('Legacy folder migration skipped:', e);
+          }
+        }
+      }
+
+      get().setFolders(dbFolders as ConnectionFolder[]);
+      get().setConnections(dbConns);
+      return dbConns;
+    } catch (e) {
+      console.error('Failed to load connections and folders from SQLite:', e);
+      return [];
+    }
+  },
+
   setActiveConnection: (id, database = '', schema = '') =>
     set({
       activeConnectionId: id,
@@ -201,30 +222,54 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   createFolder: (name, color = '#3b82f6') => {
     const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const cleanName = name.trim() || 'New Folder';
-    const newFolder: ConnectionFolder = { id, name: cleanName, color };
-    set((state) => {
-      const nextFolders = [...state.folders, newFolder];
-      saveFolderState(nextFolders, state.connectionFolders, state.connectionOrder);
-      return {
-        folders: nextFolders,
-        expandedNodes: {
-          ...state.expandedNodes,
-          [`folder:${id}`]: true,
-        },
-      };
+    const currentFolders = get().folders;
+    const sortOrder = currentFolders.length;
+    const newFolder: ConnectionFolder = { id, name: cleanName, color, parentId: null, sortOrder };
+
+    set((state) => ({
+      folders: [...state.folders, newFolder],
+      expandedNodes: {
+        ...state.expandedNodes,
+        [`folder:${id}`]: true,
+      },
+    }));
+
+    ConnectionService.SaveFolder({
+      id,
+      name: cleanName,
+      color,
+      parentId: null,
+      sortOrder,
+    }).catch((err) => {
+      console.error('Failed to save folder to SQLite:', err);
     });
+
     return id;
   },
 
   renameFolder: (folderId, name, color) => {
     const cleanName = name.trim();
     if (!cleanName) return;
-    set((state) => {
-      const nextFolders = state.folders.map((f) =>
-        f.id === folderId ? { ...f, name: cleanName, color: color ?? f.color } : f
-      );
-      saveFolderState(nextFolders, state.connectionFolders, state.connectionOrder);
-      return { folders: nextFolders };
+
+    const existingIdx = get().folders.findIndex((f) => f.id === folderId);
+    const existing = existingIdx !== -1 ? get().folders[existingIdx] : null;
+    const nextColor = color ?? existing?.color ?? '#3b82f6';
+    const sortOrder = existing?.sortOrder ?? (existingIdx !== -1 ? existingIdx : 0);
+
+    set((state) => ({
+      folders: state.folders.map((f) =>
+        f.id === folderId ? { ...f, name: cleanName, color: nextColor } : f
+      ),
+    }));
+
+    ConnectionService.SaveFolder({
+      id: folderId,
+      name: cleanName,
+      color: nextColor,
+      parentId: existing?.parentId || null,
+      sortOrder,
+    }).catch((err) => {
+      console.error('Failed to rename folder in SQLite:', err);
     });
   },
 
@@ -237,37 +282,55 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           delete nextMap[connId];
         }
       });
-      saveFolderState(nextFolders, nextMap, state.connectionOrder);
+      const nextConns = state.connections.map((c) =>
+        c.folderId === folderId ? { ...c, folderId: null } : c
+      );
       return {
         folders: nextFolders,
         connectionFolders: nextMap,
+        connections: nextConns,
       };
+    });
+
+    ConnectionService.DeleteFolder(folderId).catch((err) => {
+      console.error('Failed to delete folder from SQLite:', err);
     });
   },
 
   moveConnectionToFolder: (connId, folderId) => {
+    const normalizedFolderId = folderId || null;
     set((state) => {
       const nextMap = { ...state.connectionFolders };
-      if (folderId) {
-        nextMap[connId] = folderId;
+      if (normalizedFolderId) {
+        nextMap[connId] = normalizedFolderId;
       } else {
         delete nextMap[connId];
       }
-      saveFolderState(state.folders, nextMap, state.connectionOrder);
+      const nextConns = state.connections.map((c) =>
+        c.id === connId ? { ...c, folderId: normalizedFolderId } : c
+      );
       return {
+        connections: nextConns,
         connectionFolders: nextMap,
-        expandedNodes: folderId
-          ? { ...state.expandedNodes, [`folder:${folderId}`]: true }
+        expandedNodes: normalizedFolderId
+          ? { ...state.expandedNodes, [`folder:${normalizedFolderId}`]: true }
           : state.expandedNodes,
       };
+    });
+
+    ConnectionService.MoveConnectionToFolder(connId, normalizedFolderId).catch((err) => {
+      console.error('Failed to move connection to folder in SQLite:', err);
     });
   },
 
   reorderConnection: (draggedConnId, targetConnId, position, targetFolderId) => {
+    const normalizedFolderId = targetFolderId || null;
+    let layoutUpdates: Array<{ id: string; folderId: string | null; sortOrder: number }> = [];
+
     set((state) => {
       const nextMap = { ...state.connectionFolders };
-      if (targetFolderId) {
-        nextMap[draggedConnId] = targetFolderId;
+      if (normalizedFolderId) {
+        nextMap[draggedConnId] = normalizedFolderId;
       } else {
         delete nextMap[draggedConnId];
       }
@@ -278,6 +341,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         ...currentIds.filter((id) => !state.connectionOrder.includes(id)),
       ];
 
+      let nextOrder = baseOrder;
       if (draggedConnId !== targetConnId) {
         const withoutDragged = baseOrder.filter((id) => id !== draggedConnId);
         const targetIdx = withoutDragged.indexOf(targetConnId);
@@ -287,24 +351,39 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         } else {
           withoutDragged.push(draggedConnId);
         }
-        const sorted = sortConnectionsList(state.connections, withoutDragged);
-        saveFolderState(state.folders, nextMap, withoutDragged);
-        return {
-          connections: sorted,
-          connectionFolders: nextMap,
-          connectionOrder: withoutDragged,
-        };
+        nextOrder = withoutDragged;
       }
 
-      saveFolderState(state.folders, nextMap, baseOrder);
+      const sorted = sortConnectionsList(state.connections, nextOrder).map((c, idx) => ({
+        ...c,
+        folderId: nextMap[c.id] || null,
+        sortOrder: idx,
+      }));
+
+      layoutUpdates = sorted.map((c, idx) => ({
+        id: c.id,
+        folderId: nextMap[c.id] || null,
+        sortOrder: idx,
+      }));
+
       return {
+        connections: sorted,
         connectionFolders: nextMap,
+        connectionOrder: nextOrder,
       };
     });
+
+    if (layoutUpdates.length > 0) {
+      ConnectionService.UpdateConnectionsLayout(layoutUpdates).catch((err) => {
+        console.error('Failed to update connections layout in SQLite:', err);
+      });
+    }
   },
 
   reorderFolder: (draggedFolderId, targetFolderId, position) => {
     if (draggedFolderId === targetFolderId) return;
+    let orderedIds: string[] = [];
+
     set((state) => {
       const withoutDragged = state.folders.filter((f) => f.id !== draggedFolderId);
       const draggedFolder = state.folders.find((f) => f.id === draggedFolderId);
@@ -318,9 +397,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         withoutDragged.push(draggedFolder);
       }
 
-      saveFolderState(withoutDragged, state.connectionFolders, state.connectionOrder);
-      return { folders: withoutDragged };
+      const updatedFolders = withoutDragged.map((f, idx) => ({
+        ...f,
+        sortOrder: idx,
+      }));
+      orderedIds = updatedFolders.map((f) => f.id);
+
+      return { folders: updatedFolders };
     });
+
+    if (orderedIds.length > 0) {
+      ConnectionService.UpdateFoldersOrder(orderedIds).catch((err) => {
+        console.error('Failed to update folders order in SQLite:', err);
+      });
+    }
   },
 }));
 

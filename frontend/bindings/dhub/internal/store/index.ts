@@ -4,6 +4,8 @@
 export type {
     CachedObject,
     ConnectionConfig,
+    ConnectionFolder,
+    ConnectionLayoutUpdate,
     QueryHistoryEntry,
     Worksheet
 } from "./models.js";

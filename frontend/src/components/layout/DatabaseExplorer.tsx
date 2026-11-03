@@ -56,6 +56,7 @@ export const DatabaseExplorer: React.FC = () => {
     activeConnectionId,
     activeDatabase,
     setConnections,
+    loadConnectionsAndFolders,
     setActiveConnection,
     treeDatabases,
     setTreeDatabases,
@@ -303,9 +304,7 @@ export const DatabaseExplorer: React.FC = () => {
 
   const loadConnections = async () => {
     try {
-      const list = await ConnectionService.ListConnections();
-      const safeList = list ?? [];
-      setConnections(safeList as any);
+      const safeList = await loadConnectionsAndFolders();
       if (safeList.length > 0 && !activeConnectionId) {
         const first = safeList[0];
         setActiveConnection(first.id, first.databaseName || 'main', first.driver === 'postgres' ? 'public' : 'main');

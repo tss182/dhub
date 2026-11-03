@@ -9,8 +9,8 @@ INSTALL_SCOPE ?= user
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings update-assets
-.PHONY: build-mac build-mac-bin build-mac-dmg build-deb build-rpm build-appimage build-windows build-windows-installer
+.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings update-assets reset\:sqlite
+.PHONY: build-mac build-mac-bin build-mac-dmg build-deb build-rpm build-appimage build-windows build-windows-installer reset-sqlite db\:reset reset-db
 
 help:
 	@echo "========================================================================"
@@ -29,6 +29,7 @@ help:
 	@echo "  make build:mac:dmg          Build macOS DMG installer"
 	@echo "  make build:windows:installer Build Windows NSIS installer (scope: $(INSTALL_SCOPE))"
 	@echo "  make bindings               Generate Go-TypeScript bindings"
+	@echo "  make reset:sqlite           Reset local SQLite metadata database (dhub_meta.db)"
 	@echo "  make clean                  Remove build artifacts and output directory"
 	@echo "========================================================================"
 
@@ -80,6 +81,9 @@ build-rpm: build\:rpm
 build-appimage: build\:appimage
 build-windows: build\:windows
 build-windows-installer: build\:windows\:installer
+reset-sqlite: reset\:sqlite
+db\:reset: reset\:sqlite
+reset-db: reset\:sqlite
 
 # Utilities
 bindings:
@@ -89,6 +93,16 @@ bindings:
 update-assets:
 	@echo "==> Updating build assets from build/config.yml..."
 	$(WAILS) task common:update:build-assets
+
+reset\:sqlite:
+	@echo "==> Resetting local SQLite metadata database..."
+	@rm -f "$${XDG_CONFIG_HOME:-$$HOME/.config}/dhub/dhub_meta.db" \
+	       "$${XDG_CONFIG_HOME:-$$HOME/.config}/dhub/dhub_meta.db-wal" \
+	       "$${XDG_CONFIG_HOME:-$$HOME/.config}/dhub/dhub_meta.db-shm" \
+	       "$$HOME/Library/Application Support/dhub/dhub_meta.db" \
+	       "$$HOME/Library/Application Support/dhub/dhub_meta.db-wal" \
+	       "$$HOME/Library/Application Support/dhub/dhub_meta.db-shm"
+	@echo "==> SQLite database reset complete."
 
 clean:
 	@echo "==> Cleaning build artifacts..."

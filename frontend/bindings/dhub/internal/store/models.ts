@@ -65,6 +65,21 @@ export interface ConnectionConfig {
     "updatedAt": string;
 }
 
+export interface ConnectionFolder {
+    "id": string;
+    "name": string;
+    "color": string;
+    "parentId": string | null;
+    "sortOrder": number;
+    "createdAt": string;
+}
+
+export interface ConnectionLayoutUpdate {
+    "id": string;
+    "folderId": string | null;
+    "sortOrder": number;
+}
+
 export interface QueryHistoryEntry {
     "id": number;
     "connectionId": string;

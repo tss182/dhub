@@ -56,9 +56,16 @@ func (s *LocalStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS connection_folders (
 			id          TEXT PRIMARY KEY,
 			name        TEXT NOT NULL,
+			color       TEXT NOT NULL DEFAULT '#3b82f6',
 			parent_id   TEXT REFERENCES connection_folders(id) ON DELETE CASCADE,
 			sort_order  INTEGER NOT NULL DEFAULT 0,
 			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS app_settings (
+			key         TEXT PRIMARY KEY,
+			value       TEXT NOT NULL,
+			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 
 		`CREATE TABLE IF NOT EXISTS connections (
@@ -138,7 +145,36 @@ func (s *LocalStore) migrate() error {
 			return fmt.Errorf("migration query failed: %w (SQL: %s)", err, q)
 		}
 	}
+
+	// Ensure color column exists on older connection_folders tables
+	_, _ = s.db.Exec(`ALTER TABLE connection_folders ADD COLUMN color TEXT NOT NULL DEFAULT '#3b82f6';`)
+
 	return nil
+}
+
+func (s *LocalStore) GetSettings() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT key, value FROM app_settings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
+		res[k] = v
+	}
+	return res, nil
+}
+
+func (s *LocalStore) SaveSetting(key, value string) error {
+	query := `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+	_, err := s.db.Exec(query, key, value)
+	return err
 }
 
 type QueryHistoryEntry struct {
