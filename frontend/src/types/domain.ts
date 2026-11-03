@@ -2,11 +2,14 @@ export interface ConnectionFolder {
   id: string;
   name: string;
   color?: string;
+  parentId?: string | null;
+  sortOrder?: number;
 }
 
 export interface ConnectionConfig {
   id: string;
-  folderId?: string;
+  folderId?: string | null;
+  sortOrder?: number;
   name: string;
   driver: 'postgres' | 'mysql' | 'sqlite';
   colorTag: string;

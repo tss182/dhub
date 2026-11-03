@@ -44,13 +44,32 @@ type ConnectionConfig struct {
 type ConnectionFolder struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	Color     string    `json:"color"`
 	ParentID  *string   `json:"parentId"`
 	SortOrder int       `json:"sortOrder"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type ConnectionLayoutUpdate struct {
+	ID        string  `json:"id"`
+	FolderID  *string `json:"folderId"`
+	SortOrder int     `json:"sortOrder"`
+}
+
+func (s *LocalStore) normalizeFolderID(ctx context.Context, folderID *string) *string {
+	if folderID == nil || *folderID == "" {
+		return nil
+	}
+	var exists int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM connection_folders WHERE id = ?`, *folderID).Scan(&exists)
+	if err != nil || exists != 1 {
+		return nil
+	}
+	return folderID
+}
+
 func (s *LocalStore) ListFolders(ctx context.Context) ([]ConnectionFolder, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, parent_id, sort_order, created_at FROM connection_folders ORDER BY sort_order, name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(color, '#3b82f6'), parent_id, sort_order, created_at FROM connection_folders ORDER BY sort_order, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -59,12 +78,106 @@ func (s *LocalStore) ListFolders(ctx context.Context) ([]ConnectionFolder, error
 	var folders []ConnectionFolder
 	for rows.Next() {
 		var f ConnectionFolder
-		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.SortOrder, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.Color, &f.ParentID, &f.SortOrder, &f.CreatedAt); err != nil {
 			continue
 		}
 		folders = append(folders, f)
 	}
 	return folders, nil
+}
+
+func (s *LocalStore) SaveFolder(ctx context.Context, f ConnectionFolder) (string, error) {
+	if f.ID == "" {
+		f.ID = uuid.NewString()
+	}
+	if f.Color == "" {
+		f.Color = "#3b82f6"
+	}
+	var parentID *string
+	if f.ParentID != nil && *f.ParentID != "" {
+		parentID = f.ParentID
+	}
+
+	query := `INSERT INTO connection_folders (id, name, color, parent_id, sort_order)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			color = excluded.color,
+			parent_id = excluded.parent_id,
+			sort_order = excluded.sort_order`
+
+	_, err := s.db.ExecContext(ctx, query, f.ID, f.Name, f.Color, parentID, f.SortOrder)
+	if err != nil {
+		return "", err
+	}
+	return f.ID, nil
+}
+
+func (s *LocalStore) DeleteFolder(ctx context.Context, id string) error {
+	_, _ = s.db.ExecContext(ctx, `UPDATE connections SET folder_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE folder_id = ?`, id)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM connection_folders WHERE id = ?`, id)
+	return err
+}
+
+func (s *LocalStore) MoveConnectionToFolder(ctx context.Context, connectionID string, folderID *string) error {
+	validFolderID := s.normalizeFolderID(ctx, folderID)
+	_, err := s.db.ExecContext(ctx, `UPDATE connections SET folder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, validFolderID, connectionID)
+	return err
+}
+
+func (s *LocalStore) UpdateConnectionsLayout(ctx context.Context, items []ConnectionLayoutUpdate) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `UPDATE connections SET folder_id = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		var folderID *string
+		if item.FolderID != nil && *item.FolderID != "" {
+			var exists int
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM connection_folders WHERE id = ?`, *item.FolderID).Scan(&exists); err == nil && exists == 1 {
+				folderID = item.FolderID
+			}
+		}
+		if _, err := stmt.ExecContext(ctx, folderID, item.SortOrder, item.ID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *LocalStore) UpdateFoldersOrder(ctx context.Context, folderIDs []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `UPDATE connection_folders SET sort_order = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for idx, id := range folderIDs {
+		if _, err := stmt.ExecContext(ctx, idx, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *LocalStore) ListConnections(ctx context.Context) ([]ConnectionConfig, error) {
@@ -138,6 +251,7 @@ func (s *LocalStore) SaveConnection(ctx context.Context, c ConnectionConfig) (st
 	if c.ID == "" {
 		c.ID = uuid.NewString()
 	}
+	c.FolderID = s.normalizeFolderID(ctx, c.FolderID)
 
 	query := `INSERT INTO connections (
 		id, folder_id, name, driver, color_tag, is_read_only, tx_mode, host, port, username, database_name,

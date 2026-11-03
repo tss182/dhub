@@ -17,6 +17,10 @@ export function DeleteConnection(id: string): $CancellablePromise<void> {
     return $Call.ByID(2623237371, id);
 }
 
+export function DeleteFolder(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1327676879, id);
+}
+
 export function Disconnect(id: string): $CancellablePromise<void> {
     return $Call.ByID(3439550698, id);
 }
@@ -29,10 +33,30 @@ export function ListConnections(): $CancellablePromise<store$0.ConnectionConfig[
     return $Call.ByID(3351772953);
 }
 
+export function ListFolders(): $CancellablePromise<store$0.ConnectionFolder[] | null> {
+    return $Call.ByID(3442141661);
+}
+
+export function MoveConnectionToFolder(connectionID: string, folderID: string | null): $CancellablePromise<void> {
+    return $Call.ByID(3034202068, connectionID, folderID);
+}
+
 export function SaveConnection(cfg: store$0.ConnectionConfig): $CancellablePromise<string> {
     return $Call.ByID(2284197953, cfg);
 }
 
+export function SaveFolder(folder: store$0.ConnectionFolder): $CancellablePromise<string> {
+    return $Call.ByID(1227884293, folder);
+}
+
 export function TestConnection(cfg: store$0.ConnectionConfig): $CancellablePromise<string> {
     return $Call.ByID(505073892, cfg);
+}
+
+export function UpdateConnectionsLayout(items: store$0.ConnectionLayoutUpdate[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2704334404, items);
+}
+
+export function UpdateFoldersOrder(folderIDs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2539395134, folderIDs);
 }

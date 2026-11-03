@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
 export type DataViewMode = 'infinite' | 'paged';
 export type ThemeMode = 'dark' | 'light';
@@ -76,9 +77,11 @@ function persistSettings(values: Partial<SettingsValues>) {
   try {
     const current = loadStoredSettings();
     const updated = { ...current, ...values };
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(updated));
+    const serialized = JSON.stringify(updated);
+    localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
+    WorkspaceService.SaveSetting(SETTINGS_STORAGE_KEY, serialized).catch(() => {});
   } catch (err) {
-    console.warn('Failed to persist settings to localStorage:', err);
+    console.warn('Failed to persist settings:', err);
   }
 }
 
@@ -131,6 +134,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   resetToDefaults: () => {
     try {
       localStorage.removeItem(SETTINGS_STORAGE_KEY);
+      WorkspaceService.SaveSetting(SETTINGS_STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS)).catch(() => {});
     } catch {
       // ignore
     }
@@ -138,4 +142,39 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ ...DEFAULT_SETTINGS });
   },
 }));
+
+if (typeof window !== 'undefined') {
+  WorkspaceService.GetSettings()
+    .then((settings) => {
+      if (settings && settings[SETTINGS_STORAGE_KEY]) {
+        try {
+          const parsed = JSON.parse(settings[SETTINGS_STORAGE_KEY]);
+          localStorage.setItem(SETTINGS_STORAGE_KEY, settings[SETTINGS_STORAGE_KEY]);
+          const theme: ThemeMode = parsed.theme === 'light' ? 'light' : 'dark';
+          applyThemeToDocument(theme);
+          useSettingsStore.setState({
+            theme,
+            dataViewMode: parsed.dataViewMode === 'infinite' ? 'infinite' : 'paged',
+            defaultPageSize:
+              typeof parsed.defaultPageSize === 'number' && parsed.defaultPageSize > 0
+                ? parsed.defaultPageSize
+                : DEFAULT_SETTINGS.defaultPageSize,
+            editorFontSize:
+              typeof parsed.editorFontSize === 'number'
+                ? parsed.editorFontSize
+                : DEFAULT_SETTINGS.editorFontSize,
+            wordWrap:
+              typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
+            showMinimap:
+              typeof parsed.showMinimap === 'boolean'
+                ? parsed.showMinimap
+                : DEFAULT_SETTINGS.showMinimap,
+          });
+        } catch {
+          // ignore
+        }
+      }
+    })
+    .catch(() => {});
+}
 
