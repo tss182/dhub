@@ -3,6 +3,7 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
 export type DataViewMode = 'infinite' | 'paged';
 export type ThemeMode = 'dark' | 'light';
+export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update';
 
 interface SettingsValues {
   theme: ThemeMode;
@@ -11,6 +12,7 @@ interface SettingsValues {
   editorFontSize: number;
   wordWrap: boolean;
   showMinimap: boolean;
+  copyFormat: CopyFormat;
 }
 
 interface SettingsState extends SettingsValues {
@@ -26,6 +28,7 @@ interface SettingsState extends SettingsValues {
   setEditorFontSize: (size: number) => void;
   setWordWrap: (wrap: boolean) => void;
   setShowMinimap: (show: boolean) => void;
+  setCopyFormat: (format: CopyFormat) => void;
   resetToDefaults: () => void;
 }
 
@@ -38,6 +41,7 @@ const DEFAULT_SETTINGS: SettingsValues = {
   editorFontSize: 13,
   wordWrap: false,
   showMinimap: false,
+  copyFormat: 'csv',
 };
 
 function applyThemeToDocument(theme: ThemeMode) {
@@ -65,6 +69,7 @@ function loadStoredSettings(): SettingsValues {
         editorFontSize: typeof parsed.editorFontSize === 'number' ? parsed.editorFontSize : DEFAULT_SETTINGS.editorFontSize,
         wordWrap: typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
         showMinimap: typeof parsed.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
+        copyFormat: ['csv', 'json', 'sql_insert', 'sql_update'].includes(parsed.copyFormat) ? parsed.copyFormat : DEFAULT_SETTINGS.copyFormat,
       };
     }
   } catch (err) {
@@ -131,6 +136,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ showMinimap: show });
   },
 
+  setCopyFormat: (copyFormat) => {
+    persistSettings({ copyFormat });
+    set({ copyFormat });
+  },
+
   resetToDefaults: () => {
     try {
       localStorage.removeItem(SETTINGS_STORAGE_KEY);
@@ -169,6 +179,9 @@ if (typeof window !== 'undefined') {
               typeof parsed.showMinimap === 'boolean'
                 ? parsed.showMinimap
                 : DEFAULT_SETTINGS.showMinimap,
+            copyFormat: ['csv', 'json', 'sql_insert', 'sql_update'].includes(parsed.copyFormat)
+              ? parsed.copyFormat
+              : DEFAULT_SETTINGS.copyFormat,
           });
         } catch {
           // ignore
