@@ -92,16 +92,18 @@ export const ToastContainer: React.FC = () => {
   const toasts = useAlertStore((state) => state.toasts);
   const removeToast = useAlertStore((state) => state.removeToast);
 
-  if (toasts.length === 0) return null;
+  const visibleToasts = toasts.slice(-3);
+  if (visibleToasts.length === 0) return null;
 
   return (
     <div
       aria-live="polite"
       className="fixed top-3 right-3 z-[150] flex flex-col gap-2 max-w-sm w-full pointer-events-none select-none"
     >
-      {toasts.map((toast) => (
+      {visibleToasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onDismiss={removeToast} />
       ))}
     </div>
   );
 };
+

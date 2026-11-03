@@ -88,12 +88,12 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
         onCancel: options.onCancel,
       });
     } else {
-      // Just informational: show top-right toast notification
+      // Just informational: show top-right toast notification (max 3 stacked)
       const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
       const toastType: 'success' | 'error' | 'warning' | 'info' = type;
 
-      set((state) => ({
-        toasts: [
+      set((state) => {
+        const nextToasts = [
           ...state.toasts,
           {
             id,
@@ -102,8 +102,9 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
             message: options.message,
             duration: 3500,
           },
-        ],
-      }));
+        ];
+        return { toasts: nextToasts.slice(-3) };
+      });
     }
   },
 
@@ -125,15 +126,16 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
 
   showToast: (options) => {
     const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-    set((state) => ({
-      toasts: [
+    set((state) => {
+      const nextToasts = [
         ...state.toasts,
         {
           id,
           ...options,
         },
-      ],
-    }));
+      ];
+      return { toasts: nextToasts.slice(-3) };
+    });
     return id;
   },
 
