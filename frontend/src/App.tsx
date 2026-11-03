@@ -7,6 +7,7 @@ import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
 import { ConsoleList } from './components/layout/ConsoleList';
 import { SqlWorksheet } from './components/editor/SqlWorksheet';
 import { DataGrid } from './components/grid/DataGrid';
+import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { ConnectionDialog } from './components/modals/ConnectionDialog';
 import { SearchEverywhere } from './components/modals/SearchEverywhere';
 import { SettingsModal } from './components/modals/SettingsModal';
@@ -1669,6 +1670,7 @@ export function App() {
                         <span>Reset Filter</span>
                       </button>
                     )}
+                    <CopyFormatSelector />
                     <button
                       onClick={() => loadTableData(activeTab)}
                       disabled={tableDataByTab[activeTab.id]?.isLoading}
@@ -1689,6 +1691,7 @@ export function App() {
                   ) : (
                     <DataGrid
                       tabId={activeTab.id}
+                      tableName={activeTab.table}
                       envType={tableEnv}
                       columns={tableDataByTab[activeTab.id]?.columns || []}
                       rows={tableDataByTab[activeTab.id]?.rows || []}
