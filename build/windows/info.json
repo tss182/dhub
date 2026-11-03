@@ -5,11 +5,11 @@
 	"info": {
 		"0409": {
 			"ProductVersion": "0.1.0",
-			"CompanyName": "asdev",
-			"FileDescription": "A dhub application",
-			"LegalCopyright": "© 2026, asdev",
-			"ProductName": "My Product",
-			"Comments": "This is a comment"
+			"CompanyName": "ASDEV",
+			"FileDescription": "Database Management System",
+			"LegalCopyright": "(c) 2026, ASDEV",
+			"ProductName": "DHUB",
+			"Comments": "Product Aplication"
 		}
 	}
 }
