@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ColumnMeta, ConnectionEnvType } from '../../types/domain';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
-import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
+import { CopyFormatSelector, COPY_FORMAT_LABELS } from './CopyFormatSelector';
 import {
   Plus,
   Trash2,
@@ -146,6 +147,7 @@ const EMPTY_STAGED: Record<number, any> = {};
 
 interface DataGridProps {
   tabId: string;
+  tableName?: string;
   columns: ColumnMeta[];
   rows: any[][];
   primaryKeys?: string[];
@@ -171,6 +173,7 @@ interface DataGridProps {
 
 export const DataGrid: React.FC<DataGridProps> = ({
   tabId,
+  tableName,
   columns,
   rows,
   primaryKeys = [],
@@ -291,6 +294,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [editVal, setEditVal] = useState<string>('');
   const globalViewMode = useSettingsStore((state) => state.dataViewMode);
   const globalDefaultPageSize = useSettingsStore((state) => state.defaultPageSize);
+  const copyFormat = useSettingsStore((state) => state.copyFormat);
   const viewMode = globalViewMode;
 
   const [currentPage, setCurrentPage] = useState(page || 1);
@@ -403,8 +407,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const handleAddRow = () => {
     const newRowId = -Date.now();
     stageRowInsert(tabId, newRowId);
-    setSelectionAnchor({ r: 0, c: 0 });
-    setSelectionFocus({ r: 0, c: columns.length > 0 ? columns.length - 1 : 0 });
+    const newRowVIdx = displayedRows.length + insertedChanges.length;
+    setSelectionAnchor({ r: newRowVIdx, c: 0 });
+    setSelectionFocus({ r: newRowVIdx, c: columns.length > 0 ? columns.length - 1 : 0 });
+
+    // Scroll to bottom so new row is visible
+    setTimeout(() => {
+      if (containerRef.current) {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+    }, 20);
 
     // Auto-focus first editable column of the newly inserted row
     const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
@@ -521,7 +533,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       : sortedRows;
 
 
-  // Visual rows in display order (inserted changes first, then displayed database rows)
+  // Visual rows in display order (displayed database rows first, then new added rows at bottom)
   const visualRows = useMemo(() => {
     const list: Array<{
       vIdx: number;
@@ -531,15 +543,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
       rowData?: any[];
       globalRowIndex?: number;
     }> = [];
-
-    insertedChanges.forEach((change) => {
-      list.push({
-        vIdx: list.length,
-        rowId: change.rowIndex,
-        isInsert: true,
-        insertChange: change,
-      });
-    });
 
     displayedRows.forEach((row, rIdx) => {
       const globalRowIndex = viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
@@ -552,8 +555,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
       });
     });
 
+    insertedChanges.forEach((change) => {
+      list.push({
+        vIdx: list.length,
+        rowId: change.rowIndex,
+        isInsert: true,
+        insertChange: change,
+      });
+    });
+
     return list;
-  }, [insertedChanges, displayedRows, viewMode, currentPage, localPageSize]);
+  }, [displayedRows, insertedChanges, viewMode, currentPage, localPageSize]);
 
   // Rectangular cell selection range
   const selectionRange = useMemo(() => {
@@ -660,71 +672,172 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   };
 
-  const handleCopySelection = (includeHeaders = false) => {
-    if (!selectionRange || columns.length === 0) return;
-    const lines: string[] = [];
-    if (includeHeaders) {
-      const headerCols: string[] = [];
-      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
-        if (columns[c]) headerCols.push(columns[c].name);
-      }
-      lines.push(headerCols.join('\t'));
-    }
-    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
-      const vr = visualRows[r];
-      if (!vr) continue;
-      const cellTexts: string[] = [];
-      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
-        const col = columns[c];
-        if (!col) continue;
-        let val: any;
-        if (vr.isInsert) {
-          const staged = vr.insertChange;
-          val = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
-        } else {
-          const staged = stagedChanges[vr.globalRowIndex!];
-          if (staged?.type === 'update' && staged.changes[col.name] !== undefined) {
-            val = staged.changes[col.name];
-          } else {
-            val = vr.rowData?.[c];
-          }
-        }
-        cellTexts.push(val === null || val === undefined ? '' : String(val));
-      }
-      lines.push(cellTexts.join('\t'));
-    }
-    if (lines.length > 0) {
-      navigator.clipboard.writeText(lines.join('\n'));
-    }
-  };
+  const getFormattedCopyText = (fmt?: CopyFormat) => {
+    const targetFormat = fmt || copyFormat;
+    if (!selectionRange || columns.length === 0) return '';
+    const tbl = tableName || 'table_name';
 
-  const handleCopyAsJson = () => {
-    if (!selectionRange || columns.length === 0) return;
-    const list: Record<string, any>[] = [];
+    const getVal = (vr: (typeof visualRows)[0], cIdx: number, colName: string) => {
+      if (vr.isInsert) {
+        const staged = vr.insertChange;
+        return staged?.changes[colName] !== undefined
+          ? staged.changes[colName]
+          : (columns[cIdx]?.defaultValue ?? null);
+      }
+      const staged = stagedChanges[vr.globalRowIndex!];
+      if (staged?.type === 'update' && staged.changes[colName] !== undefined) {
+        return staged.changes[colName];
+      }
+      return vr.rowData?.[cIdx];
+    };
+
+    const formatSqlLiteral = (val: any, dataType?: string): string => {
+      if (val === null || val === undefined) return 'NULL';
+      const rawType = (dataType || '').toLowerCase();
+      const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
+      if (isNum && !isNaN(Number(val)) && String(val).trim() !== '') {
+        return String(val);
+      }
+      if (typeof val === 'boolean') {
+        return val ? 'TRUE' : 'FALSE';
+      }
+      return `'${String(val).replace(/'/g, "''")}'`;
+    };
+
+    // 1. JSON
+    if (targetFormat === 'json') {
+      const list: Record<string, any>[] = [];
+      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+        const vr = visualRows[r];
+        if (!vr) continue;
+        const rowObj: Record<string, any> = {};
+        for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+          const col = columns[c];
+          if (!col) continue;
+          rowObj[col.name] = getVal(vr, c, col.name);
+        }
+        list.push(rowObj);
+      }
+      return JSON.stringify(list, null, 2);
+    }
+
+    // 2. SQL INSERT
+    if (targetFormat === 'sql_insert') {
+      const selectedCols: ColumnMeta[] = [];
+      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        if (columns[c]) selectedCols.push(columns[c]);
+      }
+      if (selectedCols.length === 0) return '';
+      const colNames = selectedCols.map((c) => `"${c.name}"`).join(', ');
+      const valueTuples: string[] = [];
+      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+        const vr = visualRows[r];
+        if (!vr) continue;
+        const vals = selectedCols.map((col, idx) => {
+          const cIdx = selectionRange.startC + idx;
+          const val = getVal(vr, cIdx, col.name);
+          return formatSqlLiteral(val, col.dataType);
+        });
+        valueTuples.push(`  (${vals.join(', ')})`);
+      }
+      return `INSERT INTO "${tbl}" (${colNames})
+VALUES
+${valueTuples.join(',\n')};`;
+    }
+
+    // 3. SQL UPDATE
+    if (targetFormat === 'sql_update') {
+      const statements: string[] = [];
+      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+        const vr = visualRows[r];
+        if (!vr) continue;
+
+        const setClauses: string[] = [];
+        for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+          const col = columns[c];
+          if (!col) continue;
+          const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+          if (!isPK || selectionRange.startC === selectionRange.endC) {
+            const val = getVal(vr, c, col.name);
+            setClauses.push(`"${col.name}" = ${formatSqlLiteral(val, col.dataType)}`);
+          }
+        }
+
+        let whereClause = '';
+        if (primaryKeys.length > 0) {
+          const pkConds: string[] = [];
+          primaryKeys.forEach((pk) => {
+            const cIdx = columns.findIndex((c) => c.name === pk);
+            const colMeta = columns[cIdx];
+            const pkVal = cIdx !== -1 ? getVal(vr, cIdx, pk) : undefined;
+            if (pkVal !== undefined && pkVal !== null) {
+              pkConds.push(`"${pk}" = ${formatSqlLiteral(pkVal, colMeta?.dataType)}`);
+            }
+          });
+          if (pkConds.length > 0) {
+            whereClause = pkConds.join(' AND ');
+          }
+        }
+
+        if (!whereClause) {
+          const fallbackConds: string[] = [];
+          for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+            const col = columns[c];
+            if (!col) continue;
+            const val = getVal(vr, c, col.name);
+            if (val === null || val === undefined) {
+              fallbackConds.push(`"${col.name}" IS NULL`);
+            } else {
+              fallbackConds.push(`"${col.name}" = ${formatSqlLiteral(val, col.dataType)}`);
+            }
+          }
+          whereClause = fallbackConds.join(' AND ');
+        }
+
+        statements.push(`UPDATE "${tbl}"
+SET ${setClauses.join(', ')}
+WHERE ${whereClause};`);
+      }
+      return statements.join('\n\n');
+    }
+
+    // 4. Default: CSV (RFC 4180 standard)
+    const lines: string[] = [];
+    const headerCols: string[] = [];
+    for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+      if (columns[c]) {
+        const name = columns[c].name;
+        headerCols.push(
+          name.includes(',') || name.includes('"') || name.includes('\n')
+            ? `"${name.replace(/"/g, '""')}"`
+            : name
+        );
+      }
+    }
+    lines.push(headerCols.join(','));
+
     for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
       const vr = visualRows[r];
       if (!vr) continue;
-      const rowObj: Record<string, any> = {};
+      const cellVals: string[] = [];
       for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
         const col = columns[c];
         if (!col) continue;
-        let val: any;
-        if (vr.isInsert) {
-          const staged = vr.insertChange;
-          val = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? null);
+        const raw = getVal(vr, c, col.name);
+        if (raw === null || raw === undefined) {
+          cellVals.push('');
         } else {
-          const staged = stagedChanges[vr.globalRowIndex!];
-          if (staged?.type === 'update' && staged.changes[col.name] !== undefined) {
-            val = staged.changes[col.name];
+          const s = String(raw);
+          if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+            cellVals.push(`"${s.replace(/"/g, '""')}"`);
           } else {
-            val = vr.rowData?.[c];
+            cellVals.push(s);
           }
         }
-        rowObj[col.name] = val;
       }
-      list.push(rowObj);
+      lines.push(cellVals.join(','));
     }
-    navigator.clipboard.writeText(JSON.stringify(list, null, 2));
+    return lines.join('\n');
   };
 
   const handleSetSelectedToNull = () => {
@@ -861,8 +974,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
       newIds.push(newRowId);
     });
 
-    setSelectionAnchor({ r: 0, c: 0 });
-    setSelectionFocus({ r: newIds.length - 1, c: columns.length - 1 });
+    const startVIdx = displayedRows.length + insertedChanges.length;
+    setSelectionAnchor({ r: startVIdx, c: 0 });
+    setSelectionFocus({ r: startVIdx + newIds.length - 1, c: columns.length - 1 });
+
+    setTimeout(() => {
+      if (containerRef.current) {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+    }, 20);
 
     if (newIds.length === 1 && columns.length > 0) {
       const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
@@ -1005,36 +1125,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
         }
       }
 
-      // Copy selected cells as TSV
+      // Copy selected cells based on active copyFormat
       if (e.key === 'c' || e.key === 'C') {
         if (!isTyping && selectionRange && columns.length > 0) {
           e.preventDefault();
-          const rowsText: string[] = [];
-          for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
-            const vr = visualRows[r];
-            if (!vr) continue;
-            const cellTexts: string[] = [];
-            for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
-              const col = columns[c];
-              if (!col) continue;
-              let val: any;
-              if (vr.isInsert) {
-                const staged = vr.insertChange;
-                val = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
-              } else {
-                const staged = stagedChanges[vr.globalRowIndex!];
-                if (staged?.type === 'update' && staged.changes[col.name] !== undefined) {
-                  val = staged.changes[col.name];
-                } else {
-                  val = vr.rowData?.[c];
-                }
-              }
-              cellTexts.push(val === null || val === undefined ? '' : String(val));
-            }
-            rowsText.push(cellTexts.join('\t'));
-          }
-          if (rowsText.length > 0) {
-            navigator.clipboard.writeText(rowsText.join('\n'));
+          const text = getFormattedCopyText();
+          if (text) {
+            navigator.clipboard.writeText(text);
           }
           return;
         }
@@ -1044,6 +1141,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
       if (e.key === 's' || e.key === 'S') {
         e.preventDefault();
         handleApplyChanges();
+        return;
+      }
+
+      // Shortcut: Add Row (Ctrl+I on Linux/Win, Cmd+I on macOS)
+      if (e.key === 'i' || e.key === 'I') {
+        e.preventDefault();
+        handleAddRow();
         return;
       }
 
@@ -1140,7 +1244,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <button
             onClick={handleAddRow}
             className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-            title="Add New Row"
+            title={`Add New Row (${modKey}+I)`}
           >
             <Plus className="h-4 w-4 text-emerald-400" />
           </button>
@@ -1162,6 +1266,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
           </button>
 
           <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
+
+          <CopyFormatSelector />
 
           {onRefresh && (
             <button
@@ -1450,121 +1556,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </tr>
           </thead>
           <tbody>
-            {/* 1. Staged Inserted Rows (at top of grid for immediate visibility & editing) */}
-            {insertedChanges.map((change, insIdx) => {
-              const rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
-
-              return (
-                <tr
-                  key={change.rowIndex}
-                  className={rowClass}
-                >
-                  <td
-                    onMouseDown={(e) => handleRowHeaderMouseDown(e, insIdx)}
-                    onMouseEnter={() => handleRowHeaderMouseEnter(insIdx)}
-                    onContextMenu={(e) => handleRowHeaderContextMenu(e, insIdx)}
-                    className="w-12 px-1 py-1 text-center border-r border-[#272932] select-none text-[11px] font-bold cursor-pointer"
-                    title="Click to select row"
-                  >
-                    <div className="flex items-center justify-center gap-1">
-                      <span className="text-emerald-400 font-mono text-xs" title="New Staged Row">
-                        +{insIdx + 1}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          stageRowDelete(tabId, change.rowIndex, {}, {});
-                          setSelectionAnchor(null);
-                          setSelectionFocus(null);
-                        }}
-                        className="opacity-0 group-hover/insert:opacity-100 p-0.5 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 rounded transition-opacity cursor-pointer"
-                        title="Discard this new row"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </td>
-
-                  {columns.map((col, cIdx) => {
-                    const isSelected = isCellSelected(insIdx, cIdx);
-                    const isEditing = editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
-                    const colVal = change.changes[col.name];
-                    const isSet = colVal !== undefined;
-                    const displayVal = isSet ? colVal : (col.defaultValue || null);
-                    const colInputType = getColumnInputType(col.dataType);
-
-                    return (
-                      <td
-                        key={col.name}
-                        onMouseDown={(e) => handleCellMouseDown(e, insIdx, cIdx)}
-                        onMouseEnter={() => handleCellMouseEnter(insIdx, cIdx)}
-                        onContextMenu={(e) => handleCellContextMenu(e, insIdx, cIdx)}
-                        onDoubleClick={() => {
-                          if (!isEditing) {
-                            handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
-                          }
-                        }}
-                        className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs cursor-text select-none transition-colors ${
-                          isSelected
-                            ? 'bg-[#1b4ea3] text-white font-medium'
-                            : isSet
-                            ? 'bg-emerald-900/40 text-emerald-100 font-medium'
-                            : 'text-zinc-500'
-                        }`}
-                        title="Click to select, double click to edit"
-                      >
-                        {isEditing ? (
-                          <input
-                            type={colInputType === 'text' ? 'text' : colInputType}
-                            step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
-                            autoFocus
-                            ref={(el) => {
-                              if (colInputType !== 'text') {
-                                try { el?.showPicker?.(); } catch {}
-                              }
-                            }}
-                            value={editVal}
-                            onChange={(e) => setEditVal(e.target.value)}
-                            onBlur={handleFinishEdit}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleFinishEdit();
-                              if (e.key === 'Escape') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setEditingCell(null);
-                                if (stagedCount > 0) {
-                                  setShowCancelConfirm(true);
-                                }
-                              }
-                              if (e.key === 'Tab') {
-                                e.preventDefault();
-                                handleFinishEdit();
-                                const nextCol = (cIdx + 1) % columns.length;
-                                setTimeout(() => {
-                                  const nextVal = change.changes[columns[nextCol].name];
-                                  handleStartEdit(change.rowIndex, nextCol, nextVal ?? '');
-                                }, 10);
-                              }
-                            }}
-                            className={`[color-scheme:dark] w-full bg-[#101115] border border-emerald-500 px-1 py-0.5 text-white outline-none rounded font-mono text-xs shadow-inner ${
-                              colInputType !== 'text' ? 'cursor-pointer' : ''
-                            }`}
-                          />
-                        ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
-                          <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>
-                            {col.isAutoIncrement ? '(Auto)' : 'NULL'}
-                          </span>
-                        ) : (
-                          colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-            {/* 2. Existing Database Rows */}
             {displayedRows.length === 0 && insertedChanges.length === 0 ? (
               <tr>
                 <td colSpan={columns.length + 1} className="py-12 text-center text-zinc-500 font-sans">
@@ -1595,127 +1586,219 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 </td>
               </tr>
             ) : (
-              displayedRows.map((row, rIdx) => {
-                const globalRowIndex =
-                  viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
-                const vIdx = insertedChanges.length + rIdx;
-                const staged = stagedChanges[globalRowIndex];
-                const isDeleted = staged?.type === 'delete';
+              <>
+                {/* 1. Existing Database Rows */}
+                {displayedRows.map((row, rIdx) => {
+                  const globalRowIndex =
+                    viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
+                  const vIdx = rIdx;
+                  const staged = stagedChanges[globalRowIndex];
+                  const isDeleted = staged?.type === 'delete';
 
-                let rowClass = gridRowClass;
-                if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
+                  let rowClass = gridRowClass;
+                  if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
 
-                return (
-                  <tr
-                    key={globalRowIndex}
-                    className={rowClass}
-                  >
-                    <td
-                      onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                      onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                      onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                      className={`px-2 py-1 text-center text-zinc-500 border-r ${gridCellBorder} select-none text-[11px] cursor-pointer hover:text-zinc-300`}
-                      title="Click to select row"
+                  return (
+                    <tr
+                      key={globalRowIndex}
+                      className={rowClass}
                     >
-                      {globalRowIndex + 1}
-                    </td>
-                    {columns.map((col, cIdx) => {
-                      const isSelected = isCellSelected(vIdx, cIdx);
-                      const isEditing = editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
-                      const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
-                      const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
-                      const colInputType = getColumnInputType(col.dataType);
+                      <td
+                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                        className={`px-2 py-1 text-center text-zinc-500 border-r ${gridCellBorder} select-none text-[11px] cursor-pointer hover:text-zinc-300`}
+                        title="Click to select row"
+                      >
+                        {globalRowIndex + 1}
+                      </td>
+                      {columns.map((col, cIdx) => {
+                        const isSelected = isCellSelected(vIdx, cIdx);
+                        const isEditing = editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
+                        const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
+                        const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
+                        const colInputType = getColumnInputType(col.dataType);
 
-                      return (
-                        <td
-                          key={col.name}
-                          onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
-                          onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
-                          onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                          onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
-                          className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs select-none transition-colors ${
-                            isSelected
-                              ? 'bg-[#1b4ea3] text-white font-medium'
-                              : hasColChange
-                              ? 'bg-blue-900/30 text-blue-200 font-medium'
-                              : ''
-                          }`}
-                        >
-                          {isEditing ? (
-                            <input
-                              type={colInputType === 'text' ? 'text' : colInputType}
-                              step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
-                              autoFocus
-                              ref={(el) => {
-                                if (colInputType !== 'text') {
-                                  try { el?.showPicker?.(); } catch {}
-                                }
-                              }}
-                              value={editVal}
-                              onChange={(e) => setEditVal(e.target.value)}
-                              onBlur={handleFinishEdit}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleFinishEdit();
-                                if (e.key === 'Escape') {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setEditingCell(null);
-                                  if (stagedCount > 0) {
-                                    setShowCancelConfirm(true);
+                        return (
+                          <td
+                            key={col.name}
+                            onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
+                            onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
+                            onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
+                            onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
+                            className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs select-none transition-colors ${
+                              isSelected
+                                ? 'bg-[#1b4ea3] text-white font-medium'
+                                : hasColChange
+                                ? 'bg-blue-900/30 text-blue-200 font-medium'
+                                : ''
+                            }`}
+                          >
+                            {isEditing ? (
+                              <input
+                                type={colInputType === 'text' ? 'text' : colInputType}
+                                step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
+                                autoFocus
+                                ref={(el) => {
+                                  if (colInputType !== 'text') {
+                                    try { el?.showPicker?.(); } catch {}
                                   }
-                                }
-                                if (e.key === 'Tab') {
-                                  e.preventDefault();
-                                  handleFinishEdit();
-                                  const nextCol = (cIdx + 1) % columns.length;
-                                  setTimeout(() => {
-                                    handleStartEdit(globalRowIndex, nextCol, row[nextCol]);
-                                  }, 10);
-                                }
-                              }}
-                              className={`[color-scheme:dark] w-full bg-[#121317] border border-blue-500 px-1 py-0.5 text-white outline-none rounded ${
-                                colInputType !== 'text' ? 'cursor-pointer' : ''
-                              }`}
-                            />
-                          ) : displayVal === null || displayVal === undefined ? (
-                            <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>NULL</span>
-                          ) : (
-                            colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })
-            )}
+                                }}
+                                value={editVal}
+                                onChange={(e) => setEditVal(e.target.value)}
+                                onBlur={handleFinishEdit}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleFinishEdit();
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setEditingCell(null);
+                                    if (stagedCount > 0) {
+                                      setShowCancelConfirm(true);
+                                    }
+                                  }
+                                  if (e.key === 'Tab') {
+                                    e.preventDefault();
+                                    handleFinishEdit();
+                                    const nextCol = (cIdx + 1) % columns.length;
+                                    setTimeout(() => {
+                                      handleStartEdit(globalRowIndex, nextCol, row[nextCol]);
+                                    }, 10);
+                                  }
+                                }}
+                                className={`[color-scheme:dark] w-full bg-[#121317] border border-blue-500 px-1 py-0.5 text-white outline-none rounded ${
+                                  colInputType !== 'text' ? 'cursor-pointer' : ''
+                                }`}
+                              />
+                            ) : displayVal === null || displayVal === undefined ? (
+                              <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>NULL</span>
+                            ) : (
+                              colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
 
-            {/* Bottom Row: Lazy Loading Indicator or Manual Load More */}
-            {viewMode === 'infinite' && hasMore && (
-              <tr>
-                <td
-                  colSpan={columns.length + 1}
-                  className="py-3 text-center bg-[#14151a]/60 border-t border-[#272932]"
-                >
-                  {isLoadingMore ? (
-                    <div className="flex items-center justify-center gap-2 text-zinc-400 font-sans text-xs">
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-400" />
-                      <span>Loading next {localPageSize} rows...</span>
-                    </div>
-                  ) : onLoadMore ? (
-                    <button
-                      type="button"
-                      onClick={onLoadMore}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-[#22242c] hover:bg-blue-600 hover:text-white text-zinc-300 font-sans text-xs transition-colors cursor-pointer border border-[#272932]"
+                {/* 2. Staged Inserted Rows (at bottom of grid) */}
+                {insertedChanges.map((change, insIdx) => {
+                  const vIdx = displayedRows.length + insIdx;
+                  const rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
+
+                  return (
+                    <tr
+                      key={change.rowIndex}
+                      className={rowClass}
                     >
-                      <ArrowDownCircle className="h-3.5 w-3.5 text-blue-400" />
-                      <span>Load Next {localPageSize} Rows (Lazy Load)</span>
-                    </button>
-                  ) : null}
-                </td>
-              </tr>
-            )}
-          </tbody>
+                      <td
+                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                        className="w-12 px-1 py-1 text-center border-r border-[#272932] select-none text-[11px] font-bold cursor-pointer"
+                        title="Click to select row"
+                      >
+                        <div className="flex items-center justify-center gap-1">
+                          <span className="text-emerald-400 font-mono text-xs" title="New Staged Row">
+                            +{insIdx + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              stageRowDelete(tabId, change.rowIndex, {}, {});
+                              setSelectionAnchor(null);
+                              setSelectionFocus(null);
+                            }}
+                            className="opacity-0 group-hover/insert:opacity-100 p-0.5 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 rounded transition-opacity cursor-pointer"
+                            title="Discard this new row"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </td>
+
+                      {columns.map((col, cIdx) => {
+                        const isSelected = isCellSelected(vIdx, cIdx);
+                        const isEditing = editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
+                        const colVal = change.changes[col.name];
+                        const isSet = colVal !== undefined;
+                        const displayVal = isSet ? colVal : (col.defaultValue || null);
+                        const colInputType = getColumnInputType(col.dataType);
+
+                        return (
+                          <td
+                            key={col.name}
+                            onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
+                            onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
+                            onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
+                            onDoubleClick={() => {
+                              if (!isEditing) {
+                                handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
+                              }
+                            }}
+                            className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs cursor-text select-none transition-colors ${
+                              isSelected
+                                ? 'bg-[#1b4ea3] text-white font-medium'
+                                : isSet
+                                ? 'bg-emerald-900/40 text-emerald-100 font-medium'
+                                : 'text-zinc-500'
+                            }`}
+                            title="Click to select, double click to edit"
+                          >
+                            {isEditing ? (
+                              <input
+                                type={colInputType === 'text' ? 'text' : colInputType}
+                                step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
+                                autoFocus
+                                ref={(el) => {
+                                  if (colInputType !== 'text') {
+                                    try { el?.showPicker?.(); } catch {}
+                                  }
+                                }}
+                                value={editVal}
+                                onChange={(e) => setEditVal(e.target.value)}
+                                onBlur={handleFinishEdit}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleFinishEdit();
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setEditingCell(null);
+                                    if (stagedCount > 0) {
+                                      setShowCancelConfirm(true);
+                                    }
+                                  }
+                                  if (e.key === 'Tab') {
+                                    e.preventDefault();
+                                    handleFinishEdit();
+                                    const nextCol = (cIdx + 1) % columns.length;
+                                    setTimeout(() => {
+                                      const nextVal = change.changes[columns[nextCol].name];
+                                      handleStartEdit(change.rowIndex, nextCol, nextVal ?? '');
+                                    }, 10);
+                                  }
+                                }}
+                                className={`[color-scheme:dark] w-full bg-[#101115] border border-emerald-500 px-1 py-0.5 text-white outline-none rounded font-mono text-xs shadow-inner ${
+                                  colInputType !== 'text' ? 'cursor-pointer' : ''
+                                }`}
+                              />
+                            ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
+                              <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>
+                                {col.isAutoIncrement ? '(Auto)' : 'NULL'}
+                              </span>
+                            ) : (
+                              colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </>
+            )}          </tbody>
         </table>
       </div>
 
@@ -2033,14 +2116,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <button
             type="button"
             onClick={() => {
-              handleCopySelection(false);
+              const text = getFormattedCopyText();
+              if (text) navigator.clipboard.writeText(text);
               setContextMenu((prev) => ({ ...prev, isOpen: false }));
             }}
             className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
           >
             <div className="flex items-center gap-2">
               <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Copy Selection</span>
+              <span>Copy ({COPY_FORMAT_LABELS[copyFormat]})</span>
             </div>
             <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+C</kbd>
           </button>
@@ -2048,21 +2132,23 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <button
             type="button"
             onClick={() => {
-              handleCopySelection(true);
+              const text = getFormattedCopyText('csv');
+              if (text) navigator.clipboard.writeText(text);
               setContextMenu((prev) => ({ ...prev, isOpen: false }));
             }}
             className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
           >
             <div className="flex items-center gap-2">
               <FileText className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Copy with Headers</span>
+              <span>Copy as CSV</span>
             </div>
           </button>
 
           <button
             type="button"
             onClick={() => {
-              handleCopyAsJson();
+              const text = getFormattedCopyText('json');
+              if (text) navigator.clipboard.writeText(text);
               setContextMenu((prev) => ({ ...prev, isOpen: false }));
             }}
             className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -2073,7 +2159,35 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </div>
           </button>
 
-          <div className="my-1 border-t border-[#272932]" />
+          <button
+            type="button"
+            onClick={() => {
+              const text = getFormattedCopyText('sql_insert');
+              if (text) navigator.clipboard.writeText(text);
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Code className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+              <span>Copy as SQL INSERT</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const text = getFormattedCopyText('sql_update');
+              if (text) navigator.clipboard.writeText(text);
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+              <span>Copy as SQL UPDATE</span>
+            </div>
+          </button>          <div className="my-1 border-t border-[#272932]" />
 
           <button
             type="button"
@@ -2102,6 +2216,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
               <Plus className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
               <span>Add New Row</span>
             </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+I</kbd>
           </button>
 
           <button
