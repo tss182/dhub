@@ -14,7 +14,8 @@ type ConnectionConfig struct {
 	ID           string    `json:"id"`
 	FolderID     *string   `json:"folderId"`
 	Name         string    `json:"name"`
-	Driver       string    `json:"driver"` // "postgres", "mysql", "sqlite"
+	Driver       string    `json:"driver"`  // "postgres", "mysql", "sqlite"
+	EnvType      string    `json:"envType"` // "local", "dev", "prod"
 	ColorTag     string    `json:"colorTag"`
 	IsReadOnly   bool      `json:"isReadOnly"`
 	TxMode       string    `json:"txMode"`
@@ -181,7 +182,7 @@ func (s *LocalStore) UpdateFoldersOrder(ctx context.Context, folderIDs []string)
 }
 
 func (s *LocalStore) ListConnections(ctx context.Context) ([]ConnectionConfig, error) {
-	query := `SELECT id, folder_id, name, driver, color_tag, is_read_only, tx_mode, host, port, username, database_name,
+	query := `SELECT id, folder_id, name, driver, COALESCE(env_type, 'local'), color_tag, is_read_only, tx_mode, host, port, username, database_name,
 		file_path, ssl_mode, ssl_ca_path, ssl_cert_path, ssl_key_path, ssh_enabled, ssh_host, ssh_port, ssh_user,
 		ssh_auth_type, ssh_key_path, options_json, sort_order, created_at, updated_at
 		FROM connections ORDER BY sort_order, name`
@@ -197,13 +198,16 @@ func (s *LocalStore) ListConnections(ctx context.Context) ([]ConnectionConfig, e
 		var c ConnectionConfig
 		var isReadOnly, sshEnabled int
 		if err := rows.Scan(
-			&c.ID, &c.FolderID, &c.Name, &c.Driver, &c.ColorTag, &isReadOnly, &c.TxMode,
+			&c.ID, &c.FolderID, &c.Name, &c.Driver, &c.EnvType, &c.ColorTag, &isReadOnly, &c.TxMode,
 			&c.Host, &c.Port, &c.Username, &c.DatabaseName, &c.FilePath, &c.SSLMode,
 			&c.SSLCAPath, &c.SSLCertPath, &c.SSLKeyPath, &sshEnabled, &c.SSHHost,
 			&c.SSHPort, &c.SSHUser, &c.SSHAuthType, &c.SSHKeyPath, &c.OptionsJSON,
 			&c.SortOrder, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			continue
+		}
+		if c.EnvType == "" {
+			c.EnvType = "local"
 		}
 		c.IsReadOnly = isReadOnly == 1
 		c.SSHEnabled = sshEnabled == 1
@@ -213,7 +217,7 @@ func (s *LocalStore) ListConnections(ctx context.Context) ([]ConnectionConfig, e
 }
 
 func (s *LocalStore) GetConnection(ctx context.Context, id string) (*ConnectionConfig, error) {
-	query := `SELECT id, folder_id, name, driver, color_tag, is_read_only, tx_mode, host, port, username, database_name,
+	query := `SELECT id, folder_id, name, driver, COALESCE(env_type, 'local'), color_tag, is_read_only, tx_mode, host, port, username, database_name,
 		file_path, ssl_mode, ssl_ca_path, ssl_cert_path, ssl_key_path, ssh_enabled, ssh_host, ssh_port, ssh_user,
 		ssh_auth_type, ssh_key_path, options_json, sort_order, created_at, updated_at
 		FROM connections WHERE id = ?`
@@ -221,7 +225,7 @@ func (s *LocalStore) GetConnection(ctx context.Context, id string) (*ConnectionC
 	var c ConnectionConfig
 	var isReadOnly, sshEnabled int
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&c.ID, &c.FolderID, &c.Name, &c.Driver, &c.ColorTag, &isReadOnly, &c.TxMode,
+		&c.ID, &c.FolderID, &c.Name, &c.Driver, &c.EnvType, &c.ColorTag, &isReadOnly, &c.TxMode,
 		&c.Host, &c.Port, &c.Username, &c.DatabaseName, &c.FilePath, &c.SSLMode,
 		&c.SSLCAPath, &c.SSLCertPath, &c.SSLKeyPath, &sshEnabled, &c.SSHHost,
 		&c.SSHPort, &c.SSHUser, &c.SSHAuthType, &c.SSHKeyPath, &c.OptionsJSON,
@@ -232,6 +236,9 @@ func (s *LocalStore) GetConnection(ctx context.Context, id string) (*ConnectionC
 			return nil, errors.New("connection not found")
 		}
 		return nil, err
+	}
+	if c.EnvType == "" {
+		c.EnvType = "local"
 	}
 	c.IsReadOnly = isReadOnly == 1
 	c.SSHEnabled = sshEnabled == 1
@@ -252,16 +259,28 @@ func (s *LocalStore) SaveConnection(ctx context.Context, c ConnectionConfig) (st
 		c.ID = uuid.NewString()
 	}
 	c.FolderID = s.normalizeFolderID(ctx, c.FolderID)
+	if c.EnvType != "dev" && c.EnvType != "prod" {
+		c.EnvType = "local"
+	}
+	switch c.EnvType {
+	case "dev":
+		c.ColorTag = "#10b981"
+	case "prod":
+		c.ColorTag = "#ef4444"
+	default:
+		c.ColorTag = ""
+	}
 
 	query := `INSERT INTO connections (
-		id, folder_id, name, driver, color_tag, is_read_only, tx_mode, host, port, username, database_name,
+		id, folder_id, name, driver, env_type, color_tag, is_read_only, tx_mode, host, port, username, database_name,
 		file_path, ssl_mode, ssl_ca_path, ssl_cert_path, ssl_key_path, ssh_enabled, ssh_host, ssh_port, ssh_user,
 		ssh_auth_type, ssh_key_path, options_json, sort_order, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	ON CONFLICT(id) DO UPDATE SET
 		folder_id = excluded.folder_id,
 		name = excluded.name,
 		driver = excluded.driver,
+		env_type = excluded.env_type,
 		color_tag = excluded.color_tag,
 		is_read_only = excluded.is_read_only,
 		tx_mode = excluded.tx_mode,
@@ -294,7 +313,7 @@ func (s *LocalStore) SaveConnection(ctx context.Context, c ConnectionConfig) (st
 	}
 
 	_, err := s.db.ExecContext(ctx, query,
-		c.ID, c.FolderID, c.Name, c.Driver, c.ColorTag, isReadOnly, c.TxMode, c.Host, c.Port, c.Username, c.DatabaseName,
+		c.ID, c.FolderID, c.Name, c.Driver, c.EnvType, c.ColorTag, isReadOnly, c.TxMode, c.Host, c.Port, c.Username, c.DatabaseName,
 		c.FilePath, c.SSLMode, c.SSLCAPath, c.SSLCertPath, c.SSLKeyPath, sshEnabled, c.SSHHost, c.SSHPort, c.SSHUser,
 		c.SSHAuthType, c.SSHKeyPath, c.OptionsJSON, c.SortOrder,
 	)

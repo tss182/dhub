@@ -4,6 +4,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { ConnectionService } from '../../../bindings/dhub/internal/services';
 import { X, CheckCircle, AlertCircle, Database, Trash2 } from 'lucide-react';
 import { alertError } from '../../stores/useAlertStore';
+import { ConnectionEnvType, resolveConnectionEnv } from '../../types/domain';
 
 export const ConnectionDialog: React.FC = () => {
   const { isConnectionDialogOpen, setConnectionDialogOpen, editingConnectionId } = useWorkbenchStore();
@@ -20,6 +21,7 @@ export const ConnectionDialog: React.FC = () => {
   } = useConnectionStore();
 
   const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql'>('sqlite');
+  const [envType, setEnvType] = useState<ConnectionEnvType>('local');
   const [name, setName] = useState('');
   const [folderId, setFolderId] = useState<string>('');
   const [filePath, setFilePath] = useState('/home/tss/.gemini/antigravity/dhub_demo.db');
@@ -28,10 +30,21 @@ export const ConnectionDialog: React.FC = () => {
   const [username, setUsername] = useState('postgres');
   const [password, setPassword] = useState('');
   const [databaseName, setDatabaseName] = useState('postgres');
-  const [colorTag, setColorTag] = useState('#3b82f6');
+  const [colorTag, setColorTag] = useState('');
 
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const handleEnvTypeChange = (nextEnv: ConnectionEnvType) => {
+    setEnvType(nextEnv);
+    if (nextEnv === 'dev') {
+      setColorTag('#10b981');
+    } else if (nextEnv === 'prod') {
+      setColorTag('#ef4444');
+    } else {
+      setColorTag('');
+    }
+  };
 
   useEffect(() => {
     if (!isConnectionDialogOpen) return;
@@ -41,15 +54,23 @@ export const ConnectionDialog: React.FC = () => {
       // Fetch full connection data from backend (including keyring password)
       ConnectionService.GetConnection(editingConnectionId).then((conn) => {
         if (conn) {
+          const resolvedEnv = resolveConnectionEnv(conn as any);
           setName(conn.name || '');
           setDriver((conn.driver as any) || 'sqlite');
+          setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
           setPort(conn.port || (conn.driver === 'mysql' ? 3306 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
           setFilePath(conn.filePath || '');
-          setColorTag(conn.colorTag || '#3b82f6');
+          setColorTag(
+            resolvedEnv === 'dev'
+              ? '#10b981'
+              : resolvedEnv === 'prod'
+              ? '#ef4444'
+              : ''
+          );
           if (conn.folderId) {
             setFolderId(conn.folderId);
           }
@@ -59,14 +80,22 @@ export const ConnectionDialog: React.FC = () => {
         // Fallback to in-memory store
         const existing = connections.find((c) => c.id === editingConnectionId);
         if (existing) {
+          const resolvedEnv = resolveConnectionEnv(existing);
           setName(existing.name || '');
           setDriver((existing.driver as any) || 'sqlite');
+          setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
           setPort(existing.port || 5432);
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
-          setColorTag(existing.colorTag || '#3b82f6');
+          setColorTag(
+            resolvedEnv === 'dev'
+              ? '#10b981'
+              : resolvedEnv === 'prod'
+              ? '#ef4444'
+              : ''
+          );
         }
       });
     } else {
@@ -74,13 +103,14 @@ export const ConnectionDialog: React.FC = () => {
       setName('');
       setFolderId(pendingFolderIdForNewConn || '');
       setDriver('sqlite');
+      setEnvType('local');
       setFilePath('/home/tss/.gemini/antigravity/dhub_demo.db');
       setHost('localhost');
       setPort(5432);
       setUsername('postgres');
       setPassword('');
       setDatabaseName('postgres');
-      setColorTag('#3b82f6');
+      setColorTag('');
     }
     setTestResult(null);
   }, [isConnectionDialogOpen, editingConnectionId]);
@@ -152,7 +182,9 @@ export const ConnectionDialog: React.FC = () => {
         folderId: folderId || null,
         name: name || `${driver.toUpperCase()} Connection`,
         driver,
-        colorTag,
+        envType,
+        colorTag:
+          envType === 'dev' ? '#10b981' : envType === 'prod' ? '#ef4444' : '',
         isReadOnly: false,
         txMode: 'auto',
         host,
@@ -215,18 +247,53 @@ export const ConnectionDialog: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
-      <div className="flex w-[560px] flex-col rounded-lg bg-[#191a20] border border-[#272932] shadow-2xl text-xs text-zinc-300">
+      <div
+        className={`flex w-[560px] flex-col rounded-lg bg-[#191a20] border shadow-2xl text-xs text-zinc-300 overflow-hidden transition-colors ${
+          envType === 'dev'
+            ? 'border-emerald-700/60'
+            : envType === 'prod'
+            ? 'border-rose-700/60'
+            : 'border-[#272932]'
+        }`}
+      >
         {/* Modal Header */}
-        <div className="flex h-11 items-center justify-between border-b border-[#272932] px-4">
+        <div
+          className={`flex h-11 items-center justify-between border-b px-4 transition-colors ${
+            envType === 'dev'
+              ? 'bg-emerald-950/70 border-emerald-800/60'
+              : envType === 'prod'
+              ? 'bg-rose-950/70 border-rose-800/60'
+              : 'bg-[#14151a] border-[#272932]'
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-blue-400" />
+            <Database
+              className={`h-4 w-4 ${
+                envType === 'dev'
+                  ? 'text-emerald-400'
+                  : envType === 'prod'
+                  ? 'text-rose-400'
+                  : 'text-blue-400'
+              }`}
+            />
             <span className="font-semibold text-sm text-zinc-100">
               {editingConnectionId ? `Edit Connection: ${name || 'Database'}` : 'New Database Connection'}
             </span>
+            {envType !== 'local' && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono border ${
+                  envType === 'dev'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                }`}
+              >
+                {envType === 'dev' ? 'DEV' : 'PROD'}
+              </span>
+            )}
           </div>
           <button
             onClick={() => setConnectionDialogOpen(false)}
-            className="rounded p-1 text-zinc-400 hover:text-white hover:bg-[#22242c]"
+            className="rounded p-1 text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -254,6 +321,52 @@ export const ConnectionDialog: React.FC = () => {
                   {d}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Connection Type / Environment Selector */}
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">
+              Environment Type
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => handleEnvTypeChange('local')}
+                className={`flex items-center justify-center gap-2 rounded border py-2 px-3 font-medium cursor-pointer transition-all ${
+                  envType === 'local'
+                    ? 'border-zinc-500 bg-[#232631] text-zinc-100 shadow-xs'
+                    : 'border-[#272932] bg-[#14151a] text-zinc-400 hover:border-zinc-600'
+                }`}
+              >
+                <span>Local (Default)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleEnvTypeChange('dev')}
+                className={`flex items-center justify-center gap-2 rounded border py-2 px-3 font-medium cursor-pointer transition-all ${
+                  envType === 'dev'
+                    ? 'border-emerald-500 bg-emerald-600/25 text-emerald-200 shadow-xs'
+                    : 'border-[#272932] bg-[#14151a] text-zinc-400 hover:border-emerald-700/60'
+                }`}
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0" />
+                <span>Development</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleEnvTypeChange('prod')}
+                className={`flex items-center justify-center gap-2 rounded border py-2 px-3 font-medium cursor-pointer transition-all ${
+                  envType === 'prod'
+                    ? 'border-rose-500 bg-rose-600/25 text-rose-200 shadow-xs'
+                    : 'border-[#272932] bg-[#14151a] text-zinc-400 hover:border-rose-700/60'
+                }`}
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-rose-500 shrink-0" />
+                <span>Production</span>
+              </button>
             </div>
           </div>
 

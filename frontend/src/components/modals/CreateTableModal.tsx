@@ -18,7 +18,7 @@ import {
   Save,
   RefreshCw,
 } from 'lucide-react';
-import { ConnectionConfig, ColumnMeta } from '../../types/domain';
+import { ConnectionConfig, ColumnMeta, resolveConnectionEnv } from '../../types/domain';
 import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
@@ -1475,6 +1475,20 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
   if (!isOpen) return null;
 
+  const modalEnv = resolveConnectionEnv(connection);
+  const modalHeaderClass =
+    modalEnv === 'prod'
+      ? 'bg-rose-950/75 border-rose-800/70'
+      : modalEnv === 'dev'
+      ? 'bg-emerald-950/75 border-emerald-800/70'
+      : 'bg-[#16171f] border-[#272932]';
+  const modalContainerBorderClass =
+    modalEnv === 'prod'
+      ? 'border-rose-700/60'
+      : modalEnv === 'dev'
+      ? 'border-emerald-700/60'
+      : 'border-[#2b2e3a]';
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-150 select-none"
@@ -1482,13 +1496,21 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     >
       {/* Modal Container: wider width and taller height */}
       <div
-        className="w-[96vw] max-w-[1400px] h-[88vh] min-h-[550px] max-h-[94vh] rounded-2xl border border-[#2b2e3a] bg-[#14151a] shadow-2xl overflow-hidden flex flex-col text-zinc-200"
+        className={`w-[96vw] max-w-[1400px] h-[88vh] min-h-[550px] max-h-[94vh] rounded-2xl border ${modalContainerBorderClass} bg-[#14151a] shadow-2xl overflow-hidden flex flex-col text-zinc-200 transition-colors`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex h-14 items-center justify-between border-b border-[#272932] px-6 bg-[#16171f] shrink-0">
+        <div className={`flex h-14 items-center justify-between border-b px-6 shrink-0 transition-colors ${modalHeaderClass}`}>
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+            <div
+              className={`flex h-9 w-9 items-center justify-center rounded-xl border ${
+                modalEnv === 'prod'
+                  ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+                  : modalEnv === 'dev'
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                  : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+              }`}
+            >
               {isEditMode ? <Pencil className="h-4 w-4" /> : <Table className="h-5 w-5" />}
             </div>
             <div>
@@ -1497,6 +1519,17 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                 {isEditMode && initialTableName && (
                   <span className="font-mono text-xs px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/50">
                     {initialTableName}
+                  </span>
+                )}
+                {modalEnv !== 'local' && (
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${
+                      modalEnv === 'prod'
+                        ? 'bg-rose-500/20 text-rose-200 border-rose-500/50'
+                        : 'bg-emerald-500/20 text-emerald-200 border-emerald-500/50'
+                    }`}
+                  >
+                    {modalEnv === 'prod' ? 'PROD' : 'DEV'}
                   </span>
                 )}
               </h2>

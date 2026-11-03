@@ -17,7 +17,7 @@ import {
   Database,
   RefreshCw,
 } from 'lucide-react';
-import { ConnectionConfig } from '../../types/domain';
+import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { alertWarning } from '../../stores/useAlertStore';
 
 interface ConsoleListProps {
@@ -330,15 +330,21 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                     handleItemMouseLeave();
                     handleConnectionContextMenu(e, conn);
                   }}
-                  onMouseEnter={(e) =>
+                  onMouseEnter={(e) => {
+                    const connEnv = resolveConnectionEnv(conn);
                     handleItemMouseEnter(e, {
                       kind: 'connection',
                       title: conn.name,
                       badge: (conn.driver || 'DB').toUpperCase(),
                       subtitle: `${connConsoles.length} console(s) • Right-click to add console`,
-                      colorTag: conn.colorTag || '#3b82f6',
-                    })
-                  }
+                      colorTag:
+                        connEnv === 'dev'
+                          ? '#10b981'
+                          : connEnv === 'prod'
+                          ? '#ef4444'
+                          : undefined,
+                    });
+                  }}
                   onMouseLeave={handleItemMouseLeave}
                   className="group flex items-center justify-between px-2 py-1.5 bg-[#191a20] hover:bg-[#22242c] cursor-pointer text-zinc-300 transition-colors"
                   title={`${conn.name} (${conn.driver.toUpperCase()})`}
@@ -349,10 +355,15 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
                     ) : (
                       <ChevronRight className="h-3 w-3 text-zinc-500 shrink-0" />
                     )}
-                    <span
-                      className="h-2 w-2 rounded-full shrink-0"
-                      style={{ backgroundColor: conn.colorTag || '#3b82f6' }}
-                    />
+                    {resolveConnectionEnv(conn) !== 'local' && (
+                      <span
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{
+                          backgroundColor:
+                            resolveConnectionEnv(conn) === 'dev' ? '#10b981' : '#ef4444',
+                        }}
+                      />
+                    )}
                     <span className="font-semibold text-[11px] truncate">{conn.name}</span>
                     <span className="text-[9px] text-zinc-500 font-mono uppercase bg-[#121317] px-1 rounded shrink-0">
                       {conn.driver}

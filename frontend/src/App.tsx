@@ -34,7 +34,7 @@ import {
   Pencil,
   Copy,
 } from 'lucide-react';
-import { QueryResult, ColumnMeta, WorkbenchTab } from './types/domain';
+import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 
 export function App() {
   const {
@@ -1214,6 +1214,21 @@ export function App() {
                       tabDropTarget?.id === tab.id && tabDropTarget.position === 'before';
                     const isDropAfter =
                       tabDropTarget?.id === tab.id && tabDropTarget.position === 'after';
+                    const tabConn = connections.find((c) => c.id === tab.connectionId);
+                    const tabEnv = resolveConnectionEnv(tabConn);
+                    const isActive = activeTabId === tab.id;
+                    const tabColorClass =
+                      tabEnv === 'prod'
+                        ? isActive
+                          ? 'bg-rose-950/75 border-rose-500 text-rose-100 font-medium shadow-xs'
+                          : 'bg-rose-950/25 border-rose-900/50 text-rose-300/80 hover:text-rose-100 hover:bg-rose-950/45'
+                        : tabEnv === 'dev'
+                        ? isActive
+                          ? 'bg-emerald-950/75 border-emerald-500 text-emerald-100 font-medium shadow-xs'
+                          : 'bg-emerald-950/25 border-emerald-900/50 text-emerald-300/80 hover:text-emerald-100 hover:bg-emerald-950/45'
+                        : isActive
+                        ? 'bg-[#191a20] border-zinc-400 text-white font-medium'
+                        : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#191a20]/50';
 
                     return (
                       <div
@@ -1280,19 +1295,29 @@ export function App() {
                         onMouseLeave={handleTabMouseLeave}
                         className={`relative group shrink-0 max-w-[124px] flex items-center gap-1 px-2 py-1 rounded-t text-[11px] cursor-pointer border-t-2 transition-colors ${
                           isDraggingThis ? 'opacity-40 ' : ''
-                        }${
-                          activeTabId === tab.id
-                            ? 'bg-[#191a20] border-zinc-400 text-white font-medium'
-                            : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#191a20]/50'
-                        }`}
+                        }${tabColorClass}`}
                       >
                         {isDropBefore && (
                           <div className="absolute -left-0.5 top-1 bottom-1 w-0.5 bg-blue-500 rounded-full z-20 pointer-events-none" />
                         )}
                         {tab.type === 'worksheet' ? (
-                          <FileCode className="h-3 w-3 text-zinc-400 shrink-0" />
+                          <FileCode
+                            className={`h-3 w-3 shrink-0 ${
+                              tabEnv === 'prod'
+                                ? 'text-rose-400'
+                                : tabEnv === 'dev'
+                                ? 'text-emerald-400'
+                                : 'text-zinc-400'
+                            }`}
+                          />
                         ) : (
-                          <Table className="h-3 w-3 text-emerald-400 shrink-0" />
+                          <Table
+                            className={`h-3 w-3 shrink-0 ${
+                              tabEnv === 'prod'
+                                ? 'text-rose-400'
+                                : 'text-emerald-400'
+                            }`}
+                          />
                         )}
                         <span
                           onDoubleClick={
@@ -1429,6 +1454,7 @@ export function App() {
                             ) : (
                               filteredOverflowTabs.map((tab, idx) => {
                                 const conn = connections.find((c) => c.id === tab.connectionId);
+                                const dropTabEnv = resolveConnectionEnv(conn);
                                 const isSelected = idx === safeIndex;
 
                                 return (
@@ -1454,10 +1480,18 @@ export function App() {
                                         y,
                                       });
                                     }}
-                                    className={`group flex items-center justify-between gap-2 px-2 py-1 text-[11px] cursor-pointer transition-colors ${
-                                      isSelected
-                                        ? 'bg-[#2b4c7e]/70 text-white ring-1 ring-inset ring-blue-400/50'
-                                        : 'text-zinc-200 hover:bg-[#262934]'
+                                    className={`group flex items-center justify-between gap-2 px-2 py-1 text-[11px] cursor-pointer transition-colors border-l-2 ${
+                                      dropTabEnv === 'prod'
+                                        ? isSelected
+                                          ? 'bg-rose-900/60 text-white border-l-rose-500'
+                                          : 'bg-rose-950/25 text-rose-200 hover:bg-rose-950/45 border-l-rose-500/70'
+                                        : dropTabEnv === 'dev'
+                                        ? isSelected
+                                          ? 'bg-emerald-900/60 text-white border-l-emerald-500'
+                                          : 'bg-emerald-950/25 text-emerald-200 hover:bg-emerald-950/45 border-l-emerald-500/70'
+                                        : isSelected
+                                        ? 'bg-[#2b4c7e]/70 text-white border-l-blue-400'
+                                        : 'text-zinc-200 hover:bg-[#262934] border-l-transparent'
                                     }`}
                                   >
                                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1548,18 +1582,39 @@ export function App() {
                   />
                 </div>
               );
-            })() : activeTab?.type === 'table_data' ? (
+            })() : activeTab?.type === 'table_data' ? (() => {
+              const tableConn = connections.find((c) => c.id === activeTab.connectionId);
+              const tableEnv = resolveConnectionEnv(tableConn);
+              const tableHeaderBgClass =
+                tableEnv === 'prod'
+                  ? 'bg-rose-950/50 border-rose-900/60'
+                  : tableEnv === 'dev'
+                  ? 'bg-emerald-950/50 border-emerald-900/60'
+                  : 'bg-[#14151a] border-[#272932]';
+
+              return (
               <div className="flex-1 min-h-0 flex flex-col">
                 {/* Table Tab Bar with Table Name, Database, and Refresh Button */}
-                <div className="flex h-9 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
+                <div className={`flex h-9 items-center justify-between border-b px-3 transition-colors ${tableHeaderBgClass}`}>
                   <div className="flex items-center gap-2 min-w-0">
-                    <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    <Table className={`h-3.5 w-3.5 shrink-0 ${tableEnv === 'prod' ? 'text-rose-400' : 'text-emerald-400'}`} />
                     <span
                       className="font-semibold text-xs text-white truncate max-w-[320px]"
                       title={activeTab.table}
                     >
                       {activeTab.table}
                     </span>
+                    {tableEnv !== 'local' && (
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.2 rounded border uppercase shrink-0 ${
+                          tableEnv === 'prod'
+                            ? 'bg-rose-500/20 text-rose-200 border-rose-500/40'
+                            : 'bg-emerald-500/20 text-emerald-200 border-emerald-500/40'
+                        }`}
+                      >
+                        {tableEnv}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -1622,6 +1677,7 @@ export function App() {
                   ) : (
                     <DataGrid
                       tabId={activeTab.id}
+                      envType={tableEnv}
                       columns={tableDataByTab[activeTab.id]?.columns || []}
                       rows={tableDataByTab[activeTab.id]?.rows || []}
                       primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
@@ -1664,7 +1720,8 @@ export function App() {
                   )}
                 </div>
               </div>
-            ) : (
+              );
+            })() : (
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-zinc-500 select-none">
                 <Terminal className="h-10 w-10 text-zinc-600 mb-3 stroke-[1.5]" />
                 <h3 className="text-sm font-semibold text-zinc-300">No Open Tabs</h3>
@@ -1800,6 +1857,9 @@ export function App() {
                           <DataGrid
                             key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
                             tabId={`bottom-result-${activeResultIndex}`}
+                            envType={resolveConnectionEnv(
+                              connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))
+                            )}
                             columns={currentRes.columns || []}
                             rows={currentRes.rows || []}
                             hasMore={currentRes.hasMore}
@@ -2075,86 +2135,113 @@ export function App() {
       )}
 
       {/* Rename Modal Dialog */}
-      {renameModal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
-          <div className="w-80 rounded-lg bg-[#191a20] border border-[#272932] p-4 text-xs text-zinc-300 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
-            <div className="flex items-center justify-between pb-2 mb-3 border-b border-[#272932]">
-              <span className="font-semibold text-sm text-zinc-100 flex items-center gap-1.5">
-                <Pencil className="h-4 w-4 text-blue-400" />
-                Rename Tab / Console
-              </span>
-              <button
-                onClick={() => setRenameModal({ isOpen: false, id: '', title: '' })}
-                className="text-zinc-400 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <form onSubmit={handleRenameSubmit}>
-              <label className="block text-[11px] text-zinc-400 mb-1.5 font-medium">
-                New Name:
-              </label>
-              <input
-                type="text"
-                value={renameModal.title}
-                onChange={(e) => setRenameModal((prev) => ({ ...prev, title: e.target.value }))}
-                className="w-full rounded bg-[#121317] px-2.5 py-1.5 text-xs text-zinc-100 border border-[#272932] focus:border-blue-500 focus:outline-none"
-                autoFocus
-                onFocus={(e) => e.target.select()}
-              />
-              <div className="flex justify-end gap-2 mt-4">
+      {renameModal.isOpen && (() => {
+        const targetTab = tabs.find((t) => t.id === renameModal.id);
+        const renameConn = connections.find(
+          (c) => c.id === (targetTab?.connectionId || activeTab?.connectionId || activeConnectionId)
+        );
+        const renameEnv = resolveConnectionEnv(renameConn);
+        const renameHeaderClass =
+          renameEnv === 'prod'
+            ? 'bg-rose-950/75 border-rose-800/70'
+            : renameEnv === 'dev'
+            ? 'bg-emerald-950/75 border-emerald-800/70'
+            : 'bg-[#14151a] border-[#272932]';
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
+            <div className="w-80 rounded-lg bg-[#191a20] border border-[#272932] overflow-hidden text-xs text-zinc-300 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+              <div className={`flex items-center justify-between px-4 py-2.5 border-b ${renameHeaderClass}`}>
+                <span className="font-semibold text-sm text-zinc-100 flex items-center gap-1.5">
+                  <Pencil className="h-4 w-4 text-blue-400" />
+                  Rename Tab / Console
+                </span>
                 <button
-                  type="button"
                   onClick={() => setRenameModal({ isOpen: false, id: '', title: '' })}
-                  className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c] text-zinc-300 cursor-pointer"
+                  className="text-zinc-400 hover:text-white"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-sm cursor-pointer"
-                >
-                  Save
+                  <X className="h-4 w-4" />
                 </button>
               </div>
-            </form>
+              <form onSubmit={handleRenameSubmit} className="p-4">
+                <label className="block text-[11px] text-zinc-400 mb-1.5 font-medium">
+                  New Name:
+                </label>
+                <input
+                  type="text"
+                  value={renameModal.title}
+                  onChange={(e) => setRenameModal((prev) => ({ ...prev, title: e.target.value }))}
+                  className="w-full rounded bg-[#121317] px-2.5 py-1.5 text-xs text-zinc-100 border border-[#272932] focus:border-blue-500 focus:outline-none"
+                  autoFocus
+                  onFocus={(e) => e.target.select()}
+                />
+                <div className="flex justify-end gap-2 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setRenameModal({ isOpen: false, id: '', title: '' })}
+                    className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c] text-zinc-300 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-sm cursor-pointer"
+                  >
+                    Save
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* DML Preview Modal */}
-      {dmlPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
-          <div className="w-[600px] rounded-lg bg-[#191a20] border border-[#272932] p-4 text-xs text-zinc-300 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#272932] pb-2 mb-3">
-              <span className="font-semibold text-sm text-zinc-100">Pending DML Statements</span>
-              <button onClick={() => setDmlPreview(null)} className="text-zinc-400 hover:text-white">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <pre className="p-3 bg-[#121317] rounded border border-[#272932] font-mono text-xs text-emerald-400 max-h-60 overflow-auto">
-              {dmlPreview.join('\n\n')}
-            </pre>
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => setDmlPreview(null)}
-                className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c]"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  setDmlPreview(null);
-                  handleSubmitChanges();
-                }}
-                className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm"
-              >
-                Apply Changes
-              </button>
+      {dmlPreview && (() => {
+        const dmlConn = connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId));
+        const dmlEnv = resolveConnectionEnv(dmlConn);
+        const dmlHeaderClass =
+          dmlEnv === 'prod'
+            ? 'bg-rose-950/75 border-rose-800/70'
+            : dmlEnv === 'dev'
+            ? 'bg-emerald-950/75 border-emerald-800/70'
+            : 'bg-[#14151a] border-[#272932]';
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
+            <div className="w-[600px] rounded-lg bg-[#191a20] border border-[#272932] overflow-hidden text-xs text-zinc-300 shadow-2xl">
+              <div className={`flex items-center justify-between border-b px-4 py-3 ${dmlHeaderClass}`}>
+                <span className="font-semibold text-sm text-zinc-100">Pending DML Statements</span>
+                <button onClick={() => setDmlPreview(null)} className="text-zinc-400 hover:text-white">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-4">
+                <pre className="p-3 bg-[#121317] rounded border border-[#272932] font-mono text-xs text-emerald-400 max-h-60 overflow-auto">
+                  {dmlPreview.join('\n\n')}
+                </pre>
+                <div className="flex justify-end gap-2 mt-4">
+                  <button
+                    onClick={() => setDmlPreview(null)}
+                    className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c]"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDmlPreview(null);
+                      handleSubmitChanges();
+                    }}
+                    className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm"
+                  >
+                    Apply Changes
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Resizing Backdrop Overlays */}
       {isDraggingBottomResizer && (

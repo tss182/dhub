@@ -73,6 +73,7 @@ func (s *LocalStore) migrate() error {
 			folder_id       TEXT REFERENCES connection_folders(id) ON DELETE SET NULL,
 			name            TEXT NOT NULL,
 			driver          TEXT NOT NULL,
+			env_type        TEXT NOT NULL DEFAULT 'local',
 			color_tag       TEXT NOT NULL DEFAULT '#3b82f6',
 			is_read_only     INTEGER NOT NULL DEFAULT 0,
 			tx_mode         TEXT NOT NULL DEFAULT 'auto',
@@ -145,6 +146,12 @@ func (s *LocalStore) migrate() error {
 			return fmt.Errorf("migration query failed: %w (SQL: %s)", err, q)
 		}
 	}
+
+	// Ensure color column exists on older connection_folders tables
+	_, _ = s.db.Exec(`ALTER TABLE connection_folders ADD COLUMN color TEXT NOT NULL DEFAULT '#3b82f6';`)
+	// Ensure env_type column exists on older connections tables
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN env_type TEXT NOT NULL DEFAULT 'local';`)
+
 
 	// Ensure color column exists on older connection_folders tables
 	_, _ = s.db.Exec(`ALTER TABLE connection_folders ADD COLUMN color TEXT NOT NULL DEFAULT '#3b82f6';`)

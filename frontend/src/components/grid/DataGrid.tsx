@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ColumnMeta } from '../../types/domain';
+import { ColumnMeta, ConnectionEnvType } from '../../types/domain';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import {
@@ -161,6 +161,7 @@ interface DataGridProps {
   isTableTab?: boolean;
   sortConfigs?: SortConfig[];
   onSortChange?: (sortConfigs: SortConfig[]) => void;
+  envType?: ConnectionEnvType;
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({
@@ -185,6 +186,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   isTableTab = false,
   sortConfigs = [],
   onSortChange,
+  envType = 'local',
 }) => {
   const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
@@ -750,10 +752,41 @@ export const DataGrid: React.FC<DataGridProps> = ({
     onPageSizeChange?.(newSize);
   };
 
+  const gridContainerBg =
+    envType === 'prod'
+      ? 'bg-[#1e1014]'
+      : envType === 'dev'
+      ? 'bg-[#0e1d17]'
+      : 'bg-[#191a20]';
+  const gridBarBg =
+    envType === 'prod'
+      ? 'bg-[#170b0e] border-rose-900/50'
+      : envType === 'dev'
+      ? 'bg-[#091511] border-emerald-900/50'
+      : 'bg-[#14151a] border-[#272932]';
+  const gridTheadBg =
+    envType === 'prod'
+      ? 'bg-[#190c10]'
+      : envType === 'dev'
+      ? 'bg-[#0b1813]'
+      : 'bg-[#14151a]';
+  const gridCellBorder =
+    envType === 'prod'
+      ? 'border-rose-950/70'
+      : envType === 'dev'
+      ? 'border-emerald-950/70'
+      : 'border-[#272932]';
+  const gridRowClass =
+    envType === 'prod'
+      ? 'border-b border-rose-950/60 hover:bg-rose-950/35 transition-colors'
+      : envType === 'dev'
+      ? 'border-b border-emerald-950/60 hover:bg-emerald-950/35 transition-colors'
+      : 'border-b border-[#22242c] hover:bg-[#20222a] transition-colors';
+
   return (
-    <div data-grid-container="true" className="flex h-full flex-col bg-[#191a20] text-xs select-text">
+    <div data-grid-container="true" className={`flex h-full flex-col ${gridContainerBg} text-xs select-text transition-colors`}>
       {/* Table Toolbar */}
-      <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
+      <div className={`flex h-10 items-center justify-between border-b px-3 ${gridBarBg}`}>
         <div className="flex items-center gap-1.5">
           <button
             onClick={handleAddRow}
@@ -898,7 +931,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
       {/* SQL WHERE Filter Bar (Below Add Row toolbar) */}
       {isTableTab && (
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[#272932] bg-[#14151a]">
+        <div className={`flex items-center gap-2 px-3 py-1.5 border-b ${gridBarBg}`}>
           <div className="flex items-center gap-1.5 shrink-0 select-none">
             <span className="font-mono text-[11px] font-bold text-blue-400 bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded">
               WHERE
@@ -993,9 +1026,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
         className="flex-1 overflow-auto min-h-0 relative"
       >
         <table className="w-full border-collapse font-mono text-[12px] text-zinc-300">
-          <thead className="sticky top-0 bg-[#14151a] shadow-sm z-10">
-            <tr className="border-b border-[#272932]">
-              <th className="w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r border-[#272932]">#</th>
+          <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-10`}>
+            <tr className={`border-b ${gridCellBorder}`}>
+              <th className={`w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r ${gridCellBorder}`}>#</th>
               {columns.map((col) => {
                 const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
                 const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
@@ -1008,7 +1041,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     onClick={(e) => handleToggleSort(col.name, e)}
                     onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
                     onMouseLeave={handleColMouseLeave}
-                    className="px-3 py-1.5 text-left font-semibold border-r border-[#272932] text-zinc-200 group/th select-none hover:bg-[#1c1d28] transition-colors cursor-pointer"
+                    className={`px-3 py-1.5 text-left font-semibold border-r ${gridCellBorder} text-zinc-200 group/th select-none ${
+                      envType === 'prod'
+                        ? 'hover:bg-rose-950/60'
+                        : envType === 'dev'
+                        ? 'hover:bg-emerald-950/60'
+                        : 'hover:bg-[#1c1d28]'
+                    } transition-colors cursor-pointer`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 truncate">
@@ -1192,7 +1231,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 const isDeleted = staged?.type === 'delete';
                 const isSelected = selectedRowIndex === globalRowIndex;
 
-                let rowClass = 'border-b border-[#22242c] hover:bg-[#20222a] transition-colors';
+                let rowClass = gridRowClass;
                 if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
                 if (isSelected) rowClass += ' bg-blue-600/15 border-l-2 border-l-blue-500';
 
@@ -1202,7 +1241,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     onClick={() => setSelectedRowIndex(globalRowIndex)}
                     className={rowClass}
                   >
-                    <td className="px-2 py-1 text-center text-zinc-600 border-r border-[#272932] select-none text-[11px]">
+                    <td className={`px-2 py-1 text-center text-zinc-500 border-r ${gridCellBorder} select-none text-[11px]`}>
                       {globalRowIndex + 1}
                     </td>
                     {columns.map((col, cIdx) => {
@@ -1220,7 +1259,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                             }
                           }}
                           onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
-                          className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs ${
+                          className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs ${
                             hasColChange ? 'bg-blue-900/30 text-blue-200 font-medium' : ''
                           }`}
                         >
@@ -1303,7 +1342,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       </div>
 
       {/* Pagination Footer */}
-      <div className="flex h-9 items-center justify-between border-t border-[#272932] px-3 bg-[#14151a] text-zinc-400 text-xs shrink-0 select-none">
+      <div className={`flex h-9 items-center justify-between border-t px-3 ${gridBarBg} text-zinc-400 text-xs shrink-0 select-none`}>
         {/* Left: Row Count Info */}
         <div className="flex items-center gap-2 font-sans text-[11px]">
           {viewMode === 'paged' ? (
