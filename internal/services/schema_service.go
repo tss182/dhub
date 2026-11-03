@@ -158,6 +158,7 @@ func (s *SchemaService) emitSync(connID, db, schema, status, message string) {
 	}
 }
 
+// GetDefaultBackupPath returns the default .sql backup file path for a database.
 func (s *SchemaService) GetDefaultBackupPath(database string) (string, error) {
 	safeDB := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {

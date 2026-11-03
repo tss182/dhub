@@ -137,6 +137,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
                 color: f.color || '#3b82f6',
                 parentId: null,
                 sortOrder: i,
+                createdAt: new Date().toISOString(),
               });
             }
 
@@ -240,6 +241,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       color,
       parentId: null,
       sortOrder,
+      createdAt: new Date().toISOString(),
     }).catch((err) => {
       console.error('Failed to save folder to SQLite:', err);
     });
@@ -268,6 +270,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       color: nextColor,
       parentId: existing?.parentId || null,
       sortOrder,
+      createdAt: new Date().toISOString(),
     }).catch((err) => {
       console.error('Failed to rename folder in SQLite:', err);
     });

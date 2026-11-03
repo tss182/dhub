@@ -76,7 +76,7 @@ export interface ConnectionFolder {
     "color": string;
     "parentId": string | null;
     "sortOrder": number;
-    "createdAt": string;
+    "createdAt"?: string;
 }
 
 export interface ConnectionLayoutUpdate {
