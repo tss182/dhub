@@ -11,6 +11,7 @@ import { ConnectionDialog } from './components/modals/ConnectionDialog';
 import { SearchEverywhere } from './components/modals/SearchEverywhere';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { AlertModal } from './components/modals/AlertModal';
+import { ToastContainer } from './components/common/ToastContainer';
 import { TableStructureModal } from './components/modals/CreateTableModal';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
@@ -2357,6 +2358,7 @@ export function App() {
       <SearchEverywhere />
       <SettingsModal />
       <AlertModal />
+      <ToastContainer />
       <TableStructureModal
         isOpen={tableStructureModal.isOpen}
         mode={tableStructureModal.mode}

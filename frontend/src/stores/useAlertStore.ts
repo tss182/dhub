@@ -15,6 +15,14 @@ export interface AlertModalOptions {
   onCancel?: () => void;
 }
 
+export interface ToastNotification {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title?: string;
+  message: string;
+  duration?: number;
+}
+
 interface AlertStoreState {
   isOpen: boolean;
   type: AlertType;
@@ -28,8 +36,12 @@ interface AlertStoreState {
   onConfirm?: () => void;
   onCancel?: () => void;
 
+  toasts: ToastNotification[];
+
   showAlert: (options: AlertModalOptions) => void;
   showConfirm: (options: Omit<AlertModalOptions, 'type'> & { onConfirm: () => void }) => void;
+  showToast: (options: Omit<ToastNotification, 'id'>) => string;
+  removeToast: (id: string) => void;
   closeAlert: () => void;
 }
 
@@ -45,27 +57,54 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
   confirmVariant: undefined,
   onConfirm: undefined,
   onCancel: undefined,
+  toasts: [],
 
   showAlert: (options) => {
     const type = options.type || 'info';
-    let defaultTitle = 'Information';
-    if (type === 'success') defaultTitle = 'Success';
-    if (type === 'error') defaultTitle = 'Error';
-    if (type === 'warning') defaultTitle = 'Warning';
 
-    set({
-      isOpen: true,
-      type,
-      title: options.title || defaultTitle,
-      message: options.message,
-      details: options.details,
-      confirmLabel: options.confirmLabel || (type === 'error' ? 'Close' : 'OK'),
-      cancelLabel: options.cancelLabel || 'Cancel',
-      isDanger: options.isDanger || false,
-      confirmVariant: options.confirmVariant,
-      onConfirm: options.onConfirm,
-      onCancel: options.onCancel,
-    });
+    // If it requires user choice (confirm) or has detailed text to inspect, show central modal
+    const requiresModal =
+      type === 'confirm' ||
+      Boolean(options.onConfirm && options.onCancel) ||
+      Boolean(options.details && options.details.trim().length > 0);
+
+    if (requiresModal) {
+      let defaultTitle = 'Information';
+      if (type === 'success') defaultTitle = 'Success';
+      if (type === 'error') defaultTitle = 'Error';
+      if (type === 'warning') defaultTitle = 'Warning';
+
+      set({
+        isOpen: true,
+        type,
+        title: options.title || defaultTitle,
+        message: options.message,
+        details: options.details,
+        confirmLabel: options.confirmLabel || (type === 'error' ? 'Close' : 'OK'),
+        cancelLabel: options.cancelLabel || 'Cancel',
+        isDanger: options.isDanger || false,
+        confirmVariant: options.confirmVariant,
+        onConfirm: options.onConfirm,
+        onCancel: options.onCancel,
+      });
+    } else {
+      // Just informational: show top-right toast notification
+      const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+      const toastType: 'success' | 'error' | 'warning' | 'info' = type;
+
+      set((state) => ({
+        toasts: [
+          ...state.toasts,
+          {
+            id,
+            type: toastType,
+            title: options.title,
+            message: options.message,
+            duration: 3500,
+          },
+        ],
+      }));
+    }
   },
 
   showConfirm: (options) => {
@@ -84,6 +123,26 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
     });
   },
 
+  showToast: (options) => {
+    const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+    set((state) => ({
+      toasts: [
+        ...state.toasts,
+        {
+          id,
+          ...options,
+        },
+      ],
+    }));
+    return id;
+  },
+
+  removeToast: (id) => {
+    set((state) => ({
+      toasts: state.toasts.filter((t) => t.id !== id),
+    }));
+  },
+
   closeAlert: () =>
     set({
       isOpen: false,
@@ -94,17 +153,22 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
 }));
 
 // Convenience helpers
-export const alertSuccess = (message: string, title?: string, details?: string) =>
-  useAlertStore.getState().showAlert({ type: 'success', message, title, details });
+export const alertSuccess = (message: string, title?: string) =>
+  useAlertStore.getState().showToast({ type: 'success', message, title });
 
-export const alertError = (message: string, title?: string, details?: string) =>
-  useAlertStore.getState().showAlert({ type: 'error', message, title, details });
+export const alertError = (message: string, title?: string, details?: string) => {
+  if (details && details.trim().length > 0) {
+    useAlertStore.getState().showAlert({ type: 'error', message, title, details });
+  } else {
+    useAlertStore.getState().showToast({ type: 'error', message, title });
+  }
+};
 
-export const alertWarning = (message: string, title?: string, details?: string) =>
-  useAlertStore.getState().showAlert({ type: 'warning', message, title, details });
+export const alertWarning = (message: string, title?: string) =>
+  useAlertStore.getState().showToast({ type: 'warning', message, title });
 
-export const alertInfo = (message: string, title?: string, details?: string) =>
-  useAlertStore.getState().showAlert({ type: 'info', message, title, details });
+export const alertInfo = (message: string, title?: string) =>
+  useAlertStore.getState().showToast({ type: 'info', message, title });
 
 // Promise-based confirmation using the app's styled AlertModal (replaces native window.confirm)
 export const confirmDialog = (
@@ -117,4 +181,3 @@ export const confirmDialog = (
       onCancel: () => resolve(false),
     });
   });
-
