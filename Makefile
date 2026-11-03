@@ -5,6 +5,7 @@
 WAILS ?= wails3
 APP_NAME ?= dhub
 BIN_DIR ?= bin
+INSTALL_SCOPE ?= user
 
 .DEFAULT_GOAL := help
 
@@ -26,7 +27,7 @@ help:
 	@echo "Additional Targets:"
 	@echo "  make build:appimage         Build Linux AppImage (bin/)"
 	@echo "  make build:mac:dmg          Build macOS DMG installer"
-	@echo "  make build:windows:installer Build Windows NSIS installer"
+	@echo "  make build:windows:installer Build Windows NSIS installer (scope: $(INSTALL_SCOPE))"
 	@echo "  make bindings               Generate Go-TypeScript bindings"
 	@echo "  make clean                  Remove build artifacts and output directory"
 	@echo "========================================================================"
@@ -67,8 +68,8 @@ build\:windows:
 	$(WAILS) task windows:build
 
 build\:windows\:installer:
-	@echo "==> Building Windows NSIS installer..."
-	$(WAILS) task windows:package
+	@echo "==> Building Windows NSIS installer (scope: $(INSTALL_SCOPE))..."
+	$(WAILS) task windows:package INSTALL_SCOPE=$(INSTALL_SCOPE)
 
 # Aliases with hyphens for standard Makefile conventions
 build-mac: build\:mac
