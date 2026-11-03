@@ -27,6 +27,11 @@ import {
   ArrowUpDown,
   Copy,
   AlertCircle,
+  FileText,
+  Code,
+  Edit3,
+  Ban,
+  CheckSquare,
 } from 'lucide-react';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
@@ -364,12 +369,22 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const revertTabChanges = useGridEditStore((state) => state.revertTabChanges);
   const stagedCount = Object.keys(stagedChanges).length;
 
-  const [selectedRowIndex, setAnchorRow] = useState<number | null>(null);
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
-  const setSelectedRowIndex = (idx: number | null) => {
-    setAnchorRow(idx);
-    setSelectedRows(idx === null ? new Set() : new Set([idx]));
-  };
+  const [selectionAnchor, setSelectionAnchor] = useState<{ r: number; c: number } | null>(null);
+  const [selectionFocus, setSelectionFocus] = useState<{ r: number; c: number } | null>(null);
+  const isDraggingRef = useRef(false);
+  const [contextMenu, setContextMenu] = useState<{
+    isOpen: boolean;
+    x: number;
+    y: number;
+    vIdx: number | null;
+    cIdx: number | null;
+  }>({
+    isOpen: false,
+    x: 0,
+    y: 0,
+    vIdx: null,
+    cIdx: null,
+  });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const insertedChanges = useMemo(() => {
@@ -388,7 +403,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const handleAddRow = () => {
     const newRowId = -Date.now();
     stageRowInsert(tabId, newRowId);
-    setSelectedRowIndex(newRowId);
+    setSelectionAnchor({ r: 0, c: 0 });
+    setSelectionFocus({ r: 0, c: columns.length > 0 ? columns.length - 1 : 0 });
 
     // Auto-focus first editable column of the newly inserted row
     const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
@@ -445,276 +461,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
       onSubmitChanges();
     }
   };
-
-  const handleDuplicateRow = () => {
-    if (editingCell) {
-      handleFinishEdit();
-    }
-
-    let targets: number[];
-    if (selectedRows.size > 1) {
-      // Multi-select: duplicate every selected row (existing rows in grid order, then staged inserts)
-      targets = Array.from(selectedRows).sort((x, y) => (x < 0 && y < 0 ? y - x : x < 0 ? 1 : y < 0 ? -1 : x - y));
-    } else {
-      let targetRowIndex = selectedRowIndex;
-      if (targetRowIndex === null) {
-        if (insertedChanges.length > 0) {
-          targetRowIndex = insertedChanges[0].rowIndex;
-        } else if (rows.length > 0) {
-          targetRowIndex = 0;
-        } else {
-          return;
-        }
-      }
-      targets = [targetRowIndex];
-    }
-
-    const latestStaged = useGridEditStore.getState().stagedByTab[tabId] || {};
-
-    const buildValues = (targetRowIndex: number) => {
-      const initialValues: Record<string, unknown> = {};
-      if (targetRowIndex < 0) {
-        // Duplicating a staged insert row
-        const staged = latestStaged[targetRowIndex];
-        if (staged && staged.type === 'insert') {
-          columns.forEach((col) => {
-            if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
-              const rawVal = staged.changes[col.name];
-              if (rawVal !== undefined && rawVal !== null) {
-                const inputType = getColumnInputType(col.dataType);
-                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
-                initialValues[col.name] = val !== null ? val : rawVal;
-              }
-            }
-          });
-        }
-      } else {
-        // Duplicating an existing database row
-        const sourceRow = rows[targetRowIndex];
-        if (sourceRow) {
-          const staged = latestStaged[targetRowIndex];
-          columns.forEach((col, idx) => {
-            if (!col.isAutoIncrement) {
-              const rawVal =
-                staged?.type === 'update' && staged.changes[col.name] !== undefined
-                  ? staged.changes[col.name]
-                  : sourceRow[idx];
-              if (rawVal !== undefined && rawVal !== null) {
-                const inputType = getColumnInputType(col.dataType);
-                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
-                initialValues[col.name] = val !== null ? val : rawVal;
-              }
-            }
-          });
-        }
-      }
-      return initialValues;
-    };
-
-    const baseId = Date.now();
-    const newIds: number[] = [];
-    let lastValues: Record<string, unknown> = {};
-    targets.forEach((t, i) => {
-      const newRowId = -(baseId + i);
-      lastValues = buildValues(t);
-      stageRowInsert(tabId, newRowId, lastValues);
-      newIds.push(newRowId);
-    });
-
-    const newRowId = newIds[newIds.length - 1];
-    if (newIds.length > 1) {
-      // Select all duplicated rows
-      setAnchorRow(newRowId);
-      setSelectedRows(new Set(newIds));
-      return;
-    }
-    setSelectedRowIndex(newRowId);
-
-    // Auto-focus first editable column of the newly duplicated row
-    const initialValues = lastValues;
-    const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
-    const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
-    if (columns.length > 0) {
-      setTimeout(() => {
-        const val = initialValues[columns[targetColIdx].name];
-        handleStartEdit(newRowId, targetColIdx, val !== undefined && val !== null ? String(val) : '');
-      }, 50);
-    }
-  };
-
-  // Row selection: click = single, Ctrl/Cmd+click = toggle, Shift+click = range
-  const handleRowClick = (e: React.MouseEvent, idx: number) => {
-    if (e.shiftKey) window.getSelection()?.removeAllRanges();
-    if (e.shiftKey && selectedRowIndex !== null) {
-      const order = [...insertedChanges.map((c) => c.rowIndex), ...displayedRows.map((_, i) =>
-        viewMode === 'paged' ? (currentPage - 1) * localPageSize + i : i)];
-      const a = order.indexOf(selectedRowIndex);
-      const b = order.indexOf(idx);
-      if (a !== -1 && b !== -1) {
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        setSelectedRows(new Set(order.slice(lo, hi + 1)));
-        return;
-      }
-    }
-    if (e.ctrlKey || e.metaKey) {
-      setAnchorRow(idx);
-      setSelectedRows((prev) => {
-        const next = new Set(prev);
-        if (next.has(idx)) next.delete(idx);
-        else next.add(idx);
-        return next;
-      });
-      return;
-    }
-    setSelectedRowIndex(idx);
-  };
-
-  const handleDeleteActiveRow = () => {
-    if (selectedRows.size > 1) {
-      selectedRows.forEach((idx) => {
-        if (idx < 0) {
-          stageRowDelete(tabId, idx, {}, {});
-          return;
-        }
-        const pkMap: Record<string, unknown> = {};
-        const originalRowValues: Record<string, unknown> = {};
-        columns.forEach((c, ci) => {
-          originalRowValues[c.name] = rows[idx]?.[ci];
-        });
-        primaryKeys.forEach((pk) => {
-          const ci = columns.findIndex((c) => c.name === pk);
-          if (ci !== -1) pkMap[pk] = rows[idx]?.[ci];
-        });
-        stageRowDelete(tabId, idx, pkMap, originalRowValues);
-      });
-      setSelectedRowIndex(null);
-      return;
-    }
-    if (selectedRowIndex !== null) {
-      if (selectedRowIndex < 0) {
-        stageRowDelete(tabId, selectedRowIndex, {}, {});
-        setSelectedRowIndex(null);
-        return;
-      }
-      const pkMap: Record<string, unknown> = {};
-      const originalRowValues: Record<string, unknown> = {};
-      columns.forEach((c, idx) => {
-        originalRowValues[c.name] = rows[selectedRowIndex]?.[idx];
-      });
-      primaryKeys.forEach((pk) => {
-        const idx = columns.findIndex((c) => c.name === pk);
-        if (idx !== -1) pkMap[pk] = rows[selectedRowIndex]?.[idx];
-      });
-      stageRowDelete(tabId, selectedRowIndex, pkMap, originalRowValues);
-    } else if (insertedChanges.length > 0) {
-      const last = insertedChanges[insertedChanges.length - 1];
-      stageRowDelete(tabId, last.rowIndex, {}, {});
-    } else if (rows.length > 0) {
-      const pkMap: Record<string, unknown> = {};
-      const originalRowValues: Record<string, unknown> = {};
-      columns.forEach((c, idx) => {
-        originalRowValues[c.name] = rows[0]?.[idx];
-      });
-      primaryKeys.forEach((pk) => {
-        const idx = columns.findIndex((c) => c.name === pk);
-        if (idx !== -1) pkMap[pk] = rows[0]?.[idx];
-      });
-      stageRowDelete(tabId, 0, pkMap, originalRowValues);
-    }
-  };
-
-  // Keyboard shortcuts: Apply (Ctrl+S / Cmd+S), Duplicate (Ctrl+D / Cmd+D), Delete active row (Cmd+Backspace / Delete), Cancel (Esc)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.('.monaco-editor')) return;
-
-      // 1. When Cancel confirmation dialog is active
-      if (showCancelConfirm) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          setShowCancelConfirm(false);
-          return;
-        }
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          e.stopPropagation();
-          revertTabChanges(tabId);
-          setEditingCell(null);
-          if (selectedRowIndex !== null && selectedRowIndex < 0) {
-            setSelectedRowIndex(null);
-          }
-          setShowCancelConfirm(false);
-          return;
-        }
-        return;
-      }
-
-      // Check if user is typing in quick filter or WHERE inputs (don't intercept Esc for them)
-      const isInFilterOrWhere = target?.closest?.('[data-filter-input]') || target?.closest?.('[data-where-input]');
-
-      // Shortcut: Esc for Cancel / Revert Changes
-      if (e.key === 'Escape') {
-        if (isInFilterOrWhere) {
-          return;
-        }
-        if (editingCell) {
-          e.preventDefault();
-          setEditingCell(null);
-          if (stagedCount > 0) {
-            setShowCancelConfirm(true);
-          }
-          return;
-        }
-        if (stagedCount > 0) {
-          e.preventDefault();
-          setShowCancelConfirm(true);
-          return;
-        }
-      }
-
-      const activeEl = document.activeElement;
-      const isTyping =
-        (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) ||
-        (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA'));
-
-      // Shortcut: Delete active row (Cmd+Backspace on macOS, Delete key on Linux/Windows)
-      // Only delete row when NOT actively typing in an input/textarea
-      const isMacDelete = isMac && e.metaKey && (e.key === 'Backspace' || e.key === 'Delete');
-      const isOtherDelete = !isMac && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Delete';
-
-      if (!isTyping && (isMacDelete || isOtherDelete)) {
-        e.preventDefault();
-        handleDeleteActiveRow();
-        return;
-      }
-
-      const isMod = isMac ? e.metaKey : e.ctrlKey;
-      if (!isMod) return;
-
-      if (isTyping && !target?.closest?.('[data-grid-container]')) {
-        return;
-      }
-
-      // Shortcut: Apply (Ctrl+S on Linux/Win, Cmd+S on macOS)
-      if (e.key === 's' || e.key === 'S') {
-        e.preventDefault();
-        handleApplyChanges();
-        return;
-      }
-
-      // Shortcut: Duplicate (Ctrl+D on Linux/Win, Cmd+D on macOS)
-      if (e.key === 'd' || e.key === 'D') {
-        e.preventDefault();
-        handleDuplicateRow();
-        return;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tabId, isMac, editingCell, editVal, columns, rows, selectedRowIndex, selectedRows, insertedChanges, onSubmitChanges, stagedCount, showCancelConfirm]);
 
   // Filter rows client-side
   const filteredRows = useMemo(() => {
@@ -774,6 +520,544 @@ export const DataGrid: React.FC<DataGridProps> = ({
         : sortedRows
       : sortedRows;
 
+
+  // Visual rows in display order (inserted changes first, then displayed database rows)
+  const visualRows = useMemo(() => {
+    const list: Array<{
+      vIdx: number;
+      rowId: number;
+      isInsert: boolean;
+      insertChange?: (typeof insertedChanges)[0];
+      rowData?: any[];
+      globalRowIndex?: number;
+    }> = [];
+
+    insertedChanges.forEach((change) => {
+      list.push({
+        vIdx: list.length,
+        rowId: change.rowIndex,
+        isInsert: true,
+        insertChange: change,
+      });
+    });
+
+    displayedRows.forEach((row, rIdx) => {
+      const globalRowIndex = viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
+      list.push({
+        vIdx: list.length,
+        rowId: globalRowIndex,
+        isInsert: false,
+        rowData: row,
+        globalRowIndex,
+      });
+    });
+
+    return list;
+  }, [insertedChanges, displayedRows, viewMode, currentPage, localPageSize]);
+
+  // Rectangular cell selection range
+  const selectionRange = useMemo(() => {
+    if (!selectionAnchor || !selectionFocus) return null;
+    return {
+      startR: Math.min(selectionAnchor.r, selectionFocus.r),
+      endR: Math.max(selectionAnchor.r, selectionFocus.r),
+      startC: Math.min(selectionAnchor.c, selectionFocus.c),
+      endC: Math.max(selectionAnchor.c, selectionFocus.c),
+    };
+  }, [selectionAnchor, selectionFocus]);
+
+  const isCellSelected = (vIdx: number, cIdx: number) => {
+    if (!selectionRange) return false;
+    return (
+      vIdx >= selectionRange.startR &&
+      vIdx <= selectionRange.endR &&
+      cIdx >= selectionRange.startC &&
+      cIdx <= selectionRange.endC
+    );
+  };
+
+  const selectedRowKeys = useMemo(() => {
+    if (!selectionRange) return new Set<number>();
+    const set = new Set<number>();
+    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      const vr = visualRows[r];
+      if (vr) set.add(vr.rowId);
+    }
+    return set;
+  }, [selectionRange, visualRows]);
+
+  const selectedRowIndex = useMemo(() => {
+    if (!selectionFocus) return null;
+    return visualRows[selectionFocus.r]?.rowId ?? null;
+  }, [selectionFocus, visualRows]);
+
+  // Global mouseup to release cell drag selection and close context menu
+  useEffect(() => {
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+    };
+    const handleClickOutside = () => {
+      setContextMenu((prev) => (prev.isOpen ? { ...prev, isOpen: false } : prev));
+    };
+    const handleKeyDownOutside = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu((prev) => (prev.isOpen ? { ...prev, isOpen: false } : prev));
+      }
+    };
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('click', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDownOutside);
+    return () => {
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('click', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDownOutside);
+    };
+  }, []);
+
+  const handleCellContextMenu = (e: React.MouseEvent, vIdx: number, cIdx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!isCellSelected(vIdx, cIdx)) {
+      setSelectionAnchor({ r: vIdx, c: cIdx });
+      setSelectionFocus({ r: vIdx, c: cIdx });
+    }
+
+    const menuWidth = 220;
+    const menuHeight = 340;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+
+    setContextMenu({
+      isOpen: true,
+      x: Math.max(10, x),
+      y: Math.max(10, y),
+      vIdx,
+      cIdx,
+    });
+  };
+
+  const handleRowHeaderContextMenu = (e: React.MouseEvent, vIdx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!isCellSelected(vIdx, 0)) {
+      setSelectionAnchor({ r: vIdx, c: 0 });
+      setSelectionFocus({ r: vIdx, c: columns.length - 1 });
+    }
+
+    const menuWidth = 220;
+    const menuHeight = 340;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+
+    setContextMenu({
+      isOpen: true,
+      x: Math.max(10, x),
+      y: Math.max(10, y),
+      vIdx,
+      cIdx: 0,
+    });
+  };
+
+  const handleCopySelection = (includeHeaders = false) => {
+    if (!selectionRange || columns.length === 0) return;
+    const lines: string[] = [];
+    if (includeHeaders) {
+      const headerCols: string[] = [];
+      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        if (columns[c]) headerCols.push(columns[c].name);
+      }
+      lines.push(headerCols.join('\t'));
+    }
+    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      const cellTexts: string[] = [];
+      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        const col = columns[c];
+        if (!col) continue;
+        let val: any;
+        if (vr.isInsert) {
+          const staged = vr.insertChange;
+          val = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
+        } else {
+          const staged = stagedChanges[vr.globalRowIndex!];
+          if (staged?.type === 'update' && staged.changes[col.name] !== undefined) {
+            val = staged.changes[col.name];
+          } else {
+            val = vr.rowData?.[c];
+          }
+        }
+        cellTexts.push(val === null || val === undefined ? '' : String(val));
+      }
+      lines.push(cellTexts.join('\t'));
+    }
+    if (lines.length > 0) {
+      navigator.clipboard.writeText(lines.join('\n'));
+    }
+  };
+
+  const handleCopyAsJson = () => {
+    if (!selectionRange || columns.length === 0) return;
+    const list: Record<string, any>[] = [];
+    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      const rowObj: Record<string, any> = {};
+      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        const col = columns[c];
+        if (!col) continue;
+        let val: any;
+        if (vr.isInsert) {
+          const staged = vr.insertChange;
+          val = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? null);
+        } else {
+          const staged = stagedChanges[vr.globalRowIndex!];
+          if (staged?.type === 'update' && staged.changes[col.name] !== undefined) {
+            val = staged.changes[col.name];
+          } else {
+            val = vr.rowData?.[c];
+          }
+        }
+        rowObj[col.name] = val;
+      }
+      list.push(rowObj);
+    }
+    navigator.clipboard.writeText(JSON.stringify(list, null, 2));
+  };
+
+  const handleSetSelectedToNull = () => {
+    if (!selectionRange) return;
+    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        const col = columns[c];
+        if (!col || col.isPrimaryKey || col.isAutoIncrement) continue;
+        if (vr.isInsert) {
+          stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, null);
+        } else {
+          const originalRowValues: Record<string, unknown> = {};
+          columns.forEach((colMeta, idx) => {
+            originalRowValues[colMeta.name] = rows[vr.globalRowIndex!]?.[idx];
+          });
+          const pkMap: Record<string, unknown> = {};
+          primaryKeys.forEach((pk) => {
+            const idx = columns.findIndex((colMeta) => colMeta.name === pk);
+            if (idx !== -1) pkMap[pk] = rows[vr.globalRowIndex!]?.[idx];
+          });
+          stageCellUpdate(tabId, vr.globalRowIndex!, pkMap, originalRowValues, col.name, null);
+        }
+      }
+    }
+  };
+
+  const handleCellMouseDown = (e: React.MouseEvent, vIdx: number, cIdx: number) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+
+    if (editingCell) {
+      handleFinishEdit();
+    }
+
+    if (e.shiftKey && selectionAnchor) {
+      window.getSelection()?.removeAllRanges();
+      setSelectionFocus({ r: vIdx, c: cIdx });
+    } else {
+      isDraggingRef.current = true;
+      setSelectionAnchor({ r: vIdx, c: cIdx });
+      setSelectionFocus({ r: vIdx, c: cIdx });
+    }
+  };
+
+  const handleCellMouseEnter = (vIdx: number, cIdx: number) => {
+    if (isDraggingRef.current) {
+      setSelectionFocus({ r: vIdx, c: cIdx });
+    }
+  };
+
+  const handleRowHeaderMouseDown = (e: React.MouseEvent, vIdx: number) => {
+    if (e.button !== 0) return;
+    if (editingCell) handleFinishEdit();
+
+    if (e.shiftKey && selectionAnchor) {
+      window.getSelection()?.removeAllRanges();
+      setSelectionFocus({ r: vIdx, c: columns.length - 1 });
+    } else {
+      isDraggingRef.current = true;
+      setSelectionAnchor({ r: vIdx, c: 0 });
+      setSelectionFocus({ r: vIdx, c: columns.length - 1 });
+    }
+  };
+
+  const handleRowHeaderMouseEnter = (vIdx: number) => {
+    if (isDraggingRef.current) {
+      setSelectionFocus((prev) => (prev ? { r: vIdx, c: prev.c } : { r: vIdx, c: columns.length - 1 }));
+    }
+  };
+
+  const handleDuplicateRow = () => {
+    if (editingCell) {
+      handleFinishEdit();
+    }
+
+    const targets =
+      selectedRowKeys.size > 0
+        ? Array.from(selectedRowKeys).sort((x, y) => (x < 0 && y < 0 ? y - x : x < 0 ? 1 : y < 0 ? -1 : x - y))
+        : visualRows.length > 0
+        ? [visualRows[0].rowId]
+        : [];
+
+    if (targets.length === 0) return;
+
+    const latestStaged = useGridEditStore.getState().stagedByTab[tabId] || {};
+
+    const buildValues = (targetRowIndex: number) => {
+      const initialValues: Record<string, unknown> = {};
+      if (targetRowIndex < 0) {
+        const staged = latestStaged[targetRowIndex];
+        if (staged && staged.type === 'insert') {
+          columns.forEach((col) => {
+            if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
+              const rawVal = staged.changes[col.name];
+              if (rawVal !== undefined && rawVal !== null) {
+                const inputType = getColumnInputType(col.dataType);
+                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
+                initialValues[col.name] = val !== null ? val : rawVal;
+              }
+            }
+          });
+        }
+      } else {
+        const sourceRow = rows[targetRowIndex];
+        if (sourceRow) {
+          const staged = latestStaged[targetRowIndex];
+          columns.forEach((col, idx) => {
+            if (!col.isAutoIncrement) {
+              const rawVal =
+                staged?.type === 'update' && staged.changes[col.name] !== undefined
+                  ? staged.changes[col.name]
+                  : sourceRow[idx];
+              if (rawVal !== undefined && rawVal !== null) {
+                const inputType = getColumnInputType(col.dataType);
+                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
+                initialValues[col.name] = val !== null ? val : rawVal;
+              }
+            }
+          });
+        }
+      }
+      return initialValues;
+    };
+
+    const baseId = Date.now();
+    const newIds: number[] = [];
+    let lastValues: Record<string, unknown> = {};
+    targets.forEach((t, i) => {
+      const newRowId = -(baseId + i);
+      lastValues = buildValues(t);
+      stageRowInsert(tabId, newRowId, lastValues);
+      newIds.push(newRowId);
+    });
+
+    setSelectionAnchor({ r: 0, c: 0 });
+    setSelectionFocus({ r: newIds.length - 1, c: columns.length - 1 });
+
+    if (newIds.length === 1 && columns.length > 0) {
+      const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
+      const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
+      setTimeout(() => {
+        const val = lastValues[columns[targetColIdx].name];
+        handleStartEdit(newIds[0], targetColIdx, val !== undefined && val !== null ? String(val) : '');
+      }, 50);
+    }
+  };
+
+  const handleDeleteActiveRow = () => {
+    const rowKeysToDelete =
+      selectedRowKeys.size > 0
+        ? Array.from(selectedRowKeys)
+        : visualRows.length > 0
+        ? [visualRows[0].rowId]
+        : [];
+
+    if (rowKeysToDelete.length === 0) return;
+
+    rowKeysToDelete.forEach((idx) => {
+      if (idx < 0) {
+        stageRowDelete(tabId, idx, {}, {});
+        return;
+      }
+      const pkMap: Record<string, unknown> = {};
+      const originalRowValues: Record<string, unknown> = {};
+      columns.forEach((c, ci) => {
+        originalRowValues[c.name] = rows[idx]?.[ci];
+      });
+      primaryKeys.forEach((pk) => {
+        const ci = columns.findIndex((c) => c.name === pk);
+        if (ci !== -1) pkMap[pk] = rows[idx]?.[ci];
+      });
+      stageRowDelete(tabId, idx, pkMap, originalRowValues);
+    });
+
+    setSelectionAnchor(null);
+    setSelectionFocus(null);
+  };
+
+  // Keyboard shortcuts: Range Copy (Ctrl+C), Apply (Ctrl+S), Duplicate (Ctrl+D), Delete, Cancel (Esc), Arrow Navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('.monaco-editor')) return;
+
+      if (showCancelConfirm) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowCancelConfirm(false);
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          revertTabChanges(tabId);
+          setEditingCell(null);
+          setSelectionAnchor(null);
+          setSelectionFocus(null);
+          setShowCancelConfirm(false);
+          return;
+        }
+        return;
+      }
+
+      const isInFilterOrWhere = target?.closest?.('[data-filter-input]') || target?.closest?.('[data-where-input]');
+
+      if (e.key === 'Escape') {
+        if (isInFilterOrWhere) return;
+        if (editingCell) {
+          e.preventDefault();
+          setEditingCell(null);
+          if (stagedCount > 0) {
+            setShowCancelConfirm(true);
+          }
+          return;
+        }
+        if (stagedCount > 0) {
+          e.preventDefault();
+          setShowCancelConfirm(true);
+          return;
+        }
+      }
+
+      const activeEl = document.activeElement;
+      const isTyping =
+        (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) ||
+        (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA'));
+
+      // Arrow keys navigation across grid cells
+      if (!isTyping && selectionFocus && visualRows.length > 0 && columns.length > 0) {
+        let deltaR = 0;
+        let deltaC = 0;
+        if (e.key === 'ArrowUp') deltaR = -1;
+        else if (e.key === 'ArrowDown') deltaR = 1;
+        else if (e.key === 'ArrowLeft') deltaC = -1;
+        else if (e.key === 'ArrowRight') deltaC = 1;
+
+        if (deltaR !== 0 || deltaC !== 0) {
+          e.preventDefault();
+          const newR = Math.max(0, Math.min(visualRows.length - 1, selectionFocus.r + deltaR));
+          const newC = Math.max(0, Math.min(columns.length - 1, selectionFocus.c + deltaC));
+          if (e.shiftKey) {
+            setSelectionFocus({ r: newR, c: newC });
+          } else {
+            setSelectionAnchor({ r: newR, c: newC });
+            setSelectionFocus({ r: newR, c: newC });
+          }
+          return;
+        }
+      }
+
+      // Delete active / selected row(s)
+      const isMacDelete = isMac && e.metaKey && (e.key === 'Backspace' || e.key === 'Delete');
+      const isOtherDelete = !isMac && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Delete';
+
+      if (!isTyping && (isMacDelete || isOtherDelete)) {
+        e.preventDefault();
+        handleDeleteActiveRow();
+        return;
+      }
+
+      const isMod = isMac ? e.metaKey : e.ctrlKey;
+      if (!isMod) return;
+
+      if (isTyping && !target?.closest?.('[data-grid-container]')) {
+        return;
+      }
+
+      // Select All
+      if (e.key === 'a' || e.key === 'A') {
+        if (!isTyping && visualRows.length > 0 && columns.length > 0) {
+          e.preventDefault();
+          setSelectionAnchor({ r: 0, c: 0 });
+          setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
+          return;
+        }
+      }
+
+      // Copy selected cells as TSV
+      if (e.key === 'c' || e.key === 'C') {
+        if (!isTyping && selectionRange && columns.length > 0) {
+          e.preventDefault();
+          const rowsText: string[] = [];
+          for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+            const vr = visualRows[r];
+            if (!vr) continue;
+            const cellTexts: string[] = [];
+            for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+              const col = columns[c];
+              if (!col) continue;
+              let val: any;
+              if (vr.isInsert) {
+                const staged = vr.insertChange;
+                val = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
+              } else {
+                const staged = stagedChanges[vr.globalRowIndex!];
+                if (staged?.type === 'update' && staged.changes[col.name] !== undefined) {
+                  val = staged.changes[col.name];
+                } else {
+                  val = vr.rowData?.[c];
+                }
+              }
+              cellTexts.push(val === null || val === undefined ? '' : String(val));
+            }
+            rowsText.push(cellTexts.join('\t'));
+          }
+          if (rowsText.length > 0) {
+            navigator.clipboard.writeText(rowsText.join('\n'));
+          }
+          return;
+        }
+      }
+
+      // Shortcut: Apply (Ctrl+S on Linux/Win, Cmd+S on macOS)
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        handleApplyChanges();
+        return;
+      }
+
+      // Shortcut: Duplicate (Ctrl+D on Linux/Win, Cmd+D on macOS)
+      if (e.key === 'd' || e.key === 'D') {
+        e.preventDefault();
+        handleDuplicateRow();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [tabId, isMac, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm]);
   const currentOffset = (currentPage - 1) * localPageSize;
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
   const endRow = currentOffset + displayedRows.length;
@@ -1093,7 +1377,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
         <table className="w-full border-collapse font-mono text-[12px] text-zinc-300">
           <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-10`}>
             <tr className={`border-b ${gridCellBorder}`}>
-              <th className={`w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r ${gridCellBorder}`}>
+              <th
+                onClick={() => {
+                  if (visualRows.length > 0 && columns.length > 0) {
+                    setSelectionAnchor({ r: 0, c: 0 });
+                    setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
+                  }
+                }}
+                className={`w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r ${gridCellBorder} select-none cursor-pointer hover:bg-zinc-800/60`}
+                title="Click to select all cells"
+              >
                 #
               </th>
               {columns.map((col) => {
@@ -1159,17 +1452,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
           <tbody>
             {/* 1. Staged Inserted Rows (at top of grid for immediate visibility & editing) */}
             {insertedChanges.map((change, insIdx) => {
-              const isSelected = selectedRows.has(change.rowIndex);
-              let rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
-              if (isSelected) rowClass += ' ring-1 ring-emerald-400 bg-emerald-900/40';
+              const rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
 
               return (
                 <tr
                   key={change.rowIndex}
-                  onClick={(e) => handleRowClick(e, change.rowIndex)}
                   className={rowClass}
                 >
-                  <td className="w-12 px-1 py-1 text-center border-r border-[#272932] select-none text-[11px] font-bold">
+                  <td
+                    onMouseDown={(e) => handleRowHeaderMouseDown(e, insIdx)}
+                    onMouseEnter={() => handleRowHeaderMouseEnter(insIdx)}
+                    onContextMenu={(e) => handleRowHeaderContextMenu(e, insIdx)}
+                    className="w-12 px-1 py-1 text-center border-r border-[#272932] select-none text-[11px] font-bold cursor-pointer"
+                    title="Click to select row"
+                  >
                     <div className="flex items-center justify-center gap-1">
                       <span className="text-emerald-400 font-mono text-xs" title="New Staged Row">
                         +{insIdx + 1}
@@ -1179,7 +1475,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                         onClick={(e) => {
                           e.stopPropagation();
                           stageRowDelete(tabId, change.rowIndex, {}, {});
-                          if (selectedRowIndex === change.rowIndex) setSelectedRowIndex(null);
+                          setSelectionAnchor(null);
+                          setSelectionFocus(null);
                         }}
                         className="opacity-0 group-hover/insert:opacity-100 p-0.5 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 rounded transition-opacity cursor-pointer"
                         title="Discard this new row"
@@ -1190,6 +1487,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   </td>
 
                   {columns.map((col, cIdx) => {
+                    const isSelected = isCellSelected(insIdx, cIdx);
                     const isEditing = editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
                     const colVal = change.changes[col.name];
                     const isSet = colVal !== undefined;
@@ -1199,15 +1497,22 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     return (
                       <td
                         key={col.name}
-                        onClick={() => {
+                        onMouseDown={(e) => handleCellMouseDown(e, insIdx, cIdx)}
+                        onMouseEnter={() => handleCellMouseEnter(insIdx, cIdx)}
+                        onContextMenu={(e) => handleCellContextMenu(e, insIdx, cIdx)}
+                        onDoubleClick={() => {
                           if (!isEditing) {
                             handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
                           }
                         }}
-                        className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs cursor-text ${
-                          isSet ? 'bg-emerald-900/40 text-emerald-100 font-medium' : 'text-zinc-500'
+                        className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs cursor-text select-none transition-colors ${
+                          isSelected
+                            ? 'bg-[#1b4ea3] text-white font-medium'
+                            : isSet
+                            ? 'bg-emerald-900/40 text-emerald-100 font-medium'
+                            : 'text-zinc-500'
                         }`}
-                        title="Click to edit new row cell"
+                        title="Click to select, double click to edit"
                       >
                         {isEditing ? (
                           <input
@@ -1247,7 +1552,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                             }`}
                           />
                         ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
-                          <span className="text-zinc-600 italic">
+                          <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>
                             {col.isAutoIncrement ? '(Auto)' : 'NULL'}
                           </span>
                         ) : (
@@ -1259,7 +1564,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 </tr>
               );
             })}
-
             {/* 2. Existing Database Rows */}
             {displayedRows.length === 0 && insertedChanges.length === 0 ? (
               <tr>
@@ -1294,24 +1598,29 @@ export const DataGrid: React.FC<DataGridProps> = ({
               displayedRows.map((row, rIdx) => {
                 const globalRowIndex =
                   viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
+                const vIdx = insertedChanges.length + rIdx;
                 const staged = stagedChanges[globalRowIndex];
                 const isDeleted = staged?.type === 'delete';
-                const isSelected = selectedRows.has(globalRowIndex);
 
                 let rowClass = gridRowClass;
                 if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
-                if (isSelected) rowClass += ' bg-blue-600/15 border-l-2 border-l-blue-500';
 
                 return (
                   <tr
                     key={globalRowIndex}
-                    onClick={(e) => handleRowClick(e, globalRowIndex)}
                     className={rowClass}
                   >
-                    <td className={`px-2 py-1 text-center text-zinc-500 border-r ${gridCellBorder} select-none text-[11px]`}>
+                    <td
+                      onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                      onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                      onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                      className={`px-2 py-1 text-center text-zinc-500 border-r ${gridCellBorder} select-none text-[11px] cursor-pointer hover:text-zinc-300`}
+                      title="Click to select row"
+                    >
                       {globalRowIndex + 1}
                     </td>
                     {columns.map((col, cIdx) => {
+                      const isSelected = isCellSelected(vIdx, cIdx);
                       const isEditing = editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
                       const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
                       const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
@@ -1320,9 +1629,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       return (
                         <td
                           key={col.name}
+                          onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
+                          onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
+                          onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
                           onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
-                          className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs ${
-                            hasColChange ? 'bg-blue-900/30 text-blue-200 font-medium' : ''
+                          className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs select-none transition-colors ${
+                            isSelected
+                              ? 'bg-[#1b4ea3] text-white font-medium'
+                              : hasColChange
+                              ? 'bg-blue-900/30 text-blue-200 font-medium'
+                              : ''
                           }`}
                         >
                           {isEditing ? (
@@ -1341,13 +1657,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleFinishEdit();
                                 if (e.key === 'Escape') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setEditingCell(null);
-                                if (stagedCount > 0) {
-                                  setShowCancelConfirm(true);
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setEditingCell(null);
+                                  if (stagedCount > 0) {
+                                    setShowCancelConfirm(true);
+                                  }
                                 }
-                              }
                                 if (e.key === 'Tab') {
                                   e.preventDefault();
                                   handleFinishEdit();
@@ -1362,7 +1678,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                               }`}
                             />
                           ) : displayVal === null || displayVal === undefined ? (
-                            <span className="text-zinc-600 italic">NULL</span>
+                            <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>NULL</span>
                           ) : (
                             colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
                           )}
@@ -1684,7 +2000,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   revertTabChanges(tabId);
                   setEditingCell(null);
                   if (selectedRowIndex !== null && selectedRowIndex < 0) {
-                    setSelectedRowIndex(null);
+                    setSelectionAnchor(null);
+                    setSelectionFocus(null);
                   }
                   setShowCancelConfirm(false);
                 }}
@@ -1695,6 +2012,181 @@ export const DataGrid: React.FC<DataGridProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {/* Floating Context Menu */}
+      {contextMenu.isOpen && (
+        <div
+          className="fixed z-50 min-w-[210px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 truncate flex items-center justify-between">
+            <span>Grid Actions</span>
+            {selectionRange && (
+              <span className="text-zinc-600 font-mono text-[9px]">
+                {selectionRange.endR - selectionRange.startR + 1}r × {selectionRange.endC - selectionRange.startC + 1}c
+              </span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              handleCopySelection(false);
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Copy Selection</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+C</kbd>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              handleCopySelection(true);
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <FileText className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Copy with Headers</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              handleCopyAsJson();
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Code className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Copy as JSON</span>
+            </div>
+          </button>
+
+          <div className="my-1 border-t border-[#272932]" />
+
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+              handleDuplicateRow();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Copy className="h-3.5 w-3.5 text-sky-400 group-hover:text-white" />
+              <span>Duplicate Row(s)</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+D</kbd>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+              handleAddRow();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Plus className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+              <span>Add New Row</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+              handleDeleteActiveRow();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+              <span>Delete Row(s)</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{isMac ? 'Cmd+⌫' : 'Del'}</kbd>
+          </button>
+
+          <div className="my-1 border-t border-[#272932]" />
+
+          {contextMenu.vIdx !== null && contextMenu.cIdx !== null && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const { vIdx, cIdx } = contextMenu;
+                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  if (vIdx !== null && cIdx !== null) {
+                    const vr = visualRows[vIdx];
+                    if (vr) {
+                      const col = columns[cIdx];
+                      let displayVal: any;
+                      if (vr.isInsert) {
+                        const staged = vr.insertChange;
+                        displayVal = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
+                      } else {
+                        const staged = stagedChanges[vr.globalRowIndex!];
+                        displayVal = staged?.type === 'update' && staged.changes[col.name] !== undefined ? staged.changes[col.name] : vr.rowData?.[cIdx];
+                      }
+                      handleStartEdit(vr.rowId, cIdx, displayVal);
+                    }
+                  }
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <Edit3 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Edit Cell</span>
+                </div>
+                <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Double-Click</kbd>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  handleSetSelectedToNull();
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <Ban className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Set to NULL</span>
+                </div>
+              </button>
+              <div className="my-1 border-t border-[#272932]" />
+            </>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+              if (visualRows.length > 0 && columns.length > 0) {
+                setSelectionAnchor({ r: 0, c: 0 });
+                setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
+              }
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <CheckSquare className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Select All</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+A</kbd>
+          </button>
         </div>
       )}
     </div>
