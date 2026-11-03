@@ -33,6 +33,7 @@ import {
   Edit3,
   Ban,
   CheckSquare,
+  ClipboardPaste,
 } from 'lucide-react';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
@@ -136,6 +137,19 @@ function normalizeDateCommitValue(val: string, inputType: 'date' | 'datetime-loc
     return trimmed;
   }
   return trimmed;
+}
+
+function cleanPastedValue(val: any, dataType?: string): any {
+  if (val === null || val === undefined) return null;
+  const str = String(val).trim();
+  if (str === '' || str.toUpperCase() === 'NULL' || str.toLowerCase() === '<null>') {
+    return null;
+  }
+  const inputType = getColumnInputType(dataType);
+  if (inputType !== 'text') {
+    return normalizeDateCommitValue(str, inputType);
+  }
+  return str;
 }
 
 export interface SortConfig {
@@ -840,12 +854,27 @@ WHERE ${whereClause};`);
     return lines.join('\n');
   };
 
-  const handleSetSelectedToNull = () => {
-    if (!selectionRange) return;
-    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+  const handleSetSelectedToNull = (targetVIdx?: number | null, targetCIdx?: number | null) => {
+    let startR = selectionRange?.startR;
+    let endR = selectionRange?.endR;
+    let startC = selectionRange?.startC;
+    let endC = selectionRange?.endC;
+
+    if (startR === undefined || endR === undefined || startC === undefined || endC === undefined) {
+      if (targetVIdx !== null && targetVIdx !== undefined && targetCIdx !== null && targetCIdx !== undefined) {
+        startR = targetVIdx;
+        endR = targetVIdx;
+        startC = targetCIdx;
+        endC = targetCIdx;
+      } else {
+        return;
+      }
+    }
+
+    for (let r = startR; r <= endR; r++) {
       const vr = visualRows[r];
       if (!vr) continue;
-      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+      for (let c = startC; c <= endC; c++) {
         const col = columns[c];
         if (!col || col.isPrimaryKey || col.isAutoIncrement) continue;
         if (vr.isInsert) {
@@ -864,6 +893,183 @@ WHERE ${whereClause};`);
         }
       }
     }
+  };
+
+  const handlePasteData = (text: string) => {
+    if (!text || columns.length === 0) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    let parsedRows: (string | null)[][] = [];
+    let detectedHeaders: string[] | undefined;
+
+    // A. Check if JSON
+    if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+      try {
+        const json = JSON.parse(trimmed);
+        const arr = Array.isArray(json) ? json : [json];
+        if (arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+          const keys: string[] = [];
+          arr.forEach((item) => {
+            Object.keys(item).forEach((k) => {
+              if (!keys.includes(k)) keys.push(k);
+            });
+          });
+          detectedHeaders = keys;
+          parsedRows = arr.map((item) =>
+            keys.map((k) => (item[k] === null || item[k] === undefined ? null : String(item[k])))
+          );
+        }
+      } catch {}
+    }
+
+    // B. Check if TSV or CSV
+    if (parsedRows.length === 0) {
+      const rawLines = trimmed.split(/\r?\n/).filter((l) => l.length > 0);
+      if (rawLines.length === 0) return;
+
+      const isTsv = rawLines.some((l) => l.includes('\t'));
+      if (isTsv) {
+        parsedRows = rawLines.map((line) =>
+          line.split('\t').map((c) => {
+            const t = c.trim();
+            return t === 'NULL' || t === '<null>' ? null : c;
+          })
+        );
+      } else {
+        // Standard CSV parser
+        parsedRows = rawLines.map((line) => {
+          const cells: string[] = [];
+          let inQuotes = false;
+          let curr = '';
+          for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (ch === '"') {
+              if (inQuotes && line[i + 1] === '"') {
+                curr += '"';
+                i++;
+              } else {
+                inQuotes = !inQuotes;
+              }
+            } else if (ch === ',' && !inQuotes) {
+              cells.push(curr);
+              curr = '';
+            } else {
+              curr += ch;
+            }
+          }
+          cells.push(curr);
+          return cells.map((c) => {
+            const t = c.trim();
+            return t === 'NULL' || t === '<null>' ? null : c;
+          });
+        });
+      }
+    }
+
+    if (parsedRows.length === 0) return;
+
+    // Detect if first row is headers matching column names
+    if (!detectedHeaders && parsedRows.length > 1) {
+      const firstRow = parsedRows[0];
+      const matchesHeader =
+        firstRow.length > 0 &&
+        firstRow.every((c) => c && columns.some((col) => col.name.toLowerCase() === c.trim().toLowerCase()));
+      if (matchesHeader) {
+        detectedHeaders = firstRow.map((c) => c || '');
+        parsedRows = parsedRows.slice(1);
+      }
+    }
+
+    const startR = selectionRange
+      ? selectionRange.startR
+      : selectionAnchor
+      ? selectionAnchor.r
+      : 0;
+    const startC = selectionRange
+      ? selectionRange.startC
+      : selectionAnchor
+      ? selectionAnchor.c
+      : 0;
+
+    const baseInsertId = Date.now();
+    let maxAffectedVIdx = startR;
+    let maxAffectedCIdx = startC;
+
+    parsedRows.forEach((rowVals, rOffset) => {
+      const targetVIdx = startR + rOffset;
+      maxAffectedVIdx = Math.max(maxAffectedVIdx, targetVIdx);
+
+      const targetColMap: Array<{ colIdx: number; col: ColumnMeta; val: string | null }> = [];
+      if (detectedHeaders) {
+        detectedHeaders.forEach((h, hIdx) => {
+          const colIdx = columns.findIndex((col) => col.name.toLowerCase() === h.toLowerCase());
+          if (colIdx !== -1) {
+            targetColMap.push({ colIdx, col: columns[colIdx], val: rowVals[hIdx] ?? null });
+          }
+        });
+      } else {
+        rowVals.forEach((val, cOffset) => {
+          const colIdx = startC + cOffset;
+          if (colIdx < columns.length) {
+            targetColMap.push({ colIdx, col: columns[colIdx], val });
+          }
+        });
+      }
+
+      if (targetColMap.length === 0) return;
+      targetColMap.forEach(({ colIdx }) => {
+        maxAffectedCIdx = Math.max(maxAffectedCIdx, colIdx);
+      });
+
+      // Target row exists in visualRows
+      if (targetVIdx < visualRows.length) {
+        const vr = visualRows[targetVIdx];
+        if (vr.isInsert) {
+          targetColMap.forEach(({ col, val }) => {
+            if (col.isAutoIncrement) return;
+            const finalVal = cleanPastedValue(val, col.dataType);
+            stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, finalVal);
+          });
+        } else {
+          const originalRowValues: Record<string, unknown> = {};
+          columns.forEach((c, idx) => {
+            originalRowValues[c.name] = rows[vr.globalRowIndex!]?.[idx];
+          });
+          const pkMap: Record<string, unknown> = {};
+          primaryKeys.forEach((pk) => {
+            const idx = columns.findIndex((c) => c.name === pk);
+            if (idx !== -1) pkMap[pk] = rows[vr.globalRowIndex!]?.[idx];
+          });
+
+          targetColMap.forEach(({ col, val }) => {
+            if (col.isAutoIncrement) return;
+            const finalVal = cleanPastedValue(val, col.dataType);
+            stageCellUpdate(
+              tabId,
+              vr.globalRowIndex!,
+              pkMap,
+              originalRowValues,
+              col.name,
+              finalVal
+            );
+          });
+        }
+      } else {
+        // Target row is beyond current rows: auto create a new staged inserted row at bottom!
+        const newRowId = -(baseInsertId + (targetVIdx - visualRows.length));
+        const initialValues: Record<string, unknown> = {};
+        targetColMap.forEach(({ col, val }) => {
+          if (col.isAutoIncrement) return;
+          initialValues[col.name] = cleanPastedValue(val, col.dataType);
+        });
+        stageRowInsert(tabId, newRowId, initialValues);
+      }
+    });
+
+    // Update selection range to highlight the newly pasted cells
+    setSelectionAnchor({ r: startR, c: startC });
+    setSelectionFocus({ r: maxAffectedVIdx, c: Math.min(columns.length - 1, maxAffectedCIdx) });
   };
 
   const handleCellMouseDown = (e: React.MouseEvent, vIdx: number, cIdx: number) => {
@@ -935,9 +1141,7 @@ WHERE ${whereClause};`);
             if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
               const rawVal = staged.changes[col.name];
               if (rawVal !== undefined && rawVal !== null) {
-                const inputType = getColumnInputType(col.dataType);
-                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
-                initialValues[col.name] = val !== null ? val : rawVal;
+                initialValues[col.name] = cleanPastedValue(rawVal, col.dataType);
               }
             }
           });
@@ -953,9 +1157,7 @@ WHERE ${whereClause};`);
                   ? staged.changes[col.name]
                   : sourceRow[idx];
               if (rawVal !== undefined && rawVal !== null) {
-                const inputType = getColumnInputType(col.dataType);
-                const val = inputType !== 'text' ? normalizeDateCommitValue(String(rawVal), inputType) : rawVal;
-                initialValues[col.name] = val !== null ? val : rawVal;
+                initialValues[col.name] = cleanPastedValue(rawVal, col.dataType);
               }
             }
           });
@@ -1144,6 +1346,20 @@ WHERE ${whereClause};`);
         return;
       }
 
+      // Paste selected cells / multi rows (Ctrl+V on Linux/Win, Cmd+V on macOS)
+      if (e.key === 'v' || e.key === 'V') {
+        if (!isTyping) {
+          e.preventDefault();
+          navigator.clipboard
+            ?.readText?.()
+            .then((text) => {
+              if (text) handlePasteData(text);
+            })
+            .catch(() => {});
+          return;
+        }
+      }
+
       // Shortcut: Add Row (Ctrl+I on Linux/Win, Cmd+I on macOS)
       if (e.key === 'i' || e.key === 'I') {
         e.preventDefault();
@@ -1180,8 +1396,24 @@ WHERE ${whereClause};`);
       }
     };
 
+    const handleNativePaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+      if (isTyping) return;
+
+      const text = e.clipboardData?.getData('text/plain');
+      if (text) {
+        e.preventDefault();
+        handlePasteData(text);
+      }
+    };
+
     window.addEventListener('copy', handleNativeCopy);
-    return () => window.removeEventListener('copy', handleNativeCopy);
+    window.addEventListener('paste', handleNativePaste);
+    return () => {
+      window.removeEventListener('copy', handleNativeCopy);
+      window.removeEventListener('paste', handleNativePaste);
+    };
   }, [selectionRange, columns, visualRows, stagedChanges, tableName, primaryKeys, copyFormat]);
   const currentOffset = (currentPage - 1) * localPageSize;
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
@@ -2151,6 +2383,26 @@ WHERE ${whereClause};`);
               <span className="text-sky-400 font-semibold uppercase">{COPY_FORMAT_LABELS[copyFormat] || 'CSV'}</span>
               <kbd className="text-zinc-500 group-hover:text-white/80">{modKey}+C</kbd>
             </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+              navigator.clipboard
+                ?.readText?.()
+                .then((text) => {
+                  if (text) handlePasteData(text);
+                })
+                .catch(() => {});
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <ClipboardPaste className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Paste</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+V</kbd>
           </button>          <div className="my-1 border-t border-[#272932]" />
 
           <button
@@ -2235,8 +2487,9 @@ WHERE ${whereClause};`);
               <button
                 type="button"
                 onClick={() => {
+                  const { vIdx, cIdx } = contextMenu;
                   setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  handleSetSelectedToNull();
+                  handleSetSelectedToNull(vIdx, cIdx);
                 }}
                 className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >

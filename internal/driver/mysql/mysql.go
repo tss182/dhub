@@ -283,6 +283,9 @@ func normalizeMySQLValue(v any) any {
 		return v
 	}
 	trimmed := strings.TrimSpace(s)
+	if strings.EqualFold(trimmed, "null") || strings.EqualFold(trimmed, "<null>") {
+		return nil
+	}
 	if match := isoDateTimeRegex.FindStringSubmatch(trimmed); len(match) == 3 {
 		return match[1] + " " + match[2]
 	}
