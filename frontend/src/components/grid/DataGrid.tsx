@@ -1490,7 +1490,11 @@ WHERE ${whereClause};`);
   const gridRowClass = 'border-b border-[#22242c] hover:bg-[#20222a] transition-colors';
 
   return (
-    <div data-grid-container="true" className={`flex h-full flex-col ${gridContainerBg} text-xs select-text transition-colors`}>
+    <div
+      data-grid-container="true"
+      onContextMenu={(e) => e.preventDefault()}
+      className={`flex h-full flex-col ${gridContainerBg} text-xs select-text transition-colors`}
+    >
       {/* Table Toolbar */}
       <div className={`flex h-10 items-center justify-between border-b px-3 ${gridBarBg}`}>
         <div className="flex items-center gap-1.5">
