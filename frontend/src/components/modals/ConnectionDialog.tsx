@@ -3,7 +3,7 @@ import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { ConnectionService } from '../../../bindings/dhub/internal/services';
 import { X, CheckCircle, AlertCircle, Database, Trash2 } from 'lucide-react';
-import { alertError } from '../../stores/useAlertStore';
+import { alertError, confirmDialog } from '../../stores/useAlertStore';
 import { ConnectionEnvType, resolveConnectionEnv } from '../../types/domain';
 
 export const ConnectionDialog: React.FC = () => {
@@ -223,7 +223,13 @@ export const ConnectionDialog: React.FC = () => {
 
   const handleDelete = async () => {
     if (!editingConnectionId) return;
-    if (!confirm(`Are you sure you want to delete connection "${name}"?`)) return;
+    const okDel = await confirmDialog({
+      title: 'Delete Connection',
+      message: `Are you sure you want to delete connection "${name}"?`,
+      confirmLabel: 'Delete',
+      isDanger: true,
+    });
+    if (!okDel) return;
 
     setIsLoading(true);
     try {

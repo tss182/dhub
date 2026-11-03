@@ -759,6 +759,18 @@ export function App() {
     }
   }, [activeTabId, tabRefreshTrigger[activeTabId || '']]);
 
+  // Free cached rows of closed tabs so they can be garbage collected
+  useEffect(() => {
+    setTableDataByTab((prev) => {
+      const openIds = new Set(tabs.map((t) => t.id));
+      const staleKeys = Object.keys(prev).filter((id) => !openIds.has(id));
+      if (staleKeys.length === 0) return prev;
+      const next = { ...prev };
+      staleKeys.forEach((id) => delete next[id]);
+      return next;
+    });
+  }, [tabs]);
+
   // Load saved consoles from SQLite on startup
   useEffect(() => {
     loadConsoles();

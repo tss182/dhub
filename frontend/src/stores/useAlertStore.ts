@@ -106,3 +106,15 @@ export const alertWarning = (message: string, title?: string, details?: string) 
 export const alertInfo = (message: string, title?: string, details?: string) =>
   useAlertStore.getState().showAlert({ type: 'info', message, title, details });
 
+// Promise-based confirmation using the app's styled AlertModal (replaces native window.confirm)
+export const confirmDialog = (
+  options: Omit<AlertModalOptions, 'type' | 'onConfirm' | 'onCancel'>
+): Promise<boolean> =>
+  new Promise((resolve) => {
+    useAlertStore.getState().showConfirm({
+      ...options,
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+

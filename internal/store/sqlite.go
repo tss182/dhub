@@ -9,6 +9,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const (
+	maxHistoryPerConnection = 500
+	maxHistorySQLBytes      = 64 * 1024
+)
+
 type LocalStore struct {
 	db *sql.DB
 }
@@ -52,6 +57,8 @@ func (s *LocalStore) migrate() error {
 		`PRAGMA journal_mode=WAL;`,
 		`PRAGMA synchronous=NORMAL;`,
 		`PRAGMA foreign_keys=ON;`,
+		`PRAGMA cache_size=-4000;`, // cap page cache at ~4MB
+		`PRAGMA temp_store=FILE;`,
 
 		`CREATE TABLE IF NOT EXISTS connection_folders (
 			id          TEXT PRIMARY KEY,
@@ -152,10 +159,6 @@ func (s *LocalStore) migrate() error {
 	// Ensure env_type column exists on older connections tables
 	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN env_type TEXT NOT NULL DEFAULT 'local';`)
 
-
-	// Ensure color column exists on older connection_folders tables
-	_, _ = s.db.Exec(`ALTER TABLE connection_folders ADD COLUMN color TEXT NOT NULL DEFAULT '#3b82f6';`)
-
 	return nil
 }
 
@@ -200,7 +203,18 @@ type QueryHistoryEntry struct {
 func (s *LocalStore) RecordQueryHistory(entry QueryHistoryEntry) error {
 	query := `INSERT INTO query_history (connection_id, database_name, schema_name, sql_text, duration_ms, rows_affected, status, error_message, executed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-	_, err := s.db.Exec(query, entry.ConnectionID, entry.DatabaseName, entry.SchemaName, entry.SQLText, entry.DurationMs, entry.RowsAffected, entry.Status, entry.ErrorMessage)
+	sqlText := entry.SQLText
+	if len(sqlText) > maxHistorySQLBytes {
+		sqlText = sqlText[:maxHistorySQLBytes]
+	}
+	if _, err := s.db.Exec(query, entry.ConnectionID, entry.DatabaseName, entry.SchemaName, sqlText, entry.DurationMs, entry.RowsAffected, entry.Status, entry.ErrorMessage); err != nil {
+		return err
+	}
+
+	// Keep only the most recent entries per connection to bound DB size and memory.
+	_, err := s.db.Exec(`DELETE FROM query_history WHERE connection_id = ? AND id NOT IN (
+		SELECT id FROM query_history WHERE connection_id = ? ORDER BY id DESC LIMIT ?)`,
+		entry.ConnectionID, entry.ConnectionID, maxHistoryPerConnection)
 	return err
 }
 
