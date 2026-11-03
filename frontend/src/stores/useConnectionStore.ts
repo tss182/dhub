@@ -1,10 +1,68 @@
 import { create } from 'zustand';
 import { ConnectionConfig, ConnectionFolder, ObjectSummary } from '../types/domain';
-import { ConnectionService } from '../../bindings/dhub/internal/services';
+import { ConnectionService, WorkspaceService } from '../../bindings/dhub/internal/services';
 
 const LEGACY_FOLDERS_KEY = 'dhub_connection_folders_v1';
 const LEGACY_CONN_FOLDER_MAP_KEY = 'dhub_connection_folder_map_v1';
 const LEGACY_CONN_ORDER_KEY = 'dhub_connection_order_v1';
+const VISIBLE_DATABASES_STORAGE_KEY = 'dhub_visible_databases_v1';
+
+interface VisibleDbConfig {
+  selected: string[];
+  total?: number;
+}
+
+function loadStoredVisibleDatabases(): {
+  visibleDatabases: Record<string, string[]>;
+  databaseTotals: Record<string, number>;
+} {
+  const visibleDatabases: Record<string, string[]> = {};
+  const databaseTotals: Record<string, number> = {};
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { visibleDatabases, databaseTotals };
+  }
+  try {
+    const raw = localStorage.getItem(VISIBLE_DATABASES_STORAGE_KEY);
+    if (raw) {
+      const parsed: Record<string, VisibleDbConfig> = JSON.parse(raw);
+      for (const [connId, cfg] of Object.entries(parsed)) {
+        if (cfg && Array.isArray(cfg.selected)) {
+          visibleDatabases[connId] = cfg.selected;
+        }
+        if (cfg && typeof cfg.total === 'number') {
+          databaseTotals[connId] = cfg.total;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load visible databases from localStorage:', e);
+  }
+  return { visibleDatabases, databaseTotals };
+}
+
+function persistVisibleDatabases(
+  visibleDatabases: Record<string, string[]>,
+  databaseTotals: Record<string, number>
+) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const payload: Record<string, VisibleDbConfig> = {};
+    const allKeys = new Set([...Object.keys(visibleDatabases), ...Object.keys(databaseTotals)]);
+    allKeys.forEach((connId) => {
+      payload[connId] = {
+        selected: visibleDatabases[connId] || [],
+        total: databaseTotals[connId],
+      };
+    });
+    const serialized = JSON.stringify(payload);
+    localStorage.setItem(VISIBLE_DATABASES_STORAGE_KEY, serialized);
+    WorkspaceService.SaveSetting(VISIBLE_DATABASES_STORAGE_KEY, serialized).catch(() => {});
+  } catch (e) {
+    console.warn('Failed to persist visible databases:', e);
+  }
+}
+
+const initialVisibleDbData = loadStoredVisibleDatabases();
 
 function sortConnectionsList(conns: ConnectionConfig[], order: string[]): ConnectionConfig[] {
   if (!order || order.length === 0) return conns;
@@ -28,6 +86,8 @@ interface ConnectionState {
   activeDatabase: string;
   activeSchema: string;
   treeDatabases: Record<string, string[]>; // key: connId -> ['db1', 'db2']
+  visibleDatabases: Record<string, string[]>; // key: connId -> ['selected_db1', 'selected_db2']
+  databaseTotals: Record<string, number>; // key: connId -> total db count on server
   treeObjects: Record<string, ObjectSummary[]>; // key: connId:db:schema
   expandedNodes: Record<string, boolean>;
   isLoading: boolean;
@@ -38,6 +98,8 @@ interface ConnectionState {
   loadConnectionsAndFolders: () => Promise<ConnectionConfig[]>;
   setActiveConnection: (id: string, database?: string, schema?: string) => void;
   setTreeDatabases: (connId: string, databases: string[]) => void;
+  setVisibleDatabases: (connId: string, databases: string[], totalCount?: number) => void;
+  getVisibleDatabases: (connId: string) => string[];
   removeTreeDatabase: (connId: string, database: string) => void;
   setTreeObjects: (key: string, objects: ObjectSummary[]) => void;
   removeTreeObject: (key: string, objectName: string) => void;
@@ -75,6 +137,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   activeDatabase: '',
   activeSchema: '',
   treeDatabases: {},
+  visibleDatabases: initialVisibleDbData.visibleDatabases,
+  databaseTotals: initialVisibleDbData.databaseTotals,
   treeObjects: {},
   expandedNodes: {},
   isLoading: false,
@@ -180,16 +244,68 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       activeSchema: schema,
     }),
   setTreeDatabases: (connId, databases) =>
-    set((state) => ({
-      treeDatabases: { ...state.treeDatabases, [connId]: databases },
-    })),
+    set((state) => {
+      const nextTotals = { ...state.databaseTotals, [connId]: databases.length };
+      let nextVisible = { ...state.visibleDatabases };
+      if (nextVisible[connId] === undefined) {
+        nextVisible[connId] = databases;
+      } else if (databases.length > 0) {
+        // Keep previously selected databases if they still exist in the new database list
+        const currentSelected = nextVisible[connId] || [];
+        const validSelected = currentSelected.filter((db) => databases.includes(db));
+        nextVisible[connId] = validSelected.length > 0 ? validSelected : databases;
+      }
+      persistVisibleDatabases(nextVisible, nextTotals);
+      return {
+        treeDatabases: { ...state.treeDatabases, [connId]: databases },
+        databaseTotals: nextTotals,
+        visibleDatabases: nextVisible,
+      };
+    }),
+  setVisibleDatabases: (connId, databases, totalCount) =>
+    set((state) => {
+      const nextVisible = { ...state.visibleDatabases, [connId]: databases };
+      const currentTreeDbs = state.treeDatabases[connId];
+      const count = totalCount !== undefined ? totalCount : (currentTreeDbs ? currentTreeDbs.length : (state.databaseTotals[connId] ?? databases.length));
+      const nextTotals = {
+        ...state.databaseTotals,
+        [connId]: count,
+      };
+      persistVisibleDatabases(nextVisible, nextTotals);
+      return {
+        visibleDatabases: nextVisible,
+        databaseTotals: nextTotals,
+      };
+    }),
+  getVisibleDatabases: (connId) => {
+    const state = get();
+    if (state.visibleDatabases[connId] !== undefined) {
+      return state.visibleDatabases[connId];
+    }
+    return state.treeDatabases[connId] || [];
+  },
   removeTreeDatabase: (connId, database) =>
-    set((state) => ({
-      treeDatabases: {
-        ...state.treeDatabases,
-        [connId]: (state.treeDatabases[connId] || []).filter((db) => db !== database),
-      },
-    })),
+    set((state) => {
+      const updatedDbs = (state.treeDatabases[connId] || []).filter((db) => db !== database);
+      const currentVisible = state.visibleDatabases[connId];
+      const nextVisible = { ...state.visibleDatabases };
+      if (currentVisible) {
+        nextVisible[connId] = currentVisible.filter((db) => db !== database);
+      }
+      const nextTotals = {
+        ...state.databaseTotals,
+        [connId]: updatedDbs.length,
+      };
+      persistVisibleDatabases(nextVisible, nextTotals);
+      return {
+        treeDatabases: {
+          ...state.treeDatabases,
+          [connId]: updatedDbs,
+        },
+        databaseTotals: nextTotals,
+        visibleDatabases: nextVisible,
+      };
+    }),
   setTreeObjects: (key, objects) =>
     set((state) => ({
       treeObjects: { ...state.treeObjects, [key]: objects },
@@ -416,4 +532,36 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
 }));
+
+if (typeof window !== 'undefined') {
+  WorkspaceService.GetSettings()
+    .then((settings) => {
+      if (settings && settings[VISIBLE_DATABASES_STORAGE_KEY]) {
+        try {
+          const parsed = JSON.parse(settings[VISIBLE_DATABASES_STORAGE_KEY]);
+          const currentVisible = { ...useConnectionStore.getState().visibleDatabases };
+          const currentTotals = { ...useConnectionStore.getState().databaseTotals };
+          let changed = false;
+          for (const [connId, cfg] of Object.entries(parsed as Record<string, VisibleDbConfig>)) {
+            if (cfg && Array.isArray(cfg.selected) && currentVisible[connId] === undefined) {
+              currentVisible[connId] = cfg.selected;
+              changed = true;
+            }
+            if (cfg && typeof cfg.total === 'number' && currentTotals[connId] === undefined) {
+              currentTotals[connId] = cfg.total;
+              changed = true;
+            }
+          }
+          if (changed) {
+            useConnectionStore.setState({
+              visibleDatabases: currentVisible,
+              databaseTotals: currentTotals,
+            });
+          }
+        } catch {}
+      }
+    })
+    .catch(() => {});
+}
+
 

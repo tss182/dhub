@@ -25,6 +25,7 @@ import {
   Upload,
   PanelLeftClose,
   FileCode,
+  Filter,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -34,6 +35,7 @@ import {
   getConnectionEnvInfo,
 } from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning, confirmDialog } from '../../stores/useAlertStore';
+import { SchemaFilterModal } from '../modals/SchemaFilterModal';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -72,6 +74,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     loadConnectionsAndFolders,
     setActiveConnection,
     treeDatabases,
+    visibleDatabases,
+    databaseTotals,
+    getVisibleDatabases,
     setTreeDatabases,
     removeTreeDatabase,
     treeObjects,
@@ -103,6 +108,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   const [filterText, setFilterText] = useState('');
   const [loadingConnId, setLoadingConnId] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  // Schema Filter Modal / Popover state (e.g. "3 of 10")
+  const [schemaFilterModal, setSchemaFilterModal] = useState<{
+    isOpen: boolean;
+    connection: ConnectionConfig | null;
+    anchorRect: DOMRect | null;
+  }>({
+    isOpen: false,
+    connection: null,
+    anchorRect: null,
+  });
+
+  const handleOpenDatabaseFilter = (conn: ConnectionConfig, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const target = e?.currentTarget as HTMLElement | undefined;
+    const rect = target ? target.getBoundingClientRect() : null;
+    setSchemaFilterModal({
+      isOpen: true,
+      connection: conn,
+      anchorRect: rect,
+    });
+  };
 
   // Hover Tooltip state for long folder, connection, database, table, and view names
   const [hoveredItem, setHoveredItem] = useState<{
@@ -509,12 +536,21 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         const safeDbs = dbs.length > 0 ? dbs : conn?.databaseName ? [conn.databaseName] : ['main'];
         setTreeDatabases(connId, safeDbs);
 
-        const currentDb = conn?.databaseName || safeDbs[0];
+        const currentVisibleList = useConnectionStore.getState().visibleDatabases[connId];
+        const prefetchedDbs =
+          currentVisibleList !== undefined && currentVisibleList.length > 0
+            ? safeDbs.filter((d) => currentVisibleList.includes(d))
+            : safeDbs;
+
+        const currentDb =
+          conn?.databaseName && prefetchedDbs.includes(conn.databaseName)
+            ? conn.databaseName
+            : prefetchedDbs[0] || conn?.databaseName || 'main';
         const currentSchema = conn?.driver === 'postgres' ? 'public' : currentDb;
         setActiveConnection(connId, currentDb, currentSchema);
 
-        // Pre-fetch objects for all databases in background
-        for (const dbName of safeDbs) {
+        // Pre-fetch objects for visible databases in background
+        for (const dbName of prefetchedDbs) {
           const targetSchema = conn?.driver === 'postgres' ? 'public' : dbName;
           const sKey = `${connId}:${dbName}:${targetSchema}`;
           SchemaService.GetObjects(connId, dbName, targetSchema)
@@ -924,7 +960,27 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   const renderConnectionNode = (c: ConnectionConfig, currentFolderId: string | null) => {
     const isConnExpanded = !!expandedNodes[c.id];
     const isConnLoading = loadingConnId === c.id;
-    const databases = treeDatabases[c.id] || (c.databaseName ? [c.databaseName] : []);
+    const allKnownDbs = treeDatabases[c.id] || (c.databaseName ? [c.databaseName] : []);
+    const totalDbsCount =
+      allKnownDbs.length > 0
+        ? allKnownDbs.length
+        : (databaseTotals[c.id] ?? (c.databaseName ? 1 : 0));
+    const visibleList = visibleDatabases[c.id];
+    const visibleDbsCount =
+      visibleList !== undefined ? visibleList.length : totalDbsCount;
+
+    let schemaBadgeText = '';
+    if (totalDbsCount > 0) {
+      schemaBadgeText = `${visibleDbsCount} of ${totalDbsCount}`;
+    } else if (visibleList !== undefined) {
+      schemaBadgeText = `${visibleList.length} of ${visibleList.length}`;
+    }
+
+    const databases =
+      visibleList !== undefined
+        ? allKnownDbs.filter((db) => visibleList.includes(db))
+        : allKnownDbs;
+
     const isSQLite = c.driver === 'sqlite';
     const connSubtitle = isSQLite
       ? (c.filePath || c.databaseName || 'SQLite File')
@@ -1073,6 +1129,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             <span className="text-[9px] text-zinc-500 font-mono uppercase bg-[#14151a] px-1 rounded shrink-0">
               {c.driver}
             </span>
+            {!isSQLite && (
+              <button
+                type="button"
+                onClick={(e) => handleOpenDatabaseFilter(c, e)}
+                className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-[#131419] hover:bg-[#282a36] text-zinc-400 hover:text-blue-300 border border-[#272932] hover:border-blue-500/50 transition-colors shrink-0 cursor-pointer flex items-center gap-1 group/badge"
+                title={`Filter visible databases/schemas (${schemaBadgeText || 'select'})`}
+              >
+                <span>{schemaBadgeText || 'schemas'}</span>
+              </button>
+            )}
           </div>
 
           {/* Actions on hover */}
@@ -1189,7 +1255,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             ) : (
               /* Multi-Database Mode (MySQL / PostgreSQL) */
               databases.length === 0 && !isConnLoading ? (
-                <div className="text-[11px] text-zinc-500 italic py-1">No databases found</div>
+                allKnownDbs.length > 0 ? (
+                  <div className="text-[11px] text-zinc-500 italic py-1 px-1 flex items-center justify-between">
+                    <span>No schemas visible (0 of {allKnownDbs.length})</span>
+                    <button
+                      type="button"
+                      onClick={(e) => handleOpenDatabaseFilter(c, e)}
+                      className="text-blue-400 hover:underline not-italic cursor-pointer"
+                    >
+                      Select
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-zinc-500 italic py-1">No databases found</div>
+                )
               ) : (
                 databases.map((dbName) => {
                   const filterLower = filterText.toLowerCase().trim();
@@ -1927,6 +2006,21 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>Refresh Connection</span>
               </button>
+
+              {contextMenu.connection.driver !== 'sqlite' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const conn = contextMenu.connection!;
+                    closeContextMenu();
+                    handleOpenDatabaseFilter(conn);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Filter className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Select Visible Schemas / Databases...</span>
+                </button>
+              )}
 
               {/* Move to Folder / Group Section */}
               <div className="my-1 border-t border-[#272932]" />
@@ -2754,6 +2848,14 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           </div>
         );
       })()}
+
+      {/* Schema Filter Popover / Modal (e.g. 3 of 10) */}
+      <SchemaFilterModal
+        isOpen={schemaFilterModal.isOpen}
+        onClose={() => setSchemaFilterModal((prev) => ({ ...prev, isOpen: false }))}
+        connection={schemaFilterModal.connection}
+        anchorRect={schemaFilterModal.anchorRect}
+      />
     </div>
   );
 };
