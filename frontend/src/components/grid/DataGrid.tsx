@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ColumnMeta, ConnectionEnvType } from '../../types/domain';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
+import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
+import { useAlertStore } from '../../stores/useAlertStore';
 import { CopyFormatSelector, COPY_FORMAT_LABELS } from './CopyFormatSelector';
 import {
   Plus,
@@ -53,6 +55,19 @@ function parseColumnTypeDetails(dataType?: string) {
   const size = match[2]?.trim() || null;
   const extra = match[3]?.trim().toUpperCase() || null;
   return { baseType, size, extra };
+}
+
+export function formatSqlLiteral(val: any, dataType?: string): string {
+  if (val === null || val === undefined) return 'NULL';
+  const rawType = (dataType || '').toLowerCase();
+  const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
+  if (isNum && !isNaN(Number(val)) && String(val).trim() !== '') {
+    return String(val);
+  }
+  if (typeof val === 'boolean') {
+    return val ? 'TRUE' : 'FALSE';
+  }
+  return `'${String(val).replace(/'/g, "''")}'`;
 }
 
 function getColumnInputType(dataType?: string): 'date' | 'datetime-local' | 'time' | 'text' {
@@ -762,6 +777,94 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   };
 
+  const generateUpdateSql = (rowIndex: number, colName: string, newVal: any): string => {
+    const isMySQL = (driver || '').toLowerCase() === 'mysql';
+    const quoteIdent = (name: string) =>
+      isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
+    const tbl = tableName || 'table_name';
+    const quotedTbl = tbl.includes('.')
+      ? tbl.split('.').map(quoteIdent).join('.')
+      : quoteIdent(tbl);
+
+    const col = columns.find((c) => c.name === colName);
+    const colDataType = col?.dataType;
+    const formattedVal = formatSqlLiteral(newVal, colDataType);
+
+    // Build WHERE clause using primary keys if available
+    let whereClause = '';
+    const detectedPKs = primaryKeys.length > 0
+      ? primaryKeys
+      : columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
+
+    if (detectedPKs.length > 0) {
+      const pkConds: string[] = [];
+      detectedPKs.forEach((pk) => {
+        const cIdx = columns.findIndex((c) => c.name === pk);
+        const colMeta = columns[cIdx];
+        const pkVal = cIdx !== -1 ? rows[rowIndex]?.[cIdx] : undefined;
+        if (pkVal !== undefined && pkVal !== null) {
+          pkConds.push(`${quoteIdent(pk)} = ${formatSqlLiteral(pkVal, colMeta?.dataType)}`);
+        }
+      });
+      if (pkConds.length > 0) {
+        whereClause = pkConds.join(' AND ');
+      }
+    }
+
+    if (!whereClause) {
+      // Fallback: match using original row values
+      const fallbackConds: string[] = [];
+      columns.forEach((c, idx) => {
+        const val = rows[rowIndex]?.[idx];
+        if (val === null || val === undefined) {
+          fallbackConds.push(`${quoteIdent(c.name)} IS NULL`);
+        } else {
+          fallbackConds.push(`${quoteIdent(c.name)} = ${formatSqlLiteral(val, c.dataType)}`);
+        }
+      });
+      whereClause =
+        fallbackConds.length > 0
+          ? fallbackConds.join(' AND ')
+          : `${quoteIdent(colName)} = ${formatSqlLiteral(
+              rows[rowIndex]?.[columns.findIndex((c) => c.name === colName)],
+              colDataType
+            )}`;
+    }
+
+    return `UPDATE ${quotedTbl}
+SET ${quoteIdent(colName)} = ${formattedVal}
+WHERE ${whereClause};`;
+  };
+
+  const openUpdateQueryInTab = (rowIndex: number, colName: string, newVal: any) => {
+    const sql = generateUpdateSql(rowIndex, colName, newVal);
+    const cleanTable = tableName || 'table';
+    const consoleTitle = `update_${cleanTable}.sql`;
+
+    const workbenchStore = useWorkbenchStore.getState();
+    const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
+    const connId = currentTab?.connectionId || '';
+    const database = currentTab?.database || '';
+    const schema = currentTab?.schema || '';
+
+    // Check if an update console tab for this table already exists
+    const existingTab = workbenchStore.tabs.find(
+      (t) => t.type === 'worksheet' && t.title === consoleTitle
+    );
+
+    if (existingTab) {
+      workbenchStore.updateTabContent(existingTab.id, sql);
+      workbenchStore.setActiveTabId(existingTab.id);
+    } else {
+      workbenchStore.createConsole(connId, database, schema, consoleTitle, sql);
+    }
+
+    useAlertStore.getState().showToast({
+      type: 'info',
+      message: `UPDATE query ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
+    });
+  };
+
   const handleFinishEdit = () => {
     if (!editingCell) return;
     const { rowIndex, colIndex } = editingCell;
@@ -1104,19 +1207,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
         return staged.changes[colName];
       }
       return vr.rowData?.[cIdx];
-    };
-
-    const formatSqlLiteral = (val: any, dataType?: string): string => {
-      if (val === null || val === undefined) return 'NULL';
-      const rawType = (dataType || '').toLowerCase();
-      const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
-      if (isNum && !isNaN(Number(val)) && String(val).trim() !== '') {
-        return String(val);
-      }
-      if (typeof val === 'boolean') {
-        return val ? 'TRUE' : 'FALSE';
-      }
-      return `'${String(val).replace(/'/g, "''")}'`;
     };
 
     // 1. JSON
@@ -3135,6 +3225,28 @@ ${setClauses};`;
                   <span>Edit Cell</span>
                 </div>
                 <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Double-Click</kbd>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const { vIdx, cIdx } = contextMenu;
+                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  if (vIdx !== null && cIdx !== null) {
+                    const vr = visualRows[vIdx];
+                    if (vr && vr.globalRowIndex !== undefined) {
+                      const col = columns[cIdx];
+                      const currentVal = vr.rowData?.[cIdx];
+                      openUpdateQueryInTab(vr.globalRowIndex, col.name, currentVal);
+                    }
+                  }
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                  <span>Open UPDATE in Tab</span>
+                </div>
               </button>
 
               <button
