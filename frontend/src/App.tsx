@@ -16,6 +16,7 @@ import { TableStructureModal } from './components/modals/CreateTableModal';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
+import { APP_VERSION } from './version';
 import {
   Database,
   Terminal,
@@ -2396,7 +2397,7 @@ export function App() {
         </div>
         <div className="flex items-center gap-4">
           <span>Tx: AUTO</span>
-          <span>DHub Desktop v0.1.0</span>
+          <span>DHub Desktop v{APP_VERSION}</span>
         </div>
       </footer>
     </div>
