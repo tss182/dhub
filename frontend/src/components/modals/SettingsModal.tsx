@@ -16,7 +16,8 @@ import {
   Moon,
   Sun,
 } from 'lucide-react';
-import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
+import { COPY_FORMAT_LABELS } from '../grid/CopyFormatSelector';
 import { APP_VERSION } from '../../version';
 
 export const SettingsModal: React.FC = () => {
@@ -29,6 +30,8 @@ export const SettingsModal: React.FC = () => {
     editorFontSize,
     wordWrap,
     showMinimap,
+    copyFormat,
+    setCopyFormat,
     closeSettings,
     setActiveSettingsTab,
     setTheme,
@@ -419,6 +422,43 @@ export const SettingsModal: React.FC = () => {
                     >
                       Set Size
                     </button>
+                  </div>
+                </div>
+
+                <div className="h-[1px] bg-[#272932]" />
+
+                {/* 3. Default Copy Format */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
+                      Default Copy Format
+                    </label>
+                    <span className="font-mono text-sky-400 font-semibold bg-sky-950/40 border border-sky-800/40 px-2 py-0.5 rounded text-[11px]">
+                      {COPY_FORMAT_LABELS[copyFormat]}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Format used when copying cells or selected rows from the data grid (Ctrl+C / Cmd+C).
+                  </p>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'] as CopyFormat[]).map((fmt) => {
+                      const isSelected = fmt === copyFormat;
+                      return (
+                        <button
+                          key={fmt}
+                          type="button"
+                          onClick={() => setCopyFormat(fmt)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-blue-600 border-blue-500 text-white shadow-xs'
+                              : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-300 hover:border-zinc-500 hover:text-white'
+                          }`}
+                        >
+                          {COPY_FORMAT_LABELS[fmt]}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 

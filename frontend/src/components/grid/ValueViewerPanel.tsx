@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import Editor, { loader } from '@monaco-editor/react';
+import Editor, { OnMount, loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import {
   X,
@@ -18,8 +18,12 @@ import {
   Sparkles,
   Info,
   Minimize2,
+  Maximize2,
   CheckCircle2,
   AlertTriangle,
+  Save,
+  RotateCcw,
+  Edit3,
 } from 'lucide-react';
 
 loader.config({ monaco });
@@ -36,6 +40,7 @@ interface ValueViewerPanelProps {
   rowIndex?: number;
   columnIndex?: number;
   rawValue: any;
+  onSave?: (newValue: any) => void;
 }
 
 export function detectFormat(val: string): 'html' | 'json' | 'xml' | 'text' {
@@ -209,6 +214,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   rowIndex,
   columnIndex,
   rawValue,
+  onSave,
 }) => {
   const [selectedFormat, setSelectedFormat] = useState<ValueFormat>('auto');
   const [htmlViewMode, setHtmlViewMode] = useState<'preview' | 'source'>('preview');
@@ -217,8 +223,29 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   const [isPretty, setIsPretty] = useState<boolean>(true); // Pretty (beauty) vs Minified
   const [copied, setCopied] = useState<boolean>(false);
   const [isResizing, setIsResizing] = useState<boolean>(false);
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const [isSavedRecently, setIsSavedRecently] = useState<boolean>(false);
+
+  // Active editable text buffer
+  const [editorText, setEditorText] = useState<string>('');
+  const lastLoadedTextRef = useRef<string>('');
+
   const startXRef = useRef<number>(0);
   const startWidthRef = useRef<number>(width);
+  const prevWidthRef = useRef<number>(width);
+
+  const handleToggleExpand = () => {
+    if (isExpanded) {
+      onWidthChange(prevWidthRef.current || 450);
+      setIsExpanded(false);
+    } else {
+      prevWidthRef.current = width;
+      const maxAvailable = typeof window !== 'undefined' ? Math.max(500, window.innerWidth - 200) : 1000;
+      const targetWidth = typeof window !== 'undefined' ? Math.min(maxAvailable, Math.round(window.innerWidth * 0.6)) : 750;
+      onWidthChange(targetWidth);
+      setIsExpanded(true);
+    }
+  };
 
   // Stringify or determine string representation
   const stringValue = useMemo(() => {
@@ -242,7 +269,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   // Active format: either manually selected or detected
   const activeFormat = selectedFormat === 'auto' ? autoDetectedFormat : selectedFormat;
 
-  // Formatted content for display
+  // Base formatted content from cell's current raw value
   const { formattedText, isValid, validationError } = useMemo(() => {
     if (stringValue === null) return { formattedText: '', isValid: true, validationError: undefined };
 
@@ -273,9 +300,45 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
     return { formattedText: stringValue, isValid: true, validationError: undefined };
   }, [stringValue, activeFormat, isPretty, htmlViewMode]);
 
+  // Sync editor buffer whenever the active cell or its base formatted text changes
+  const cellKey = `${rowIndex}_${columnIndex}_${columnName}_${rawValue}_${activeFormat}_${isPretty}`;
+  useEffect(() => {
+    setEditorText(formattedText);
+    lastLoadedTextRef.current = formattedText;
+  }, [cellKey, formattedText]);
+
+  // Track if text has been edited in the editor
+  const isDirty = editorText !== lastLoadedTextRef.current;
+
+  // Save handler: commit changes to the cell in DataGrid
+  const handleSave = () => {
+    if (!onSave) return;
+    onSave(editorText);
+    lastLoadedTextRef.current = editorText;
+    setIsSavedRecently(true);
+    setTimeout(() => setIsSavedRecently(false), 2000);
+  };
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+
+  // Reset handler: revert back to cell's original value
+  const handleReset = () => {
+    setEditorText(lastLoadedTextRef.current);
+  };
+
+  // Keyboard shortcuts inside Monaco Editor (Ctrl+S / Cmd+S, Ctrl+Enter / Cmd+Enter)
+  const handleEditorDidMount: OnMount = (editor, monacoInstance) => {
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
+      handleSaveRef.current();
+    });
+    editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.Enter, () => {
+      handleSaveRef.current();
+    });
+  };
+
   // Copy handler
   const handleCopy = async () => {
-    const textToCopy = formattedText || stringValue || '';
+    const textToCopy = editorText || formattedText || stringValue || '';
     if (!textToCopy) return;
     try {
       if (navigator?.clipboard?.writeText) {
@@ -297,7 +360,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
 
   // Download handler
   const handleDownload = () => {
-    const content = formattedText || stringValue || '';
+    const content = editorText || formattedText || stringValue || '';
     if (!content) return;
     const extensions: Record<string, string> = {
       html: 'html',
@@ -324,7 +387,8 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
 
     const handleMouseMove = (e: MouseEvent) => {
       const delta = startXRef.current - e.clientX;
-      const newWidth = Math.max(280, Math.min(850, startWidthRef.current + delta));
+      const maxAvailable = typeof window !== 'undefined' ? Math.max(400, window.innerWidth - 200) : 1200;
+      const newWidth = Math.max(240, Math.min(maxAvailable, startWidthRef.current + delta));
       onWidthChange(newWidth);
     };
 
@@ -337,12 +401,12 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMouseMove, { capture: true });
+    window.addEventListener('mouseup', handleMouseUp, { capture: true });
 
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove, { capture: true });
+      window.removeEventListener('mouseup', handleMouseUp, { capture: true });
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
@@ -350,6 +414,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
 
   const handleStartResize = (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     startXRef.current = e.clientX;
     startWidthRef.current = width;
     setIsResizing(true);
@@ -357,7 +422,8 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
 
   if (!isOpen) return null;
 
-  // HTML document for preview iframe
+  // HTML document for preview iframe (uses editorText so user edits reflect in live preview)
+  const currentHtmlContent = editorText || stringValue || '';
   const htmlDoc = `
 <!DOCTYPE html>
 <html>
@@ -386,7 +452,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   </style>
 </head>
 <body>
-  ${stringValue || ''}
+  ${currentHtmlContent}
 </body>
 </html>
 `;
@@ -406,13 +472,25 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
       className="relative flex flex-col h-full bg-[#14151a] border-l border-[#272932] shadow-2xl z-20 shrink-0 select-none"
       style={{ width }}
     >
-      {/* Resizer Handle */}
+      {/* Full-screen mouse capture backdrop while dragging to prevent iframes/Monaco from stealing events */}
+      {isResizing && (
+        <div
+          className="fixed inset-0 z-[99999] cursor-col-resize select-none bg-transparent"
+          style={{ cursor: 'col-resize' }}
+        />
+      )}
+
+      {/* Resizer Splitter Handle */}
       <div
         onMouseDown={handleStartResize}
-        className="absolute left-0 top-0 bottom-0 w-1.5 -ml-1 cursor-col-resize hover:bg-blue-500/80 transition-colors z-30 group"
-        title="Drag to resize panel"
+        onDoubleClick={() => {
+          onWidthChange(450);
+          setIsExpanded(false);
+        }}
+        className="absolute left-0 top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/30 transition-colors z-40 group flex items-center justify-center select-none"
+        title="Drag to resize panel (Double-click to reset width to 450px)"
       >
-        <div className="w-0.5 h-full mx-auto group-hover:bg-blue-400/80" />
+        <div className={`w-[2px] h-full transition-colors ${isResizing ? 'bg-blue-400' : 'bg-transparent group-hover:bg-blue-400/80'}`} />
       </div>
 
       {/* Panel Header */}
@@ -420,21 +498,60 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
         <div className="flex items-center gap-1.5 min-w-0">
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#20222b] text-zinc-200 text-xs font-medium border border-[#2b2e3a]">
             <Globe className="h-3.5 w-3.5 text-blue-400" />
-            <span className="font-semibold">Value</span>
+            <span className="font-semibold">View As</span>
           </div>
 
           {columnName && (
             <span
-              className="text-[11px] font-mono text-zinc-400 truncate max-w-[140px] px-1.5 py-0.5 rounded bg-[#101114] border border-[#23252e]"
+              className="text-[11px] font-mono text-zinc-400 truncate max-w-[120px] px-1.5 py-0.5 rounded bg-[#101114] border border-[#23252e]"
               title={`Column: ${columnName} (${columnType || 'unknown'})`}
             >
               {columnName}
+            </span>
+          )}
+
+          {isDirty && (
+            <span
+              className="text-[10px] text-amber-400 font-sans font-medium flex items-center gap-1 shrink-0 animate-pulse"
+              title="Unsaved changes in editor"
+            >
+              ● Modified
             </span>
           )}
         </div>
 
         {/* Action Controls & Close */}
         <div className="flex items-center gap-1 shrink-0">
+          {/* Save / Apply Changes Button */}
+          {isDirty && onSave ? (
+            <button
+              type="button"
+              onClick={handleSave}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-all cursor-pointer animate-in fade-in"
+              title="Save changes to table cell (Ctrl+S or Ctrl+Enter)"
+            >
+              <Save className="h-3.5 w-3.5" />
+              <span>Save</span>
+            </button>
+          ) : isSavedRecently ? (
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-emerald-950/60 text-emerald-300 border border-emerald-800/40 font-medium">
+              <Check className="h-3 w-3 text-emerald-400" />
+              <span>Saved!</span>
+            </div>
+          ) : null}
+
+          {/* Revert / Reset Button */}
+          {isDirty && (
+            <button
+              type="button"
+              onClick={handleReset}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#23252e] transition-colors cursor-pointer"
+              title="Discard edits and revert to cell value"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleCopy}
@@ -460,13 +577,23 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
             <Download className="h-3.5 w-3.5" />
           </button>
 
+          {/* Maximize / Restore width button */}
+          <button
+            type="button"
+            onClick={handleToggleExpand}
+            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#23252e] transition-colors cursor-pointer"
+            title={isExpanded ? 'Restore width' : 'Expand / Maximize width'}
+          >
+            {isExpanded ? <Minimize2 className="h-3.5 w-3.5 text-blue-400" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </button>
+
           <div className="h-3.5 w-[1px] bg-[#272932] mx-0.5" />
 
           <button
             type="button"
             onClick={onClose}
             className="p-1 rounded text-zinc-400 hover:text-white hover:bg-rose-950/40 hover:text-rose-300 transition-colors cursor-pointer"
-            title="Close Value Panel (F7)"
+            title="Close View As Panel (F7)"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -570,7 +697,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
                       ? 'bg-[#2b2e3b] text-white font-medium'
                       : 'text-zinc-400 hover:text-zinc-200'
                   }`}
-                  title="View HTML Source Code"
+                  title="View & Edit HTML Source Code"
                 >
                   <Code2 className="h-3 w-3 text-amber-400" />
                   <span>Source</span>
@@ -629,17 +756,32 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
               </>
             )}
           </div>
-          <span className="text-[9px] text-zinc-500 uppercase">{isPretty ? 'Beauty' : 'Compact'}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] text-zinc-400 flex items-center gap-1">
+              <Edit3 className="h-2.5 w-2.5 text-zinc-500" />
+              <span>Editable</span>
+            </span>
+            <span className="text-[9px] text-zinc-500 uppercase">{isPretty ? 'Beauty' : 'Compact'}</span>
+          </div>
         </div>
       )}
 
       {/* Content Area */}
       <div className="flex-1 min-h-0 relative overflow-hidden bg-[#101114]">
-        {stringValue === null ? (
+        {stringValue === null && !editorText ? (
           <div className="flex flex-col items-center justify-center h-full text-zinc-500 select-none p-4 text-center">
             <Info className="h-8 w-8 text-zinc-600 mb-2" />
             <span className="font-mono text-sm text-zinc-400 italic">NULL</span>
             <span className="text-xs text-zinc-600 mt-1">This cell has no value</span>
+            {onSave && (
+              <button
+                type="button"
+                onClick={() => setEditorText('')}
+                className="mt-3 px-2.5 py-1 rounded bg-[#20222b] hover:bg-[#2b2e3a] text-zinc-300 text-xs transition-colors cursor-pointer border border-[#2b2e3a]"
+              >
+                Set Value
+              </button>
+            )}
           </div>
         ) : activeFormat === 'html' && htmlViewMode === 'preview' ? (
           <div className="w-full h-full relative">
@@ -649,17 +791,29 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
               sandbox="allow-same-origin allow-popups"
               className="w-full h-full border-0 select-text"
             />
+            {/* Quick button to edit HTML source */}
+            <button
+              type="button"
+              onClick={() => setHtmlViewMode('source')}
+              className="absolute bottom-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#181920]/90 backdrop-blur-md border border-[#2e313d] text-zinc-300 hover:text-white hover:bg-[#242630] text-xs font-sans shadow-lg transition-all cursor-pointer"
+              title="Switch to HTML Source code to edit"
+            >
+              <Code2 className="h-3.5 w-3.5 text-amber-400" />
+              <span>Edit HTML Source</span>
+            </button>
           </div>
         ) : (
           <div className="w-full h-full relative">
             <Editor
               height="100%"
               language={monacoLanguage}
-              value={formattedText}
+              value={editorText}
+              onChange={(newVal) => setEditorText(newVal ?? '')}
+              onMount={handleEditorDidMount}
               theme="vs-dark"
               options={{
-                readOnly: true,
-                domReadOnly: true,
+                readOnly: false,
+                domReadOnly: false,
                 minimap: { enabled: false },
                 wordWrap: wordWrap ? 'on' : 'off',
                 scrollBeyondLastLine: false,
@@ -690,19 +844,23 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
         <div className="flex items-center gap-2 truncate">
           <span>Format: <span className="text-zinc-300 font-medium uppercase">{activeFormat}</span></span>
           {selectedFormat === 'auto' && <span className="text-zinc-500">(detected)</span>}
-          {stringValue !== null && (
+          {editorText !== null && (
             <>
               <span>•</span>
-              <span>{stringValue.length.toLocaleString()} chars</span>
+              <span>{editorText.length.toLocaleString()} chars</span>
               <span>•</span>
-              <span>{new Blob([stringValue]).size.toLocaleString()} bytes</span>
+              <span>{new Blob([editorText]).size.toLocaleString()} bytes</span>
             </>
           )}
         </div>
 
-        <div className="flex items-center gap-1 shrink-0 text-zinc-400">
+        <div className="flex items-center gap-2 shrink-0 text-zinc-400">
+          <span className="text-zinc-500">Ctrl+S to save</span>
           {rowIndex !== undefined && columnIndex !== undefined && (
-            <span>Row {rowIndex + 1}, Col {columnIndex + 1}</span>
+            <>
+              <span>•</span>
+              <span>Row {rowIndex + 1}, Col {columnIndex + 1}</span>
+            </>
           )}
         </div>
       </div>

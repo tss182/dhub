@@ -7,6 +7,7 @@ export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = {
   json: 'JSON',
   sql_insert: 'SQL INSERT',
   sql_update: 'SQL UPDATE',
+  sql_upsert: 'SQL UPSERT',
 };
 
 export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className = '' }) => {
@@ -50,7 +51,7 @@ export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className
           <div className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1">
             Copy Format
           </div>
-          {(['csv', 'json', 'sql_insert', 'sql_update'] as CopyFormat[]).map((fmt) => (
+          {(['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'] as CopyFormat[]).map((fmt) => (
             <button
               key={fmt}
               type="button"
