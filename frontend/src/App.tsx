@@ -1825,7 +1825,6 @@ export function App() {
                     <DataGrid
                       tabId={activeTab.id}
                       tableName={activeTab.table}
-                      driver={activeTab.driver || connections.find((c) => c.id === activeTab.connectionId)?.driver}
                       envType={tableEnv}
                       columns={tableDataByTab[activeTab.id]?.columns || []}
                       rows={tableDataByTab[activeTab.id]?.rows || []}
@@ -2075,7 +2074,6 @@ export function App() {
                           <DataGrid
                             key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
                             tabId={`bottom-result-${activeResultIndex}`}
-                            driver={connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.driver}
                             envType={resolveConnectionEnv(
                               connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))
                             )}

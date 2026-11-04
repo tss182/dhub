@@ -21,8 +21,6 @@ import {
   Maximize2,
   CheckCircle2,
   AlertTriangle,
-  Save,
-  RotateCcw,
   Edit3,
 } from 'lucide-react';
 
@@ -224,7 +222,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
-  const [isSavedRecently, setIsSavedRecently] = useState<boolean>(false);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Active editable text buffer
   const [editorText, setEditorText] = useState<string>('');
@@ -303,36 +301,45 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   // Sync editor buffer whenever the active cell or its base formatted text changes
   const cellKey = `${rowIndex}_${columnIndex}_${columnName}_${rawValue}_${activeFormat}_${isPretty}`;
   useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
     setEditorText(formattedText);
     lastLoadedTextRef.current = formattedText;
   }, [cellKey, formattedText]);
 
-  // Track if text has been edited in the editor
-  const isDirty = editorText !== lastLoadedTextRef.current;
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
 
-  // Save handler: commit changes to the cell in DataGrid
-  const handleSave = () => {
-    if (!onSave) return;
-    onSave(editorText);
-    lastLoadedTextRef.current = editorText;
-    setIsSavedRecently(true);
-    setTimeout(() => setIsSavedRecently(false), 2000);
+  // Directly update datagridview as user types, with debounce
+  const handleEditorChange = (newVal: string | undefined) => {
+    const val = newVal ?? '';
+    setEditorText(val);
+
+    if (onSave) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        onSave(val);
+      }, 250);
+    }
   };
-  const handleSaveRef = useRef(handleSave);
-  handleSaveRef.current = handleSave;
 
-  // Reset handler: revert back to cell's original value
-  const handleReset = () => {
-    setEditorText(lastLoadedTextRef.current);
-  };
-
-  // Keyboard shortcuts inside Monaco Editor (Ctrl+S / Cmd+S, Ctrl+Enter / Cmd+Enter)
+  // Keyboard shortcuts inside Monaco Editor (Ctrl+S / Cmd+S, Ctrl+Enter / Cmd+Enter: flush immediately)
   const handleEditorDidMount: OnMount = (editor, monacoInstance) => {
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => {
-      handleSaveRef.current();
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (onSave) onSave(editor.getValue());
     });
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.Enter, () => {
-      handleSaveRef.current();
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (onSave) onSave(editor.getValue());
     });
   };
 
@@ -510,47 +517,10 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
             </span>
           )}
 
-          {isDirty && (
-            <span
-              className="text-[10px] text-amber-400 font-sans font-medium flex items-center gap-1 shrink-0 animate-pulse"
-              title="Unsaved changes in editor"
-            >
-              ● Modified
-            </span>
-          )}
         </div>
 
         {/* Action Controls & Close */}
         <div className="flex items-center gap-1 shrink-0">
-          {/* Save / Apply Changes Button */}
-          {isDirty && onSave ? (
-            <button
-              type="button"
-              onClick={handleSave}
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-all cursor-pointer animate-in fade-in"
-              title="Save changes to table cell (Ctrl+S or Ctrl+Enter)"
-            >
-              <Save className="h-3.5 w-3.5" />
-              <span>Save</span>
-            </button>
-          ) : isSavedRecently ? (
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-emerald-950/60 text-emerald-300 border border-emerald-800/40 font-medium">
-              <Check className="h-3 w-3 text-emerald-400" />
-              <span>Saved!</span>
-            </div>
-          ) : null}
-
-          {/* Revert / Reset Button */}
-          {isDirty && (
-            <button
-              type="button"
-              onClick={handleReset}
-              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#23252e] transition-colors cursor-pointer"
-              title="Discard edits and revert to cell value"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </button>
-          )}
 
           <button
             type="button"
@@ -808,7 +778,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
               height="100%"
               language={monacoLanguage}
               value={editorText}
-              onChange={(newVal) => setEditorText(newVal ?? '')}
+              onChange={handleEditorChange}
               onMount={handleEditorDidMount}
               theme="vs-dark"
               options={{
@@ -855,7 +825,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0 text-zinc-400">
-          <span className="text-zinc-500">Ctrl+S to save</span>
+          <span className="text-zinc-500">Live sync with grid</span>
           {rowIndex !== undefined && columnIndex !== undefined && (
             <>
               <span>•</span>
