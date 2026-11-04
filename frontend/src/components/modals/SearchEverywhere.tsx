@@ -4,6 +4,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
 import { Search, Table, Database, Terminal, FileCode, Settings as SettingsIcon } from 'lucide-react';
+import { DbDriverIcon } from '../common/DbDriverIcon';
 
 interface SearchResultItem {
   id: string;
@@ -296,7 +297,7 @@ export const SearchEverywhere: React.FC = () => {
                     {item.kind === 'table' && <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
                     {item.kind === 'view' && <Table className="h-3.5 w-3.5 text-teal-400 shrink-0" />}
                     {item.kind === 'console' && <FileCode className="h-3.5 w-3.5 text-amber-400 shrink-0" />}
-                    {item.kind === 'connection' && <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />}
+                    {item.kind === 'connection' && <DbDriverIcon driver={conn?.driver} className="h-3.5 w-3.5 shrink-0" />}
 
                     <span className="font-medium text-zinc-100 truncate">{item.title}</span>
 
