@@ -6,12 +6,12 @@
 name: "dhub"
 arch: ${GOARCH}
 platform: "linux"
-version: "0.1.1"
+version: "0.1.2"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
 description: "Database Management System"
-vendor: "ASDEV"
+vendor: "AsDev"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"

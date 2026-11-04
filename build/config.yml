@@ -5,13 +5,13 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "ASDEV" # The name of the company
-  productName: "DHUB" # The name of the application
+  companyName: "AsDev" # The name of the company
+  productName: "DHub" # The name of the application
   productIdentifier: "com.asdev.dhub" # The unique product identifier
   description: "Database Management System" # The application description
-  copyright: "(c) 2026, ASDEV" # Copyright text
+  copyright: "(c) 2026, AsDev" # Copyright text
   comments: "Product Aplication" # Comments
-  version: "0.1.1" # The application version
+  version: "0.1.2" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

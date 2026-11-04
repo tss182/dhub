@@ -1,6 +1,6 @@
 [Desktop Entry]
 Version=1.0
-Name=DHUB
+Name=DHub
 Comment=Database Management System
 # The Exec line includes %u to pass the URL to the application
 Exec=/usr/local/bin/dhub %u

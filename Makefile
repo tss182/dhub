@@ -9,7 +9,7 @@ INSTALL_SCOPE ?= user
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings update-assets reset\:sqlite
+.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings update-assets sync-version reset\:sqlite
 .PHONY: build-mac build-mac-bin build-mac-dmg build-deb build-rpm build-appimage build-windows build-windows-installer reset-sqlite db\:reset reset-db
 
 help:
@@ -29,6 +29,8 @@ help:
 	@echo "  make build:mac:dmg          Build macOS DMG installer"
 	@echo "  make build:windows:installer Build Windows NSIS installer (scope: $(INSTALL_SCOPE))"
 	@echo "  make bindings               Generate Go-TypeScript bindings"
+	@echo "  make update-assets          Update build assets & sync version everywhere"
+	@echo "  make sync-version           Sync version from build/config.yml across project"
 	@echo "  make reset:sqlite           Reset local SQLite metadata database (dhub_meta.db)"
 	@echo "  make clean                  Remove build artifacts and output directory"
 	@echo "========================================================================"
@@ -93,6 +95,11 @@ bindings:
 update-assets:
 	@echo "==> Updating build assets from build/config.yml..."
 	$(WAILS) task common:update:build-assets
+	@echo "==> Syncing version across frontend and packaging manifests..."
+	@./scripts/sync-version.sh
+
+sync-version:
+	@./scripts/sync-version.sh
 
 reset\:sqlite:
 	@echo "==> Resetting local SQLite metadata database..."
