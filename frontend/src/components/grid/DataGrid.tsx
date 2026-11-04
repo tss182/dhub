@@ -34,6 +34,7 @@ import {
   Ban,
   CheckSquare,
   ClipboardPaste,
+  Clock,
 } from 'lucide-react';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
@@ -159,6 +160,96 @@ export interface SortConfig {
 
 const EMPTY_STAGED: Record<number, any> = {};
 
+export interface WhereSuggestionItem {
+  id: string;
+  type: 'column' | 'keyword';
+  name: string;
+  dataType?: string;
+  isPK?: boolean;
+  iconType?: 'pk' | 'number' | 'date' | 'boolean' | 'text';
+}
+
+const SQL_WHERE_KEYWORDS = [
+  'AND',
+  'OR',
+  'LIKE',
+  'NOT LIKE',
+  'ILIKE',
+  'IN',
+  'NOT IN',
+  'IS NULL',
+  'IS NOT NULL',
+  'BETWEEN',
+  'ORDER BY',
+  'ASC',
+  'DESC',
+  'LIMIT',
+];
+
+function getWhereColumnIconType(dataType?: string, isPK?: boolean): 'pk' | 'number' | 'date' | 'boolean' | 'text' {
+  if (isPK) return 'pk';
+  if (!dataType) return 'text';
+  const upper = dataType.toUpperCase();
+  if (
+    upper.includes('INT') ||
+    upper.includes('NUMERIC') ||
+    upper.includes('DECIMAL') ||
+    upper.includes('FLOAT') ||
+    upper.includes('DOUBLE') ||
+    upper.includes('REAL') ||
+    upper.includes('SERIAL')
+  ) {
+    return 'number';
+  }
+  if (upper.includes('DATE') || upper.includes('TIME')) {
+    return 'date';
+  }
+  if (upper.includes('BOOL') || upper.includes('BIT')) {
+    return 'boolean';
+  }
+  return 'text';
+}
+
+function isInsideQuotes(text: string, cursor: number): boolean {
+  const textBefore = text.slice(0, cursor);
+  let inSingle = false;
+  let inDouble = false;
+
+  for (let i = 0; i < textBefore.length; i++) {
+    const ch = textBefore[i];
+    if (ch === "'" && !inDouble) {
+      if (inSingle && textBefore[i + 1] === "'") {
+        i++; // Escaped ''
+      } else {
+        inSingle = !inSingle;
+      }
+    } else if (ch === '"' && !inSingle) {
+      if (inDouble && textBefore[i + 1] === '"') {
+        i++; // Escaped ""
+      } else {
+        inDouble = !inDouble;
+      }
+    }
+  }
+
+  return inSingle || inDouble;
+}
+
+function getWhereCurrentToken(text: string, cursor: number) {
+  const textBefore = text.slice(0, cursor);
+  const match = textBefore.match(/([a-zA-Z0-9_`"'.%]+)$/);
+  if (!match) {
+    return { start: cursor, end: cursor, word: '' };
+  }
+  const rawWord = match[1];
+  const word = rawWord.replace(/[`"']/g, '');
+  const start = cursor - rawWord.length;
+  const textAfter = text.slice(cursor);
+  const afterMatch = textAfter.match(/^([a-zA-Z0-9_`"'.%]+)/);
+  const end = cursor + (afterMatch ? afterMatch[1].length : 0);
+  return { start, end, word };
+}
+
 interface DataGridProps {
   tabId: string;
   tableName?: string;
@@ -212,7 +303,176 @@ export const DataGrid: React.FC<DataGridProps> = ({
 }) => {
   const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
+  const [whereCursorPos, setWhereCursorPos] = useState<number>(0);
+  const [showWhereSuggestions, setShowWhereSuggestions] = useState<boolean>(false);
+  const [forceShowSuggestions, setForceShowSuggestions] = useState<boolean>(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(0);
+  const whereInputRef = useRef<HTMLInputElement>(null);
+  const whereContainerRef = useRef<HTMLDivElement>(null);
+  const suggestionListRef = useRef<HTMLDivElement>(null);
   const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
+
+  const whereSuggestions = useMemo<WhereSuggestionItem[]>(() => {
+    if (!isTableTab || !columns || columns.length === 0) return [];
+
+    // 1. NEVER show autocomplete inside string literals (single or double quotes)
+    if (isInsideQuotes(whereInput, whereCursorPos)) {
+      return [];
+    }
+
+    const token = getWhereCurrentToken(whereInput, whereCursorPos);
+    const search = token.word.toLowerCase();
+
+    // 2. NEVER show autocomplete if typing numbers, wildcards %, or operators
+    if (/^[0-9%'".,+\-*/<>=!]/.test(search)) {
+      return [];
+    }
+
+    const columnItems: WhereSuggestionItem[] = columns.map((col) => {
+      const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+      return {
+        id: `col-${col.name}`,
+        type: 'column',
+        name: col.name,
+        dataType: col.dataType,
+        isPK,
+        iconType: getWhereColumnIconType(col.dataType, isPK),
+      };
+    });
+
+    // 3. If no search prefix typed, only show if user explicitly pressed Ctrl+Space
+    if (!search) {
+      if (!forceShowSuggestions) {
+        return [];
+      }
+      return columnItems.sort((a, b) => {
+        if (a.isPK && !b.isPK) return -1;
+        if (!a.isPK && b.isPK) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    }
+
+    // 4. Filter columns by prefix or contains
+    const matchedCols = columnItems
+      .filter((col) => col.name.toLowerCase().includes(search))
+      .sort((a, b) => {
+        const aLower = a.name.toLowerCase();
+        const bLower = b.name.toLowerCase();
+        const aStarts = aLower.startsWith(search);
+        const bStarts = bLower.startsWith(search);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        if (a.isPK && !b.isPK) return -1;
+        if (!a.isPK && b.isPK) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    // 5. Filter keywords (starts-with only)
+    const matchedKeywords: WhereSuggestionItem[] = SQL_WHERE_KEYWORDS
+      .filter((kw) => kw.toLowerCase().startsWith(search))
+      .map((kw) => ({
+        id: `kw-${kw}`,
+        type: 'keyword',
+        name: kw,
+      }));
+
+    return [...matchedCols, ...matchedKeywords];
+  }, [isTableTab, columns, primaryKeys, whereInput, whereCursorPos, forceShowSuggestions]);
+
+  const applyWhereSuggestion = (item: WhereSuggestionItem) => {
+    const inputEl = whereInputRef.current;
+    const cursor = inputEl ? (inputEl.selectionStart ?? whereInput.length) : whereInput.length;
+    const token = getWhereCurrentToken(whereInput, cursor);
+
+    const before = whereInput.slice(0, token.start);
+    const after = whereInput.slice(token.end);
+
+    let insertText = item.name;
+    if (item.type === 'column' && /[^a-zA-Z0-9_]/.test(insertText)) {
+      insertText = `\`${insertText}\``;
+    }
+
+    const needsSpaceAfter = !after.startsWith(' ');
+    const nextValue = `${before}${insertText}${needsSpaceAfter ? ' ' : ''}${after}`;
+    const nextCursor = before.length + insertText.length + (needsSpaceAfter ? 1 : 0);
+
+    setWhereInput(nextValue);
+    setWhereCursorPos(nextCursor);
+    setShowWhereSuggestions(false);
+    setSelectedSuggestionIndex(0);
+
+    requestAnimationFrame(() => {
+      if (whereInputRef.current) {
+        whereInputRef.current.focus();
+        whereInputRef.current.setSelectionRange(nextCursor, nextCursor);
+      }
+    });
+  };
+
+  const handleWhereKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Explicit trigger: Ctrl+Space opens all columns
+    if (e.ctrlKey && e.code === 'Space') {
+      e.preventDefault();
+      setForceShowSuggestions(true);
+      setShowWhereSuggestions(true);
+      setSelectedSuggestionIndex(0);
+      return;
+    }
+
+    if (showWhereSuggestions && whereSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSuggestionIndex((prev) => (prev + 1) % whereSuggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSuggestionIndex((prev) => (prev - 1 + whereSuggestions.length) % whereSuggestions.length);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < whereSuggestions.length) {
+          e.preventDefault();
+          applyWhereSuggestion(whereSuggestions[selectedSuggestionIndex]);
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowWhereSuggestions(false);
+        setForceShowSuggestions(false);
+        return;
+      }
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      setShowWhereSuggestions(false);
+      setForceShowSuggestions(false);
+      onApplyWhere?.(whereInput);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (whereContainerRef.current && !whereContainerRef.current.contains(e.target as Node)) {
+        setShowWhereSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (showWhereSuggestions && suggestionListRef.current) {
+      const activeEl = suggestionListRef.current.querySelector<HTMLElement>(
+        `[data-suggestion-index="${selectedSuggestionIndex}"]`
+      );
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [selectedSuggestionIndex, showWhereSuggestions]);
 
   useEffect(() => {
     setWhereInput(whereClause || '');
@@ -350,7 +610,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   }, [pageSize]);
 
-  // Fix inverted horizontal scrolling (WebKitGTK on Linux / Shift+Wheel)
+  // Horizontal scrolling (touchpad swipe, tilt wheel, and Shift + Wheel)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -360,17 +620,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
       if (e.shiftKey) {
         e.preventDefault();
         const multiplier = e.deltaMode === 1 ? 24 : 1;
-        const delta = (e.deltaY !== 0 ? e.deltaY : -e.deltaX) * multiplier;
+        const delta = (e.deltaY !== 0 ? e.deltaY : e.deltaX) * multiplier;
         container.scrollLeft += delta;
         return;
       }
 
       // 2. Direct horizontal scroll (touchpad swipe / tilt wheel):
-      // WebKitGTK on Linux sends inverted deltaX, so we flip the sign
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 0.5) {
         e.preventDefault();
         const multiplier = e.deltaMode === 1 ? 24 : 1;
-        container.scrollLeft -= e.deltaX * multiplier;
+        container.scrollLeft += e.deltaX * multiplier;
       }
     };
 
@@ -1644,24 +1903,56 @@ WHERE ${whereClause};`);
       {/* SQL WHERE Filter Bar (Below Add Row toolbar) */}
       {isTableTab && (
         <div className={`flex items-center gap-2 px-3 py-1.5 border-b ${gridBarBg}`}>
-          <div className="flex items-center gap-1.5 shrink-0 select-none">
-            <span className="font-mono text-[11px] font-bold text-blue-400 bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded">
-              WHERE
-            </span>
+          <div className="flex items-center shrink-0 select-none">
+            <div className="inline-flex items-center gap-1 font-mono text-[11px] font-bold text-blue-400 bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded">
+              <span>WHERE</span>
+              {whereInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWhereInput('');
+                    onApplyWhere?.('');
+                    setShowWhereSuggestions(false);
+                  }}
+                  className="text-blue-400/60 hover:text-white transition-colors cursor-pointer ml-0.5"
+                  title="Clear WHERE condition"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </div>
-          <div className="relative flex-1 flex items-center">
+
+          <div ref={whereContainerRef} className="relative flex-1 flex items-center">
+            <Filter className="h-3.5 w-3.5 text-blue-400 absolute left-2.5 pointer-events-none shrink-0" />
             <input
+              ref={whereInputRef}
               type="text"
               data-where-input="true"
-              placeholder="e.g. name like '%user' and id = '1' (Press Enter to apply)"
+              placeholder="e.g. status = 'active' and total > 100 (Type column to autocomplete, Enter to apply)"
               value={whereInput}
-              onChange={(e) => setWhereInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  onApplyWhere?.(whereInput);
+              onChange={(e) => {
+                setWhereInput(e.target.value);
+                setWhereCursorPos(e.target.selectionStart ?? e.target.value.length);
+                setForceShowSuggestions(false);
+                setShowWhereSuggestions(true);
+                setSelectedSuggestionIndex(0);
+              }}
+              onFocus={(e) => {
+                setWhereCursorPos(e.target.selectionStart ?? e.target.value.length);
+                setForceShowSuggestions(false);
+              }}
+              onClick={(e) => {
+                setWhereCursorPos(e.currentTarget.selectionStart ?? whereInput.length);
+                setForceShowSuggestions(false);
+              }}
+              onKeyUp={(e) => {
+                if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter' && e.key !== 'Escape') {
+                  setWhereCursorPos(e.currentTarget.selectionStart ?? whereInput.length);
                 }
               }}
-              className={`w-full h-7 rounded bg-[#101115] border pl-3 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none transition-colors ${
+              onKeyDown={handleWhereKeyDown}
+              className={`w-full h-7 rounded bg-[#101115] border pl-8 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none transition-colors ${
                 errorMessage
                   ? 'border-rose-500/80 focus:border-rose-500 ring-1 ring-rose-500/30'
                   : 'border-[#2b2e3a] focus:border-blue-500'
@@ -1673,6 +1964,7 @@ WHERE ${whereClause};`);
                 onClick={() => {
                   setWhereInput('');
                   onApplyWhere?.('');
+                  setShowWhereSuggestions(false);
                 }}
                 className="absolute right-2 text-zinc-500 hover:text-white cursor-pointer"
                 title="Clear WHERE filter"
@@ -1680,11 +1972,83 @@ WHERE ${whereClause};`);
                 <X className="h-3 w-3" />
               </button>
             )}
+
+            {/* Autocomplete Dropdown */}
+            {showWhereSuggestions && whereSuggestions.length > 0 && (
+              <div
+                ref={suggestionListRef}
+                className="absolute left-0 top-full mt-1 w-full max-w-md max-h-64 overflow-y-auto rounded-lg bg-[#14151b] border border-[#2b2e3a] shadow-2xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
+              >
+                <div className="px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-zinc-500 border-b border-[#22242d] flex items-center justify-between select-none">
+                  <span>Fields & Keywords ({whereSuggestions.length})</span>
+                  <span className="text-zinc-600">Tab / Enter ↵ • ↑↓ to navigate</span>
+                </div>
+                {whereSuggestions.map((item, idx) => {
+                  const isSelected = idx === selectedSuggestionIndex;
+                  return (
+                    <div
+                      key={item.id}
+                      data-suggestion-index={idx}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applyWhereSuggestion(item);
+                      }}
+                      onMouseEnter={() => setSelectedSuggestionIndex(idx)}
+                      className={`flex items-center justify-between px-2.5 py-1.5 cursor-pointer text-xs font-mono transition-colors select-none ${
+                        isSelected
+                          ? 'bg-blue-600/30 text-white border-l-2 border-blue-400 pl-2'
+                          : 'text-zinc-300 hover:bg-[#1f212a] hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {item.type === 'column' ? (
+                          item.isPK ? (
+                            <Key className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                          ) : item.iconType === 'number' ? (
+                            <Hash className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                          ) : item.iconType === 'date' ? (
+                            <Clock className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                          )
+                        ) : (
+                          <Code className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+                        )}
+                        <span className={`truncate font-medium ${item.type === 'keyword' ? 'text-cyan-300 font-bold' : ''}`}>
+                          {item.name}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0 ml-3">
+                        {item.isPK && (
+                          <span className="px-1 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            PK
+                          </span>
+                        )}
+                        {item.dataType && (
+                          <span className="text-[10px] text-zinc-500 font-mono">
+                            {item.dataType}
+                          </span>
+                        )}
+                        {item.type === 'keyword' && (
+                          <span className="text-[9px] font-mono text-zinc-600 uppercase">
+                            SQL
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <button
             type="button"
-            onClick={() => onApplyWhere?.(whereInput)}
+            onClick={() => {
+              setShowWhereSuggestions(false);
+              onApplyWhere?.(whereInput);
+            }}
             className="flex items-center gap-1.5 h-7 px-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs shrink-0"
             title="Apply WHERE filter (Enter)"
           >
@@ -1698,6 +2062,7 @@ WHERE ${whereClause};`);
               onClick={() => {
                 setWhereInput('');
                 onApplyWhere?.('');
+                setShowWhereSuggestions(false);
               }}
               className="flex items-center gap-1 h-7 px-2.5 rounded bg-[#20222b] hover:bg-rose-950/40 hover:text-rose-300 text-zinc-400 border border-[#272932] text-xs transition-colors cursor-pointer shrink-0"
               title="Reset WHERE filter"

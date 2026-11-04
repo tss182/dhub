@@ -17,6 +17,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { APP_VERSION } from '../../version';
 
 export const SettingsModal: React.FC = () => {
   const {
@@ -491,7 +492,7 @@ export const SettingsModal: React.FC = () => {
                     Modern high-performance Database Client & SQL IDE.
                   </p>
                   <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
-                    <span>Version 0.1.0</span>
+                    <span>Version {APP_VERSION}</span>
                     <span className="text-zinc-500">•</span>
                     <span className="text-emerald-400">Stable</span>
                   </div>
