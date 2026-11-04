@@ -635,7 +635,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   }, [pageSize]);
 
-  // Horizontal scrolling (touchpad swipe, tilt wheel, and Shift + Wheel)
+  // Fix inverted horizontal scrolling (touchpad swipe, tilt wheel, and Shift + Wheel on WebKitGTK / Linux)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -645,16 +645,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
       if (e.shiftKey) {
         e.preventDefault();
         const multiplier = e.deltaMode === 1 ? 24 : 1;
-        const delta = (e.deltaY !== 0 ? e.deltaY : e.deltaX) * multiplier;
+        const delta = (e.deltaY !== 0 ? e.deltaY : -e.deltaX) * multiplier;
         container.scrollLeft += delta;
         return;
       }
 
       // 2. Direct horizontal scroll (touchpad swipe / tilt wheel):
+      // WebKitGTK on Linux sends inverted deltaX, so we flip the sign
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 0.5) {
         e.preventDefault();
         const multiplier = e.deltaMode === 1 ? 24 : 1;
-        container.scrollLeft += e.deltaX * multiplier;
+        container.scrollLeft -= e.deltaX * multiplier;
       }
     };
 

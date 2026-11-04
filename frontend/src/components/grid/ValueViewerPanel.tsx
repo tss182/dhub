@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import Editor, { loader } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
 import {
   X,
   Copy,
@@ -15,7 +17,12 @@ import {
   Globe,
   Sparkles,
   Info,
+  Minimize2,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
+
+loader.config({ monaco });
 
 export type ValueFormat = 'auto' | 'html' | 'json' | 'xml' | 'text';
 
@@ -47,6 +54,20 @@ export function detectFormat(val: string): 'html' | 'json' | 'xml' | 'text' {
     } catch {}
   }
 
+  // Check XML (starts with <?xml or starts and ends with <tag> without typical HTML tags)
+  if (
+    trimmed.startsWith('<?xml') ||
+    (trimmed.startsWith('<') && trimmed.endsWith('>') && !/<(html|body|div|p|span|table|tr|td|th|h[1-6]|ul|ol|li|a|b|i|em|strong|br|style)\b/i.test(trimmed))
+  ) {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(trimmed, 'application/xml');
+      if (!doc.querySelector('parsererror')) {
+        return 'xml';
+      }
+    } catch {}
+  }
+
   // Check HTML
   if (
     trimmed.startsWith('<!DOCTYPE') ||
@@ -56,41 +77,125 @@ export function detectFormat(val: string): 'html' | 'json' | 'xml' | 'text' {
     return 'html';
   }
 
-  // Check XML
-  if (
-    trimmed.startsWith('<?xml') ||
-    (trimmed.startsWith('<') && trimmed.endsWith('>') && !/<(div|span|p|b|i|table|h[1-6]|a|img)\b/i.test(trimmed))
-  ) {
+  // Fallback check for XML
+  if (trimmed.startsWith('<') && trimmed.endsWith('>')) {
     return 'xml';
   }
 
   return 'text';
 }
 
-function formatXml(xml: string): string {
+function formatXmlBeauty(xml: string): { formatted: string; isValid: boolean; error?: string } {
+  if (!xml || typeof xml !== 'string') return { formatted: '', isValid: true };
+  const trimmed = xml.trim();
+
+  // Validate XML with DOMParser
+  let isValid = true;
+  let errorMsg: string | undefined;
   try {
-    let formatted = '';
-    let indent = 0;
-    const tab = '  ';
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(trimmed, 'application/xml');
+    const parserError = doc.querySelector('parsererror');
+    if (parserError) {
+      isValid = false;
+      errorMsg = parserError.textContent?.slice(0, 100) || 'Invalid XML syntax';
+    }
+  } catch (err: any) {
+    isValid = false;
+    errorMsg = err?.message || 'Invalid XML syntax';
+  }
+
+  // Pretty format XML
+  try {
+    const PADDING = '  ';
     const reg = /(>)(<)(\/*)/g;
-    const cleanXml = xml.replace(reg, '$1\r\n$2$3');
-    cleanXml.split('\r\n').forEach((node) => {
-      let pad = 0;
-      if (node.match(/.+<\/\w[^>]*>$/)) {
-        pad = 0;
-      } else if (node.match(/^<\/\w/)) {
-        if (indent !== 0) indent -= 1;
-      } else if (node.match(/^<\w[^>]*[^\/]>.*$/)) {
-        pad = 1;
+    let formatted = '';
+    let pad = 0;
+
+    const normalized = trimmed.replace(reg, '$1\r\n$2$3');
+    const lines = normalized.split('\r\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      let indent = 0;
+      if (line.match(/.+<\/\w[^>]*>$/)) {
+        // Tag with content and closing tag on same line: <tag>content</tag>
+        indent = 0;
+      } else if (line.match(/^<\/\w/)) {
+        // Closing tag: </tag>
+        if (pad !== 0) {
+          pad -= 1;
+        }
+      } else if (line.match(/^<\w[^>]*[^\/]>.*$/) && !line.startsWith('<?') && !line.startsWith('<!')) {
+        // Opening tag: <tag> (not self-closing and not declaration)
+        indent = 1;
       } else {
-        pad = 0;
+        indent = 0;
       }
-      formatted += tab.repeat(indent) + node + '\r\n';
-      indent += pad;
-    });
-    return formatted.trim();
+
+      formatted += PADDING.repeat(pad) + line + '\n';
+      pad += indent;
+    }
+
+    return { formatted: formatted.trim(), isValid, error: errorMsg };
+  } catch {
+    return { formatted: xml, isValid, error: errorMsg };
+  }
+}
+
+function minifyXml(xml: string): string {
+  try {
+    return xml
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/>\s+</g, '><')
+      .trim();
   } catch {
     return xml;
+  }
+}
+
+function formatJsonBeauty(str: string): { formatted: string; isValid: boolean; error?: string } {
+  if (!str || typeof str !== 'string') return { formatted: '', isValid: true };
+  try {
+    let parsed = JSON.parse(str);
+    // Handle double-escaped JSON string (e.g. "\"{\\\"a\\\":1}\"")
+    if (typeof parsed === 'string') {
+      const inner = parsed.trim();
+      if ((inner.startsWith('{') && inner.endsWith('}')) || (inner.startsWith('[') && inner.endsWith(']'))) {
+        try {
+          parsed = JSON.parse(inner);
+        } catch {}
+      }
+    }
+    return {
+      formatted: JSON.stringify(parsed, null, 2),
+      isValid: true,
+    };
+  } catch (err: any) {
+    return {
+      formatted: str,
+      isValid: false,
+      error: err?.message || 'Invalid JSON syntax',
+    };
+  }
+}
+
+function minifyJson(str: string): string {
+  try {
+    let parsed = JSON.parse(str);
+    if (typeof parsed === 'string') {
+      const inner = parsed.trim();
+      if ((inner.startsWith('{') && inner.endsWith('}')) || (inner.startsWith('[') && inner.endsWith(']'))) {
+        try {
+          parsed = JSON.parse(inner);
+        } catch {}
+      }
+    }
+    return JSON.stringify(parsed);
+  } catch {
+    return str;
   }
 }
 
@@ -109,6 +214,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   const [htmlViewMode, setHtmlViewMode] = useState<'preview' | 'source'>('preview');
   const [htmlTheme, setHtmlTheme] = useState<'light' | 'dark'>('light');
   const [wordWrap, setWordWrap] = useState<boolean>(true);
+  const [isPretty, setIsPretty] = useState<boolean>(true); // Pretty (beauty) vs Minified
   const [copied, setCopied] = useState<boolean>(false);
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const startXRef = useRef<number>(0);
@@ -137,28 +243,35 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   const activeFormat = selectedFormat === 'auto' ? autoDetectedFormat : selectedFormat;
 
   // Formatted content for display
-  const { formattedText, isValid } = useMemo(() => {
-    if (stringValue === null) return { formattedText: '', isValid: true };
+  const { formattedText, isValid, validationError } = useMemo(() => {
+    if (stringValue === null) return { formattedText: '', isValid: true, validationError: undefined };
 
     if (activeFormat === 'json') {
-      try {
-        const parsed = JSON.parse(stringValue);
-        return { formattedText: JSON.stringify(parsed, null, 2), isValid: true };
-      } catch {
-        return { formattedText: stringValue, isValid: false };
+      if (!isPretty) {
+        return { formattedText: minifyJson(stringValue), isValid: true, validationError: undefined };
       }
+      const res = formatJsonBeauty(stringValue);
+      return { formattedText: res.formatted, isValid: res.isValid, validationError: res.error };
     }
 
     if (activeFormat === 'xml') {
-      try {
-        return { formattedText: formatXml(stringValue), isValid: true };
-      } catch {
-        return { formattedText: stringValue, isValid: false };
+      if (!isPretty) {
+        return { formattedText: minifyXml(stringValue), isValid: true, validationError: undefined };
       }
+      const res = formatXmlBeauty(stringValue);
+      return { formattedText: res.formatted, isValid: res.isValid, validationError: res.error };
     }
 
-    return { formattedText: stringValue, isValid: true };
-  }, [stringValue, activeFormat]);
+    if (activeFormat === 'html') {
+      if (!isPretty && htmlViewMode === 'source') {
+        return { formattedText: minifyXml(stringValue), isValid: true, validationError: undefined };
+      }
+      const res = formatXmlBeauty(stringValue);
+      return { formattedText: res.formatted, isValid: true, validationError: undefined };
+    }
+
+    return { formattedText: stringValue, isValid: true, validationError: undefined };
+  }, [stringValue, activeFormat, isPretty, htmlViewMode]);
 
   // Copy handler
   const handleCopy = async () => {
@@ -278,6 +391,16 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
 </html>
 `;
 
+  // Determine Monaco language
+  const monacoLanguage =
+    activeFormat === 'json'
+      ? 'json'
+      : activeFormat === 'xml'
+      ? 'xml'
+      : activeFormat === 'html'
+      ? 'html'
+      : 'plaintext';
+
   return (
     <div
       className="relative flex flex-col h-full bg-[#14151a] border-l border-[#272932] shadow-2xl z-20 shrink-0 select-none"
@@ -321,7 +444,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
                 ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
                 : 'text-zinc-400 hover:text-white hover:bg-[#23252e]'
             } disabled:opacity-40 disabled:cursor-not-allowed`}
-            title="Copy value to clipboard"
+            title="Copy formatted value to clipboard"
           >
             {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
             <span className="text-[10px] font-medium">{copied ? 'Copied' : 'Copy'}</span>
@@ -390,6 +513,38 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
 
         {/* Right: Format-specific toggles */}
         <div className="flex items-center gap-1 text-zinc-400">
+          {/* Beauty vs Minified toggle for JSON, XML and HTML source */}
+          {(activeFormat === 'json' || activeFormat === 'xml' || (activeFormat === 'html' && htmlViewMode === 'source')) && (
+            <div className="flex items-center bg-[#1a1b22] p-0.5 rounded border border-[#272932]">
+              <button
+                type="button"
+                onClick={() => setIsPretty(true)}
+                className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] cursor-pointer transition-colors ${
+                  isPretty
+                    ? 'bg-blue-600/30 text-blue-300 font-semibold border border-blue-500/40'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+                title="Beauty Format (Indented with syntax highlighting)"
+              >
+                <Sparkles className="h-3 w-3 text-amber-400" />
+                <span>Beauty</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsPretty(false)}
+                className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] cursor-pointer transition-colors ${
+                  !isPretty
+                    ? 'bg-blue-600/30 text-blue-300 font-semibold border border-blue-500/40'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+                title="Minify / Compact into one line"
+              >
+                <Minimize2 className="h-3 w-3 text-cyan-400" />
+                <span>Compact</span>
+              </button>
+            </div>
+          )}
+
           {activeFormat === 'html' && (
             <>
               {/* Preview vs Source */}
@@ -454,6 +609,30 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
         </div>
       </div>
 
+      {/* Validation status notification bar for JSON & XML */}
+      {(activeFormat === 'json' || activeFormat === 'xml') && stringValue !== null && (
+        <div className={`px-2.5 py-1 border-b text-[10px] font-mono flex items-center justify-between ${
+          isValid
+            ? 'bg-emerald-950/20 border-emerald-900/30 text-emerald-400'
+            : 'bg-amber-950/30 border-amber-900/40 text-amber-300'
+        }`}>
+          <div className="flex items-center gap-1.5 truncate">
+            {isValid ? (
+              <>
+                <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
+                <span>Valid {activeFormat.toUpperCase()} • Beauty Formatted</span>
+              </>
+            ) : (
+              <>
+                <AlertTriangle className="h-3 w-3 text-amber-400 shrink-0" />
+                <span className="truncate">Syntax Warning: {validationError || `Invalid ${activeFormat.toUpperCase()}`}</span>
+              </>
+            )}
+          </div>
+          <span className="text-[9px] text-zinc-500 uppercase">{isPretty ? 'Beauty' : 'Compact'}</span>
+        </div>
+      )}
+
       {/* Content Area */}
       <div className="flex-1 min-h-0 relative overflow-hidden bg-[#101114]">
         {stringValue === null ? (
@@ -472,20 +651,36 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
             />
           </div>
         ) : (
-          <div className="w-full h-full overflow-auto p-3 font-mono text-xs select-text">
-            {!isValid && (
-              <div className="mb-2 px-2.5 py-1 rounded bg-amber-950/40 border border-amber-800/40 text-amber-300 text-[11px] flex items-center gap-1.5">
-                <Info className="h-3 w-3 shrink-0" />
-                <span>Notice: Content could not be parsed strictly as {activeFormat.toUpperCase()}. Displaying raw value.</span>
-              </div>
-            )}
-            <pre
-              className={`text-zinc-200 font-mono text-[11px] leading-relaxed ${
-                wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'
-              }`}
-            >
-              {formattedText}
-            </pre>
+          <div className="w-full h-full relative">
+            <Editor
+              height="100%"
+              language={monacoLanguage}
+              value={formattedText}
+              theme="vs-dark"
+              options={{
+                readOnly: true,
+                domReadOnly: true,
+                minimap: { enabled: false },
+                wordWrap: wordWrap ? 'on' : 'off',
+                scrollBeyondLastLine: false,
+                fontSize: 12,
+                fontFamily:
+                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                lineNumbers: 'on',
+                folding: true,
+                glyphMargin: false,
+                lineDecorationsWidth: 6,
+                lineNumbersMinChars: 3,
+                automaticLayout: true,
+                contextmenu: true,
+                renderWhitespace: 'none',
+                scrollbar: {
+                  verticalScrollbarSize: 8,
+                  horizontalScrollbarSize: 8,
+                },
+                padding: { top: 8, bottom: 8 },
+              }}
+            />
           </div>
         )}
       </div>
@@ -514,4 +709,3 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
     </div>
   );
 };
-
