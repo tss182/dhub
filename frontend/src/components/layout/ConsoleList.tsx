@@ -42,6 +42,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
     connections,
     activeConnectionId,
     treeDatabases,
+    visibleDatabases,
     setTreeDatabases,
   } = useConnectionStore();
 
@@ -158,9 +159,18 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
       }
     }
 
+    const visibleList = visibleDatabases[conn.id];
+    const effectiveDbs =
+      visibleList !== undefined
+        ? dbs.filter((db) => visibleList.includes(db) || visibleList.some((v) => v.toLowerCase() === db.toLowerCase()))
+        : dbs;
+
     const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
-    const nonSystemDb = dbs.find((d) => !systemDbs.includes(d.toLowerCase()));
-    const targetDb = conn.databaseName || nonSystemDb || (dbs.length > 0 ? dbs[0] : (conn.driver === 'sqlite' ? 'main' : 'default'));
+    const nonSystemDb = effectiveDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
+    const targetDb =
+      (conn.databaseName && (!visibleList || visibleList.includes(conn.databaseName) || visibleList.some((v) => v.toLowerCase() === conn.databaseName.toLowerCase())) ? conn.databaseName : '') ||
+      nonSystemDb ||
+      (effectiveDbs.length > 0 ? effectiveDbs[0] : (conn.driver === 'sqlite' ? 'main' : 'default'));
     const targetSchema = conn.driver === 'postgres' ? 'public' : targetDb;
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
