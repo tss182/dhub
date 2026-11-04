@@ -84,6 +84,7 @@ export function App() {
     connections,
     setConnections,
     treeDatabases,
+    visibleDatabases,
     setTreeDatabases,
     setActiveConnection,
   } = useConnectionStore();
@@ -1637,18 +1638,32 @@ export function App() {
             {activeTab?.type === 'worksheet' ? (() => {
               const tabConn = connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId));
               const tabConnDbs = treeDatabases[tabConn?.id || ''] || [];
+              const visibleList = tabConn ? visibleDatabases[tabConn.id] : undefined;
+              const visibleDbs =
+                visibleList !== undefined
+                  ? tabConnDbs.filter((db) => visibleList.includes(db) || visibleList.some((v) => v.toLowerCase() === db.toLowerCase()))
+                  : tabConnDbs;
+
               const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
-              const nonSystemDb = tabConnDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
+              const nonSystemDb = visibleDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
+              const isDbAllowed = (dbName?: string) => {
+                if (!dbName) return false;
+                if (!visibleList) return true;
+                return visibleList.includes(dbName) || visibleList.some((v) => v.toLowerCase() === dbName.toLowerCase());
+              };
+
               const effectiveDb =
-                activeTab.database ||
-                tabConn?.databaseName ||
+                (activeTab.database && isDbAllowed(activeTab.database) ? activeTab.database : '') ||
+                (tabConn?.databaseName && isDbAllowed(tabConn.databaseName) ? tabConn.databaseName : '') ||
                 nonSystemDb ||
-                (tabConnDbs.length > 0 ? tabConnDbs[0] : (tabConn?.driver === 'sqlite' ? 'main' : ''));
+                (visibleDbs.length > 0 ? visibleDbs[0] : (tabConn?.driver === 'sqlite' ? 'main' : ''));
               const effectiveSchema = activeTab.schema || (tabConn?.driver === 'postgres' ? 'public' : effectiveDb);
               const availableDbs =
-                tabConnDbs.length > 0
-                  ? tabConnDbs
-                  : (tabConn?.databaseName ? [tabConn.databaseName] : (tabConn?.driver === 'sqlite' ? ['main'] : []));
+                visibleDbs.length > 0
+                  ? visibleDbs
+                  : (visibleList !== undefined
+                      ? visibleList
+                      : (tabConn?.databaseName ? [tabConn.databaseName] : (tabConn?.driver === 'sqlite' ? ['main'] : [])));
 
               return (
                 <div className="flex-1 min-h-0">

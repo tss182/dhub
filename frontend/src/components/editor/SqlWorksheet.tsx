@@ -211,6 +211,19 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const wordWrap = useSettingsStore((s) => s.wordWrap);
   const showMinimap = useSettingsStore((s) => s.showMinimap);
   const theme = useSettingsStore((s) => s.theme);
+  const visibleDatabases = useConnectionStore((s) => s.visibleDatabases);
+
+  // Filter available databases so that only visible databases are shown in the dropdown
+  const displayedDatabases = React.useMemo(() => {
+    if (!connection?.id) return availableDatabases;
+    const visibleList = visibleDatabases[connection.id];
+    if (visibleList !== undefined) {
+      return availableDatabases.filter(
+        (db) => visibleList.includes(db) || visibleList.some((v) => v.toLowerCase() === db.toLowerCase())
+      );
+    }
+    return availableDatabases;
+  }, [availableDatabases, connection?.id, visibleDatabases]);
 
   // Keep fresh references to avoid stale closure issues inside Monaco callbacks
   const onExecuteRef = useRef(onExecute);
@@ -245,8 +258,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     metadataRef.current.database = database;
     metadataRef.current.schema = schema;
     metadataRef.current.driver = connection?.driver;
-    metadataRef.current.availableDatabases = availableDatabases;
-  }, [connection?.id, connection?.driver, database, schema, availableDatabases]);
+    metadataRef.current.availableDatabases = displayedDatabases;
+  }, [connection?.id, connection?.driver, database, schema, displayedDatabases]);
 
   // Load and cache database tables & columns
   useEffect(() => {
@@ -699,13 +712,13 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               <div className="absolute top-full left-0 mt-1 min-w-[210px] max-w-[320px] max-h-64 overflow-auto rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
                 <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1 flex items-center justify-between">
                   <span>Databases</span>
-                  <span className="font-mono text-zinc-500">{availableDatabases.length}</span>
+                  <span className="font-mono text-zinc-500">{displayedDatabases.length}</span>
                 </div>
 
-                {availableDatabases.length === 0 ? (
+                {displayedDatabases.length === 0 ? (
                   <div className="px-2.5 py-2 text-[11px] text-zinc-500 italic">No databases found</div>
                 ) : (
-                  availableDatabases.map((db) => {
+                  displayedDatabases.map((db) => {
                     const isSelected = db === database;
                     return (
                       <div
