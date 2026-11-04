@@ -1,14 +1,14 @@
 {
 	"fixed": {
-		"file_version": "0.1.1"
+		"file_version": "0.1.2"
 	},
 	"info": {
 		"0409": {
-			"ProductVersion": "0.1.1",
-			"CompanyName": "ASDEV",
+			"ProductVersion": "0.1.2",
+			"CompanyName": "AsDev",
 			"FileDescription": "Database Management System",
-			"LegalCopyright": "(c) 2026, ASDEV",
-			"ProductName": "DHUB",
+			"LegalCopyright": "(c) 2026, AsDev",
+			"ProductName": "DHub",
 			"Comments": "Product Aplication"
 		}
 	}
