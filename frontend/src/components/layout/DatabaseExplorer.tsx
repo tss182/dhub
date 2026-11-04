@@ -1167,13 +1167,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               const isActive = activeConnectionId === c.id;
               if (env === 'dev') {
                 return isActive
-                  ? 'bg-emerald-950/50 text-emerald-100 font-medium border border-emerald-700/40'
-                  : 'text-zinc-300 hover:bg-emerald-950/30';
+                  ? 'bg-emerald-950/60 text-emerald-200 font-medium border border-emerald-600/50'
+                  : 'bg-emerald-950/30 text-emerald-400 border border-emerald-800/40 hover:bg-emerald-950/50 hover:text-emerald-300';
               }
               if (env === 'prod') {
                 return isActive
-                  ? 'bg-rose-950/50 text-rose-100 font-medium border border-rose-700/40'
-                  : 'text-zinc-300 hover:bg-rose-950/30';
+                  ? 'bg-rose-950/60 text-rose-200 font-medium border border-rose-600/50'
+                  : 'bg-rose-950/30 text-rose-400 border border-rose-800/40 hover:bg-rose-950/50 hover:text-rose-300';
               }
               return isActive
                 ? 'bg-[#22242c] font-medium text-white'
@@ -1187,33 +1187,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             ) : (
               <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
             )}
-            {resolveConnectionEnv(c) !== 'local' && (
-              <span
-                className="h-2 w-2 rounded-full shrink-0"
-                style={{
-                  backgroundColor:
-                    resolveConnectionEnv(c) === 'dev' ? '#10b981' : '#ef4444',
-                }}
-              />
-            )}
             <DbDriverIcon driver={c.driver} className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{c.name}</span>
-            {resolveConnectionEnv(c) !== 'local' && (
-              <span
-                className={`text-[9px] font-mono font-bold uppercase px-1 rounded shrink-0 ${
-                  resolveConnectionEnv(c) === 'dev'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                }`}
-              >
-                {resolveConnectionEnv(c) === 'dev' ? 'DEV' : 'PROD'}
-              </span>
-            )}
             {!isSQLite && (
               <button
                 type="button"
-                onClick={(e) => handleOpenDatabaseFilter(c, e)}
-                className="text-[8.5px] font-medium tracking-tight px-1 py-0.5 rounded bg-[#181a22] hover:bg-[#252836] text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer flex items-center group/badge leading-none"
+                onMouseEnter={(e) => {
+                  e.stopPropagation();
+                  handleItemMouseLeave();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenDatabaseFilter(c, e);
+                }}
+                className="opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity text-[8.5px] font-medium tracking-tight px-1 py-0.5 rounded bg-[#181a22] hover:bg-[#252836] text-zinc-400 hover:text-zinc-200 shrink-0 cursor-pointer flex items-center leading-none"
                 title={`Filter visible databases/schemas (${schemaBadgeText || 'select'})`}
               >
                 <span>{schemaBadgeText || 'schemas'}</span>
