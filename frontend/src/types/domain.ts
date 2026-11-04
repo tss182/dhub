@@ -171,7 +171,7 @@ export interface QueryHistoryEntry {
   executedAt: string;
 }
 
-export type WorkbenchTabType = 'worksheet' | 'table_data' | 'ddl';
+export type WorkbenchTabType = 'worksheet' | 'table_data' | 'ddl' | 'users';
 
 export interface WorkbenchTab {
   id: string;

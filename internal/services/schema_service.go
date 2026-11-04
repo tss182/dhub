@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -183,7 +184,17 @@ func (s *SchemaService) GetDefaultBackupPath(database string) (string, error) {
 	return filepath.Join(homeDir, filename), nil
 }
 
-func (s *SchemaService) BackupDatabase(connectionID, database, filePath string) (string, error) {
+type BackupOptions struct {
+	Mode              string   `json:"mode"`              // "full", "schema_only", "data_only"
+	TableSelection    string   `json:"tableSelection"`    // "all", "include", "exclude"
+	Tables            []string `json:"tables"`            // list of tables
+	IncludeRoutines   bool     `json:"includeRoutines"`   // mysqldump --routines
+	IncludeTriggers   bool     `json:"includeTriggers"`   // mysqldump --triggers
+	IncludeEvents     bool     `json:"includeEvents"`     // mysqldump --events
+	SingleTransaction bool     `json:"singleTransaction"` // mysqldump --single-transaction
+}
+
+func (s *SchemaService) BackupDatabase(connectionID, database, filePath, optionsJSON string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -214,6 +225,32 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath string) 
 		}
 	}
 
+	opts := BackupOptions{
+		Mode:              "full",
+		TableSelection:    "all",
+		IncludeRoutines:   true,
+		IncludeTriggers:   true,
+		IncludeEvents:     false,
+		SingleTransaction: true,
+	}
+	if strings.TrimSpace(optionsJSON) != "" {
+		_ = json.Unmarshal([]byte(optionsJSON), &opts)
+	}
+
+	// Filter empty table names
+	var validTables []string
+	for _, t := range opts.Tables {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			validTables = append(validTables, t)
+		}
+	}
+	opts.Tables = validTables
+
+	if opts.TableSelection == "include" && len(opts.Tables) == 0 {
+		return "", fmt.Errorf("table selection is set to 'include' but no tables were selected")
+	}
+
 	switch conn.Driver {
 	case "mysql":
 		binPath, err := exec.LookPath("mysqldump")
@@ -242,17 +279,59 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath string) 
 			"-h", host,
 			"-P", strconv.Itoa(port),
 			"-u", user,
-			"--single-transaction",
-			"--routines",
-			"--triggers",
 			"--default-character-set=utf8mb4",
 		}
 
+		if opts.SingleTransaction {
+			baseArgs = append(baseArgs, "--single-transaction")
+		}
+
+		// Dump Mode
+		switch opts.Mode {
+		case "schema_only":
+			baseArgs = append(baseArgs, "--no-data")
+		case "data_only":
+			baseArgs = append(baseArgs, "--no-create-info")
+		}
+
+		// Routines / Functions
+		if opts.IncludeRoutines {
+			baseArgs = append(baseArgs, "--routines")
+		} else {
+			baseArgs = append(baseArgs, "--skip-routines")
+		}
+
+		// Triggers
+		if opts.IncludeTriggers {
+			baseArgs = append(baseArgs, "--triggers")
+		} else {
+			baseArgs = append(baseArgs, "--skip-triggers")
+		}
+
+		// Events
+		if opts.IncludeEvents {
+			baseArgs = append(baseArgs, "--events")
+		} else {
+			baseArgs = append(baseArgs, "--skip-events")
+		}
+
+		// Table exclusions
+		if opts.TableSelection == "exclude" {
+			for _, tbl := range opts.Tables {
+				baseArgs = append(baseArgs, fmt.Sprintf("--ignore-table=%s.%s", database, tbl))
+			}
+		}
+
 		runDump := func(extraArgs ...string) ([]byte, error) {
-			args := make([]string, 0, len(baseArgs)+len(extraArgs)+2)
+			args := make([]string, 0, len(baseArgs)+len(extraArgs)+len(opts.Tables)+2)
 			args = append(args, baseArgs...)
 			args = append(args, extraArgs...)
 			args = append(args, "--result-file="+filePath, database)
+
+			// Table inclusions
+			if opts.TableSelection == "include" {
+				args = append(args, opts.Tables...)
+			}
 
 			cmd := exec.CommandContext(ctx, binPath, args...)
 			cmd.Env = os.Environ()
@@ -309,8 +388,27 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath string) 
 			"--no-owner",
 			"--no-acl",
 			"-f", filePath,
-			database,
 		}
+
+		switch opts.Mode {
+		case "schema_only":
+			args = append(args, "--schema-only")
+		case "data_only":
+			args = append(args, "--data-only")
+		}
+
+		if opts.TableSelection == "include" {
+			for _, tbl := range opts.Tables {
+				args = append(args, "-t", tbl)
+			}
+		} else if opts.TableSelection == "exclude" {
+			for _, tbl := range opts.Tables {
+				args = append(args, "-T", tbl)
+			}
+		}
+
+		args = append(args, database)
+
 		cmd := exec.CommandContext(ctx, binPath, args...)
 		cmd.Env = os.Environ()
 		if conn.Password != "" {
@@ -330,7 +428,16 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath string) 
 			if err != nil {
 				return "", fmt.Errorf("failed to create backup file: %w", err)
 			}
-			cmd := exec.CommandContext(ctx, binPath, conn.FilePath, ".dump")
+			cmdArgs := []string{conn.FilePath}
+			if opts.Mode == "schema_only" {
+				cmdArgs = append(cmdArgs, ".schema")
+			} else {
+				cmdArgs = append(cmdArgs, ".dump")
+			}
+			if opts.TableSelection == "include" {
+				cmdArgs = append(cmdArgs, opts.Tables...)
+			}
+			cmd := exec.CommandContext(ctx, binPath, cmdArgs...)
 			var stderr bytes.Buffer
 			cmd.Stdout = outFile
 			cmd.Stderr = &stderr
