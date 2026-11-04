@@ -274,6 +274,7 @@ interface DataGridProps {
   sortConfigs?: SortConfig[];
   onSortChange?: (sortConfigs: SortConfig[]) => void;
   envType?: ConnectionEnvType;
+  rawSql?: string;
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({
@@ -300,6 +301,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   sortConfigs = [],
   onSortChange,
   envType = 'local',
+  rawSql,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
@@ -311,6 +313,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const whereContainerRef = useRef<HTMLDivElement>(null);
   const suggestionListRef = useRef<HTMLDivElement>(null);
   const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
+  const [copiedRawSql, setCopiedRawSql] = useState(false);
+
+  const handleCopyRawSql = async () => {
+    if (!rawSql) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(rawSql);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = rawSql;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopiedRawSql(true);
+      setTimeout(() => setCopiedRawSql(false), 2000);
+    } catch (_) {}
+  };
 
   const whereSuggestions = useMemo<WhereSuggestionItem[]>(() => {
     if (!isTableTab || !columns || columns.length === 0) return [];
@@ -1784,6 +1807,31 @@ WHERE ${whereClause};`);
           <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
 
           <CopyFormatSelector />
+
+          {rawSql && (
+            <button
+              type="button"
+              onClick={handleCopyRawSql}
+              className={`flex items-center gap-1.5 h-7 px-2.5 rounded font-sans text-xs transition-colors cursor-pointer select-none ${
+                copiedRawSql
+                  ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                  : 'bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932]'
+              }`}
+              title={`Copy Raw Query to clipboard:\n${rawSql}`}
+            >
+              {copiedRawSql ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="text-[11px] font-semibold text-emerald-300">Copied SQL!</span>
+                </>
+              ) : (
+                <>
+                  <Code className="h-3.5 w-3.5 text-blue-400" />
+                  <span className="text-[11px] font-medium">Copy Query</span>
+                </>
+              )}
+            </button>
+          )}
 
           {onRefresh && (
             <button

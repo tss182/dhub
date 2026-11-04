@@ -93,6 +93,27 @@ export function App() {
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState('Ready');
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
+  const [copiedResultRawSql, setCopiedResultRawSql] = useState(false);
+
+  const handleCopyResultRawSql = async (rawSql: string) => {
+    if (!rawSql) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(rawSql);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = rawSql;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopiedResultRawSql(true);
+      setTimeout(() => setCopiedResultRawSql(false), 2000);
+    } catch (_) {}
+  };
 
   // Tab Context Menu state
   const [tabContextMenu, setTabContextMenu] = useState<{
@@ -887,7 +908,10 @@ export function App() {
         offset: 0,
       } as any);
 
-      setQueryResult(res as any);
+      setQueryResult({
+        ...res,
+        sql: (res as any)?.sql || sql,
+      } as any);
       setActiveResultIndex(0);
       setQueryPagination({
         page: 1,
@@ -1895,62 +1919,118 @@ export function App() {
                     className="flex flex-col bg-[#191a20] shrink-0"
                   >
                 {/* Services Bar */}
-                <div className="flex h-8 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
-                  <div className="flex items-center gap-2 overflow-x-auto">
-                    {queryResult?.results && queryResult.results.length > 1 ? (
-                      queryResult.results.map((res: any, idx: number) => {
-                        const isSelected = activeBottomTab === 'result' && activeResultIndex === idx;
-                        const hasCols = res.columns && res.columns.length > 0;
-                        const label = hasCols
-                          ? `Result ${idx + 1} (${res.rows?.length || 0})`
-                          : `Result ${idx + 1} (${res.rowsAffected || 0} aff)`;
-                        return (
+                {(() => {
+                  const currentActiveRes =
+                    queryResult?.results && queryResult.results[activeResultIndex]
+                      ? queryResult.results[activeResultIndex]
+                      : queryResult;
+                  const currentRawSql =
+                    (currentActiveRes as any)?.sql ||
+                    queryResult?.sql ||
+                    queryPagination?.lastSql ||
+                    '';
+
+                  return (
+                    <div className="flex h-8 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a] shrink-0 select-none gap-2">
+                      <div className="flex items-center gap-2 overflow-x-auto min-w-0">
+                        {queryResult?.results && queryResult.results.length > 1 ? (
+                          queryResult.results.map((res: any, idx: number) => {
+                            const isSelected = activeBottomTab === 'result' && activeResultIndex === idx;
+                            const hasCols = res.columns && res.columns.length > 0;
+                            const label = hasCols
+                              ? `Result ${idx + 1} (${res.rows?.length || 0})`
+                              : `Result ${idx + 1} (${res.rowsAffected || 0} aff)`;
+                            return (
+                              <button
+                                key={idx}
+                                onClick={() => {
+                                  setActiveBottomTab('result');
+                                  setActiveResultIndex(idx);
+                                }}
+                                className={`text-xs pb-1 border-b-2 font-medium cursor-pointer transition-colors whitespace-nowrap ${
+                                  isSelected
+                                    ? 'border-zinc-400 text-white font-semibold'
+                                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })
+                        ) : (
                           <button
-                            key={idx}
-                            onClick={() => {
-                              setActiveBottomTab('result');
-                              setActiveResultIndex(idx);
-                            }}
-                            className={`text-xs pb-1 border-b-2 font-medium cursor-pointer transition-colors whitespace-nowrap ${
-                              isSelected
+                            onClick={() => setActiveBottomTab('result')}
+                            className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
+                              activeBottomTab === 'result'
                                 ? 'border-zinc-400 text-white font-semibold'
                                 : 'border-transparent text-zinc-500 hover:text-zinc-300'
                             }`}
                           >
-                            {label}
+                            Query Result
                           </button>
-                        );
-                      })
-                    ) : (
+                        )}
+                        <button
+                          onClick={() => setActiveBottomTab('output')}
+                          className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
+                            activeBottomTab === 'output'
+                              ? 'border-zinc-400 text-white font-semibold'
+                              : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                          }`}
+                        >
+                          Output Log
+                        </button>
+                      </div>
+
+                      {/* Raw Query Preview & 1-Click Copy in Tab Bar */}
+                      {activeBottomTab === 'result' && currentRawSql && (
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1 justify-end max-w-xl mx-2">
+                          <div className="flex items-center gap-1.5 min-w-0 bg-[#101115] border border-[#272932] rounded px-2 py-0.5 shadow-xs">
+                            <Terminal className="h-3 w-3 text-amber-400 shrink-0" />
+                            <span className="text-[10px] text-zinc-500 font-bold uppercase shrink-0 font-sans tracking-wider">
+                              SQL:
+                            </span>
+                            <span
+                              className="font-mono text-[11px] text-zinc-300 truncate select-all cursor-pointer hover:text-white transition-colors"
+                              title={`${currentRawSql}\n\n(Click to copy raw query)`}
+                              onClick={() => handleCopyResultRawSql(currentRawSql)}
+                            >
+                              {currentRawSql.replace(/[\r\n]+/g, ' ')}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyResultRawSql(currentRawSql)}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-all shrink-0 cursor-pointer ${
+                                copiedResultRawSql
+                                  ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                                  : 'bg-[#1e2029] hover:bg-[#282b37] text-zinc-300 hover:text-white border border-[#2b2e3a]'
+                              }`}
+                              title="Copy raw query to clipboard"
+                            >
+                              {copiedResultRawSql ? (
+                                <>
+                                  <Check className="h-3 w-3 text-emerald-400" />
+                                  <span>Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="h-3 w-3 text-zinc-400" />
+                                  <span>Copy</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <button
-                        onClick={() => setActiveBottomTab('result')}
-                        className={`text-xs pb-1 border-b-2 font-medium cursor-pointer ${
-                          activeBottomTab === 'result'
-                            ? 'border-zinc-400 text-white'
-                            : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                        }`}
+                        onClick={toggleBottomPanel}
+                        className="text-zinc-500 hover:text-zinc-300 text-xs cursor-pointer ml-2 shrink-0"
                       >
-                        Query Result
+                        Minimize
                       </button>
-                    )}
-                    <button
-                      onClick={() => setActiveBottomTab('output')}
-                      className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
-                        activeBottomTab === 'output'
-                          ? 'border-zinc-400 text-white'
-                          : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                      }`}
-                    >
-                      Output Log
-                    </button>
-                  </div>
-                  <button
-                    onClick={toggleBottomPanel}
-                    className="text-zinc-500 hover:text-zinc-300 text-xs cursor-pointer ml-2"
-                  >
-                    Minimize
-                  </button>
-                </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Bottom Panel Content */}
                 <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -1983,6 +2063,12 @@ export function App() {
                         );
                       }
 
+                      const currentResSql =
+                        (currentRes as any)?.sql ||
+                        queryResult?.sql ||
+                        queryPagination?.lastSql ||
+                        '';
+
                       return (
                         <div className="flex-1 min-h-0">
                           <DataGrid
@@ -2003,6 +2089,7 @@ export function App() {
                             onRefresh={() => handleQueryPageChange(queryPagination.page)}
                             onSubmitChanges={handleSubmitChanges}
                             onPreviewChanges={handlePreviewChanges}
+                            rawSql={currentResSql}
                           />
                         </div>
                       );
