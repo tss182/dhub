@@ -26,6 +26,8 @@ import {
   PanelLeftClose,
   FileCode,
   Filter,
+  User,
+  Search,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -128,6 +130,18 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       isOpen: true,
       connection: conn,
       anchorRect: rect,
+    });
+  };
+
+  const handleOpenUsersTab = (conn: ConnectionConfig) => {
+    openTab({
+      id: `users-${conn.id}`,
+      type: 'users',
+      title: `${conn.name} - Users`,
+      connectionId: conn.id,
+      driver: conn.driver,
+      database: conn.databaseName || (conn.driver === 'postgres' ? 'postgres' : 'mysql'),
+      schema: conn.driver === 'postgres' ? 'public' : 'main',
     });
   };
 
@@ -310,6 +324,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     database: string;
     filePath: string;
     isProcessing: boolean;
+    dumpMode: 'full' | 'schema_only' | 'data_only';
+    includeRoutines: boolean;
+    includeTriggers: boolean;
+    includeEvents: boolean;
+    singleTransaction: boolean;
+    tableSelection: 'all' | 'include' | 'exclude';
+    selectedTables: string[];
+    availableTables: string[];
+    tableSearch: string;
+    isLoadingTables: boolean;
   }>({
     isOpen: false,
     mode: 'backup',
@@ -317,6 +341,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     database: '',
     filePath: '',
     isProcessing: false,
+    dumpMode: 'full',
+    includeRoutines: true,
+    includeTriggers: true,
+    includeEvents: false,
+    singleTransaction: true,
+    tableSelection: 'all',
+    selectedTables: [],
+    availableTables: [],
+    tableSearch: '',
+    isLoadingTables: false,
   });
 
   const handleOpenBackupModal = async (conn: ConnectionConfig, database: string) => {
@@ -333,7 +367,36 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       database,
       filePath: defaultPath,
       isProcessing: false,
+      dumpMode: 'full',
+      includeRoutines: true,
+      includeTriggers: true,
+      includeEvents: false,
+      singleTransaction: true,
+      tableSelection: 'all',
+      selectedTables: [],
+      availableTables: [],
+      tableSearch: '',
+      isLoadingTables: true,
     });
+
+    try {
+      const objs = await SchemaService.GetObjects(conn.id, database, '');
+      const tables = (objs || [])
+        .filter((o) => o.type === 'table')
+        .map((o) => o.name)
+        .sort((a, b) => a.localeCompare(b));
+      setBackupRestoreModal((prev) => ({
+        ...prev,
+        availableTables: tables,
+        isLoadingTables: false,
+      }));
+    } catch (e) {
+      console.warn('Failed to load tables for backup:', e);
+      setBackupRestoreModal((prev) => ({
+        ...prev,
+        isLoadingTables: false,
+      }));
+    }
   };
 
   const handleBrowseBackupFile = async () => {
@@ -391,14 +454,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   };
 
   const handleOpenRestoreModal = async (conn: ConnectionConfig, database: string) => {
-    setBackupRestoreModal({
+    setBackupRestoreModal((prev) => ({
+      ...prev,
       isOpen: true,
       mode: 'restore',
       connection: conn,
       database,
       filePath: '',
       isProcessing: false,
-    });
+    }));
 
     // Prompt user immediately to pick the .sql file to restore
     try {
@@ -441,11 +505,37 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       return;
     }
 
+    if (
+      mode === 'backup' &&
+      backupRestoreModal.tableSelection === 'include' &&
+      backupRestoreModal.selectedTables.length === 0
+    ) {
+      alertWarning(
+        'Please select at least one table to include in the backup, or switch to "All Tables".',
+        'No Tables Selected'
+      );
+      return;
+    }
+
     setBackupRestoreModal((prev) => ({ ...prev, isProcessing: true }));
 
     try {
       if (mode === 'backup') {
-        const msg = await SchemaService.BackupDatabase(connection.id, database, cleanPath);
+        const backupOpts = {
+          mode: backupRestoreModal.dumpMode,
+          tableSelection: backupRestoreModal.tableSelection,
+          tables: backupRestoreModal.selectedTables,
+          includeRoutines: backupRestoreModal.includeRoutines,
+          includeTriggers: backupRestoreModal.includeTriggers,
+          includeEvents: backupRestoreModal.includeEvents,
+          singleTransaction: backupRestoreModal.singleTransaction,
+        };
+        const msg = await SchemaService.BackupDatabase(
+          connection.id,
+          database,
+          cleanPath,
+          JSON.stringify(backupOpts)
+        );
         setBackupRestoreModal((prev) => ({ ...prev, isOpen: false, isProcessing: false }));
         alertSuccess(msg, 'Database Backup Completed');
       } else {
@@ -1186,6 +1276,34 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             {isConnLoading && databases.length === 0 && (
               <div className="text-[11px] text-zinc-500 italic py-1">Connecting & loading databases...</div>
             )}
+
+            {/* Users Node (Yellow with User icon, placed at the top) */}
+            <div
+              onClick={() => {
+                handleItemMouseLeave();
+                handleOpenUsersTab(c);
+              }}
+              onMouseEnter={(e) =>
+                handleItemMouseEnter(e, {
+                  kind: 'database',
+                  title: 'Users & Permissions',
+                  badge: 'USERS',
+                  subtitle: `${c.name} • Manage database users, grant permissions, and roles`,
+                  colorTag: '#eab308',
+                })
+              }
+              onMouseLeave={handleItemMouseLeave}
+              title={`Users & Permissions (${c.name})`}
+              className="group/users flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-amber-300 hover:text-amber-200 transition-colors mb-0.5"
+            >
+              <User className="h-3 w-3 shrink-0 text-amber-400 group-hover/users:text-amber-300" />
+              <span className="truncate font-medium flex-1 text-amber-300 group-hover/users:text-amber-200">
+                users
+              </span>
+              <span className="text-[9px] font-mono text-amber-400/80 border border-amber-500/30 bg-amber-500/10 px-1 rounded uppercase shrink-0">
+                AUTH
+              </span>
+            </div>
 
             {/* SQLite Direct Mode */}
             {isSQLite ? (
@@ -2013,6 +2131,21 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   onClick={() => {
                     const conn = contextMenu.connection!;
                     closeContextMenu();
+                    handleOpenUsersTab(conn);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-amber-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group"
+                >
+                  <User className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                  <span>Manage Users & Permissions...</span>
+                </button>
+              )}
+
+              {contextMenu.connection.driver !== 'sqlite' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const conn = contextMenu.connection!;
+                    closeContextMenu();
                     handleOpenDatabaseFilter(conn);
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -2671,6 +2804,39 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           ? 'sqlite3'
           : 'mysql';
 
+        const filteredTables = backupRestoreModal.availableTables.filter((tbl) =>
+          tbl.toLowerCase().includes(backupRestoreModal.tableSearch.toLowerCase().trim())
+        );
+
+        const toggleTable = (tbl: string) => {
+          setBackupRestoreModal((prev) => {
+            const has = prev.selectedTables.includes(tbl);
+            return {
+              ...prev,
+              selectedTables: has
+                ? prev.selectedTables.filter((t) => t !== tbl)
+                : [...prev.selectedTables, tbl],
+            };
+          });
+        };
+
+        const selectAllTables = () => {
+          setBackupRestoreModal((prev) => ({
+            ...prev,
+            selectedTables: Array.from(new Set([...prev.selectedTables, ...filteredTables])),
+          }));
+        };
+
+        const deselectAllTables = () => {
+          setBackupRestoreModal((prev) => {
+            const fSet = new Set(filteredTables);
+            return {
+              ...prev,
+              selectedTables: prev.selectedTables.filter((t) => !fSet.has(t)),
+            };
+          });
+        };
+
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
@@ -2681,7 +2847,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             }}
           >
             <div
-              className={`w-full max-w-lg rounded-2xl border bg-[#14151a] shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col overflow-hidden text-zinc-200 ${
+              className={`w-full ${
+                isBackup ? 'max-w-2xl' : 'max-w-lg'
+              } max-h-[90vh] rounded-2xl border bg-[#14151a] shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col overflow-hidden text-zinc-200 ${
                 brEnv === 'dev'
                   ? 'border-emerald-700/60'
                   : brEnv === 'prod'
@@ -2753,7 +2921,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               </div>
 
               {/* Modal Body */}
-              <form onSubmit={handleConfirmBackupRestore} className="p-6 space-y-4">
+              <form onSubmit={handleConfirmBackupRestore} className="p-6 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
                 <div>
                   <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                     {isBackup ? 'Backup File Location (.sql)' : 'SQL File to Restore (.sql)'}{' '}
@@ -2791,10 +2959,238 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   </div>
                   <p className="text-[11px] text-zinc-500 mt-1.5">
                     {isBackup
-                      ? `Exports schema and data of database "${backupRestoreModal.database}" using ${cliTool}.`
+                      ? `Exports database "${backupRestoreModal.database}" using ${cliTool}.`
                       : `Executes the .sql file into database "${backupRestoreModal.database}" using ${cliTool}.`}
                   </p>
                 </div>
+
+                {isBackup && (
+                  <>
+                    {/* Dump Content Mode */}
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                        Backup Content
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { id: 'full', label: 'Full', desc: 'Schema + Data' },
+                          { id: 'schema_only', label: 'Schema Only', desc: 'Structure (DDL) only' },
+                          { id: 'data_only', label: 'Data Only', desc: 'Data (INSERTs) only' },
+                        ].map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            disabled={backupRestoreModal.isProcessing}
+                            onClick={() =>
+                              setBackupRestoreModal((prev) => ({
+                                ...prev,
+                                dumpMode: item.id as any,
+                              }))
+                            }
+                            className={`px-3 py-2.5 rounded-xl border text-left cursor-pointer transition-colors ${
+                              backupRestoreModal.dumpMode === item.id
+                                ? 'bg-blue-600/20 border-blue-500 text-blue-200 shadow-xs'
+                                : 'bg-[#181920] border-[#2b2e3a] text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                            }`}
+                          >
+                            <div className="text-xs font-semibold">{item.label}</div>
+                            <div className="text-[10px] text-zinc-500 mt-0.5">{item.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Stored Programs & Options */}
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                        Stored Programs & Options
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-zinc-300 bg-[#101115] p-3 rounded-xl border border-[#2b2e3a]">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={backupRestoreModal.includeTriggers}
+                            disabled={backupRestoreModal.isProcessing}
+                            onChange={(e) =>
+                              setBackupRestoreModal((prev) => ({
+                                ...prev,
+                                includeTriggers: e.target.checked,
+                              }))
+                            }
+                            className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
+                          />
+                          <span>Include Triggers</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={backupRestoreModal.includeRoutines}
+                            disabled={backupRestoreModal.isProcessing}
+                            onChange={(e) =>
+                              setBackupRestoreModal((prev) => ({
+                                ...prev,
+                                includeRoutines: e.target.checked,
+                              }))
+                            }
+                            className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
+                          />
+                          <span>Include Routines (Procedures/Functions)</span>
+                        </label>
+                        {drv === 'mysql' && (
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={backupRestoreModal.includeEvents}
+                              disabled={backupRestoreModal.isProcessing}
+                              onChange={(e) =>
+                                setBackupRestoreModal((prev) => ({
+                                  ...prev,
+                                  includeEvents: e.target.checked,
+                                }))
+                              }
+                              className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
+                            />
+                            <span>Include Events</span>
+                          </label>
+                        )}
+                        {drv === 'mysql' && (
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={backupRestoreModal.singleTransaction}
+                              disabled={backupRestoreModal.isProcessing}
+                              onChange={(e) =>
+                                setBackupRestoreModal((prev) => ({
+                                  ...prev,
+                                  singleTransaction: e.target.checked,
+                                }))
+                              }
+                              className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
+                            />
+                            <span>Single Transaction</span>
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Table Selection */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                          Tables Selection
+                        </label>
+                        {backupRestoreModal.tableSelection !== 'all' && (
+                          <span className="text-[11px] text-zinc-400 font-mono">
+                            {backupRestoreModal.selectedTables.length} of{' '}
+                            {backupRestoreModal.availableTables.length} tables selected
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mb-2">
+                        {[
+                          { id: 'all', label: 'All Tables', desc: 'Dump entire database' },
+                          { id: 'include', label: 'Include Selected', desc: 'Only dump chosen tables' },
+                          { id: 'exclude', label: 'Exclude / Skip', desc: 'Skip chosen tables' },
+                        ].map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            disabled={backupRestoreModal.isProcessing}
+                            onClick={() =>
+                              setBackupRestoreModal((prev) => ({
+                                ...prev,
+                                tableSelection: item.id as any,
+                              }))
+                            }
+                            className={`px-3 py-2 rounded-xl border text-left cursor-pointer transition-colors ${
+                              backupRestoreModal.tableSelection === item.id
+                                ? 'bg-blue-600/20 border-blue-500 text-blue-200 shadow-xs'
+                                : 'bg-[#181920] border-[#2b2e3a] text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
+                            }`}
+                          >
+                            <div className="text-xs font-semibold">{item.label}</div>
+                            <div className="text-[10px] text-zinc-500 mt-0.5">{item.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+
+                      {backupRestoreModal.tableSelection !== 'all' && (
+                        <div className="rounded-xl border border-[#2b2e3a] bg-[#101115] p-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <div className="relative flex-1">
+                              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+                              <input
+                                type="text"
+                                placeholder="Filter tables..."
+                                value={backupRestoreModal.tableSearch}
+                                onChange={(e) =>
+                                  setBackupRestoreModal((prev) => ({
+                                    ...prev,
+                                    tableSearch: e.target.value,
+                                  }))
+                                }
+                                className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#181920] border border-[#2d303f] text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={selectAllTables}
+                              className="px-2.5 py-1.5 rounded-lg bg-[#1f212a] hover:bg-[#2a2d3b] border border-[#323646] text-[11px] text-zinc-300 transition-colors cursor-pointer"
+                            >
+                              Select All
+                            </button>
+                            <button
+                              type="button"
+                              onClick={deselectAllTables}
+                              className="px-2.5 py-1.5 rounded-lg bg-[#1f212a] hover:bg-[#2a2d3b] border border-[#323646] text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                            >
+                              Clear
+                            </button>
+                          </div>
+
+                          <div className="max-h-44 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                            {backupRestoreModal.isLoadingTables ? (
+                              <div className="py-4 text-center text-xs text-zinc-500 flex items-center justify-center gap-2">
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                Loading tables...
+                              </div>
+                            ) : filteredTables.length === 0 ? (
+                              <div className="py-4 text-center text-xs text-zinc-500">
+                                {backupRestoreModal.availableTables.length === 0
+                                  ? 'No tables found in this database.'
+                                  : 'No matching tables found.'}
+                              </div>
+                            ) : (
+                              filteredTables.map((tbl) => {
+                                const isSelected = backupRestoreModal.selectedTables.includes(tbl);
+                                return (
+                                  <div
+                                    key={tbl}
+                                    onClick={() => toggleTable(tbl)}
+                                    className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-xs select-none ${
+                                      isSelected
+                                        ? 'bg-blue-600/15 text-blue-200'
+                                        : 'hover:bg-white/5 text-zinc-300'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => {}}
+                                      className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
+                                    />
+                                    <Table className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+                                    <span className="font-mono truncate">{tbl}</span>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
 
                 {!isBackup && brEnv === 'prod' && (
                   <div className="rounded-lg bg-rose-950/40 border border-rose-800/60 px-3 py-2 text-[11px] text-rose-200">
@@ -2803,7 +3199,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   </div>
                 )}
 
-                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530] shrink-0">
                   <button
                     type="button"
                     disabled={backupRestoreModal.isProcessing}

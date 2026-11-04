@@ -12,8 +12,8 @@ import * as driver$0 from "../driver/models.js";
 // @ts-ignore: Unused imports
 import * as store$0 from "../store/models.js";
 
-export function BackupDatabase(connectionID: string, database: string, filePath: string): $CancellablePromise<string> {
-    return $Call.ByID(2971308220, connectionID, database, filePath);
+export function BackupDatabase(connectionID: string, database: string, filePath: string, optionsJSON: string): $CancellablePromise<string> {
+    return $Call.ByID(2971308220, connectionID, database, filePath, optionsJSON);
 }
 
 export function GetCachedSchema(connectionID: string, database: string, schema: string): $CancellablePromise<store$0.CachedObject[] | null> {

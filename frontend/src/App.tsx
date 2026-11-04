@@ -37,8 +37,10 @@ import {
   Check,
   PanelLeftClose,
   PanelLeftOpen,
+  Users,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
+import { UserManager } from './components/users/UserManager';
 
 export function App() {
   const {
@@ -1399,6 +1401,8 @@ export function App() {
                                 : 'text-zinc-400'
                             }`}
                           />
+                        ) : tab.type === 'users' ? (
+                          <Users className="h-3 w-3 shrink-0 text-amber-400" />
                         ) : (
                           <Table
                             className={`h-3 w-3 shrink-0 ${
@@ -1586,6 +1590,8 @@ export function App() {
                                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                       {tab.type === 'worksheet' ? (
                                         <FileCode className="h-3 w-3 text-blue-400 shrink-0" />
+                                      ) : tab.type === 'users' ? (
+                                        <Users className="h-3 w-3 text-amber-400 shrink-0" />
                                       ) : (
                                         <Table className="h-3 w-3 text-cyan-400 shrink-0" />
                                       )}
@@ -1822,6 +1828,13 @@ export function App() {
                   )}
                 </div>
               </div>
+              );
+            })() : activeTab?.type === 'users' ? (() => {
+              const usersConn = connections.find((c) => c.id === activeTab.connectionId) || null;
+              return (
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <UserManager tab={activeTab} connection={usersConn} />
+                </div>
               );
             })() : (
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-zinc-500 select-none">
@@ -2065,6 +2078,8 @@ export function App() {
           <div className="flex items-start gap-2">
             {hoveredTab.tab.type === 'worksheet' ? (
               <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
+            ) : hoveredTab.tab.type === 'users' ? (
+              <Users className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
             ) : (
               <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
             )}
@@ -2074,7 +2089,7 @@ export function App() {
               </div>
               <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px] text-zinc-400 font-mono">
                 <span className="px-1.5 py-0.2 rounded bg-[#22242c] border border-[#2e313d] uppercase text-zinc-300">
-                  {hoveredTab.tab.type === 'worksheet' ? 'SQL Console' : 'Table'}
+                  {hoveredTab.tab.type === 'worksheet' ? 'SQL Console' : hoveredTab.tab.type === 'users' ? 'User Management' : 'Table'}
                 </span>
                 {hoveredTab.connName && (
                   <span className="text-zinc-400 truncate max-w-[140px]">
@@ -2100,7 +2115,7 @@ export function App() {
         >
           <div>
             <span className="text-zinc-400">
-              {hoveredDropdownTab.tab.type === 'worksheet' ? 'Console: ' : 'Table: '}
+              {hoveredDropdownTab.tab.type === 'worksheet' ? 'Console: ' : hoveredDropdownTab.tab.type === 'users' ? 'Users: ' : 'Table: '}
             </span>
             <span className="font-medium text-white">
               {hoveredDropdownTab.tab.table || hoveredDropdownTab.tab.title}
@@ -2131,6 +2146,8 @@ export function App() {
           <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 truncate flex items-center gap-1.5">
             {tabContextMenu.tab.type === 'worksheet' ? (
               <FileCode className="h-3 w-3 text-blue-400" />
+            ) : tabContextMenu.tab.type === 'users' ? (
+              <Users className="h-3 w-3 text-amber-400" />
             ) : (
               <Table className="h-3 w-3 text-emerald-400" />
             )}
