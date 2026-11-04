@@ -21,12 +21,47 @@ interface SearchResultItem {
 
 export const SearchEverywhere: React.FC = () => {
   const { isSearchEverywhereOpen, setSearchEverywhereOpen, openTab, consoles } = useWorkbenchStore();
-  const { connections, treeObjects, setActiveConnection } = useConnectionStore();
+  const { connections, treeObjects, treeDatabases, visibleDatabases, setActiveConnection } = useConnectionStore();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const isDatabaseVisible = (connId?: string, databaseName?: string): boolean => {
+    if (!connId) return false;
+    const conn = connections.find((c) => c.id === connId);
+    if (!conn) return false;
+
+    const targetDb = databaseName || conn.databaseName || (conn.driver === 'sqlite' ? 'main' : '');
+
+    // 1. If explicit visibleDatabases configuration exists for this connection:
+    const visibleList = visibleDatabases[connId];
+    if (visibleList !== undefined) {
+      if (!targetDb) return false;
+      return (
+        visibleList.includes(targetDb) ||
+        visibleList.some((d) => d.toLowerCase() === targetDb.toLowerCase())
+      );
+    }
+
+    // 2. If no filter has been set yet, check known loaded databases:
+    const knownDbs = treeDatabases[connId];
+    if (knownDbs && knownDbs.length > 0) {
+      if (!targetDb) return false;
+      return (
+        knownDbs.includes(targetDb) ||
+        knownDbs.some((d) => d.toLowerCase() === targetDb.toLowerCase())
+      );
+    }
+
+    // 3. Fallback: if database list hasn't been fetched yet, allow the connection's default database
+    if (conn.databaseName) {
+      return !targetDb || targetDb.toLowerCase() === conn.databaseName.toLowerCase();
+    }
+
+    return true;
+  };
 
   useEffect(() => {
     if (isSearchEverywhereOpen) {
@@ -100,6 +135,11 @@ export const SearchEverywhere: React.FC = () => {
           const connId = parts[0] || '';
           const dbName = parts[1] || '';
           const schemaName = parts[2] || '';
+
+          if (!isDatabaseVisible(connId, dbName)) {
+            return;
+          }
+
           (objs || []).forEach((o: any) => {
             if (o.name && o.name.toLowerCase().includes(qLower)) {
               memoryMatches.push({
@@ -113,9 +153,13 @@ export const SearchEverywhere: React.FC = () => {
           });
         });
 
-        // Deduplicate database objects
+        // Deduplicate database objects & filter visible databases
         const seenObjKeys = new Set<string>();
         for (const item of [...backendMatches, ...memoryMatches]) {
+          if (!isDatabaseVisible(item.connectionId, item.databaseName)) {
+            continue;
+          }
+
           const k = `${item.connectionId}:${item.databaseName}:${item.schemaName}:${item.objectName}`;
           if (!seenObjKeys.has(k)) {
             seenObjKeys.add(k);
@@ -141,7 +185,13 @@ export const SearchEverywhere: React.FC = () => {
         // 3. Search query consoles
         const matchingConsoles = consoles.filter((c) => c.title.toLowerCase().includes(qLower));
         for (const c of matchingConsoles) {
+          if (c.database && !isDatabaseVisible(c.connectionId, c.database)) {
+            continue;
+          }
           const conn = connections.find((cn) => cn.id === c.connectionId);
+          if (c.connectionId && !conn) {
+            continue;
+          }
           items.unshift({
             id: `console-${c.id}`,
             kind: 'console',
@@ -177,7 +227,7 @@ export const SearchEverywhere: React.FC = () => {
     }, 120);
 
     return () => clearTimeout(timer);
-  }, [query, treeObjects, consoles, connections]);
+  }, [query, treeObjects, consoles, connections, visibleDatabases, treeDatabases]);
 
   const handleSelectItem = (item: SearchResultItem) => {
     setSearchEverywhereOpen(false);
