@@ -4,11 +4,177 @@ import * as monaco from 'monaco-editor';
 
 loader.config({ monaco });
 import { Play, Square, Database, Terminal, ChevronDown, Check } from 'lucide-react';
-import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
+import { ConnectionConfig, ColumnMeta, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useConnectionStore } from '../../stores/useConnectionStore';
+import { SchemaService } from '../../../bindings/dhub/internal/services';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
+
+interface TableColumnMeta {
+  name: string;
+  type: 'table' | 'view';
+  columns: ColumnMeta[];
+}
+
+interface SqlKeywordDef {
+  label: string;
+  detail: string;
+  documentation?: string;
+  snippet?: string;
+}
+
+const SQL_KEYWORDS: SqlKeywordDef[] = [
+  { label: 'SELECT', detail: 'SQL Keyword', snippet: 'SELECT ' },
+  { label: 'SELECT * FROM', detail: 'SQL Snippet', snippet: 'SELECT * FROM ${1:table} WHERE ${2:1=1};' },
+  { label: 'FROM', detail: 'SQL Clause', snippet: 'FROM ' },
+  { label: 'WHERE', detail: 'SQL Clause', snippet: 'WHERE ' },
+  { label: 'JOIN', detail: 'SQL Join', snippet: 'JOIN ${1:table} ON ${2:condition}' },
+  { label: 'INNER JOIN', detail: 'SQL Join', snippet: 'INNER JOIN ${1:table} ON ${2:condition}' },
+  { label: 'LEFT JOIN', detail: 'SQL Join', snippet: 'LEFT JOIN ${1:table} ON ${2:condition}' },
+  { label: 'RIGHT JOIN', detail: 'SQL Join', snippet: 'RIGHT JOIN ${1:table} ON ${2:condition}' },
+  { label: 'FULL JOIN', detail: 'SQL Join', snippet: 'FULL JOIN ${1:table} ON ${2:condition}' },
+  { label: 'CROSS JOIN', detail: 'SQL Join', snippet: 'CROSS JOIN ${1:table}' },
+  { label: 'ON', detail: 'SQL Clause', snippet: 'ON ' },
+  { label: 'USING', detail: 'SQL Clause', snippet: 'USING (${1:column})' },
+  { label: 'GROUP BY', detail: 'SQL Clause', snippet: 'GROUP BY ' },
+  { label: 'ORDER BY', detail: 'SQL Clause', snippet: 'ORDER BY ${1:column} ${2|ASC,DESC|}' },
+  { label: 'HAVING', detail: 'SQL Clause', snippet: 'HAVING ' },
+  { label: 'LIMIT', detail: 'SQL Clause', snippet: 'LIMIT ${1:100}' },
+  { label: 'OFFSET', detail: 'SQL Clause', snippet: 'OFFSET ${1:0}' },
+  { label: 'INSERT INTO', detail: 'SQL Statement', snippet: 'INSERT INTO ${1:table} (${2:columns})\nVALUES (${3:values});' },
+  { label: 'VALUES', detail: 'SQL Clause', snippet: 'VALUES (${1:values})' },
+  { label: 'UPDATE', detail: 'SQL Statement', snippet: 'UPDATE ${1:table}\nSET ${2:col} = ${3:val}\nWHERE ${4:condition};' },
+  { label: 'SET', detail: 'SQL Clause', snippet: 'SET ' },
+  { label: 'DELETE FROM', detail: 'SQL Statement', snippet: 'DELETE FROM ${1:table} WHERE ${2:condition};' },
+  { label: 'TRUNCATE TABLE', detail: 'SQL Statement', snippet: 'TRUNCATE TABLE ${1:table};' },
+  { label: 'CREATE TABLE', detail: 'DDL Statement', snippet: 'CREATE TABLE ${1:table_name} (\n  ${2:id} INT PRIMARY KEY AUTO_INCREMENT,\n  ${3:name} VARCHAR(255) NOT NULL\n);' },
+  { label: 'ALTER TABLE', detail: 'DDL Statement', snippet: 'ALTER TABLE ${1:table} ' },
+  { label: 'DROP TABLE', detail: 'DDL Statement', snippet: 'DROP TABLE IF EXISTS ${1:table};' },
+  { label: 'CREATE VIEW', detail: 'DDL Statement', snippet: 'CREATE VIEW ${1:view_name} AS\nSELECT ${2:*}\nFROM ${3:table};' },
+  { label: 'DISTINCT', detail: 'SQL Keyword', snippet: 'DISTINCT ' },
+  { label: 'UNION', detail: 'SQL Set Operator', snippet: 'UNION\n' },
+  { label: 'UNION ALL', detail: 'SQL Set Operator', snippet: 'UNION ALL\n' },
+  { label: 'INTERSECT', detail: 'SQL Set Operator', snippet: 'INTERSECT\n' },
+  { label: 'EXCEPT', detail: 'SQL Set Operator', snippet: 'EXCEPT\n' },
+  { label: 'AND', detail: 'SQL Operator', snippet: 'AND ' },
+  { label: 'OR', detail: 'SQL Operator', snippet: 'OR ' },
+  { label: 'NOT', detail: 'SQL Operator', snippet: 'NOT ' },
+  { label: 'IN', detail: 'SQL Operator', snippet: 'IN (${1:list})' },
+  { label: 'NOT IN', detail: 'SQL Operator', snippet: 'NOT IN (${1:list})' },
+  { label: 'EXISTS', detail: 'SQL Operator', snippet: 'EXISTS (${1:subquery})' },
+  { label: 'NOT EXISTS', detail: 'SQL Operator', snippet: 'NOT EXISTS (${1:subquery})' },
+  { label: 'BETWEEN', detail: 'SQL Operator', snippet: 'BETWEEN ${1:min} AND ${2:max}' },
+  { label: 'LIKE', detail: 'SQL Operator', snippet: "LIKE '%${1:pattern}%'" },
+  { label: 'NOT LIKE', detail: 'SQL Operator', snippet: "NOT LIKE '%${1:pattern}%'" },
+  { label: 'ILIKE', detail: 'SQL Operator (Case-Insensitive)', snippet: "ILIKE '%${1:pattern}%'" },
+  { label: 'IS NULL', detail: 'SQL Condition', snippet: 'IS NULL' },
+  { label: 'IS NOT NULL', detail: 'SQL Condition', snippet: 'IS NOT NULL' },
+  { label: 'ASC', detail: 'Sort Order', snippet: 'ASC' },
+  { label: 'DESC', detail: 'Sort Order', snippet: 'DESC' },
+  { label: 'AS', detail: 'SQL Alias', snippet: 'AS ' },
+  { label: 'CASE WHEN', detail: 'Conditional Expression', snippet: 'CASE\n  WHEN ${1:condition} THEN ${2:result}\n  ELSE ${3:default}\nEND' },
+  { label: 'PRIMARY KEY', detail: 'Constraint', snippet: 'PRIMARY KEY' },
+  { label: 'FOREIGN KEY', detail: 'Constraint', snippet: 'FOREIGN KEY (${1:col}) REFERENCES ${2:ref_tbl}(${3:ref_col})' },
+];
+
+const SQL_FUNCTIONS: SqlKeywordDef[] = [
+  // Aggregates
+  { label: 'COUNT', detail: 'Aggregate Function', snippet: 'COUNT(${1:*})' },
+  { label: 'SUM', detail: 'Aggregate Function', snippet: 'SUM(${1:column})' },
+  { label: 'AVG', detail: 'Aggregate Function', snippet: 'AVG(${1:column})' },
+  { label: 'MIN', detail: 'Aggregate Function', snippet: 'MIN(${1:column})' },
+  { label: 'MAX', detail: 'Aggregate Function', snippet: 'MAX(${1:column})' },
+  { label: 'GROUP_CONCAT', detail: 'Aggregate Function', snippet: "GROUP_CONCAT(${1:column} SEPARATOR ', ')" },
+  { label: 'STRING_AGG', detail: 'Aggregate Function (Postgres)', snippet: "STRING_AGG(${1:column}, ', ')" },
+
+  // Conditional / Null handling
+  { label: 'COALESCE', detail: 'Return first non-null', snippet: 'COALESCE(${1:val1}, ${2:val2})' },
+  { label: 'NULLIF', detail: 'Return null if equal', snippet: 'NULLIF(${1:val1}, ${2:val2})' },
+  { label: 'IFNULL', detail: 'MySQL null fallback', snippet: 'IFNULL(${1:val}, ${2:fallback})' },
+
+  // String functions
+  { label: 'CONCAT', detail: 'String Concatenation', snippet: 'CONCAT(${1:str1}, ${2:str2})' },
+  { label: 'LOWER', detail: 'Lowercase String', snippet: 'LOWER(${1:str})' },
+  { label: 'UPPER', detail: 'Uppercase String', snippet: 'UPPER(${1:str})' },
+  { label: 'TRIM', detail: 'Trim whitespace', snippet: 'TRIM(${1:str})' },
+  { label: 'SUBSTRING', detail: 'Extract substring', snippet: 'SUBSTRING(${1:str}, ${2:start}, ${3:length})' },
+  { label: 'LENGTH', detail: 'String length', snippet: 'LENGTH(${1:str})' },
+  { label: 'REPLACE', detail: 'Replace substring', snippet: 'REPLACE(${1:str}, ${2:from}, ${3:to})' },
+  { label: 'LEFT', detail: 'Left substring', snippet: 'LEFT(${1:str}, ${2:len})' },
+  { label: 'RIGHT', detail: 'Right substring', snippet: 'RIGHT(${1:str}, ${2:len})' },
+
+  // Date & Time
+  { label: 'NOW', detail: 'Current date and time', snippet: 'NOW()' },
+  { label: 'CURRENT_TIMESTAMP', detail: 'Current timestamp', snippet: 'CURRENT_TIMESTAMP' },
+  { label: 'CURRENT_DATE', detail: 'Current date', snippet: 'CURRENT_DATE' },
+  { label: 'CURRENT_TIME', detail: 'Current time', snippet: 'CURRENT_TIME' },
+  { label: 'DATE', detail: 'Extract date part', snippet: 'DATE(${1:timestamp})' },
+  { label: 'DATEDIFF', detail: 'Date difference', snippet: 'DATEDIFF(${1:end_date}, ${2:start_date})' },
+  { label: 'DATE_ADD', detail: 'Add interval to date', snippet: 'DATE_ADD(${1:date}, INTERVAL ${2:1} ${3|DAY,MONTH,YEAR,HOUR|})' },
+  { label: 'DATE_SUB', detail: 'Subtract interval from date', snippet: 'DATE_SUB(${1:date}, INTERVAL ${2:1} ${3|DAY,MONTH,YEAR,HOUR|})' },
+  { label: 'EXTRACT', detail: 'Extract date/time subfield', snippet: 'EXTRACT(${1|YEAR,MONTH,DAY,HOUR,MINUTE|} FROM ${2:date})' },
+
+  // Math
+  { label: 'ROUND', detail: 'Round number', snippet: 'ROUND(${1:num}, ${2:decimals})' },
+  { label: 'FLOOR', detail: 'Round down to integer', snippet: 'FLOOR(${1:num})' },
+  { label: 'CEIL', detail: 'Round up to integer', snippet: 'CEIL(${1:num})' },
+  { label: 'ABS', detail: 'Absolute value', snippet: 'ABS(${1:num})' },
+
+  // JSON / Conversion
+  { label: 'CAST', detail: 'Type conversion', snippet: 'CAST(${1:expr} AS ${2|VARCHAR(255),INT,DECIMAL(10,2),DATE,DATETIME,JSON|})' },
+  { label: 'JSON_EXTRACT', detail: 'Extract value from JSON', snippet: "JSON_EXTRACT(${1:json_doc}, '$.${2:path}')" },
+  { label: 'JSON_UNQUOTE', detail: 'Unquote JSON string', snippet: 'JSON_UNQUOTE(${1:json_val})' },
+
+  // Window
+  { label: 'ROW_NUMBER', detail: 'Window Function', snippet: 'ROW_NUMBER() OVER (PARTITION BY ${1:col} ORDER BY ${2:col})' },
+  { label: 'RANK', detail: 'Window Function', snippet: 'RANK() OVER (ORDER BY ${1:col})' },
+  { label: 'DENSE_RANK', detail: 'Window Function', snippet: 'DENSE_RANK() OVER (ORDER BY ${1:col})' },
+  { label: 'LAG', detail: 'Access previous row', snippet: 'LAG(${1:col}, ${2:1}) OVER (ORDER BY ${3:col})' },
+  { label: 'LEAD', detail: 'Access next row', snippet: 'LEAD(${1:col}, ${2:1}) OVER (ORDER BY ${3:col})' },
+];
+
+function isInsideStringLiteral(lineContent: string, column: number): boolean {
+  let insideSingle = false;
+  let insideDouble = false;
+  for (let i = 0; i < column - 1; i++) {
+    const ch = lineContent[i];
+    const prev = i > 0 ? lineContent[i - 1] : '';
+    if (ch === "'" && prev !== '\\') {
+      if (!insideDouble) insideSingle = !insideSingle;
+    } else if (ch === '"' && prev !== '\\') {
+      if (!insideSingle) insideDouble = !insideDouble;
+    }
+  }
+  return insideSingle || insideDouble;
+}
+
+function extractTableAliases(sqlText: string): Map<string, string> {
+  const aliasMap = new Map<string, string>();
+  const regex = /\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:`?([a-zA-Z0-9_]+)`?\.)?`?([a-zA-Z0-9_]+)`?(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/gi;
+
+  const nonAliases = new Set([
+    'WHERE', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'CROSS', 'ON', 'USING',
+    'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'OFFSET', 'UNION', 'SET', 'SELECT', 'VALUES',
+    'AND', 'OR', 'NOT', 'AS', 'NATURAL'
+  ]);
+
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(sqlText)) !== null) {
+    const tableName = match[2];
+    const alias = match[3];
+
+    if (tableName) {
+      aliasMap.set(tableName.toLowerCase(), tableName);
+      if (alias && !nonAliases.has(alias.toUpperCase())) {
+        aliasMap.set(alias.toLowerCase(), tableName);
+      }
+    }
+  }
+
+  return aliasMap;
+}
 
 interface SqlWorksheetProps {
   sql: string;
@@ -46,7 +212,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const showMinimap = useSettingsStore((s) => s.showMinimap);
   const theme = useSettingsStore((s) => s.theme);
 
-  // Keep fresh references to avoid stale closure issues inside Monaco addCommand callback
+  // Keep fresh references to avoid stale closure issues inside Monaco callbacks
   const onExecuteRef = useRef(onExecute);
   useEffect(() => {
     onExecuteRef.current = onExecute;
@@ -56,6 +222,327 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   useEffect(() => {
     databaseRef.current = database;
   }, [database]);
+
+  // Current metadata cache ref for Monaco completion provider
+  const metadataRef = useRef<{
+    connectionId?: string;
+    database: string;
+    schema: string;
+    driver?: string;
+    tableMap: Map<string, TableColumnMeta>;
+    availableDatabases: string[];
+  }>({
+    connectionId: connection?.id,
+    database,
+    schema,
+    driver: connection?.driver,
+    tableMap: new Map(),
+    availableDatabases,
+  });
+
+  useEffect(() => {
+    metadataRef.current.connectionId = connection?.id;
+    metadataRef.current.database = database;
+    metadataRef.current.schema = schema;
+    metadataRef.current.driver = connection?.driver;
+    metadataRef.current.availableDatabases = availableDatabases;
+  }, [connection?.id, connection?.driver, database, schema, availableDatabases]);
+
+  // Load and cache database tables & columns
+  useEffect(() => {
+    if (!connection?.id || !database) return;
+
+    let isCancelled = false;
+    const connId = connection.id;
+    const dbName = database;
+    const schemaName = schema || (connection.driver === 'postgres' ? 'public' : dbName);
+
+    const loadMeta = async () => {
+      const currentMap = new Map<string, TableColumnMeta>();
+
+      // Incorporate any schemaMetadata prop if provided
+      if (schemaMetadata && schemaMetadata.length > 0) {
+        for (const sm of schemaMetadata) {
+          currentMap.set(sm.table.toLowerCase(), {
+            name: sm.table,
+            type: 'table',
+            columns: sm.columns.map((c) => ({
+              name: c.name,
+              dataType: c.dataType,
+              rawType: c.dataType,
+              isNullable: true,
+              isPrimaryKey: false,
+              isAutoIncrement: false,
+              defaultValue: '',
+            })),
+          });
+        }
+      }
+
+      // 1. Check in-memory treeObjects from connection store
+      const schemaKey = `${connId}:${dbName}:${schemaName}`;
+      const storeObjects = useConnectionStore.getState().treeObjects[schemaKey] || [];
+      for (const obj of storeObjects) {
+        if (!currentMap.has(obj.name.toLowerCase())) {
+          currentMap.set(obj.name.toLowerCase(), {
+            name: obj.name,
+            type: (obj.type as any) || 'table',
+            columns: [],
+          });
+        }
+      }
+
+      // 2. Load cached objects from local SQLite schema_cache
+      try {
+        const cached = await SchemaService.GetCachedSchema(connId, dbName, schemaName);
+        if (cached && !isCancelled) {
+          for (const item of cached) {
+            const existing = currentMap.get(item.objectName.toLowerCase());
+            currentMap.set(item.objectName.toLowerCase(), {
+              name: item.objectName,
+              type: (item.objectType as any) || existing?.type || 'table',
+              columns: item.columns || existing?.columns || [],
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load cached schema for autocomplete:', err);
+      }
+
+      // 3. If no objects found, fetch list from server
+      if (currentMap.size === 0 && !isCancelled) {
+        try {
+          const objs = await SchemaService.GetObjects(connId, dbName, schemaName);
+          if (objs && !isCancelled) {
+            for (const o of objs) {
+              currentMap.set(o.name.toLowerCase(), {
+                name: o.name,
+                type: (o.type as any) || 'table',
+                columns: [],
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to fetch objects for autocomplete:', err);
+        }
+      }
+
+      if (isCancelled) return;
+
+      // Update ref immediately
+      metadataRef.current.tableMap = new Map(currentMap);
+
+      // 4. Background fetch column structure for tables without columns (up to 40 tables)
+      const tablesNeedingCols = Array.from(currentMap.values())
+        .filter((t) => t.columns.length === 0)
+        .slice(0, 40);
+
+      const concurrency = 4;
+      for (let i = 0; i < tablesNeedingCols.length; i += concurrency) {
+        if (isCancelled) break;
+        const batch = tablesNeedingCols.slice(i, i + concurrency);
+        await Promise.allSettled(
+          batch.map(async (tbl) => {
+            try {
+              const struct = await SchemaService.GetTableStructure(connId, dbName, schemaName, tbl.name);
+              if (struct && struct.columns && !isCancelled) {
+                const currentEntry = metadataRef.current.tableMap.get(tbl.name.toLowerCase());
+                if (currentEntry) {
+                  currentEntry.columns = struct.columns;
+                }
+              }
+            } catch (_) {}
+          })
+        );
+      }
+    };
+
+    loadMeta();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [connection?.id, database, schema, schemaMetadata]);
+
+  // Register SQL completion item provider with Monaco
+  useEffect(() => {
+    const provider = monaco.languages.registerCompletionItemProvider('sql', {
+      triggerCharacters: ['.', ' ', '(', ',', '\n'],
+      provideCompletionItems: async (model, position) => {
+        const lineContent = model.getLineContent(position.lineNumber);
+        const textUntilPosition = lineContent.slice(0, position.column - 1);
+
+        // 1. Check if inside string literal or comment
+        if (isInsideStringLiteral(lineContent, position.column)) {
+          return { suggestions: [] };
+        }
+        if (textUntilPosition.includes('--')) {
+          return { suggestions: [] };
+        }
+
+        const word = model.getWordUntilPosition(position);
+        const range: monaco.IRange = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+
+        const { connectionId, database, schema, driver, tableMap, availableDatabases } = metadataRef.current;
+        const suggestions: monaco.languages.CompletionItem[] = [];
+
+        // Check if typing after a dot: e.g. "users." or "u." or "mydb."
+        const textBeforeWord = lineContent.slice(0, word.startColumn - 1);
+        const dotMatch = /([a-zA-Z0-9_`"\[\]]+)\.\s*$/.exec(textBeforeWord);
+
+        const fullSql = model.getValue();
+        const aliasMap = extractTableAliases(fullSql);
+
+        if (dotMatch) {
+          const rawQualifier = dotMatch[1].replace(/[`"\[\]]/g, '');
+          const qualifierLower = rawQualifier.toLowerCase();
+
+          // Check if qualifier is an alias or table name
+          const resolvedTableName = aliasMap.get(qualifierLower) || qualifierLower;
+          let targetTable = tableMap.get(resolvedTableName.toLowerCase());
+
+          // If table found in our map:
+          if (targetTable) {
+            // If columns not loaded yet, fetch on-demand!
+            if (targetTable.columns.length === 0 && connectionId && database) {
+              try {
+                const targetSchema = schema || (driver === 'postgres' ? 'public' : database);
+                const struct = await SchemaService.GetTableStructure(connectionId, database, targetSchema, targetTable.name);
+                if (struct?.columns) {
+                  targetTable.columns = struct.columns;
+                }
+              } catch (_) {}
+            }
+
+            // Suggest all columns of this table
+            targetTable.columns.forEach((col) => {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                detail: `${col.dataType || 'column'}${col.isPrimaryKey ? ' • PRIMARY KEY' : ''}${col.isNullable ? '' : ' • NOT NULL'} (${targetTable.name})`,
+                documentation: col.comment ? { value: col.comment } : undefined,
+                insertText: col.name,
+                sortText: col.isPrimaryKey ? `0_${col.name}` : `1_${col.name}`,
+                range,
+              });
+            });
+
+            // Also suggest '*'
+            suggestions.unshift({
+              label: '*',
+              kind: monaco.languages.CompletionItemKind.Value,
+              detail: `All columns of ${targetTable.name}`,
+              insertText: '*',
+              sortText: '0_0_*',
+              range,
+            });
+
+            return { suggestions };
+          }
+
+          // Check if qualifier is a database / schema name
+          if (availableDatabases && availableDatabases.some((d) => d.toLowerCase() === qualifierLower)) {
+            const otherDb = availableDatabases.find((d) => d.toLowerCase() === qualifierLower) || rawQualifier;
+            const otherKey = `${connectionId}:${otherDb}:${otherDb}`;
+            const otherObjs = useConnectionStore.getState().treeObjects[otherKey] || [];
+            otherObjs.forEach((o) => {
+              suggestions.push({
+                label: o.name,
+                kind: o.type === 'view' ? monaco.languages.CompletionItemKind.Class : monaco.languages.CompletionItemKind.Struct,
+                detail: `${o.type === 'view' ? 'View' : 'Table'} (${otherDb})`,
+                insertText: o.name,
+                range,
+              });
+            });
+
+            return { suggestions };
+          }
+
+          return { suggestions: [] };
+        }
+
+        // --- NOT AFTER A DOT (General / Clause Context) ---
+
+        // Check if cursor is immediately after a table-expecting keyword: FROM, JOIN, UPDATE, INTO, TABLE
+        const isTableContext = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([a-zA-Z0-9_`"\[\]]*)$/i.test(textBeforeWord);
+
+        // 1. Tables and Views
+        tableMap.forEach((tbl) => {
+          const isView = tbl.type === 'view';
+          suggestions.push({
+            label: tbl.name,
+            kind: isView ? monaco.languages.CompletionItemKind.Class : monaco.languages.CompletionItemKind.Struct,
+            detail: `${isView ? 'View' : 'Table'} (${schema || database || 'db'})${tbl.columns.length > 0 ? ` • ${tbl.columns.length} columns` : ''}`,
+            insertText: tbl.name,
+            sortText: isTableContext ? `0_${tbl.name}` : `2_${tbl.name}`,
+            range,
+          });
+        });
+
+        // 2. If not strictly expecting a table, suggest Columns!
+        if (!isTableContext) {
+          const queryTableNames = new Set(Array.from(aliasMap.values()).map((t) => t.toLowerCase()));
+
+          const seenCols = new Set<string>();
+          tableMap.forEach((tbl) => {
+            const isTableInQuery = queryTableNames.has(tbl.name.toLowerCase());
+            tbl.columns.forEach((col) => {
+              const colKey = `${tbl.name}.${col.name}`;
+              if (!seenCols.has(colKey)) {
+                seenCols.add(colKey);
+                suggestions.push({
+                  label: col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  detail: `${col.dataType || 'column'}${col.isPrimaryKey ? ' • PK' : ''} — ${tbl.name}`,
+                  documentation: col.comment ? { value: col.comment } : undefined,
+                  insertText: col.name,
+                  sortText: isTableInQuery ? (col.isPrimaryKey ? `0_0_${col.name}` : `0_1_${col.name}`) : `1_${col.name}`,
+                  range,
+                });
+              }
+            });
+          });
+
+          // 3. SQL Functions
+          SQL_FUNCTIONS.forEach((fn) => {
+            suggestions.push({
+              label: fn.label,
+              kind: monaco.languages.CompletionItemKind.Function,
+              detail: fn.detail,
+              insertText: fn.snippet || fn.label,
+              insertTextRules: fn.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+              sortText: `3_${fn.label}`,
+              range,
+            });
+          });
+
+          // 4. SQL Keywords & Snippets
+          SQL_KEYWORDS.forEach((kw) => {
+            suggestions.push({
+              label: kw.label,
+              kind: kw.snippet && kw.snippet.includes('${') ? monaco.languages.CompletionItemKind.Snippet : monaco.languages.CompletionItemKind.Keyword,
+              detail: kw.detail,
+              insertText: kw.snippet || kw.label,
+              insertTextRules: kw.snippet && kw.snippet.includes('${') ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+              sortText: `4_${kw.label}`,
+              range,
+            });
+          });
+        }
+
+        return { suggestions };
+      },
+    });
+
+    return () => {
+      provider.dispose();
+    };
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -113,44 +600,6 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
     // Intercept Ctrl+S / Cmd+S in editor to prevent browser save dialog
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {});
-
-    // Auto-complete provider
-    monaco.languages.registerCompletionItemProvider('sql', {
-      triggerCharacters: ['.', ' '],
-      provideCompletionItems: (model, position) => {
-        const word = model.getWordUntilPosition(position);
-        const range = {
-          startLineNumber: position.lineNumber,
-          endLineNumber: position.lineNumber,
-          startColumn: word.startColumn,
-          endColumn: word.endColumn,
-        };
-
-        const suggestions: monaco.languages.CompletionItem[] = [];
-
-        for (const item of schemaMetadata) {
-          suggestions.push({
-            label: item.table,
-            kind: monaco.languages.CompletionItemKind.Struct,
-            detail: `Table (${schema || 'default'})`,
-            insertText: item.table,
-            range,
-          });
-
-          for (const col of item.columns) {
-            suggestions.push({
-              label: `${col.name}`,
-              kind: monaco.languages.CompletionItemKind.Field,
-              detail: `${item.table}.${col.name} : ${col.dataType}`,
-              insertText: col.name,
-              range,
-            });
-          }
-        }
-
-        return { suggestions };
-      },
-    });
   };
 
   const connEnv = resolveConnectionEnv(connection);
@@ -311,6 +760,23 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             cursorBlinking: 'smooth',
             renderLineHighlight: 'all',
             automaticLayout: true,
+            quickSuggestions: {
+              other: true,
+              comments: false,
+              strings: false,
+            },
+            suggestOnTriggerCharacters: true,
+            acceptSuggestionOnEnter: 'smart',
+            tabCompletion: 'on',
+            suggest: {
+              showWords: false,
+              showKeywords: true,
+              showSnippets: true,
+              showClasses: true,
+              showFields: true,
+              showFunctions: true,
+              showStructs: true,
+            },
           }}
         />
       </div>
