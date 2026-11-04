@@ -35,7 +35,9 @@ import {
   CheckSquare,
   ClipboardPaste,
   Clock,
+  PanelRight,
 } from 'lucide-react';
+import { ValueViewerPanel } from './ValueViewerPanel';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -686,6 +688,38 @@ export const DataGrid: React.FC<DataGridProps> = ({
     cIdx: null,
   });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [isValuePanelOpen, setIsValuePanelOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('dhub_value_panel_open') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [valuePanelWidth, setValuePanelWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('dhub_value_panel_width');
+      return saved ? Math.max(280, Math.min(850, parseInt(saved, 10))) : 400;
+    } catch {
+      return 400;
+    }
+  });
+
+  const handleToggleValuePanel = () => {
+    setIsValuePanelOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('dhub_value_panel_open', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleValuePanelWidthChange = (w: number) => {
+    setValuePanelWidth(w);
+    try {
+      localStorage.setItem('dhub_value_panel_width', String(w));
+    } catch {}
+  };
 
   const insertedChanges = useMemo(() => {
     return Object.values(stagedChanges).filter(
@@ -898,6 +932,53 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (!selectionFocus) return null;
     return visualRows[selectionFocus.r]?.rowId ?? null;
   }, [selectionFocus, visualRows]);
+
+  // Active focused cell details for ValueViewerPanel
+  const activeFocusedCell = useMemo(() => {
+    let r = selectionFocus?.r;
+    let c = selectionFocus?.c;
+
+    if ((r === undefined || c === undefined) && contextMenu.vIdx !== null && contextMenu.cIdx !== null) {
+      r = contextMenu.vIdx;
+      c = contextMenu.cIdx;
+    }
+
+    if (r === undefined || c === undefined) {
+      if (visualRows.length > 0 && columns.length > 0) {
+        r = 0;
+        c = 0;
+      } else {
+        return null;
+      }
+    }
+
+    const vr = visualRows[r];
+    const col = columns[c];
+    if (!vr || !col) return null;
+
+    let rawVal: any;
+    if (vr.isInsert) {
+      const staged = vr.insertChange;
+      rawVal =
+        staged?.changes[col.name] !== undefined
+          ? staged.changes[col.name]
+          : (columns[c]?.defaultValue ?? null);
+    } else {
+      const staged = stagedChanges[vr.globalRowIndex!];
+      rawVal =
+        staged?.type === 'update' && staged.changes[col.name] !== undefined
+          ? staged.changes[col.name]
+          : vr.rowData?.[c];
+    }
+
+    return {
+      rawValue: rawVal,
+      columnName: col.name,
+      columnType: col.dataType,
+      rowIndex: r,
+      columnIndex: c,
+    };
+  }, [selectionFocus, contextMenu.vIdx, contextMenu.cIdx, visualRows, columns, stagedChanges]);
 
   // Global mouseup to release cell drag selection and close context menu
   useEffect(() => {
@@ -1559,6 +1640,13 @@ WHERE ${whereClause};`);
         (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) ||
         (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA'));
 
+      // Shortcut: F7 to Toggle Result Panels (Value Panel)
+      if (e.key === 'F7') {
+        e.preventDefault();
+        handleToggleValuePanel();
+        return;
+      }
+
       // Arrow keys navigation across grid cells
       if (!isTyping && selectionFocus && visualRows.length > 0 && columns.length > 0) {
         let deltaR = 0;
@@ -1842,6 +1930,21 @@ WHERE ${whereClause};`);
               <RefreshCw className="h-3.5 w-3.5" />
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={handleToggleValuePanel}
+            className={`flex items-center gap-1.5 h-7 px-2 rounded font-sans text-xs transition-colors cursor-pointer select-none ${
+              isValuePanelOpen
+                ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
+                : 'bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932]'
+            }`}
+            title="Toggle Result Panels / Value Viewer (F7)"
+          >
+            <PanelRight className="h-3.5 w-3.5 text-blue-400" />
+            <span className="text-[11px] font-medium hidden sm:inline">Panels</span>
+            <kbd className="text-[9px] text-zinc-500 font-mono hidden md:inline">F7</kbd>
+          </button>
 
           {stagedCount > 0 && (
             <>
@@ -2144,12 +2247,14 @@ WHERE ${whereClause};`);
         </div>
       )}
 
-      {/* Grid Table Container */}
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-auto min-h-0 relative"
-      >
+      {/* Grid Table & Side Value Panel Container */}
+      <div className="flex-1 flex min-h-0 relative overflow-hidden">
+        {/* Grid Table Container */}
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-auto min-h-0 relative"
+        >
         <table className="w-full border-collapse font-mono text-[12px] text-zinc-300">
           <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-10`}>
             <tr className={`border-b ${gridCellBorder}`}>
@@ -2471,6 +2576,25 @@ WHERE ${whereClause};`);
             )}          </tbody>
         </table>
       </div>
+
+      {/* Side Value Viewer Panel */}
+      <ValueViewerPanel
+        isOpen={isValuePanelOpen}
+        onClose={() => {
+          setIsValuePanelOpen(false);
+          try {
+            localStorage.setItem('dhub_value_panel_open', 'false');
+          } catch {}
+        }}
+        width={valuePanelWidth}
+        onWidthChange={handleValuePanelWidthChange}
+        columnName={activeFocusedCell?.columnName}
+        columnType={activeFocusedCell?.columnType}
+        rowIndex={activeFocusedCell?.rowIndex}
+        columnIndex={activeFocusedCell?.columnIndex}
+        rawValue={activeFocusedCell?.rawValue}
+      />
+    </div>
 
       {/* Pagination Footer */}
       <div className={`flex h-9 items-center justify-between border-t px-3 ${gridBarBg} text-zinc-400 text-xs shrink-0 select-none`}>
@@ -2918,6 +3042,23 @@ WHERE ${whereClause};`);
               <div className="my-1 border-t border-[#272932]" />
             </>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+              handleToggleValuePanel();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <PanelRight className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+              <span>Toggle result panels</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">F7</kbd>
+          </button>
+
+          <div className="my-1 border-t border-[#272932]" />
 
           <button
             type="button"
