@@ -255,6 +255,7 @@ function getWhereCurrentToken(text: string, cursor: number) {
 interface DataGridProps {
   tabId: string;
   tableName?: string;
+  driver?: string;
   columns: ColumnMeta[];
   rows: any[][];
   primaryKeys?: string[];
@@ -282,6 +283,7 @@ interface DataGridProps {
 export const DataGrid: React.FC<DataGridProps> = ({
   tabId,
   tableName,
+  driver,
   columns,
   rows,
   primaryKeys = [],
@@ -699,9 +701,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [valuePanelWidth, setValuePanelWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('dhub_value_panel_width');
-      return saved ? Math.max(280, Math.min(850, parseInt(saved, 10))) : 400;
+      const maxW = typeof window !== 'undefined' ? Math.max(500, window.innerWidth - 200) : 1200;
+      return saved ? Math.max(240, Math.min(maxW, parseInt(saved, 10))) : 450;
     } catch {
-      return 400;
+      return 450;
     }
   });
 
@@ -792,6 +795,34 @@ export const DataGrid: React.FC<DataGridProps> = ({
       stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, finalVal);
     }
     setEditingCell(null);
+  };
+
+  const handleUpdateCellFromValueViewer = (newVal: any) => {
+    if (!activeFocusedCell) return;
+    const { rowIndex: vIdx, columnIndex: cIdx } = activeFocusedCell;
+    const vr = visualRows[vIdx];
+    const col = columns[cIdx];
+    if (!vr || !col) return;
+
+    if (vr.isInsert) {
+      stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, newVal);
+    } else {
+      const gRowIndex = vr.globalRowIndex!;
+      const originalRowValues: Record<string, unknown> = {};
+      columns.forEach((c, idx) => {
+        originalRowValues[c.name] = rows[gRowIndex]?.[idx];
+      });
+
+      const pkMap: Record<string, unknown> = {};
+      primaryKeys.forEach((pk) => {
+        const idx = columns.findIndex((c) => c.name === pk);
+        if (idx !== -1) {
+          pkMap[pk] = rows[gRowIndex]?.[idx];
+        }
+      });
+
+      stageCellUpdate(tabId, gRowIndex, pkMap, originalRowValues, col.name, newVal);
+    }
   };
 
   const handleApplyChanges = () => {
@@ -1054,6 +1085,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
     if (!selectionRange || columns.length === 0) return '';
     const tbl = tableName || 'table_name';
+    const isMySQL = (driver || '').toLowerCase() === 'mysql';
+    const quoteIdent = (name: string) =>
+      isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
+    const quotedTbl = tbl.includes('.')
+      ? tbl.split('.').map((p) => quoteIdent(p)).join('.')
+      : quoteIdent(tbl);
 
     const getVal = (vr: (typeof visualRows)[0], cIdx: number, colName: string) => {
       if (vr.isInsert) {
@@ -1106,7 +1143,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         if (columns[c]) selectedCols.push(columns[c]);
       }
       if (selectedCols.length === 0) return '';
-      const colNames = selectedCols.map((c) => `"${c.name}"`).join(', ');
+      const colNames = selectedCols.map((c) => quoteIdent(c.name)).join(', ');
       const valueTuples: string[] = [];
       for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
         const vr = visualRows[r];
@@ -1118,7 +1155,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         });
         valueTuples.push(`  (${vals.join(', ')})`);
       }
-      return `INSERT INTO "${tbl}" (${colNames})
+      return `INSERT INTO ${quotedTbl} (${colNames})
 VALUES
 ${valueTuples.join(',\n')};`;
     }
@@ -1137,7 +1174,7 @@ ${valueTuples.join(',\n')};`;
           const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
           if (!isPK || selectionRange.startC === selectionRange.endC) {
             const val = getVal(vr, c, col.name);
-            setClauses.push(`"${col.name}" = ${formatSqlLiteral(val, col.dataType)}`);
+            setClauses.push(`${quoteIdent(col.name)} = ${formatSqlLiteral(val, col.dataType)}`);
           }
         }
 
@@ -1149,7 +1186,7 @@ ${valueTuples.join(',\n')};`;
             const colMeta = columns[cIdx];
             const pkVal = cIdx !== -1 ? getVal(vr, cIdx, pk) : undefined;
             if (pkVal !== undefined && pkVal !== null) {
-              pkConds.push(`"${pk}" = ${formatSqlLiteral(pkVal, colMeta?.dataType)}`);
+              pkConds.push(`${quoteIdent(pk)} = ${formatSqlLiteral(pkVal, colMeta?.dataType)}`);
             }
           });
           if (pkConds.length > 0) {
@@ -1164,19 +1201,92 @@ ${valueTuples.join(',\n')};`;
             if (!col) continue;
             const val = getVal(vr, c, col.name);
             if (val === null || val === undefined) {
-              fallbackConds.push(`"${col.name}" IS NULL`);
+              fallbackConds.push(`${quoteIdent(col.name)} IS NULL`);
             } else {
-              fallbackConds.push(`"${col.name}" = ${formatSqlLiteral(val, col.dataType)}`);
+              fallbackConds.push(`${quoteIdent(col.name)} = ${formatSqlLiteral(val, col.dataType)}`);
             }
           }
           whereClause = fallbackConds.join(' AND ');
         }
 
-        statements.push(`UPDATE "${tbl}"
+        statements.push(`UPDATE ${quotedTbl}
 SET ${setClauses.join(', ')}
 WHERE ${whereClause};`);
       }
       return statements.join('\n\n');
+    }
+
+    // 4. SQL UPSERT
+    if (targetFormat === 'sql_upsert') {
+      const selectedCols: ColumnMeta[] = [];
+      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        if (columns[c]) selectedCols.push(columns[c]);
+      }
+      if (selectedCols.length === 0) return '';
+      const colNames = selectedCols.map((c) => quoteIdent(c.name)).join(', ');
+      const valueTuples: string[] = [];
+      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+        const vr = visualRows[r];
+        if (!vr) continue;
+        const vals = selectedCols.map((col, idx) => {
+          const cIdx = selectionRange.startC + idx;
+          const val = getVal(vr, cIdx, col.name);
+          return formatSqlLiteral(val, col.dataType);
+        });
+        valueTuples.push(`  (${vals.join(', ')})`);
+      }
+
+      // Determine Primary / Conflict Keys
+      const detectedPKs = primaryKeys.length > 0
+        ? primaryKeys
+        : columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
+
+      const fallbackPK =
+        columns.find((c) => /^id$/i.test(c.name))?.name ||
+        selectedCols.find((c) => /^id$/i.test(c.name))?.name ||
+        selectedCols[0]?.name ||
+        'id';
+
+      const effectivePKs = detectedPKs.length > 0 ? detectedPKs : [fallbackPK];
+
+      // Non-PK columns to be updated upon collision
+      const updateCols = selectedCols.filter((c) => !effectivePKs.includes(c.name));
+
+      if (isMySQL) {
+        // MySQL ON DUPLICATE KEY UPDATE
+        const setClauses =
+          updateCols.length > 0
+            ? updateCols
+                .map((c) => `  ${quoteIdent(c.name)} = VALUES(${quoteIdent(c.name)})`)
+                .join(',\n')
+            : `  ${quoteIdent(effectivePKs[0])} = ${quoteIdent(effectivePKs[0])}`;
+
+        return `INSERT INTO ${quotedTbl} (${colNames})
+VALUES
+${valueTuples.join(',\n')}
+ON DUPLICATE KEY UPDATE
+${setClauses};`;
+      }
+
+      // PostgreSQL / SQLite ON CONFLICT (...) DO UPDATE SET ...
+      const conflictTargets = effectivePKs.map((pk) => quoteIdent(pk)).join(', ');
+
+      if (updateCols.length === 0) {
+        return `INSERT INTO ${quotedTbl} (${colNames})
+VALUES
+${valueTuples.join(',\n')}
+ON CONFLICT (${conflictTargets}) DO NOTHING;`;
+      }
+
+      const setClauses = updateCols
+        .map((c) => `  ${quoteIdent(c.name)} = EXCLUDED.${quoteIdent(c.name)}`)
+        .join(',\n');
+
+      return `INSERT INTO ${quotedTbl} (${colNames})
+VALUES
+${valueTuples.join(',\n')}
+ON CONFLICT (${conflictTargets}) DO UPDATE SET
+${setClauses};`;
     }
 
     // 4. Default: CSV (RFC 4180 standard)
@@ -1748,7 +1858,7 @@ WHERE ${whereClause};`);
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tabId, isMac, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm, copyFormat, tableName, primaryKeys]);
+  }, [tabId, isMac, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm, copyFormat, tableName, primaryKeys, driver]);
 
   // Global clipboard copy event to ensure Ctrl+C always outputs the selected format
   useEffect(() => {
@@ -1785,7 +1895,7 @@ WHERE ${whereClause};`);
       window.removeEventListener('copy', handleNativeCopy);
       window.removeEventListener('paste', handleNativePaste);
     };
-  }, [selectionRange, columns, visualRows, stagedChanges, tableName, primaryKeys, copyFormat]);
+  }, [selectionRange, columns, visualRows, stagedChanges, tableName, primaryKeys, copyFormat, driver]);
   const currentOffset = (currentPage - 1) * localPageSize;
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
   const endRow = currentOffset + displayedRows.length;
@@ -1940,10 +2050,10 @@ WHERE ${whereClause};`);
                 ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
                 : 'bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932]'
             }`}
-            title="Toggle Result Panels / Value Viewer (F7)"
+            title="View As / Value Viewer (F7)"
           >
             <PanelRight className="h-3.5 w-3.5 text-blue-400" />
-            <span className="text-[11px] font-medium hidden sm:inline">Panels</span>
+            <span className="text-[11px] font-medium hidden sm:inline">View As</span>
             <kbd className="text-[9px] text-zinc-500 font-mono hidden md:inline">F7</kbd>
           </button>
 
@@ -2594,6 +2704,7 @@ WHERE ${whereClause};`);
         rowIndex={activeFocusedCell?.rowIndex}
         columnIndex={activeFocusedCell?.columnIndex}
         rawValue={activeFocusedCell?.rawValue}
+        onSave={handleUpdateCellFromValueViewer}
       />
     </div>
 
@@ -3054,7 +3165,7 @@ WHERE ${whereClause};`);
           >
             <div className="flex items-center gap-2">
               <PanelRight className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-              <span>Toggle result panels</span>
+              <span>View As</span>
             </div>
             <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">F7</kbd>
           </button>

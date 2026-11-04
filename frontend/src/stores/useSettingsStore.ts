@@ -3,7 +3,7 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
 export type DataViewMode = 'infinite' | 'paged';
 export type ThemeMode = 'dark' | 'light';
-export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update';
+export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update' | 'sql_upsert';
 
 interface SettingsValues {
   theme: ThemeMode;
@@ -69,7 +69,7 @@ function loadStoredSettings(): SettingsValues {
         editorFontSize: typeof parsed.editorFontSize === 'number' ? parsed.editorFontSize : DEFAULT_SETTINGS.editorFontSize,
         wordWrap: typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
         showMinimap: typeof parsed.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
-        copyFormat: ['csv', 'json', 'sql_insert', 'sql_update'].includes(parsed.copyFormat) ? parsed.copyFormat : DEFAULT_SETTINGS.copyFormat,
+        copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat) ? parsed.copyFormat : DEFAULT_SETTINGS.copyFormat,
       };
     }
   } catch (err) {
@@ -179,7 +179,7 @@ if (typeof window !== 'undefined') {
               typeof parsed.showMinimap === 'boolean'
                 ? parsed.showMinimap
                 : DEFAULT_SETTINGS.showMinimap,
-            copyFormat: ['csv', 'json', 'sql_insert', 'sql_update'].includes(parsed.copyFormat)
+            copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat)
               ? parsed.copyFormat
               : DEFAULT_SETTINGS.copyFormat,
           });
