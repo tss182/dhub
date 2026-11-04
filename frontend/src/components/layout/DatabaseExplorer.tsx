@@ -38,6 +38,7 @@ import {
 } from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning, confirmDialog } from '../../stores/useAlertStore';
 import { SchemaFilterModal } from '../modals/SchemaFilterModal';
+import { DbDriverIcon } from '../common/DbDriverIcon';
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -1195,15 +1196,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 }}
               />
             )}
-            <Database
-              className={`h-3.5 w-3.5 shrink-0 ${
-                resolveConnectionEnv(c) === 'dev'
-                  ? 'text-emerald-400'
-                  : resolveConnectionEnv(c) === 'prod'
-                  ? 'text-rose-400'
-                  : 'text-zinc-400'
-              }`}
-            />
+            <DbDriverIcon driver={c.driver} className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{c.name}</span>
             {resolveConnectionEnv(c) !== 'local' && (
               <span
@@ -1216,14 +1209,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 {resolveConnectionEnv(c) === 'dev' ? 'DEV' : 'PROD'}
               </span>
             )}
-            <span className="text-[9px] text-zinc-500 font-mono uppercase bg-[#14151a] px-1 rounded shrink-0">
-              {c.driver}
-            </span>
             {!isSQLite && (
               <button
                 type="button"
                 onClick={(e) => handleOpenDatabaseFilter(c, e)}
-                className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-[#131419] hover:bg-[#282a36] text-zinc-400 hover:text-blue-300 border border-[#272932] hover:border-blue-500/50 transition-colors shrink-0 cursor-pointer flex items-center gap-1 group/badge"
+                className="text-[8.5px] font-medium tracking-tight px-1 py-0.5 rounded bg-[#181a22] hover:bg-[#252836] text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer flex items-center group/badge leading-none"
                 title={`Filter visible databases/schemas (${schemaBadgeText || 'select'})`}
               >
                 <span>{schemaBadgeText || 'schemas'}</span>

@@ -5,6 +5,7 @@ import { ConnectionService } from '../../../bindings/dhub/internal/services';
 import { X, CheckCircle, AlertCircle, Database, Trash2 } from 'lucide-react';
 import { alertError, confirmDialog } from '../../stores/useAlertStore';
 import { ConnectionEnvType, resolveConnectionEnv } from '../../types/domain';
+import { DbDriverIcon } from '../common/DbDriverIcon';
 
 export const ConnectionDialog: React.FC = () => {
   const { isConnectionDialogOpen, setConnectionDialogOpen, editingConnectionId } = useWorkbenchStore();
@@ -318,13 +319,14 @@ export const ConnectionDialog: React.FC = () => {
                   key={d}
                   type="button"
                   onClick={() => handleDriverChange(d)}
-                  className={`rounded border py-2 text-center uppercase font-mono tracking-wider cursor-pointer transition-colors ${
+                  className={`flex items-center justify-center gap-2 rounded border py-2 text-center uppercase font-mono tracking-wider cursor-pointer transition-colors ${
                     driver === d
                       ? 'border-blue-500 bg-blue-600/20 text-blue-200'
                       : 'border-[#272932] bg-[#14151a] text-zinc-400 hover:border-zinc-600'
                   }`}
                 >
-                  {d}
+                  <DbDriverIcon driver={d} className="h-4 w-4 shrink-0" />
+                  <span>{d}</span>
                 </button>
               ))}
             </div>
