@@ -57,6 +57,62 @@ func (s *LocalStore) SaveSchemaCache(ctx context.Context, item CachedObject) err
 	return err
 }
 
+func (s *LocalStore) SaveSchemaCacheBatch(ctx context.Context, items []CachedObject) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	query := `INSERT INTO schema_cache (
+		connection_id, database_name, schema_name, object_type, object_name,
+		columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	ON CONFLICT(connection_id, database_name, schema_name, object_type, object_name) DO UPDATE SET
+		columns_json = CASE
+			WHEN excluded.columns_json != 'null' AND excluded.columns_json != '[]' THEN excluded.columns_json
+			ELSE schema_cache.columns_json
+		END,
+		indexes_json = CASE
+			WHEN excluded.indexes_json != 'null' AND excluded.indexes_json != '[]' THEN excluded.indexes_json
+			ELSE schema_cache.indexes_json
+		END,
+		foreign_keys_json = CASE
+			WHEN excluded.foreign_keys_json != 'null' AND excluded.foreign_keys_json != '[]' THEN excluded.foreign_keys_json
+			ELSE schema_cache.foreign_keys_json
+		END,
+		row_estimate = CASE
+			WHEN excluded.row_estimate > 0 THEN excluded.row_estimate
+			ELSE schema_cache.row_estimate
+		END,
+		synced_at = CURRENT_TIMESTAMP`
+
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		colJSON, _ := json.Marshal(item.Columns)
+		idxJSON, _ := json.Marshal(item.Indexes)
+		fkJSON, _ := json.Marshal(item.ForeignKeys)
+
+		if _, err := stmt.ExecContext(ctx,
+			item.ConnectionID, item.DatabaseName, item.SchemaName, item.ObjectType, item.ObjectName,
+			string(colJSON), string(idxJSON), string(fkJSON), item.RowEstimate,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (s *LocalStore) GetCachedObjects(ctx context.Context, connectionID, databaseName, schemaName string) ([]CachedObject, error) {
 	query := `SELECT connection_id, database_name, schema_name, object_type, object_name, columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
 		FROM schema_cache WHERE connection_id = ? AND database_name = ? AND schema_name = ?

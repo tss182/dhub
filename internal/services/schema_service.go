@@ -61,16 +61,18 @@ func (s *SchemaService) GetObjects(connectionID, database, schema string) ([]dri
 	if err == nil && len(objs) > 0 {
 		go func() {
 			ctx := context.Background()
-			for _, o := range objs {
-				_ = s.store.SaveSchemaCache(ctx, store.CachedObject{
+			cachedItems := make([]store.CachedObject, len(objs))
+			for i, o := range objs {
+				cachedItems[i] = store.CachedObject{
 					ConnectionID: connectionID,
 					DatabaseName: database,
 					SchemaName:   schema,
 					ObjectType:   o.Type,
 					ObjectName:   o.Name,
 					RowEstimate:  o.RowEstimate,
-				})
+				}
 			}
+			_ = s.store.SaveSchemaCacheBatch(ctx, cachedItems)
 		}()
 	}
 	return objs, err

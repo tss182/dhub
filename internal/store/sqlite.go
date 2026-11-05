@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"dhub/internal/config"
@@ -27,14 +28,25 @@ func NewLocalStore() (*LocalStore, error) {
 }
 
 func NewLocalStoreWithPath(dbPath string) (*LocalStore, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	dsn := dbPath
+	if dbPath != ":memory:" {
+		if !strings.Contains(dbPath, "?") {
+			dsn = dbPath + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+		} else if !strings.Contains(dbPath, "busy_timeout") {
+			dsn = dbPath + "&_pragma=busy_timeout(10000)"
+		}
+	}
+
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite store: %w", err)
 	}
 
-	// In WAL mode, SQLite allows concurrent readers and handles busy locks up to busy_timeout.
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	// In SQLite embedded storage, serializing database access through 1 open connection
+	// with a 10s busy_timeout and WAL mode completely eliminates OS-level write lock contention (SQLITE_BUSY).
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 
 	s := &LocalStore{db: db}
 	if err := s.migrate(); err != nil {
@@ -61,7 +73,7 @@ func (s *LocalStore) migrate() error {
 		`PRAGMA journal_mode=WAL;`,
 		`PRAGMA synchronous=NORMAL;`,
 		`PRAGMA foreign_keys=ON;`,
-		`PRAGMA busy_timeout=5000;`, // wait up to 5s if table is locked
+		`PRAGMA busy_timeout=10000;`, // wait up to 10s if table is locked
 		`PRAGMA cache_size=-4000;`, // cap page cache at ~4MB
 		`PRAGMA temp_store=FILE;`,
 
