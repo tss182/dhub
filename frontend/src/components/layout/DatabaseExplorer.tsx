@@ -3,6 +3,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
 import { Dialogs } from '@wailsio/runtime';
+import { Popover } from '../common/Popover';
 import {
   Database,
   Folder,
@@ -61,6 +62,8 @@ const FOLDER_COLORS = [
   { label: 'Cyan', value: '#06b6d4' },
   { label: 'Zinc', value: '#71717a' },
 ];
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 
 interface DatabaseExplorerProps {
   onCollapse?: () => void;
@@ -1597,13 +1600,19 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
           {onCollapse && (
-            <button
-              onClick={onCollapse}
-              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
-              title="Minimize Sidebar (Ctrl+B)"
+            <Popover
+              content="Close Explorer"
+              shortcut={isMac ? '⌘B' : 'Ctrl+B'}
+              side="bottom"
+              align="end"
             >
-              <PanelLeftClose className="h-3.5 w-3.5" />
-            </button>
+              <button
+                onClick={onCollapse}
+                className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </Popover>
           )}
         </div>
       </div>

@@ -606,7 +606,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
             </button>
           )}
 
-          {onClose && (
+          {!inSidebar && onClose && (
             <>
               <div className="h-3.5 w-[1px] bg-[#272932] mx-0.5" />
               <button

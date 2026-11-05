@@ -19,6 +19,9 @@ import {
 } from 'lucide-react';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { alertWarning, confirmDialog } from '../../stores/useAlertStore';
+import { Popover } from '../common/Popover';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 
 interface ConsoleListProps {
   onRename: (id: string, currentTitle: string) => void;
@@ -270,27 +273,34 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
           </div>
 
           <div className="flex items-center gap-1">
-            <button
-              onClick={() => {
-                const activeConn = connections.find((c) => c.id === activeConnectionId) || connections[0];
-                if (activeConn) {
-                  handleCreateForConnection(activeConn);
-                } else {
-                  alertWarning('Please select or add a connection in Database Explorer first.', 'No Active Connection');
-                }
-              }}
-              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
-              title="New Query Console"
+            <Popover content="New Query Console" side="bottom" align="end">
+              <button
+                onClick={() => {
+                  const activeConn = connections.find((c) => c.id === activeConnectionId) || connections[0];
+                  if (activeConn) {
+                    handleCreateForConnection(activeConn);
+                  } else {
+                    alertWarning('Please select or add a connection in Database Explorer first.', 'No Active Connection');
+                  }
+                }}
+                className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </Popover>
+            <Popover
+              content="Close Consoles"
+              shortcut={isMac ? '⌘R' : 'Ctrl+R'}
+              side="bottom"
+              align="end"
             >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={toggleRightPanel}
-              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
-              title="Collapse Consoles Panel"
-            >
-              <PanelRightClose className="h-3.5 w-3.5" />
-            </button>
+              <button
+                onClick={toggleRightPanel}
+                className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </Popover>
           </div>
         </div>
       )}
