@@ -32,8 +32,9 @@ func NewLocalStoreWithPath(dbPath string) (*LocalStore, error) {
 		return nil, fmt.Errorf("failed to open sqlite store: %w", err)
 	}
 
-	// Optimize for single-desktop local database
-	db.SetMaxOpenConns(1)
+	// In WAL mode, SQLite allows concurrent readers and handles busy locks up to busy_timeout.
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
 
 	s := &LocalStore{db: db}
 	if err := s.migrate(); err != nil {
@@ -60,6 +61,7 @@ func (s *LocalStore) migrate() error {
 		`PRAGMA journal_mode=WAL;`,
 		`PRAGMA synchronous=NORMAL;`,
 		`PRAGMA foreign_keys=ON;`,
+		`PRAGMA busy_timeout=5000;`, // wait up to 5s if table is locked
 		`PRAGMA cache_size=-4000;`, // cap page cache at ~4MB
 		`PRAGMA temp_store=FILE;`,
 
@@ -180,6 +182,9 @@ func (s *LocalStore) GetSettings() (map[string]string, error) {
 		}
 		res[k] = v
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return res, nil
 }
 
@@ -240,6 +245,9 @@ func (s *LocalStore) GetRecentHistory(connectionID string, limit int) ([]QueryHi
 			continue
 		}
 		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return entries, nil
 }

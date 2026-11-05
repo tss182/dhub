@@ -321,12 +321,16 @@ func (s *LocalStore) SaveConnection(ctx context.Context, c ConnectionConfig) (st
 		return "", err
 	}
 
-	// Save secrets securely
+	// Save or clear secrets securely
 	if c.Password != "" {
 		_ = crypto.SaveSecret("conn:"+c.ID+":db", c.Password)
+	} else {
+		_ = crypto.DeleteSecret("conn:" + c.ID + ":db")
 	}
 	if c.SSHPassword != "" {
 		_ = crypto.SaveSecret("conn:"+c.ID+":ssh", c.SSHPassword)
+	} else {
+		_ = crypto.DeleteSecret("conn:" + c.ID + ":ssh")
 	}
 
 	return c.ID, nil
