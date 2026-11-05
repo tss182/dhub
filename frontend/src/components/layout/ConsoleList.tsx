@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useWorkbenchStore, ConsoleRecord } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Database,
   RefreshCw,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { alertWarning, confirmDialog } from '../../stores/useAlertStore';
@@ -44,6 +45,9 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
 
   const {
     connections,
+    folders,
+    connectionFolders,
+    connectionOrder,
     activeConnectionId,
     treeDatabases,
     visibleDatabases,
@@ -52,6 +56,62 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
 
   const [filterText, setFilterText] = useState('');
   const [expandedConns, setExpandedConns] = useState<Record<string, boolean>>({});
+
+  // Sort connections in the exact same visual order as DatabaseExplorer:
+  // Folders first (by folder sortOrder/name), each with its folder connections,
+  // followed by ungrouped connections (by sortOrder/connectionOrder/name).
+  const orderedConnections = useMemo(() => {
+    const result: ConnectionConfig[] = [];
+    const seen = new Set<string>();
+
+    const sortSubList = (list: ConnectionConfig[]) => {
+      const orderMap = new Map<string, number>();
+      connectionOrder.forEach((id, idx) => orderMap.set(id, idx));
+      return [...list].sort((a, b) => {
+        const idxA = orderMap.has(a.id) ? orderMap.get(a.id)! : (a.sortOrder ?? 999999);
+        const idxB = orderMap.has(b.id) ? orderMap.get(b.id)! : (b.sortOrder ?? 999999);
+        if (idxA !== idxB) return idxA - idxB;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+    };
+
+    // 1. Folders first
+    const sortedFolders = [...folders].sort((a, b) => {
+      const soA = a.sortOrder ?? 999999;
+      const soB = b.sortOrder ?? 999999;
+      if (soA !== soB) return soA - soB;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
+    sortedFolders.forEach((folder) => {
+      const folderConns = connections.filter((c) => connectionFolders[c.id] === folder.id);
+      sortSubList(folderConns).forEach((c) => {
+        if (!seen.has(c.id)) {
+          seen.add(c.id);
+          result.push(c);
+        }
+      });
+    });
+
+    // 2. Ungrouped connections
+    const ungrouped = connections.filter((c) => !connectionFolders[c.id]);
+    sortSubList(ungrouped).forEach((c) => {
+      if (!seen.has(c.id)) {
+        seen.add(c.id);
+        result.push(c);
+      }
+    });
+
+    // 3. Fallback for any remaining
+    sortSubList(connections).forEach((c) => {
+      if (!seen.has(c.id)) {
+        seen.add(c.id);
+        result.push(c);
+      }
+    });
+
+    return result;
+  }, [connections, folders, connectionFolders, connectionOrder]);
 
   // Hover Tooltip state for long connection and console names
   const [hoveredItem, setHoveredItem] = useState<{
@@ -122,13 +182,26 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
   const toggleConnection = (connId: string) => {
     setExpandedConns((prev) => ({
       ...prev,
-      [connId]: prev[connId] === undefined ? false : !prev[connId],
+      [connId]: !prev[connId],
     }));
   };
 
   const isConnExpanded = (connId: string) => {
-    // Default to true (expanded) if not explicitly collapsed
-    return expandedConns[connId] !== false;
+    // Default to false (collapsed) by default
+    return !!expandedConns[connId];
+  };
+
+  const toggleAllConnections = () => {
+    const allExpanded = orderedConnections.length > 0 && orderedConnections.every((c) => !!expandedConns[c.id]);
+    if (allExpanded) {
+      setExpandedConns({});
+    } else {
+      const next: Record<string, boolean> = {};
+      orderedConnections.forEach((c) => {
+        next[c.id] = true;
+      });
+      setExpandedConns(next);
+    }
   };
 
   const handleOpenConsole = (record: ConsoleRecord) => {
@@ -306,8 +379,8 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
       )}
 
       {/* Speed Search */}
-      <div className="p-2 border-b border-[#272932]">
-        <div className="relative">
+      <div className="p-2 border-b border-[#272932] flex items-center gap-1.5">
+        <div className="relative flex-1">
           <input
             type="text"
             placeholder="Filter consoles..."
@@ -317,6 +390,16 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
           />
           <Search className="h-3 w-3 text-zinc-500 absolute left-2 top-2 pointer-events-none" />
         </div>
+        <Popover content="Toggle Expand / Collapse All" side="bottom" align="end">
+          <button
+            type="button"
+            onClick={toggleAllConnections}
+            className="p-1 rounded bg-[#121317] hover:bg-[#22242c] text-zinc-400 hover:text-white border border-[#272932] transition-colors cursor-pointer shrink-0"
+            title="Toggle Expand / Collapse All"
+          >
+            <ChevronsUpDown className="h-3.5 w-3.5" />
+          </button>
+        </Popover>
       </div>
 
       {/* Connections with their attached Consoles */}
@@ -324,20 +407,24 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
         onScroll={handleItemMouseLeave}
         className="flex-1 overflow-auto p-2 space-y-2"
       >
-        {connections.length === 0 ? (
+        {orderedConnections.length === 0 ? (
           <div className="py-8 text-center text-zinc-500">
             <p className="text-[11px]">No connections configured</p>
           </div>
         ) : (
-          connections.map((conn) => {
+          orderedConnections.map((conn) => {
             const connConsoles = consoles.filter((c) => c.connectionId === conn.id);
+            const sortedConnConsoles = [...connConsoles].sort((a, b) =>
+              (a.title || '').localeCompare(b.title || '')
+            );
+
             const matchingConsoles = filterLower
-              ? connConsoles.filter(
+              ? sortedConnConsoles.filter(
                   (c) =>
                     c.title.toLowerCase().includes(filterLower) ||
                     (c.database && c.database.toLowerCase().includes(filterLower))
                 )
-              : connConsoles;
+              : sortedConnConsoles;
 
             const connMatches = filterLower && conn.name.toLowerCase().includes(filterLower);
             if (filterLower && !connMatches && matchingConsoles.length === 0) {
@@ -345,7 +432,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
             }
 
             const isExpanded = isConnExpanded(conn.id) || !!filterLower;
-            const displayedConsoles = filterLower && !connMatches ? matchingConsoles : connConsoles;
+            const displayedConsoles = filterLower && !connMatches ? matchingConsoles : sortedConnConsoles;
 
             return (
               <div key={conn.id} className="rounded bg-[#14151a]/40 border border-[#272932]/70 overflow-hidden">
