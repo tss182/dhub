@@ -39,7 +39,6 @@ import {
   Clock,
   PanelRight,
 } from 'lucide-react';
-import { ValueViewerPanel } from './ValueViewerPanel';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -706,38 +705,23 @@ export const DataGrid: React.FC<DataGridProps> = ({
     cIdx: null,
   });
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [isValuePanelOpen, setIsValuePanelOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('dhub_value_panel_open') === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [valuePanelWidth, setValuePanelWidth] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('dhub_value_panel_width');
-      const maxW = typeof window !== 'undefined' ? Math.max(500, window.innerWidth - 200) : 1200;
-      return saved ? Math.max(240, Math.min(maxW, parseInt(saved, 10))) : 450;
-    } catch {
-      return 450;
-    }
-  });
+
+  const isRightPanelOpen = useWorkbenchStore((state) => state.isRightPanelOpen);
+  const activeRightSidebarTab = useWorkbenchStore((state) => state.activeRightSidebarTab);
+  const setRightPanelOpen = useWorkbenchStore((state) => state.setRightPanelOpen);
+  const setActiveRightSidebarTab = useWorkbenchStore((state) => state.setActiveRightSidebarTab);
+
+  const isValuePanelOpen = isRightPanelOpen && activeRightSidebarTab === 'views';
 
   const handleToggleValuePanel = () => {
-    setIsValuePanelOpen((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('dhub_value_panel_open', String(next));
-      } catch {}
-      return next;
-    });
-  };
-
-  const handleValuePanelWidthChange = (w: number) => {
-    setValuePanelWidth(w);
-    try {
-      localStorage.setItem('dhub_value_panel_width', String(w));
-    } catch {}
+    if (!isRightPanelOpen) {
+      setRightPanelOpen(true);
+      setActiveRightSidebarTab('views');
+    } else if (activeRightSidebarTab === 'views') {
+      setRightPanelOpen(false);
+    } else {
+      setActiveRightSidebarTab('views');
+    }
   };
 
   const insertedChanges = useMemo(() => {
@@ -1114,6 +1098,70 @@ WHERE ${whereClause};`;
       columnIndex: c,
     };
   }, [selectionFocus, contextMenu.vIdx, contextMenu.cIdx, visualRows, columns, stagedChanges]);
+
+  const handleUpdateRef = useRef(handleUpdateCellFromValueViewer);
+  handleUpdateRef.current = handleUpdateCellFromValueViewer;
+
+  const prevCellRef = useRef<{
+    tabId: string;
+    r?: number;
+    c?: number;
+    colName?: string;
+    rawValue: any;
+  } | null>(null);
+
+  // Sync active focused cell with the right sidebar Views tab
+  useEffect(() => {
+    if (!activeFocusedCell) return;
+
+    const prev = prevCellRef.current;
+    if (
+      prev &&
+      prev.tabId === tabId &&
+      prev.r === activeFocusedCell.rowIndex &&
+      prev.c === activeFocusedCell.columnIndex &&
+      prev.colName === activeFocusedCell.columnName &&
+      Object.is(prev.rawValue, activeFocusedCell.rawValue)
+    ) {
+      return;
+    }
+
+    prevCellRef.current = {
+      tabId,
+      r: activeFocusedCell.rowIndex,
+      c: activeFocusedCell.columnIndex,
+      colName: activeFocusedCell.columnName,
+      rawValue: activeFocusedCell.rawValue,
+    };
+
+    useWorkbenchStore.getState().setActiveCellViewer({
+      tabId,
+      tableName,
+      columnName: activeFocusedCell.columnName,
+      columnType: activeFocusedCell.columnType,
+      rowIndex: activeFocusedCell.rowIndex,
+      columnIndex: activeFocusedCell.columnIndex,
+      rawValue: activeFocusedCell.rawValue,
+      onSave: (newVal) => handleUpdateRef.current(newVal),
+    });
+  }, [
+    tabId,
+    tableName,
+    activeFocusedCell?.rowIndex,
+    activeFocusedCell?.columnIndex,
+    activeFocusedCell?.columnName,
+    activeFocusedCell?.columnType,
+    activeFocusedCell?.rawValue,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      const current = useWorkbenchStore.getState().activeCellViewer;
+      if (current && current.tabId === tabId) {
+        useWorkbenchStore.getState().setActiveCellViewer(null);
+      }
+    };
+  }, [tabId]);
 
   // Global mouseup to release cell drag selection and close context menu
   useEffect(() => {
@@ -2777,25 +2825,6 @@ ${setClauses};`;
             )}          </tbody>
         </table>
       </div>
-
-      {/* Side Value Viewer Panel */}
-      <ValueViewerPanel
-        isOpen={isValuePanelOpen}
-        onClose={() => {
-          setIsValuePanelOpen(false);
-          try {
-            localStorage.setItem('dhub_value_panel_open', 'false');
-          } catch {}
-        }}
-        width={valuePanelWidth}
-        onWidthChange={handleValuePanelWidthChange}
-        columnName={activeFocusedCell?.columnName}
-        columnType={activeFocusedCell?.columnType}
-        rowIndex={activeFocusedCell?.rowIndex}
-        columnIndex={activeFocusedCell?.columnIndex}
-        rawValue={activeFocusedCell?.rawValue}
-        onSave={handleUpdateCellFromValueViewer}
-      />
     </div>
 
       {/* Pagination Footer */}

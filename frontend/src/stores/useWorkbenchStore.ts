@@ -119,12 +119,27 @@ export interface TableStructureModalConfig {
   tableName?: string;
 }
 
+export type RightSidebarTab = 'consoles' | 'views';
+
+export interface ActiveCellViewer {
+  tabId: string;
+  tableName?: string;
+  columnName?: string;
+  columnType?: string;
+  rowIndex?: number;
+  columnIndex?: number;
+  rawValue: any;
+  onSave?: (newValue: any) => void;
+}
+
 interface WorkbenchState {
   tabs: WorkbenchTab[];
   activeTabId: string | null;
   activeBottomTab: 'result' | 'output' | 'history' | 'explain';
   isBottomPanelOpen: boolean;
   isRightPanelOpen: boolean;
+  activeRightSidebarTab: RightSidebarTab;
+  activeCellViewer: ActiveCellViewer | null;
   isLeftPanelOpen: boolean;
   isSearchEverywhereOpen: boolean;
   isConnectionDialogOpen: boolean;
@@ -164,6 +179,13 @@ interface WorkbenchState {
   toggleBottomPanel: () => void;
   toggleRightPanel: () => void;
   setRightPanelOpen: (open: boolean) => void;
+  setActiveRightSidebarTab: (tab: RightSidebarTab) => void;
+  setActiveCellViewer: (
+    viewer:
+      | ActiveCellViewer
+      | null
+      | ((prev: ActiveCellViewer | null) => ActiveCellViewer | null)
+  ) => void;
   toggleLeftPanel: () => void;
   setLeftPanelOpen: (open: boolean) => void;
   setSearchEverywhereOpen: (open: boolean) => void;
@@ -181,6 +203,16 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   activeBottomTab: 'result',
   isBottomPanelOpen: true,
   isRightPanelOpen: true,
+  activeRightSidebarTab: (() => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('dhub_right_sidebar_tab');
+        if (saved === 'views' || saved === 'consoles') return saved as RightSidebarTab;
+      } catch {}
+    }
+    return 'consoles';
+  })(),
+  activeCellViewer: null,
   isLeftPanelOpen: (() => {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem('dhub_left_sidebar_open');
@@ -554,6 +586,33 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set((state) => ({ isRightPanelOpen: !state.isRightPanelOpen })),
 
   setRightPanelOpen: (isRightPanelOpen) => set({ isRightPanelOpen }),
+
+  setActiveRightSidebarTab: (activeRightSidebarTab) => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('dhub_right_sidebar_tab', activeRightSidebarTab);
+      } catch {}
+    }
+    set({ activeRightSidebarTab });
+  },
+
+  setActiveCellViewer: (viewer) =>
+    set((state) => {
+      const next = typeof viewer === 'function' ? viewer(state.activeCellViewer) : viewer;
+      if (state.activeCellViewer === next) return state;
+      if (
+        state.activeCellViewer &&
+        next &&
+        state.activeCellViewer.tabId === next.tabId &&
+        state.activeCellViewer.rowIndex === next.rowIndex &&
+        state.activeCellViewer.columnIndex === next.columnIndex &&
+        state.activeCellViewer.columnName === next.columnName &&
+        Object.is(state.activeCellViewer.rawValue, next.rawValue)
+      ) {
+        return state;
+      }
+      return { activeCellViewer: next };
+    }),
 
   toggleLeftPanel: () =>
     set((state) => {

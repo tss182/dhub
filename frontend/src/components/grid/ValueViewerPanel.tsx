@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Edit3,
+  PanelRight,
 } from 'lucide-react';
 
 loader.config({ monaco });
@@ -29,16 +30,18 @@ loader.config({ monaco });
 export type ValueFormat = 'auto' | 'html' | 'json' | 'xml' | 'text';
 
 interface ValueViewerPanelProps {
-  isOpen: boolean;
-  onClose: () => void;
-  width: number;
-  onWidthChange: (newWidth: number) => void;
+  isOpen?: boolean;
+  onClose?: () => void;
+  width?: number;
+  onWidthChange?: (newWidth: number) => void;
   columnName?: string;
   columnType?: string;
   rowIndex?: number;
   columnIndex?: number;
-  rawValue: any;
+  tableName?: string;
+  rawValue?: any;
   onSave?: (newValue: any) => void;
+  inSidebar?: boolean;
 }
 
 export function detectFormat(val: string): 'html' | 'json' | 'xml' | 'text' {
@@ -203,16 +206,18 @@ function minifyJson(str: string): string {
 }
 
 export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
-  isOpen,
+  isOpen = true,
   onClose,
-  width,
+  width = 450,
   onWidthChange,
   columnName,
   columnType,
   rowIndex,
   columnIndex,
+  tableName,
   rawValue,
   onSave,
+  inSidebar = false,
 }) => {
   const [selectedFormat, setSelectedFormat] = useState<ValueFormat>('auto');
   const [htmlViewMode, setHtmlViewMode] = useState<'preview' | 'source'>('preview');
@@ -233,8 +238,9 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   const prevWidthRef = useRef<number>(width);
 
   const handleToggleExpand = () => {
+    if (!onWidthChange) return;
     if (isExpanded) {
-      onWidthChange(prevWidthRef.current || 450);
+      onWidthChange(prevWidthRef.current || (inSidebar ? 320 : 450));
       setIsExpanded(false);
     } else {
       prevWidthRef.current = width;
@@ -396,7 +402,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
       const delta = startXRef.current - e.clientX;
       const maxAvailable = typeof window !== 'undefined' ? Math.max(400, window.innerWidth - 200) : 1200;
       const newWidth = Math.max(240, Math.min(maxAvailable, startWidthRef.current + delta));
-      onWidthChange(newWidth);
+      onWidthChange?.(newWidth);
     };
 
     const handleMouseUp = () => {
@@ -428,6 +434,18 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   };
 
   if (!isOpen) return null;
+
+  if (inSidebar && !columnName && rawValue === undefined) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-zinc-500 select-none p-6 text-center">
+        <PanelRight className="h-10 w-10 text-zinc-600 mb-3" />
+        <span className="text-sm font-medium text-zinc-300">No Cell Selected</span>
+        <span className="text-xs text-zinc-500 mt-1 max-w-[240px]">
+          Select any cell in a table or query result to view and edit its value.
+        </span>
+      </div>
+    );
+  }
 
   // HTML document for preview iframe (uses editorText so user edits reflect in live preview)
   const currentHtmlContent = editorText || stringValue || '';
@@ -476,11 +494,15 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
 
   return (
     <div
-      className="relative flex flex-col h-full bg-[#14151a] border-l border-[#272932] shadow-2xl z-20 shrink-0 select-none"
-      style={{ width }}
+      className={
+        inSidebar
+          ? 'relative flex flex-col h-full w-full bg-[#14151a] select-none overflow-hidden'
+          : 'relative flex flex-col h-full bg-[#14151a] border-l border-[#272932] shadow-2xl z-20 shrink-0 select-none'
+      }
+      style={inSidebar ? undefined : { width }}
     >
       {/* Full-screen mouse capture backdrop while dragging to prevent iframes/Monaco from stealing events */}
-      {isResizing && (
+      {!inSidebar && isResizing && (
         <div
           className="fixed inset-0 z-[99999] cursor-col-resize select-none bg-transparent"
           style={{ cursor: 'col-resize' }}
@@ -488,40 +510,65 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
       )}
 
       {/* Resizer Splitter Handle */}
-      <div
-        onMouseDown={handleStartResize}
-        onDoubleClick={() => {
-          onWidthChange(450);
-          setIsExpanded(false);
-        }}
-        className="absolute left-0 top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/30 transition-colors z-40 group flex items-center justify-center select-none"
-        title="Drag to resize panel (Double-click to reset width to 450px)"
-      >
-        <div className={`w-[2px] h-full transition-colors ${isResizing ? 'bg-blue-400' : 'bg-transparent group-hover:bg-blue-400/80'}`} />
-      </div>
+      {!inSidebar && onWidthChange && (
+        <div
+          onMouseDown={handleStartResize}
+          onDoubleClick={() => {
+            onWidthChange(450);
+            setIsExpanded(false);
+          }}
+          className="absolute left-0 top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/30 transition-colors z-40 group flex items-center justify-center select-none"
+          title="Drag to resize panel (Double-click to reset width to 450px)"
+        >
+          <div className={`w-[2px] h-full transition-colors ${isResizing ? 'bg-blue-400' : 'bg-transparent group-hover:bg-blue-400/80'}`} />
+        </div>
+      )}
 
       {/* Panel Header */}
       <div className="flex h-9 items-center justify-between border-b border-[#272932] px-2.5 bg-[#181920] shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#20222b] text-zinc-200 text-xs font-medium border border-[#2b2e3a]">
-            <Globe className="h-3.5 w-3.5 text-blue-400" />
-            <span className="font-semibold">View As</span>
-          </div>
+          {!inSidebar && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#20222b] text-zinc-200 text-xs font-medium border border-[#2b2e3a]">
+              <Globe className="h-3.5 w-3.5 text-blue-400" />
+              <span className="font-semibold">View As</span>
+            </div>
+          )}
 
-          {columnName && (
+          {tableName && (
             <span
-              className="text-[11px] font-mono text-zinc-400 truncate max-w-[120px] px-1.5 py-0.5 rounded bg-[#101114] border border-[#23252e]"
-              title={`Column: ${columnName} (${columnType || 'unknown'})`}
+              className="text-[11px] font-mono text-zinc-400 truncate max-w-[100px] px-1.5 py-0.5 rounded bg-[#101114] border border-[#23252e]"
+              title={`Table: ${tableName}`}
             >
-              {columnName}
+              {tableName}
             </span>
           )}
 
+          {columnName && (
+            <span
+              className="text-[11px] font-mono text-blue-300 font-medium truncate max-w-[130px] px-1.5 py-0.5 rounded bg-[#101114] border border-[#23252e]"
+              title={`Column: ${columnName}${columnType ? ` (${columnType})` : ''}`}
+            >
+              {columnName}
+              {columnType && (
+                <span className="text-[9px] text-zinc-500 ml-1 font-normal font-sans uppercase">
+                  {columnType}
+                </span>
+              )}
+            </span>
+          )}
+
+          {rowIndex !== undefined && (
+            <span
+              className="text-[10px] text-zinc-500 font-mono hidden sm:inline"
+              title={`Row index: ${rowIndex}`}
+            >
+              Row {rowIndex + 1}
+            </span>
+          )}
         </div>
 
         {/* Action Controls & Close */}
         <div className="flex items-center gap-1 shrink-0">
-
           <button
             type="button"
             onClick={handleCopy}
@@ -548,25 +595,30 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
           </button>
 
           {/* Maximize / Restore width button */}
-          <button
-            type="button"
-            onClick={handleToggleExpand}
-            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#23252e] transition-colors cursor-pointer"
-            title={isExpanded ? 'Restore width' : 'Expand / Maximize width'}
-          >
-            {isExpanded ? <Minimize2 className="h-3.5 w-3.5 text-blue-400" /> : <Maximize2 className="h-3.5 w-3.5" />}
-          </button>
+          {onWidthChange && (
+            <button
+              type="button"
+              onClick={handleToggleExpand}
+              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#23252e] transition-colors cursor-pointer"
+              title={isExpanded ? 'Restore width' : 'Expand / Maximize width'}
+            >
+              {isExpanded ? <Minimize2 className="h-3.5 w-3.5 text-blue-400" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            </button>
+          )}
 
-          <div className="h-3.5 w-[1px] bg-[#272932] mx-0.5" />
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-rose-950/40 hover:text-rose-300 transition-colors cursor-pointer"
-            title="Close View As Panel (F7)"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          {onClose && (
+            <>
+              <div className="h-3.5 w-[1px] bg-[#272932] mx-0.5" />
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1 rounded text-zinc-400 hover:text-white hover:bg-rose-950/40 hover:text-rose-300 transition-colors cursor-pointer"
+                title="Close View (F7)"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
         </div>
       </div>
 

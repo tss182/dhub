@@ -22,9 +22,10 @@ import { alertWarning, confirmDialog } from '../../stores/useAlertStore';
 
 interface ConsoleListProps {
   onRename: (id: string, currentTitle: string) => void;
+  hideHeader?: boolean;
 }
 
-export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
+export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader = false }) => {
   const {
     consoles,
     tabs,
@@ -256,41 +257,43 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename }) => {
   return (
     <div className="flex h-full flex-col bg-[#191a20] text-xs select-none relative">
       {/* Panel Header */}
-      <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
-        <div className="flex items-center gap-2">
-          <Terminal className="h-3.5 w-3.5 text-blue-400" />
-          <span className="font-semibold uppercase tracking-wider text-[11px] text-zinc-400">
-            Consoles
-          </span>
-          <span className="rounded bg-[#272932] px-1.5 py-0.2 text-[10px] text-zinc-400 font-mono">
-            {consoles.length}
-          </span>
-        </div>
+      {!hideHeader && (
+        <div className="flex h-10 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a]">
+          <div className="flex items-center gap-2">
+            <Terminal className="h-3.5 w-3.5 text-blue-400" />
+            <span className="font-semibold uppercase tracking-wider text-[11px] text-zinc-400">
+              Consoles
+            </span>
+            <span className="rounded bg-[#272932] px-1.5 py-0.2 text-[10px] text-zinc-400 font-mono">
+              {consoles.length}
+            </span>
+          </div>
 
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => {
-              const activeConn = connections.find((c) => c.id === activeConnectionId) || connections[0];
-              if (activeConn) {
-                handleCreateForConnection(activeConn);
-              } else {
-                alertWarning('Please select or add a connection in Database Explorer first.', 'No Active Connection');
-              }
-            }}
-            className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
-            title="New Query Console"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={toggleRightPanel}
-            className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
-            title="Collapse Consoles Panel"
-          >
-            <PanelRightClose className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                const activeConn = connections.find((c) => c.id === activeConnectionId) || connections[0];
+                if (activeConn) {
+                  handleCreateForConnection(activeConn);
+                } else {
+                  alertWarning('Please select or add a connection in Database Explorer first.', 'No Active Connection');
+                }
+              }}
+              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+              title="New Query Console"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={toggleRightPanel}
+              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+              title="Collapse Consoles Panel"
+            >
+              <PanelRightClose className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Speed Search */}
       <div className="p-2 border-b border-[#272932]">
