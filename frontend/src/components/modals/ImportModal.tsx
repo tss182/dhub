@@ -60,7 +60,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         CanChooseFiles: true,
         AllowsMultipleSelection: false,
         Filters: [
+          { DisplayName: 'Supported Files (*.csv, *.tsv, *.txt, *.json)', Pattern: '*.csv;*.tsv;*.txt;*.json' },
           { DisplayName: 'Delimited Files (*.csv, *.tsv, *.txt)', Pattern: '*.csv;*.tsv;*.txt' },
+          { DisplayName: 'JSON Files (*.json)', Pattern: '*.json' },
           { DisplayName: 'All Files (*.*)', Pattern: '*.*' },
         ],
       });
@@ -126,13 +128,14 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         throw new Error('Please map at least one file column to a table column.');
       }
 
+      const isJson = filePath.trim().toLowerCase().endsWith('.json');
       const req: ImportRequest = {
         connectionId,
         database,
         schema,
         table,
         filePath: filePath.trim(),
-        format: 'csv',
+        format: isJson ? 'json' : 'csv',
         delimiter,
         hasHeader,
         mappings: mappingList,
@@ -206,31 +209,43 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 rounded-lg border border-[#272932] bg-[#22242c]/50 p-3">
-                <div>
-                  <label className="block text-zinc-400 mb-1">Delimiter</label>
-                  <select
-                    value={delimiter}
-                    onChange={(e) => setDelimiter(e.target.value)}
-                    className="w-full rounded border border-[#272932] bg-[#191a20] px-2 py-1.5 text-zinc-200 outline-none focus:border-blue-500"
-                  >
-                    <option value=",">Comma (,)</option>
-                    <option value=";">Semicolon (;)</option>
-                    <option value="&#9;">Tab (\t)</option>
-                  </select>
+              {filePath.trim().toLowerCase().endsWith('.json') ? (
+                <div className="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-blue-400">
+                  <FileText className="h-4 w-4 shrink-0" />
+                  <div>
+                    <span className="font-semibold">JSON Format Detected</span>
+                    <p className="text-[11px] opacity-80 mt-0.5">
+                      Column keys will be automatically extracted from the JSON object fields.
+                    </p>
+                  </div>
                 </div>
-                <div className="flex items-center pt-5">
-                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
-                    <input
-                      type="checkbox"
-                      checked={hasHeader}
-                      onChange={(e) => setHasHeader(e.target.checked)}
-                      className="rounded border-[#272932] bg-[#191a20] text-blue-500 focus:ring-0"
-                    />
-                    <span>First row is header</span>
-                  </label>
+              ) : (
+                <div className="grid grid-cols-2 gap-4 rounded-lg border border-[#272932] bg-[#22242c]/50 p-3">
+                  <div>
+                    <label className="block text-zinc-400 mb-1">Delimiter</label>
+                    <select
+                      value={delimiter}
+                      onChange={(e) => setDelimiter(e.target.value)}
+                      className="w-full rounded border border-[#272932] bg-[#191a20] px-2 py-1.5 text-zinc-200 outline-none focus:border-blue-500"
+                    >
+                      <option value=",">Comma (,)</option>
+                      <option value=";">Semicolon (;)</option>
+                      <option value="&#9;">Tab (\t)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center pt-5">
+                    <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={hasHeader}
+                        onChange={(e) => setHasHeader(e.target.checked)}
+                        className="rounded border-[#272932] bg-[#191a20] text-blue-500 focus:ring-0"
+                      />
+                      <span>First row is header</span>
+                    </label>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 

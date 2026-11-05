@@ -180,6 +180,7 @@ export function App() {
         isLoadingMore: boolean;
         lastSql: string;
         connectionId: string;
+        tabId?: string;
         database: string;
         schema: string;
       }
@@ -433,7 +434,7 @@ export function App() {
           if (!Number.isNaN(w)) setLeftSidebarWidth(w);
         }
         if (settings['dhub_right_sidebar_w']) {
-          const w = Math.max(180, Math.min(600, Number(settings['dhub_right_sidebar_w'])));
+          const w = Math.max(180, Math.min(1000, Number(settings['dhub_right_sidebar_w'])));
           if (!Number.isNaN(w)) setRightSidebarWidth(w);
         }
         if (settings['dhub_bottom_panel_h']) {
@@ -485,6 +486,7 @@ export function App() {
     isLoadingMore: false,
     lastSql: '',
     connectionId: '',
+    tabId: currentTabId,
     database: '',
     schema: '',
   };
@@ -535,6 +537,7 @@ export function App() {
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
+          tabId?: string;
           database: string;
           schema: string;
         }
@@ -544,6 +547,7 @@ export function App() {
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
+          tabId?: string;
           database: string;
           schema: string;
         }) => {
@@ -552,6 +556,7 @@ export function App() {
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
+          tabId?: string;
           database: string;
           schema: string;
         })
@@ -564,6 +569,7 @@ export function App() {
         isLoadingMore: false,
         lastSql: '',
         connectionId: '',
+        tabId: currentTabId,
         database: '',
         schema: '',
       };
@@ -617,6 +623,26 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
         useSettingsStore.getState().toggleSettings();
+        return;
+      }
+
+      // Close Active Tab: Ctrl+W / Cmd+W
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'w' || e.key === 'W')) {
+        e.preventDefault();
+        const activeId = useWorkbenchStore.getState().activeTabId;
+        if (activeId) {
+          useWorkbenchStore.getState().closeTab(activeId);
+        }
+        return;
+      }
+
+      // Stop Query Execution: Ctrl+F2 / Cmd+F2
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'F2' || e.code === 'F2')) {
+        e.preventDefault();
+        const activeId = useWorkbenchStore.getState().activeTabId;
+        if (activeId) {
+          handleCancelQuery(activeId);
+        }
         return;
       }
 
@@ -1073,6 +1099,7 @@ export function App() {
       const res = await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: targetConnId,
+        tabId: currentTab?.id || '',
         database: targetDb,
         schema: targetSchema,
         sql,
@@ -1091,6 +1118,7 @@ export function App() {
         isLoadingMore: false,
         lastSql: sql,
         connectionId: targetConnId,
+        tabId: currentTab?.id || '',
         database: targetDb,
         schema: targetSchema,
       });
@@ -1137,6 +1165,7 @@ export function App() {
       const res = await QueryService.ExecuteQuery({
         executionId: 'exec-more-' + Date.now(),
         connectionId: queryPagination.connectionId,
+        tabId: queryPagination.tabId || currentTabId || '',
         database: queryPagination.database,
         schema: queryPagination.schema,
         sql: queryPagination.lastSql,
@@ -1190,6 +1219,7 @@ export function App() {
       const res = await QueryService.ExecuteQuery({
         executionId: 'exec-page-' + Date.now(),
         connectionId: queryPagination.connectionId,
+        tabId: queryPagination.tabId || currentTabId || '',
         database: queryPagination.database,
         schema: queryPagination.schema,
         sql: queryPagination.lastSql,
@@ -1239,6 +1269,7 @@ export function App() {
       const res = await QueryService.ExecuteQuery({
         executionId: 'exec-size-' + Date.now(),
         connectionId: queryPagination.connectionId,
+        tabId: queryPagination.tabId || currentTabId || '',
         database: queryPagination.database,
         schema: queryPagination.schema,
         sql: queryPagination.lastSql,
@@ -1822,7 +1853,10 @@ export function App() {
                 (tabConn?.databaseName && isDbAllowed(tabConn.databaseName) ? tabConn.databaseName : '') ||
                 nonSystemDb ||
                 (visibleDbs.length > 0 ? visibleDbs[0] : (tabConn?.driver === 'sqlite' ? 'main' : ''));
-              const effectiveSchema = activeTab.schema || (tabConn?.driver === 'postgres' ? 'public' : effectiveDb);
+              const effectiveSchema =
+                activeTab.schema ||
+                useConnectionStore.getState().activeSchema ||
+                (tabConn?.driver === 'postgres' ? 'public' : effectiveDb);
               const availableDbs =
                 visibleDbs.length > 0
                   ? visibleDbs
@@ -1856,7 +1890,9 @@ export function App() {
                         .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
                       const connId = currentTab?.connectionId || activeConnectionId || '';
                       const conn = connections.find((c) => c.id === connId);
-                      const targetSchema = conn?.driver === 'postgres' ? 'public' : newDb;
+                      const targetSchema =
+                        currentTab?.schema ||
+                        (conn?.driver === 'postgres' ? (useConnectionStore.getState().activeSchema || 'public') : newDb);
                       if (currentTab) {
                         updateTabDatabase(currentTab.id, newDb, targetSchema);
                       }

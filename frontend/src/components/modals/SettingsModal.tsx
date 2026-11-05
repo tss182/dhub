@@ -520,6 +520,28 @@ export const SettingsModal: React.FC = () => {
                     {wordWrap ? 'Word Wrap: ON' : 'Word Wrap: OFF'}
                   </button>
                 </div>
+
+                <div className="h-[1px] bg-[#272932]" />
+
+                <div>
+                  <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
+                    Editor Minimap
+                  </label>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Show code minimap outline on the right side of the SQL Worksheet editor.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowMinimap(!showMinimap)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                      showMinimap
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {showMinimap ? 'Minimap: ON' : 'Minimap: OFF'}
+                  </button>
+                </div>
               </div>
             )}
 

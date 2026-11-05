@@ -65,7 +65,9 @@ select optgroup {
 
 /* Light Theme CSS Variables & Overrides */
 html[data-theme="light"],
-[data-theme="light"] {
+html.light,
+[data-theme="light"],
+.light {
   --bg-canvas: #f8fafc;
   --bg-island: #ffffff;
   --bg-island-hover: #f1f5f9;
@@ -75,7 +77,10 @@ html[data-theme="light"],
   color-scheme: light;
 }
 
-[data-theme="light"] {
+html[data-theme="light"],
+html.light,
+[data-theme="light"],
+.light {
   /* Canvas & Darkest Backgrounds */
   .bg-\[\#121317\],
   .bg-\[\#101115\],

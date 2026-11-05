@@ -77,13 +77,74 @@ func NewExportService(s *store.LocalStore, sm *manager.SessionManager, appGetter
 	}
 }
 
-// PreviewImportFile parses the first 10 rows of a CSV file for column mapping preview.
+// PreviewImportFile parses the first 10 rows of a CSV or JSON file for column mapping preview.
 func (e *ExportService) PreviewImportFile(filePath, delimiter string, hasHeader bool) (*FilePreview, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
+
+	if strings.HasSuffix(strings.ToLower(filePath), ".json") {
+		byteData, err := io.ReadAll(io.LimitReader(f, 2*1024*1024))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read JSON file: %w", err)
+		}
+		var rawList []map[string]any
+		if err := json.Unmarshal(byteData, &rawList); err != nil {
+			var wrapper map[string]any
+			if err2 := json.Unmarshal(byteData, &wrapper); err2 == nil {
+				for _, val := range wrapper {
+					if arr, ok := val.([]any); ok {
+						for _, item := range arr {
+							if m, ok := item.(map[string]any); ok {
+								rawList = append(rawList, m)
+							}
+						}
+						if len(rawList) > 0 {
+							break
+						}
+					}
+				}
+			}
+		}
+
+		if len(rawList) == 0 {
+			return nil, fmt.Errorf("JSON file must contain an array of objects or an object containing an array")
+		}
+
+		colSet := make(map[string]bool)
+		var columns []string
+		for _, item := range rawList {
+			for k := range item {
+				if !colSet[k] {
+					colSet[k] = true
+					columns = append(columns, k)
+				}
+			}
+		}
+
+		var previewRows [][]string
+		for idx, item := range rawList {
+			if idx >= 10 {
+				break
+			}
+			row := make([]string, len(columns))
+			for cIdx, col := range columns {
+				if v, ok := item[col]; ok && v != nil {
+					row[cIdx] = fmt.Sprintf("%v", v)
+				} else {
+					row[cIdx] = ""
+				}
+			}
+			previewRows = append(previewRows, row)
+		}
+
+		return &FilePreview{
+			Columns: columns,
+			Rows:    previewRows,
+		}, nil
+	}
 
 	delimRune := ','
 	if delimiter == ";" {
@@ -132,6 +193,21 @@ func (e *ExportService) PreviewImportFile(filePath, delimiter string, hasHeader 
 	}, nil
 }
 
+// quoteIdentifier safely quotes table/schema/column identifiers based on database driver.
+func quoteIdentifier(driverType, name string) string {
+	if name == "" {
+		return ""
+	}
+	switch strings.ToLower(driverType) {
+	case "mysql":
+		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	case "postgres", "sqlite":
+		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+	default:
+		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+	}
+}
+
 // ExportToFile streams query or table rows directly into a file on disk.
 func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	start := time.Now()
@@ -141,16 +217,23 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		return nil, err
 	}
 
+	var driverType string
+	if cfg, err := e.store.GetConnection(context.Background(), req.ConnectionID); err == nil && cfg != nil {
+		driverType = cfg.Driver
+	}
+
 	// Prepare query SQL
 	querySQL := req.SQL
 	if strings.TrimSpace(querySQL) == "" {
 		if req.Table == "" {
 			return nil, fmt.Errorf("either table name or SQL query must be provided for export")
 		}
+		quotedTable := quoteIdentifier(driverType, req.Table)
 		if req.Schema != "" && req.Schema != "main" && req.Schema != req.Database {
-			querySQL = fmt.Sprintf("SELECT * FROM %s.%s", req.Schema, req.Table)
+			quotedSchema := quoteIdentifier(driverType, req.Schema)
+			querySQL = fmt.Sprintf("SELECT * FROM %s.%s", quotedSchema, quotedTable)
 		} else {
-			querySQL = fmt.Sprintf("SELECT * FROM %s", req.Table)
+			querySQL = fmt.Sprintf("SELECT * FROM %s", quotedTable)
 		}
 	}
 
@@ -207,10 +290,12 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		targetTable := req.Table
 		if targetTable == "" {
 			targetTable = "exported_table"
+		} else {
+			targetTable = quoteIdentifier(driverType, targetTable)
 		}
 		colNames := make([]string, len(res.Columns))
 		for i, col := range res.Columns {
-			colNames[i] = fmt.Sprintf("%q", col.Name)
+			colNames[i] = quoteIdentifier(driverType, col.Name)
 		}
 		colsJoined := strings.Join(colNames, ", ")
 
@@ -306,6 +391,93 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 	}
 	defer f.Close()
 
+	var batch []driver.RowChange
+	var totalImported int64
+	const batchSize = 250
+
+	flushBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		affected, err := drv.ApplyChanges(context.Background(), req.Database, req.Schema, req.Table, batch)
+		if err != nil {
+			return fmt.Errorf("failed to apply batch of %d rows: %w", len(batch), err)
+		}
+		totalImported += affected
+		batch = batch[:0]
+		return nil
+	}
+
+	isJSON := strings.EqualFold(req.Format, "json") || strings.HasSuffix(strings.ToLower(req.FilePath), ".json")
+	if isJSON {
+		decoder := json.NewDecoder(f)
+		tok, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON file: %w", err)
+		}
+
+		handleObject := func(item map[string]any) error {
+			changes := make(map[string]any, len(req.Mappings))
+			for _, m := range req.Mappings {
+				if m.TableColumn == "" {
+					continue
+				}
+				if val, ok := item[m.FileColumn]; ok {
+					changes[m.TableColumn] = val
+				}
+			}
+			if len(changes) > 0 {
+				batch = append(batch, driver.RowChange{
+					Type:    "insert",
+					Changes: changes,
+				})
+				if len(batch) >= batchSize {
+					if err := flushBatch(); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
+
+		if delim, ok := tok.(json.Delim); ok && delim == '[' {
+			for decoder.More() {
+				var item map[string]any
+				if err := decoder.Decode(&item); err != nil {
+					return nil, fmt.Errorf("error decoding JSON record: %w", err)
+				}
+				if err := handleObject(item); err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			byteData, _ := io.ReadAll(f)
+			var wrapper map[string]any
+			if err := json.Unmarshal(byteData, &wrapper); err == nil {
+				for _, val := range wrapper {
+					if arr, ok := val.([]any); ok {
+						for _, item := range arr {
+							if m, ok := item.(map[string]any); ok {
+								if err := handleObject(m); err != nil {
+									return nil, err
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if err := flushBatch(); err != nil {
+			return nil, err
+		}
+
+		return &ImportResult{
+			RowsImported: totalImported,
+			ElapsedMs:    time.Since(start).Milliseconds(),
+		}, nil
+	}
+
 	delimRune := ','
 	if req.Delimiter == ";" {
 		delimRune = ';'
@@ -328,23 +500,6 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 		for i, h := range header {
 			headerMap[strings.TrimSpace(h)] = i
 		}
-	}
-
-	var batch []driver.RowChange
-	var totalImported int64
-	const batchSize = 250
-
-	flushBatch := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		affected, err := drv.ApplyChanges(context.Background(), req.Database, req.Schema, req.Table, batch)
-		if err != nil {
-			return fmt.Errorf("failed to apply batch of %d rows: %w", len(batch), err)
-		}
-		totalImported += affected
-		batch = batch[:0]
-		return nil
 	}
 
 	rowIndex := 0
