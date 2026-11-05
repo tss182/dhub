@@ -55,3 +55,4 @@ All notable changes to DHub will be documented in this file.
 - Added unit tests for `LocalStore` (connections CRUD, query history recording and bounds, schema cache).
 - 100% Go test suite pass rate (`go test ./...`).
 - Zero TypeScript build errors (`npm run build`).
+
