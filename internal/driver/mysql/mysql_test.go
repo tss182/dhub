@@ -97,3 +97,4 @@ func TestGenerateDMLPreview(t *testing.T) {
 		t.Errorf("expected delete statement %q, got %q", expectedDelete, stmts[2])
 	}
 }
+

@@ -512,3 +512,4 @@ export const ERDiagramView: React.FC<ERDiagramViewProps> = ({
     </div>
   );
 };
+

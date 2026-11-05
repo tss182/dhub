@@ -8,6 +8,12 @@ import (
 )
 
 func GetConfigDir() (string, error) {
+	if env := os.Getenv("DHUB_CONFIG_DIR"); env != "" {
+		if err := os.MkdirAll(env, 0755); err != nil {
+			return "", err
+		}
+		return env, nil
+	}
 	dir := filepath.Join(xdg.ConfigHome, "dhub")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err

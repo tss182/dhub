@@ -23,7 +23,10 @@ func NewLocalStore() (*LocalStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewLocalStoreWithPath(dbPath)
+}
 
+func NewLocalStoreWithPath(dbPath string) (*LocalStore, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite store: %w", err)
