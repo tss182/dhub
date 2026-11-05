@@ -32,6 +32,28 @@ func NewQueryService(s *store.LocalStore, sm *manager.SessionManager, appGetter 
 }
 
 func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResult, error) {
+	cfg, cfgErr := q.store.GetConnection(context.Background(), req.ConnectionID)
+	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
+		statements := driver.SplitStatements(req.SQL)
+		for _, stmt := range statements {
+			if !driver.IsQueryReturningRows(stmt) {
+				errMsg := fmt.Sprintf("execution blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(stmt, 60))
+				q.emitStatus(req.ExecutionID, "error", errMsg)
+				_ = q.store.RecordQueryHistory(store.QueryHistoryEntry{
+					ConnectionID: req.ConnectionID,
+					DatabaseName: req.Database,
+					SchemaName:   req.Schema,
+					SQLText:      req.SQL,
+					DurationMs:   0,
+					RowsAffected: 0,
+					Status:       "error",
+					ErrorMessage: errMsg,
+				})
+				return nil, fmt.Errorf("%s", errMsg)
+			}
+		}
+	}
+
 	drv, err := q.sessions.GetOrConnect(context.Background(), req.ConnectionID)
 	if err != nil {
 		return nil, err
@@ -94,22 +116,27 @@ func (q *QueryService) CancelQuery(executionID string) bool {
 	return false
 }
 
-func (q *QueryService) PreviewChanges(connectionID, schema, table string, changes []driver.RowChange) ([]string, error) {
+func (q *QueryService) PreviewChanges(connectionID, database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	drv, err := q.sessions.GetOrConnect(context.Background(), connectionID)
 	if err != nil {
 		return nil, err
 	}
-	return drv.GenerateDMLPreview(schema, table, changes)
+	return drv.GenerateDMLPreview(database, schema, table, changes)
 }
 
-func (q *QueryService) SubmitChanges(connectionID, schema, table string, changes []driver.RowChange) (int64, error) {
+func (q *QueryService) SubmitChanges(connectionID, database, schema, table string, changes []driver.RowChange) (int64, error) {
+	cfg, cfgErr := q.store.GetConnection(context.Background(), connectionID)
+	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
+		return 0, fmt.Errorf("submission blocked: connection %q is configured as read-only", cfg.Name)
+	}
+
 	drv, err := q.sessions.GetOrConnect(context.Background(), connectionID)
 	if err != nil {
 		return 0, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return drv.ApplyChanges(ctx, schema, table, changes)
+	return drv.ApplyChanges(ctx, database, schema, table, changes)
 }
 
 func (q *QueryService) emitStatus(execID, state, message string) {

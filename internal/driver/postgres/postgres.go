@@ -4,19 +4,29 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"dhub/internal/driver"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+// PostgresDriver keeps one connection pool per database. PostgreSQL cannot
+// switch databases within a single connection, so every database the user
+// browses or queries gets its own lazily-created pool derived from the same
+// connection string (and therefore the same SSH tunnel / credentials).
 type PostgresDriver struct {
-	db     *sql.DB
-	connStr string
+	db        *sql.DB // pool for the default database
+	connStr   string
+	defaultDB string
+
+	mu    sync.Mutex
+	pools map[string]*sql.DB // extra pools keyed by database name
 }
 
-func NewPostgresDriver(connStr string) (*PostgresDriver, error) {
+func openPool(connStr string) (*sql.DB, error) {
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
 		return nil, err
@@ -24,7 +34,54 @@ func NewPostgresDriver(connStr string) (*PostgresDriver, error) {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(time.Hour)
-	return &PostgresDriver{db: db, connStr: connStr}, nil
+	return db, nil
+}
+
+func NewPostgresDriver(connStr string) (*PostgresDriver, error) {
+	db, err := openPool(connStr)
+	if err != nil {
+		return nil, err
+	}
+	defaultDB := ""
+	if u, perr := url.Parse(connStr); perr == nil {
+		defaultDB = strings.TrimPrefix(u.Path, "/")
+	}
+	return &PostgresDriver{
+		db:        db,
+		connStr:   connStr,
+		defaultDB: defaultDB,
+		pools:     make(map[string]*sql.DB),
+	}, nil
+}
+
+// dbFor returns the pool for the requested database, creating it on first use.
+// Empty names, "main" (UI placeholder) and the default database use the default pool.
+func (p *PostgresDriver) dbFor(database string) (*sql.DB, error) {
+	database = strings.TrimSpace(database)
+	if database == "" || database == "main" || database == p.defaultDB {
+		return p.db, nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if pool, ok := p.pools[database]; ok {
+		return pool, nil
+	}
+
+	u, err := url.Parse(p.connStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid connection string: %w", err)
+	}
+	u.Path = "/" + database
+	u.RawPath = ""
+
+	pool, err := openPool(u.String())
+	if err != nil {
+		return nil, err
+	}
+	p.pools[database] = pool
+	return pool, nil
 }
 
 func (p *PostgresDriver) Ping(ctx context.Context) error {
@@ -32,10 +89,28 @@ func (p *PostgresDriver) Ping(ctx context.Context) error {
 }
 
 func (p *PostgresDriver) Close() error {
+	p.mu.Lock()
+	for name, pool := range p.pools {
+		_ = pool.Close()
+		delete(p.pools, name)
+	}
+	p.mu.Unlock()
+
 	if p.db != nil {
 		return p.db.Close()
 	}
 	return nil
+}
+
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+func qualifiedName(schema, table string) string {
+	if schema == "" {
+		return quoteIdent(table)
+	}
+	return quoteIdent(schema) + "." + quoteIdent(table)
 }
 
 func (p *PostgresDriver) ListDatabases(ctx context.Context) ([]string, error) {
@@ -57,10 +132,14 @@ func (p *PostgresDriver) ListDatabases(ctx context.Context) ([]string, error) {
 }
 
 func (p *PostgresDriver) ListSchemas(ctx context.Context, database string) ([]string, error) {
+	db, err := p.dbFor(database)
+	if err != nil {
+		return nil, err
+	}
 	query := `SELECT schema_name FROM information_schema.schemata
 		WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
 		ORDER BY schema_name;`
-	rows, err := p.db.QueryContext(ctx, query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +156,10 @@ func (p *PostgresDriver) ListSchemas(ctx context.Context, database string) ([]st
 }
 
 func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema string) ([]driver.ObjectSummary, error) {
+	db, err := p.dbFor(database)
+	if err != nil {
+		return nil, err
+	}
 	query := `
 		SELECT
 			table_name,
@@ -89,7 +172,7 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 		WHERE table_schema = $1
 		ORDER BY table_name;`
 
-	rows, err := p.db.QueryContext(ctx, query, schema)
+	rows, err := db.QueryContext(ctx, query, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +194,11 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 }
 
 func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema, table string) (*driver.TableStructure, error) {
+	db, err := p.dbFor(database)
+	if err != nil {
+		return nil, err
+	}
+
 	structure := &driver.TableStructure{
 		Schema:      schema,
 		Name:        table,
@@ -120,15 +208,16 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		Indexes:     []driver.IndexMeta{},
 	}
 
-	// 1. Get Primary Keys
+	// 1. Get Primary Keys (ordered by position in the key)
 	pkQuery := `
 		SELECT kcu.column_name
 		FROM information_schema.table_constraints tc
 		JOIN information_schema.key_column_usage kcu
 			ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
 		WHERE tc.constraint_type = 'PRIMARY KEY'
-			AND tc.table_schema = $1 AND tc.table_name = $2;`
-	pkRows, err := p.db.QueryContext(ctx, pkQuery, schema, table)
+			AND tc.table_schema = $1 AND tc.table_name = $2
+		ORDER BY kcu.ordinal_position;`
+	pkRows, err := db.QueryContext(ctx, pkQuery, schema, table)
 	if err == nil {
 		defer pkRows.Close()
 		for pkRows.Next() {
@@ -146,66 +235,139 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 
 	// 2. Get Columns
 	colQuery := `
-		SELECT column_name, data_type, is_nullable, column_default
+		SELECT column_name, data_type, is_nullable, column_default, is_identity
 		FROM information_schema.columns
 		WHERE table_schema = $1 AND table_name = $2
 		ORDER BY ordinal_position;`
-	rows, err := p.db.QueryContext(ctx, colQuery, schema, table)
+	rows, err := db.QueryContext(ctx, colQuery, schema, table)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	colIndex := make(map[string]int)
 	for rows.Next() {
 		var name, dataType, isNullable string
-		var dflt *string
-		if err := rows.Scan(&name, &dataType, &isNullable, &dflt); err == nil {
+		var dflt, isIdentity *string
+		if err := rows.Scan(&name, &dataType, &isNullable, &dflt, &isIdentity); err == nil {
 			defVal := ""
 			if dflt != nil {
 				defVal = *dflt
 			}
+			isAuto := strings.HasPrefix(strings.ToLower(defVal), "nextval(") ||
+				(isIdentity != nil && strings.EqualFold(*isIdentity, "YES"))
+			colIndex[name] = len(structure.Columns)
 			structure.Columns = append(structure.Columns, driver.ColumnMeta{
 				Name:         name,
 				DataType:     dataType,
 				RawType:      dataType,
 				IsNullable:   isNullable == "YES",
 				IsPrimaryKey: pkSet[name],
+				IsAutoIncr:   isAuto,
 				DefaultValue: defVal,
 			})
 		}
 	}
 
-	// 3. Get Foreign Keys
+	// 2b. Column & table comments (best effort)
+	cmtQuery := `
+		SELECT a.attnum, COALESCE(a.attname, ''), d.description
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+		JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = COALESCE(a.attnum, 0)
+		WHERE n.nspname = $1 AND c.relname = $2;`
+	if cRows, cErr := db.QueryContext(ctx, cmtQuery, schema, table); cErr == nil {
+		defer cRows.Close()
+		for cRows.Next() {
+			var attnum int
+			var attname string
+			var desc *string
+			if err := cRows.Scan(&attnum, &attname, &desc); err != nil || desc == nil {
+				continue
+			}
+			if attnum == 0 {
+				structure.Comment = *desc
+			} else if idx, ok := colIndex[attname]; ok {
+				structure.Columns[idx].Comment = *desc
+			}
+		}
+	}
+
+	// 3. Get Foreign Keys (with ON UPDATE / ON DELETE rules)
 	fkQuery := `
 		SELECT
 			tc.constraint_name, kcu.column_name,
 			ccu.table_schema AS foreign_table_schema,
 			ccu.table_name AS foreign_table_name,
-			ccu.column_name AS foreign_column_name
+			ccu.column_name AS foreign_column_name,
+			rc.update_rule, rc.delete_rule
 		FROM information_schema.table_constraints AS tc
 		JOIN information_schema.key_column_usage AS kcu
 			ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
 		JOIN information_schema.constraint_column_usage AS ccu
 			ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
+		JOIN information_schema.referential_constraints AS rc
+			ON rc.constraint_name = tc.constraint_name AND rc.constraint_schema = tc.table_schema
 		WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1 AND tc.table_name = $2;`
-	fkRows, err := p.db.QueryContext(ctx, fkQuery, schema, table)
+	fkRows, err := db.QueryContext(ctx, fkQuery, schema, table)
 	if err == nil {
 		defer fkRows.Close()
 		for fkRows.Next() {
-			var cName, col, fSchema, fTable, fCol string
-			if err := fkRows.Scan(&cName, &col, &fSchema, &fTable, &fCol); err == nil {
+			var cName, col, fSchema, fTable, fCol, onUpdate, onDelete string
+			if err := fkRows.Scan(&cName, &col, &fSchema, &fTable, &fCol, &onUpdate, &onDelete); err == nil {
 				structure.ForeignKeys = append(structure.ForeignKeys, driver.ForeignKeyMeta{
 					ConstraintName: cName,
 					ColumnName:     col,
 					RefSchema:      fSchema,
 					RefTable:       fTable,
 					RefColumn:      fCol,
+					OnUpdate:       onUpdate,
+					OnDelete:       onDelete,
 				})
 			}
 		}
 	}
 
-	// 4. Generate DDL
+	// 4. Get Indexes (composite indexes grouped by name, columns in key order)
+	idxQuery := `
+		SELECT i.relname, ix.indisunique, ix.indisprimary, am.amname, a.attname
+		FROM pg_class t
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		JOIN pg_index ix ON ix.indrelid = t.oid
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		JOIN pg_am am ON am.oid = i.relam
+		JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE n.nspname = $1 AND t.relname = $2
+		ORDER BY i.relname, k.ord;`
+	if idxRows, idxErr := db.QueryContext(ctx, idxQuery, schema, table); idxErr == nil {
+		defer idxRows.Close()
+		idxPos := make(map[string]int)
+		for idxRows.Next() {
+			var idxName, method, colName string
+			var isUnique, isPrimary bool
+			if err := idxRows.Scan(&idxName, &isUnique, &isPrimary, &method, &colName); err != nil {
+				continue
+			}
+			pos, exists := idxPos[idxName]
+			if !exists {
+				pos = len(structure.Indexes)
+				idxPos[idxName] = pos
+				structure.Indexes = append(structure.Indexes, driver.IndexMeta{
+					Name:      idxName,
+					Columns:   []string{},
+					IsUnique:  isUnique,
+					IsPrimary: isPrimary,
+					Type:      method,
+					Method:    method,
+				})
+			}
+			structure.Indexes[pos].Columns = append(structure.Indexes[pos].Columns, colName)
+		}
+	}
+
+	// 5. Generate DDL
 	structure.DDL = generatePostgresDDL(schema, table, structure)
 
 	return structure, nil
@@ -213,15 +375,15 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 
 func generatePostgresDDL(schema, table string, s *driver.TableStructure) string {
 	var sb strings.Builder
-	prefix := fmt.Sprintf(`"%s"."%s"`, schema, table)
+	prefix := qualifiedName(schema, table)
 	if schema == "" || schema == "public" {
-		prefix = fmt.Sprintf(`"%s"`, table)
+		prefix = quoteIdent(table)
 	}
 	sb.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", prefix))
 
 	var defs []string
 	for _, c := range s.Columns {
-		def := fmt.Sprintf("  \"%s\" %s", c.Name, c.DataType)
+		def := fmt.Sprintf("  %s %s", quoteIdent(c.Name), c.DataType)
 		if !c.IsNullable {
 			def += " NOT NULL"
 		}
@@ -234,9 +396,9 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 	if len(s.PrimaryKeys) > 0 {
 		var pkCols []string
 		for _, pk := range s.PrimaryKeys {
-			pkCols = append(pkCols, fmt.Sprintf(`"%s"`, pk))
+			pkCols = append(pkCols, quoteIdent(pk))
 		}
-		defs = append(defs, fmt.Sprintf("  CONSTRAINT \"%s_pkey\" PRIMARY KEY (%s)", table, strings.Join(pkCols, ", ")))
+		defs = append(defs, fmt.Sprintf("  CONSTRAINT %s PRIMARY KEY (%s)", quoteIdent(table+"_pkey"), strings.Join(pkCols, ", ")))
 	}
 
 	for _, fk := range s.ForeignKeys {
@@ -244,35 +406,64 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 		if cName == "" {
 			cName = fmt.Sprintf("%s_%s_fkey", table, fk.ColumnName)
 		}
-		defs = append(defs, fmt.Sprintf("  CONSTRAINT \"%s\" FOREIGN KEY (\"%s\") REFERENCES \"%s\".\"%s\" (\"%s\")",
-			cName, fk.ColumnName, fk.RefSchema, fk.RefTable, fk.RefColumn))
+		def := fmt.Sprintf("  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+			quoteIdent(cName), quoteIdent(fk.ColumnName), qualifiedName(fk.RefSchema, fk.RefTable), quoteIdent(fk.RefColumn))
+		if fk.OnUpdate != "" && !strings.EqualFold(fk.OnUpdate, "NO ACTION") {
+			def += " ON UPDATE " + fk.OnUpdate
+		}
+		if fk.OnDelete != "" && !strings.EqualFold(fk.OnDelete, "NO ACTION") {
+			def += " ON DELETE " + fk.OnDelete
+		}
+		defs = append(defs, def)
 	}
 
 	sb.WriteString(strings.Join(defs, ",\n"))
 	sb.WriteString("\n);")
+
+	for _, idx := range s.Indexes {
+		if idx.IsPrimary {
+			continue
+		}
+		var cols []string
+		for _, c := range idx.Columns {
+			cols = append(cols, quoteIdent(c))
+		}
+		unique := ""
+		if idx.IsUnique {
+			unique = "UNIQUE "
+		}
+		method := ""
+		if idx.Method != "" && !strings.EqualFold(idx.Method, "btree") {
+			method = " USING " + idx.Method
+		}
+		sb.WriteString(fmt.Sprintf("\n\nCREATE %sINDEX %s ON %s%s (%s);", unique, quoteIdent(idx.Name), prefix, method, strings.Join(cols, ", ")))
+	}
+
 	return sb.String()
 }
 
 func (p *PostgresDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	conn, err := p.db.Conn(ctx)
+	db, err := p.dbFor(req.Database)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
 	if req.Schema != "" && req.Schema != "main" {
-		_, _ = conn.ExecContext(ctx, fmt.Sprintf(`SET search_path TO "%s", public`, req.Schema))
+		_, _ = conn.ExecContext(ctx, fmt.Sprintf(`SET search_path TO %s, public`, quoteIdent(req.Schema)))
 	}
 
 	return driver.ExecuteStatements(ctx, conn, req)
 }
 
-func (p *PostgresDriver) GenerateDMLPreview(schema, table string, changes []driver.RowChange) ([]string, error) {
+func (p *PostgresDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
-	prefix := fmt.Sprintf(`"%s"."%s"`, schema, table)
-	if schema == "" {
-		prefix = fmt.Sprintf(`"%s"`, table)
-	}
+	prefix := qualifiedName(schema, table)
 
 	for _, c := range changes {
 		switch c.Type {
@@ -280,7 +471,7 @@ func (p *PostgresDriver) GenerateDMLPreview(schema, table string, changes []driv
 			cols := []string{}
 			vals := []string{}
 			for k, v := range c.Changes {
-				cols = append(cols, fmt.Sprintf(`"%s"`, k))
+				cols = append(cols, quoteIdent(k))
 				vals = append(vals, formatSQLVal(v))
 			}
 			stmt := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s);`, prefix, strings.Join(cols, ", "), strings.Join(vals, ", "))
@@ -291,17 +482,17 @@ func (p *PostgresDriver) GenerateDMLPreview(schema, table string, changes []driv
 		case "update":
 			sets := []string{}
 			for k, v := range c.Changes {
-				sets = append(sets, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(v)))
+				sets = append(sets, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(v)))
 			}
 			where := []string{}
 			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(v)))
+				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(v)))
 			}
 			statements = append(statements, fmt.Sprintf(`UPDATE %s SET %s WHERE %s;`, prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
 			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(v)))
+				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(v)))
 			}
 			statements = append(statements, fmt.Sprintf(`DELETE FROM %s WHERE %s;`, prefix, strings.Join(where, " AND ")))
 		}
@@ -309,17 +500,18 @@ func (p *PostgresDriver) GenerateDMLPreview(schema, table string, changes []driv
 	return statements, nil
 }
 
-func (p *PostgresDriver) ApplyChanges(ctx context.Context, schema, table string, changes []driver.RowChange) (int64, error) {
-	tx, err := p.db.BeginTx(ctx, nil)
+func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
+	db, err := p.dbFor(database)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 
-	prefix := fmt.Sprintf(`"%s"."%s"`, schema, table)
-	if schema == "" {
-		prefix = fmt.Sprintf(`"%s"`, table)
-	}
+	prefix := qualifiedName(schema, table)
 
 	var totalAffected int64
 	for _, c := range changes {
@@ -330,7 +522,7 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, schema, table string,
 			vals := []any{}
 			idx := 1
 			for k, v := range c.Changes {
-				cols = append(cols, fmt.Sprintf(`"%s"`, k))
+				cols = append(cols, quoteIdent(k))
 				placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
 				vals = append(vals, v)
 				idx++
@@ -350,13 +542,13 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, schema, table string,
 			vals := []any{}
 			idx := 1
 			for k, v := range c.Changes {
-				sets = append(sets, fmt.Sprintf(`"%s" = $%d`, k, idx))
+				sets = append(sets, fmt.Sprintf(`%s = $%d`, quoteIdent(k), idx))
 				vals = append(vals, v)
 				idx++
 			}
 			where := []string{}
 			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`"%s" = $%d`, k, idx))
+				where = append(where, fmt.Sprintf(`%s = $%d`, quoteIdent(k), idx))
 				vals = append(vals, v)
 				idx++
 			}
@@ -372,7 +564,7 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, schema, table string,
 			vals := []any{}
 			idx := 1
 			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`"%s" = $%d`, k, idx))
+				where = append(where, fmt.Sprintf(`%s = $%d`, quoteIdent(k), idx))
 				vals = append(vals, v)
 				idx++
 			}
@@ -403,4 +595,3 @@ func formatSQLVal(v any) string {
 		return fmt.Sprintf("%v", val)
 	}
 }
-

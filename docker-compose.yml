@@ -1,0 +1,36 @@
+# Local databases for development and integration testing.
+#   docker compose up -d
+#   PostgreSQL: postgres://dhub:dhub@localhost:55432/dhub   (also database "dhub_extra")
+#   MySQL:      dhub:dhub@tcp(localhost:53306)/dhub
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: dhub
+      POSTGRES_PASSWORD: dhub
+      POSTGRES_DB: dhub
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./scripts/dev-db/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dhub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: dhub
+      MYSQL_PASSWORD: dhub
+      MYSQL_DATABASE: dhub
+    ports:
+      - "53306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+

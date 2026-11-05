@@ -270,6 +270,7 @@ interface DataGridProps {
   tabId: string;
   tableName?: string;
   driver?: string;
+  isReadOnly?: boolean;
   columns: ColumnMeta[];
   rows: any[][];
   primaryKeys?: string[];
@@ -298,6 +299,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   tabId,
   tableName,
   driver,
+  isReadOnly = false,
   columns,
   rows,
   primaryKeys = [],
@@ -731,6 +733,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [stagedChanges]);
 
   const handleStartEdit = (rowIndex: number, colIndex: number, currentVal: any) => {
+    if (isReadOnly) return;
     const col = columns[colIndex];
     const inputType = getColumnInputType(col?.dataType);
     setEditingCell({ rowIndex, colIndex });
@@ -738,6 +741,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const handleAddRow = () => {
+    if (isReadOnly) return;
     const newRowId = -Date.now();
     stageRowInsert(tabId, newRowId);
     const newRowVIdx = displayedRows.length + insertedChanges.length;
@@ -1729,6 +1733,7 @@ ${setClauses};`;
   };
 
   const handleDuplicateRow = () => {
+    if (isReadOnly) return;
     if (editingCell) {
       handleFinishEdit();
     }
@@ -1809,6 +1814,7 @@ ${setClauses};`;
   };
 
   const handleDeleteActiveRow = () => {
+    if (isReadOnly) return;
     const rowKeysToDelete =
       selectedRowKeys.size > 0
         ? Array.from(selectedRowKeys)
@@ -2117,31 +2123,45 @@ ${setClauses};`;
       {/* Table Toolbar */}
       <div className={`flex h-10 items-center justify-between border-b px-3 ${gridBarBg}`}>
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={handleAddRow}
-            className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-            title={`Add New Row (${modKey}+I)`}
-          >
-            <Plus className="h-4 w-4 text-emerald-400" />
-          </button>
+          {isReadOnly && (
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 font-bold font-mono text-[10px] tracking-wider uppercase mr-1 select-none shadow-xs"
+              title="This connection is configured as READ-ONLY. Modifying data or schema is disabled."
+            >
+              <Ban className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <span>READ-ONLY</span>
+            </div>
+          )}
 
-          <button
-            onClick={handleDuplicateRow}
-            className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-            title={`Duplicate Selected Row (${modKey}+D)`}
-          >
-            <Copy className="h-3.5 w-3.5 text-sky-400" />
-          </button>
+          {!isReadOnly && (
+            <>
+              <button
+                onClick={handleAddRow}
+                className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
+                title={`Add New Row (${modKey}+I)`}
+              >
+                <Plus className="h-4 w-4 text-emerald-400" />
+              </button>
 
-          <button
-            onClick={handleDeleteActiveRow}
-            className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-            title={`Delete Active Row (${isMac ? 'Cmd+Backspace' : 'Delete'})`}
-          >
-            <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-          </button>
+              <button
+                onClick={handleDuplicateRow}
+                className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
+                title={`Duplicate Selected Row (${modKey}+D)`}
+              >
+                <Copy className="h-3.5 w-3.5 text-sky-400" />
+              </button>
 
-          <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
+              <button
+                onClick={handleDeleteActiveRow}
+                className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
+                title={`Delete Active Row (${isMac ? 'Cmd+Backspace' : 'Delete'})`}
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+              </button>
+
+              <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
+            </>
+          )}
 
           <CopyFormatSelector />
 

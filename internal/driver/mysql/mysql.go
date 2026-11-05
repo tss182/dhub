@@ -28,6 +28,11 @@ func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
 	return &MySQLDriver{db: db, dsn: dsn}, nil
 }
 
+// quoteIdent quotes a MySQL identifier, escaping embedded backticks.
+func quoteIdent(s string) string {
+	return "`" + strings.ReplaceAll(s, "`", "``") + "`"
+}
+
 func (m *MySQLDriver) Ping(ctx context.Context) error {
 	return m.db.PingContext(ctx)
 }
@@ -211,10 +216,40 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
+	// 3b. Fetch Foreign Keys (with ON UPDATE / ON DELETE rules)
+	fkQuery := `SELECT kcu.constraint_name, kcu.column_name,
+			COALESCE(kcu.referenced_table_schema, ''), kcu.referenced_table_name, kcu.referenced_column_name,
+			rc.update_rule, rc.delete_rule
+		FROM information_schema.key_column_usage kcu
+		JOIN information_schema.referential_constraints rc
+			ON rc.constraint_schema = kcu.constraint_schema
+			AND rc.constraint_name = kcu.constraint_name
+			AND rc.table_name = kcu.table_name
+		WHERE kcu.table_schema = ? AND kcu.table_name = ?
+			AND kcu.referenced_table_name IS NOT NULL
+		ORDER BY kcu.constraint_name, kcu.ordinal_position`
+	if fkRows, fkErr := m.db.QueryContext(ctx, fkQuery, database, table); fkErr == nil {
+		defer fkRows.Close()
+		for fkRows.Next() {
+			var cName, col, refSchema, refTable, refCol, onUpdate, onDelete string
+			if err := fkRows.Scan(&cName, &col, &refSchema, &refTable, &refCol, &onUpdate, &onDelete); err == nil {
+				structure.ForeignKeys = append(structure.ForeignKeys, driver.ForeignKeyMeta{
+					ConstraintName: cName,
+					ColumnName:     col,
+					RefSchema:      refSchema,
+					RefTable:       refTable,
+					RefColumn:      refCol,
+					OnUpdate:       onUpdate,
+					OnDelete:       onDelete,
+				})
+			}
+		}
+	}
+
 	// 4. Fetch DDL
-	showQuery := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", database, table)
+	showQuery := fmt.Sprintf("SHOW CREATE TABLE %s.%s", quoteIdent(database), quoteIdent(table))
 	if database == "" {
-		showQuery = fmt.Sprintf("SHOW CREATE TABLE `%s`", table)
+		showQuery = fmt.Sprintf("SHOW CREATE TABLE %s", quoteIdent(table))
 	}
 	var tblName, ddlStr string
 	if err := m.db.QueryRowContext(ctx, showQuery).Scan(&tblName, &ddlStr); err == nil {
@@ -232,7 +267,7 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	defer conn.Close()
 
 	if req.Database != "" && req.Database != "main" {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE `%s`", req.Database)); err != nil {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(req.Database))); err != nil {
 			return nil, fmt.Errorf("error switching to database '%s': %w", req.Database, err)
 		}
 	}
@@ -240,10 +275,14 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	return driver.ExecuteStatements(ctx, conn, req)
 }
 
-func (m *MySQLDriver) GenerateDMLPreview(schema, table string, changes []driver.RowChange) ([]string, error) {
+func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
-	prefix := fmt.Sprintf("`%s`.`%s`", schema, table)
-	if schema == "" {
+	effectiveSchema := schema
+	if effectiveSchema == "" && database != "" && database != "main" {
+		effectiveSchema = database
+	}
+	prefix := fmt.Sprintf("`%s`.`%s`", effectiveSchema, table)
+	if effectiveSchema == "" {
 		prefix = fmt.Sprintf("`%s`", table)
 	}
 
@@ -302,15 +341,19 @@ func normalizeMySQLValue(v any) any {
 	return v
 }
 
-func (m *MySQLDriver) ApplyChanges(ctx context.Context, schema, table string, changes []driver.RowChange) (int64, error) {
+func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 
-	prefix := fmt.Sprintf("`%s`.`%s`", schema, table)
-	if schema == "" {
+	effectiveSchema := schema
+	if effectiveSchema == "" && database != "" && database != "main" {
+		effectiveSchema = database
+	}
+	prefix := fmt.Sprintf("`%s`.`%s`", effectiveSchema, table)
+	if effectiveSchema == "" {
 		prefix = fmt.Sprintf("`%s`", table)
 	}
 
