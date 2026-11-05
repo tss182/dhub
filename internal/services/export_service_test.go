@@ -151,7 +151,7 @@ func TestExportService_ExportAndImport(t *testing.T) {
 		t.Fatalf("failed to read exported sql: %v", err)
 	}
 	sqlStr := string(sqlData)
-	if !strings.Contains(sqlStr, "INSERT INTO items") || !strings.Contains(sqlStr, "Widget") {
+	if (!strings.Contains(sqlStr, "INSERT INTO items") && !strings.Contains(sqlStr, `INSERT INTO "items"`)) || !strings.Contains(sqlStr, "Widget") {
 		t.Errorf("exported sql missing expected contents: %s", sqlStr)
 	}
 

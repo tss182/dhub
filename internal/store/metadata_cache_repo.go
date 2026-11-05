@@ -32,10 +32,22 @@ func (s *LocalStore) SaveSchemaCache(ctx context.Context, item CachedObject) err
 		columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	ON CONFLICT(connection_id, database_name, schema_name, object_type, object_name) DO UPDATE SET
-		columns_json = excluded.columns_json,
-		indexes_json = excluded.indexes_json,
-		foreign_keys_json = excluded.foreign_keys_json,
-		row_estimate = excluded.row_estimate,
+		columns_json = CASE
+			WHEN excluded.columns_json != 'null' AND excluded.columns_json != '[]' THEN excluded.columns_json
+			ELSE schema_cache.columns_json
+		END,
+		indexes_json = CASE
+			WHEN excluded.indexes_json != 'null' AND excluded.indexes_json != '[]' THEN excluded.indexes_json
+			ELSE schema_cache.indexes_json
+		END,
+		foreign_keys_json = CASE
+			WHEN excluded.foreign_keys_json != 'null' AND excluded.foreign_keys_json != '[]' THEN excluded.foreign_keys_json
+			ELSE schema_cache.foreign_keys_json
+		END,
+		row_estimate = CASE
+			WHEN excluded.row_estimate > 0 THEN excluded.row_estimate
+			ELSE schema_cache.row_estimate
+		END,
 		synced_at = CURRENT_TIMESTAMP`
 
 	_, err := s.db.ExecContext(ctx, query,
@@ -66,7 +78,19 @@ func (s *LocalStore) GetCachedObjects(ctx context.Context, connectionID, databas
 		_ = json.Unmarshal([]byte(colJSON), &o.Columns)
 		_ = json.Unmarshal([]byte(idxJSON), &o.Indexes)
 		_ = json.Unmarshal([]byte(fkJSON), &o.ForeignKeys)
+		if o.Columns == nil {
+			o.Columns = []driver.ColumnMeta{}
+		}
+		if o.Indexes == nil {
+			o.Indexes = []driver.IndexMeta{}
+		}
+		if o.ForeignKeys == nil {
+			o.ForeignKeys = []driver.ForeignKeyMeta{}
+		}
 		objects = append(objects, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return objects, nil
 }
@@ -105,7 +129,19 @@ func (s *LocalStore) SearchEverywhere(ctx context.Context, connectionID, querySt
 		_ = json.Unmarshal([]byte(colJSON), &o.Columns)
 		_ = json.Unmarshal([]byte(idxJSON), &o.Indexes)
 		_ = json.Unmarshal([]byte(fkJSON), &o.ForeignKeys)
+		if o.Columns == nil {
+			o.Columns = []driver.ColumnMeta{}
+		}
+		if o.Indexes == nil {
+			o.Indexes = []driver.IndexMeta{}
+		}
+		if o.ForeignKeys == nil {
+			o.ForeignKeys = []driver.ForeignKeyMeta{}
+		}
 		objects = append(objects, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return objects, nil
 }

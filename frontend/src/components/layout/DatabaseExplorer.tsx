@@ -1060,6 +1060,164 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
+  const handleRoutineClick = (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    routineName: string
+  ) => {
+    let content = `-- Routine / Function / Procedure: ${routineName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
+    if (conn.driver === 'postgres') {
+      content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
+    } else if (conn.driver === 'mysql') {
+      content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+    } else {
+      content += `-- SQLite does not support stored procedures or routines.\n`;
+    }
+
+    openTab({
+      id: `routine-${conn.id}-${db}-${schema}-${routineName}`,
+      type: 'worksheet',
+      title: `${routineName}.sql`,
+      connectionId: conn.id,
+      database: db,
+      schema: schema,
+      content,
+    });
+  };
+
+  const handleTriggerClick = (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    triggerName: string
+  ) => {
+    let content = `-- Trigger: ${triggerName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
+    if (conn.driver === 'postgres') {
+      content += `-- 1. View trigger definition:\nSELECT pg_get_triggerdef(t.oid)\nFROM pg_trigger t\nJOIN pg_class c ON c.oid = t.tgrelid\nJOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE n.nspname = '${schema}' AND t.tgname = '${triggerName}';\n`;
+    } else if (conn.driver === 'mysql') {
+      content += `-- 1. View trigger definition:\nSHOW CREATE TRIGGER \`${db}\`.\`${triggerName}\`;\n`;
+    } else {
+      content += `-- 1. View trigger definition in SQLite:\nSELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '${triggerName}';\n`;
+    }
+
+    openTab({
+      id: `trigger-${conn.id}-${db}-${schema}-${triggerName}`,
+      type: 'worksheet',
+      title: `${triggerName}.sql`,
+      connectionId: conn.id,
+      database: db,
+      schema: schema,
+      content,
+    });
+  };
+
+  const handleDeleteRoutine = async (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    routineName: string
+  ) => {
+    const ok = await confirmDialog({
+      title: 'Drop Routine',
+      message: `Are you sure you want to DROP routine/function "${routineName}"? This action cannot be undone.`,
+      confirmLabel: 'Drop Routine',
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    let sql = '';
+    if (conn.driver === 'mysql') {
+      sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`; DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
+    } else if (conn.driver === 'postgres') {
+      sql = `DROP ROUTINE IF EXISTS "${schema}"."${routineName}";`;
+    } else {
+      alertInfo('SQLite does not support routines/procedures.', 'Information');
+      return;
+    }
+
+    try {
+      const execId = 'drop-routine-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema: schema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      const schemaKey = `${conn.id}:${db}:${schema}`;
+      removeTreeObject(schemaKey, routineName);
+      SchemaService.GetObjects(conn.id, db, schema)
+        .then((objs) => {
+          if (objs) setTreeObjects(schemaKey, objs as any);
+        })
+        .catch(() => {});
+      alertSuccess(`Routine "${routineName}" has been dropped.`);
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Drop Routine');
+    }
+  };
+
+  const handleDeleteTrigger = async (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    triggerName: string
+  ) => {
+    const ok = await confirmDialog({
+      title: 'Drop Trigger',
+      message: `Are you sure you want to DROP trigger "${triggerName}"? This action cannot be undone.`,
+      confirmLabel: 'Drop Trigger',
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    let sql = '';
+    if (conn.driver === 'mysql') {
+      sql = `DROP TRIGGER IF EXISTS \`${db}\`.\`${triggerName}\`;`;
+    } else if (conn.driver === 'postgres') {
+      openTab({
+        id: `drop-trigger-${Date.now()}`,
+        type: 'worksheet',
+        title: `drop_${triggerName}.sql`,
+        connectionId: conn.id,
+        database: db,
+        schema: schema,
+        content: `-- PostgreSQL requires the table name to drop a trigger:\nDROP TRIGGER IF EXISTS "${triggerName}" ON "${schema}"."<table_name>";\n`,
+      });
+      return;
+    } else {
+      sql = `DROP TRIGGER IF EXISTS "${triggerName}";`;
+    }
+
+    try {
+      const execId = 'drop-trigger-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema: schema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      const schemaKey = `${conn.id}:${db}:${schema}`;
+      removeTreeObject(schemaKey, triggerName);
+      SchemaService.GetObjects(conn.id, db, schema)
+        .then((objs) => {
+          if (objs) setTreeObjects(schemaKey, objs as any);
+        })
+        .catch(() => {});
+      alertSuccess(`Trigger "${triggerName}" has been dropped.`);
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Drop Trigger');
+    }
+  };
+
   const handleNewConsole = (connId: string, dbName?: string, schema?: string, tableName?: string) => {
     const conn = connections.find((c) => c.id === connId);
     const targetDb = dbName || conn?.databaseName || 'main';
@@ -1733,6 +1891,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                               key={obj.name}
                                               onClick={() => {
                                                 handleItemMouseLeave();
+                                                handleRoutineClick(c, dbName, sName, obj.name);
                                               }}
                                               onContextMenu={(e) => {
                                                 handleItemMouseLeave();
@@ -1773,6 +1932,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                               key={obj.name}
                                               onClick={() => {
                                                 handleItemMouseLeave();
+                                                handleTriggerClick(c, dbName, sName, obj.name);
                                               }}
                                               onContextMenu={(e) => {
                                                 handleItemMouseLeave();
@@ -1951,6 +2111,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                       key={obj.name}
                                       onClick={() => {
                                         handleItemMouseLeave();
+                                        handleRoutineClick(c, dbName, targetSchema, obj.name);
                                       }}
                                       onContextMenu={(e) => {
                                         handleItemMouseLeave();
@@ -1991,6 +2152,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                       key={obj.name}
                                       onClick={() => {
                                         handleItemMouseLeave();
+                                        handleTriggerClick(c, dbName, targetSchema, obj.name);
                                       }}
                                       onContextMenu={(e) => {
                                         handleItemMouseLeave();
@@ -2458,7 +2620,17 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               {contextMenu.type === 'connection' && `Connection: ${contextMenu.connection?.name}`}
               {contextMenu.type === 'database' && `Database: ${contextMenu.database}`}
               {contextMenu.type === 'table' &&
-                `${contextMenu.table?.type === 'view' ? 'View' : 'Table'}: ${contextMenu.table?.name}`}
+                `${
+                  contextMenu.table?.type === 'routine'
+                    ? 'Routine'
+                    : contextMenu.table?.type === 'trigger'
+                    ? 'Trigger'
+                    : contextMenu.table?.type === 'materialized_view'
+                    ? 'Mat View'
+                    : contextMenu.table?.type === 'view'
+                    ? 'View'
+                    : 'Table'
+                }: ${contextMenu.table?.name}`}
               {contextMenu.type === 'empty' && 'Explorer Menu'}
             </span>
             {copiedText && <span className="text-[9px] text-emerald-400 lowercase font-normal">copied!</span>}
@@ -2837,182 +3009,280 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             </>
           )}
 
-          {/* Table Menu Items */}
+          {/* Table / Object Menu Items */}
           {contextMenu.type === 'table' && contextMenu.connection && contextMenu.table && (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleTableClick(
-                    contextMenu.connection!.id,
-                    contextMenu.database || 'main',
-                    contextMenu.schema || 'main',
-                    contextMenu.table!.name
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Table className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
-                <span>Edit Data (Open Table)</span>
-              </button>
+              {contextMenu.table.type === 'routine' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleRoutineClick(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <FileCode className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                    <span>Open Definition & Execute</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleEditTableStructure(
-                    contextMenu.connection!,
-                    contextMenu.database || 'main',
-                    contextMenu.schema || 'main',
-                    contextMenu.table!.name
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Edit Table Structure...</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(contextMenu.table!.name)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Copy Routine Name</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleNewConsole(
-                    contextMenu.connection!.id,
-                    contextMenu.database || 'main',
-                    contextMenu.schema || 'main',
-                    contextMenu.table!.name
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>New Query Console</span>
-              </button>
+                  <div className="my-1 border-t border-[#272932]" />
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleOpenERDiagram(
-                    contextMenu.connection!.id,
-                    contextMenu.database!,
-                    contextMenu.schema || contextMenu.database!
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                <span>Open ER Diagram...</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteRoutine(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Drop Routine...</span>
+                  </button>
+                </>
+              ) : contextMenu.table.type === 'trigger' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleTriggerClick(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Zap className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Open Trigger Definition</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleRefreshTable(
-                    contextMenu.connection!.id,
-                    contextMenu.database || 'main',
-                    contextMenu.schema || 'main',
-                    contextMenu.table!.name
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Refresh Table</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(contextMenu.table!.name)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Copy Trigger Name</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => handleCopyText(contextMenu.table!.name)}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Copy Table Name</span>
-              </button>
+                  <div className="my-1 border-t border-[#272932]" />
 
-              <button
-                type="button"
-                onClick={() => {
-                  handleCopyTableSchema(
-                    contextMenu.connection!,
-                    contextMenu.database || 'main',
-                    contextMenu.schema || 'main',
-                    contextMenu.table!.name
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Copy Table Schema (DDL)</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteTrigger(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Drop Trigger...</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleTableClick(
+                        contextMenu.connection!.id,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Table className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                    <span>Edit Data (Open Table)</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  const conn = contextMenu.connection!;
-                  const db = contextMenu.database || 'main';
-                  const sch = contextMenu.schema || 'main';
-                  const tbl = contextMenu.table!.name;
-                  closeContextMenu();
-                  setExportModal({
-                    isOpen: true,
-                    connId: conn.id,
-                    db,
-                    schema: sch,
-                    table: tbl,
-                  });
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Download className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Export Data...</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleEditTableStructure(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Edit Table Structure...</span>
+                  </button>
 
-              {contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const conn = contextMenu.connection!;
-                    const db = contextMenu.database || 'main';
-                    const sch = contextMenu.schema || 'main';
-                    const tbl = contextMenu.table!.name;
-                    closeContextMenu();
-                    setImportModal({
-                      isOpen: true,
-                      connId: conn.id,
-                      db,
-                      schema: sch,
-                      table: tbl,
-                    });
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                >
-                  <Upload className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                  <span>Import Data (CSV)...</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleNewConsole(
+                        contextMenu.connection!.id,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>New Query Console</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleOpenERDiagram(
+                        contextMenu.connection!.id,
+                        contextMenu.database!,
+                        contextMenu.schema || contextMenu.database!
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                    <span>Open ER Diagram...</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleRefreshTable(
+                        contextMenu.connection!.id,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Refresh Table</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(contextMenu.table!.name)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Copy Table Name</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleCopyTableSchema(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Copy Table Schema (DDL)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const conn = contextMenu.connection!;
+                      const db = contextMenu.database || 'main';
+                      const sch = contextMenu.schema || 'main';
+                      const tbl = contextMenu.table!.name;
+                      closeContextMenu();
+                      setExportModal({
+                        isOpen: true,
+                        connId: conn.id,
+                        db,
+                        schema: sch,
+                        table: tbl,
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Download className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Export Data...</span>
+                  </button>
+
+                  {contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const conn = contextMenu.connection!;
+                        const db = contextMenu.database || 'main';
+                        const sch = contextMenu.schema || 'main';
+                        const tbl = contextMenu.table!.name;
+                        closeContextMenu();
+                        setImportModal({
+                          isOpen: true,
+                          connId: conn.id,
+                          db,
+                          schema: sch,
+                          table: tbl,
+                        });
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Upload className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                      <span>Import Data (CSV)...</span>
+                    </button>
+                  )}
+
+                  <div className="my-1 border-t border-[#272932]" />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteTable(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Drop {contextMenu.table!.type === 'view' ? 'View' : 'Table'}...</span>
+                  </button>
+                </>
               )}
-
-              <div className="my-1 border-t border-[#272932]" />
-
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleDeleteTable(
-                    contextMenu.connection!,
-                    contextMenu.database || 'main',
-                    contextMenu.schema || 'main',
-                    contextMenu.table!
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
-              >
-                <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                <span>Drop {contextMenu.table!.type === 'view' ? 'View' : 'Table'}...</span>
-              </button>
             </>
           )}
 
