@@ -41,6 +41,7 @@ func main() {
 	schemaSvc := services.NewSchemaService(localStore, sessionMgr, func() *application.App { return wailsApp })
 	querySvc := services.NewQueryService(localStore, sessionMgr, func() *application.App { return wailsApp })
 	workspaceSvc := services.NewWorkspaceService(localStore)
+	exportSvc := services.NewExportService(localStore, sessionMgr, func() *application.App { return wailsApp })
 
 	wailsApp = application.New(application.Options{
 		Name:        "DHub",
@@ -55,6 +56,7 @@ func main() {
 			application.NewService(schemaSvc),
 			application.NewService(querySvc),
 			application.NewService(workspaceSvc),
+			application.NewService(exportSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

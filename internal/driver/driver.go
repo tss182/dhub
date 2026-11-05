@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"database/sql"
 )
 
 type DriverType string
@@ -68,6 +69,7 @@ type TableStructure struct {
 type QueryRequest struct {
 	ExecutionID  string `json:"executionId"`
 	ConnectionID string `json:"connectionId"`
+	TabID        string `json:"tabId,omitempty"`
 	Database     string `json:"database"`
 	Schema       string `json:"schema"`
 	SQL          string `json:"sql"`
@@ -118,6 +120,7 @@ type DatabaseDriver interface {
 
 	// Execution & Staged Changes
 	Execute(ctx context.Context, req QueryRequest) (*QueryResult, error)
+	BeginTx(ctx context.Context, database string) (*sql.Tx, error)
 	ApplyChanges(ctx context.Context, database, schema, table string, changes []RowChange) (int64, error)
 	GenerateDMLPreview(database, schema, table string, changes []RowChange) ([]string, error)
 }

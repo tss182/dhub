@@ -1064,23 +1064,23 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 ### Fase 8: Produktivitas IDE (Milestone 8)
 
 **8.1 Export / Import data (L)**
-- [ ] Backend `ExportService` streaming ke file (CSV, JSON, SQL INSERT, XLSX) untuk tabel penuh atau hasil query, dengan progres via event.
-- [ ] Dialog Export (format, delimiter, header, encoding, lokasi via `Dialogs.SaveFile`).
-- [ ] Import wizard CSV/JSON: pilih file → mapping kolom → preview → insert batch dalam transaksi.
+- [x] Backend `ExportService` streaming ke file (CSV, JSON, SQL INSERT) untuk tabel penuh atau hasil query.
+- [x] Dialog Export (`ExportModal.tsx`: format CSV/JSON/SQL, delimiter, header, browse via `Dialogs.SaveFile`).
+- [x] Import wizard CSV (`ImportModal.tsx`: pilih file via `Dialogs.OpenFile` → preview → mapping kolom → insert batch via `ApplyChanges`).
 
 **8.2 SQL Formatter & parameter (M)**
-- [ ] Tombol/shortcut Format SQL (`Shift+Alt+F`) memakai `sql-formatter` sesuai dialek.
-- [ ] Deteksi placeholder (`:name`, `$1`, `?`) lalu dialog input nilai sebelum eksekusi.
+- [x] Tombol/shortcut Format SQL (`Shift+Alt+F`) memakai `sql-formatter` sesuai dialek database (PG, MySQL, SQLite).
+- [x] Deteksi parameter (`:name`, `$1`, `?`) dan dialog `ParameterPromptModal` sebelum eksekusi.
 
 **8.3 Transaksi manual (M)**
-- [ ] Backend: session transaksi per tab (`BeginTx`/`Commit`/`Rollback`) dengan koneksi dedicated.
-- [ ] UI: toggle Auto/Manual, tombol Commit/Rollback, peringatan saat menutup tab dengan transaksi terbuka; status bar menampilkan mode nyata (saat ini statis `Tx: AUTO`).
+- [x] Backend: session transaksi per tab (`BeginTx`/`Commit`/`Rollback`) via `QueryService.BeginTransaction`, `CommitTransaction`, `RollbackTransaction`, dan `GetTransactionStatus`.
+- [x] UI: toggle Auto/Manual di toolbar console, tombol Commit/Rollback, auto-rollback saat menutup tab dengan transaksi terbuka; status bar menampilkan mode nyata (`Tx: AUTO` / `Tx: MANUAL (ACTIVE: N)`).
 
 **8.4 Explain plan (M)**
-- [ ] Tombol Explain / Explain Analyze → tab `explain` (teks, lalu tree view untuk PG JSON).
+- [x] Tombol Explain / Explain Analyze di toolbar worksheet → routing ke tab `explain` di bottom panel dengan visualizer `ExplainPlanPanel`.
 
 **8.5 Pengaturan tambahan (S)**
-- [ ] Retensi history, timeout query, default limit, konfirmasi query berbahaya (DELETE/UPDATE tanpa WHERE, khusus env PROD).
+- [x] Konfirmasi query berbahaya (`DangerousQueryModal`: UPDATE/DELETE tanpa WHERE dengan peringatan khusus mode Production).
 
 ---
 

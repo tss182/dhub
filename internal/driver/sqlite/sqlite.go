@@ -16,11 +16,15 @@ type SQLiteDriver struct {
 }
 
 func NewSQLiteDriver(filePath string) (*SQLiteDriver, error) {
-	db, err := sql.Open("sqlite", filePath)
+	dsn := filePath
+	if filePath != ":memory:" && !strings.Contains(filePath, "?") {
+		dsn = filePath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(5)
 	return &SQLiteDriver{db: db, filePath: filePath}, nil
 }
 
@@ -194,6 +198,10 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 
 func (s *SQLiteDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
 	return driver.ExecuteStatements(ctx, s.db, req)
+}
+
+func (s *SQLiteDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
+	return s.db.BeginTx(ctx, nil)
 }
 
 func (s *SQLiteDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {

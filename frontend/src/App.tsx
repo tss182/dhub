@@ -16,6 +16,7 @@ import { ToastContainer } from './components/common/ToastContainer';
 import { Popover } from './components/common/Popover';
 import { TableStructureModal } from './components/modals/CreateTableModal';
 import { QueryHistoryPanel } from './components/history/QueryHistoryPanel';
+import { ExplainPlanPanel } from './components/explain/ExplainPlanPanel';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
@@ -183,6 +184,22 @@ export function App() {
       }
     >
   >({});
+
+  // Track manual transaction status per tab
+  const [txStatusByTab, setTxStatusByTab] = useState<
+    Record<string, { mode: 'auto' | 'manual'; isOpen: boolean; count: number }>
+  >({});
+
+  useEffect(() => {
+    const tabIdSet = new Set(tabs.map((t) => t.id));
+    Object.entries(txStatusByTab).forEach(([tId, st]) => {
+      if (!tabIdSet.has(tId) && st.isOpen) {
+        QueryService.RollbackTransaction(tId).catch((err) =>
+          console.warn('Auto-rollback on tab close failed:', err)
+        );
+      }
+    });
+  }, [tabs, txStatusByTab]);
 
   // Left & Right sidebar resizable widths
   const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
@@ -1815,6 +1832,7 @@ export function App() {
               return (
                 <div className="flex-1 min-h-0">
                   <SqlWorksheet
+                    tabId={activeTab.id}
                     sql={activeTab.content || ''}
                     connection={tabConn}
                     database={effectiveDb}
@@ -1824,6 +1842,13 @@ export function App() {
                     onChange={(val) => updateTabContent(activeTab.id, val)}
                     onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || effectiveDb)}
                     onCancel={() => handleCancelQuery(activeTab.id)}
+                    onExplain={(explainSql) => {
+                      handleExecuteQuery(explainSql, effectiveDb);
+                      setActiveBottomTab('explain');
+                    }}
+                    onTxStatusChange={(st) => {
+                      setTxStatusByTab((prev) => ({ ...prev, [activeTab.id]: st }));
+                    }}
                     onDatabaseChange={(newDb) => {
                       const currentTab = useWorkbenchStore
                         .getState()
@@ -1947,6 +1972,9 @@ export function App() {
                   ) : (
                     <DataGrid
                       tabId={activeTab.id}
+                      connectionId={activeTab.connectionId}
+                      database={activeTab.database}
+                      schema={activeTab.schema}
                       tableName={activeTab.table}
                       envType={tableEnv}
                       columns={tableDataByTab[activeTab.id]?.columns || []}
@@ -2113,6 +2141,16 @@ export function App() {
                         >
                           Query History
                         </button>
+                        <button
+                          onClick={() => setActiveBottomTab('explain')}
+                          className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
+                            activeBottomTab === 'explain'
+                              ? 'border-zinc-400 text-white font-semibold'
+                              : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                          }`}
+                        >
+                          Explain Plan
+                        </button>
                       </div>
 
                       {/* Raw Query Preview & 1-Click Copy in Tab Bar */}
@@ -2208,6 +2246,9 @@ export function App() {
                           <DataGrid
                             key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
                             tabId={`bottom-result-${activeResultIndex}`}
+                            connectionId={activeTab?.connectionId || activeConnectionId || undefined}
+                            database={activeTab?.database}
+                            schema={activeTab?.schema}
                             envType={resolveConnectionEnv(
                               connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))
                             )}
@@ -2243,6 +2284,13 @@ export function App() {
                         onExecuteQuery={(sql, targetDb) => {
                           handleExecuteQuery(sql, targetDb);
                         }}
+                      />
+                    </div>
+                  ) : activeBottomTab === 'explain' ? (
+                    <div className="flex-1 min-h-0">
+                      <ExplainPlanPanel
+                        planRows={queryResult?.rows}
+                        elapsedMs={queryResult?.elapsedMs}
                       />
                     </div>
                   ) : (
@@ -2698,7 +2746,25 @@ export function App() {
           </span>
         </div>
         <div className="flex items-center gap-4">
-          <span>Tx: AUTO</span>
+          {(() => {
+            const currentTab = tabs.find((t) => t.id === activeTabId);
+            const currentTx = currentTab ? txStatusByTab[currentTab.id] : undefined;
+            if (currentTx?.mode === 'manual') {
+              if (currentTx.isOpen) {
+                return (
+                  <span
+                    className="text-amber-400 font-semibold flex items-center gap-1.5"
+                    title="Active transaction with uncommitted statements"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                    <span>Tx: MANUAL (ACTIVE: {currentTx.count})</span>
+                  </span>
+                );
+              }
+              return <span className="text-zinc-400">Tx: MANUAL (IDLE)</span>;
+            }
+            return <span>Tx: AUTO</span>;
+          })()}
           <span>DHub Desktop v{APP_VERSION}</span>
         </div>
       </footer>

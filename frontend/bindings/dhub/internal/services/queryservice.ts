@@ -9,20 +9,44 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as driver$0 from "../driver/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
+export function BeginTransaction(tabID: string, connectionID: string, database: string): $CancellablePromise<$models.TxStatus | null> {
+    return $Call.ByID(823115241, tabID, connectionID, database).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
 export function CancelQuery(executionID: string): $CancellablePromise<boolean> {
     return $Call.ByID(1812827844, executionID);
 }
 
+export function CommitTransaction(tabID: string): $CancellablePromise<void> {
+    return $Call.ByID(1919003025, tabID);
+}
+
 export function ExecuteQuery(req: driver$0.QueryRequest): $CancellablePromise<driver$0.QueryResult | null> {
     return $Call.ByID(1999955655, req).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+export function GetTransactionStatus(tabID: string): $CancellablePromise<$models.TxStatus | null> {
+    return $Call.ByID(3750451220, tabID).then(($result: any) => {
         return $$createType1($result);
     });
 }
 
 export function PreviewChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[]): $CancellablePromise<string[]> {
     return $Call.ByID(1080152811, connectionID, database, schema, table, changes).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType4($result);
     });
+}
+
+export function RollbackTransaction(tabID: string): $CancellablePromise<void> {
+    return $Call.ByID(2967145846, tabID);
 }
 
 export function SubmitChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[]): $CancellablePromise<number> {
@@ -30,6 +54,8 @@ export function SubmitChanges(connectionID: string, database: string, schema: st
 }
 
 // Private type creation functions
-const $$createType0 = driver$0.QueryResult.createFrom;
+const $$createType0 = $models.TxStatus.createFrom;
 const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = $Create.Array($Create.Any);
+const $$createType2 = driver$0.QueryResult.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $Create.Array($Create.Any);

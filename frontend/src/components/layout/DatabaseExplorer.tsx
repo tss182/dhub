@@ -4,6 +4,8 @@ import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
 import { Dialogs } from '@wailsio/runtime';
 import { Popover } from '../common/Popover';
+import { ExportModal } from '../modals/ExportModal';
+import { ImportModal } from '../modals/ImportModal';
 import {
   Database,
   Folder,
@@ -356,6 +358,23 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     tableSearch: '',
     isLoadingTables: false,
   });
+
+  // Export / Import Table Modal state
+  const [exportModal, setExportModal] = useState<{
+    isOpen: boolean;
+    connId: string;
+    db: string;
+    schema: string;
+    table: string;
+  }>({ isOpen: false, connId: '', db: '', schema: '', table: '' });
+
+  const [importModal, setImportModal] = useState<{
+    isOpen: boolean;
+    connId: string;
+    db: string;
+    schema: string;
+    table: string;
+  }>({ isOpen: false, connId: '', db: '', schema: '', table: '' });
 
   const handleOpenBackupModal = async (conn: ConnectionConfig, database: string) => {
     let defaultPath = `${database}_backup.sql`;
@@ -2425,6 +2444,52 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <span>Copy Table Schema (DDL)</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  const conn = contextMenu.connection!;
+                  const db = contextMenu.database || 'main';
+                  const sch = contextMenu.schema || 'main';
+                  const tbl = contextMenu.table!.name;
+                  closeContextMenu();
+                  setExportModal({
+                    isOpen: true,
+                    connId: conn.id,
+                    db,
+                    schema: sch,
+                    table: tbl,
+                  });
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Download className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Export Data...</span>
+              </button>
+
+              {contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const conn = contextMenu.connection!;
+                    const db = contextMenu.database || 'main';
+                    const sch = contextMenu.schema || 'main';
+                    const tbl = contextMenu.table!.name;
+                    closeContextMenu();
+                    setImportModal({
+                      isOpen: true,
+                      connId: conn.id,
+                      db,
+                      schema: sch,
+                      table: tbl,
+                    });
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Upload className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Import Data (CSV)...</span>
+                </button>
+              )}
+
               <div className="my-1 border-t border-[#272932]" />
 
               <button
@@ -3237,6 +3302,26 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         onClose={() => setSchemaFilterModal((prev) => ({ ...prev, isOpen: false }))}
         connection={schemaFilterModal.connection}
         anchorRect={schemaFilterModal.anchorRect}
+      />
+
+      {/* Export Table Modal */}
+      <ExportModal
+        isOpen={exportModal.isOpen}
+        onClose={() => setExportModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={exportModal.connId}
+        database={exportModal.db}
+        schema={exportModal.schema}
+        table={exportModal.table}
+      />
+
+      {/* Import Table Modal */}
+      <ImportModal
+        isOpen={importModal.isOpen}
+        onClose={() => setImportModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={importModal.connId}
+        database={importModal.db}
+        schema={importModal.schema}
+        table={importModal.table}
       />
     </div>
   );

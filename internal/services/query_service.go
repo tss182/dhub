@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"time"
@@ -14,12 +15,30 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+type TxSession struct {
+	TabID        string
+	ConnectionID string
+	Database     string
+	Tx           *sql.Tx
+	StartedAt    time.Time
+	Count        int
+}
+
+type TxStatus struct {
+	IsOpen          bool   `json:"isOpen"`
+	ConnectionID    string `json:"connectionId"`
+	Database        string `json:"database"`
+	StartedAt       int64  `json:"startedAt"`
+	StatementsCount int    `json:"statementsCount"`
+}
+
 type QueryService struct {
 	store      *store.LocalStore
 	sessions   *manager.SessionManager
 	appGetter  func() *application.App
 	mu         sync.Mutex
 	runningOps map[string]context.CancelFunc
+	activeTx   map[string]*TxSession
 }
 
 func NewQueryService(s *store.LocalStore, sm *manager.SessionManager, appGetter func() *application.App) *QueryService {
@@ -28,6 +47,7 @@ func NewQueryService(s *store.LocalStore, sm *manager.SessionManager, appGetter 
 		sessions:   sm,
 		appGetter:  appGetter,
 		runningOps: make(map[string]context.CancelFunc),
+		activeTx:   make(map[string]*TxSession),
 	}
 }
 
@@ -54,9 +74,20 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 		}
 	}
 
-	drv, err := q.sessions.GetOrConnect(context.Background(), req.ConnectionID)
-	if err != nil {
-		return nil, err
+	var activeTxSession *TxSession
+	if req.TabID != "" {
+		q.mu.Lock()
+		activeTxSession = q.activeTx[req.TabID]
+		q.mu.Unlock()
+	}
+
+	var drv driver.DatabaseDriver
+	if activeTxSession == nil {
+		var err error
+		drv, err = q.sessions.GetOrConnect(context.Background(), req.ConnectionID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -74,7 +105,20 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 	q.emitStatus(req.ExecutionID, "running", "Executing statement...")
 	start := time.Now()
 
-	res, execErr := drv.Execute(ctx, req)
+	var res *driver.QueryResult
+	var execErr error
+
+	if activeTxSession != nil {
+		res, execErr = driver.ExecuteStatements(ctx, activeTxSession.Tx, req)
+		if execErr == nil {
+			q.mu.Lock()
+			activeTxSession.Count++
+			q.mu.Unlock()
+		}
+	} else {
+		res, execErr = drv.Execute(ctx, req)
+	}
+
 	elapsed := time.Since(start).Milliseconds()
 
 	status := "success"
@@ -114,6 +158,106 @@ func (q *QueryService) CancelQuery(executionID string) bool {
 		return true
 	}
 	return false
+}
+
+func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*TxStatus, error) {
+	if tabID == "" {
+		return nil, fmt.Errorf("tab ID is required")
+	}
+
+	q.mu.Lock()
+	if existing, ok := q.activeTx[tabID]; ok && existing != nil {
+		q.mu.Unlock()
+		return &TxStatus{
+			IsOpen:          true,
+			ConnectionID:    existing.ConnectionID,
+			Database:        existing.Database,
+			StartedAt:       existing.StartedAt.UnixMilli(),
+			StatementsCount: existing.Count,
+		}, nil
+	}
+	q.mu.Unlock()
+
+	drv, err := q.sessions.GetOrConnect(context.Background(), connectionID)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := drv.BeginTx(context.Background(), database)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	session := &TxSession{
+		TabID:        tabID,
+		ConnectionID: connectionID,
+		Database:     database,
+		Tx:           tx,
+		StartedAt:    time.Now(),
+		Count:        0,
+	}
+
+	q.mu.Lock()
+	q.activeTx[tabID] = session
+	q.mu.Unlock()
+
+	return &TxStatus{
+		IsOpen:          true,
+		ConnectionID:    connectionID,
+		Database:        database,
+		StartedAt:       session.StartedAt.UnixMilli(),
+		StatementsCount: 0,
+	}, nil
+}
+
+func (q *QueryService) CommitTransaction(tabID string) error {
+	q.mu.Lock()
+	session, ok := q.activeTx[tabID]
+	if !ok || session == nil {
+		q.mu.Unlock()
+		return fmt.Errorf("no active transaction found for tab %s", tabID)
+	}
+	delete(q.activeTx, tabID)
+	q.mu.Unlock()
+
+	if err := session.Tx.Commit(); err != nil {
+		return fmt.Errorf("commit failed: %w", err)
+	}
+	return nil
+}
+
+func (q *QueryService) RollbackTransaction(tabID string) error {
+	q.mu.Lock()
+	session, ok := q.activeTx[tabID]
+	if !ok || session == nil {
+		q.mu.Unlock()
+		return nil // No-op if none active
+	}
+	delete(q.activeTx, tabID)
+	q.mu.Unlock()
+
+	if err := session.Tx.Rollback(); err != nil {
+		return fmt.Errorf("rollback failed: %w", err)
+	}
+	return nil
+}
+
+func (q *QueryService) GetTransactionStatus(tabID string) *TxStatus {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if session, ok := q.activeTx[tabID]; ok && session != nil {
+		return &TxStatus{
+			IsOpen:          true,
+			ConnectionID:    session.ConnectionID,
+			Database:        session.Database,
+			StartedAt:       session.StartedAt.UnixMilli(),
+			StatementsCount: session.Count,
+		}
+	}
+	return &TxStatus{
+		IsOpen: false,
+	}
 }
 
 func (q *QueryService) PreviewChanges(connectionID, database, schema, table string, changes []driver.RowChange) ([]string, error) {

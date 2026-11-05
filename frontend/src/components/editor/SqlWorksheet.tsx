@@ -3,11 +3,26 @@ import Editor, { OnMount, loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 
 loader.config({ monaco });
-import { Play, Square, Database, Terminal, ChevronDown, Check } from 'lucide-react';
+import {
+  Play,
+  Square,
+  Database,
+  Terminal,
+  ChevronDown,
+  Check,
+  AlignLeft,
+  Activity,
+  RotateCcw,
+  Zap,
+} from 'lucide-react';
+import { format } from 'sql-formatter';
 import { ConnectionConfig, ColumnMeta, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
+import * as QueryService from '../../../bindings/dhub/internal/services/queryservice';
+import { ParameterPromptModal } from '../modals/ParameterPromptModal';
+import { DangerousQueryModal } from '../modals/DangerousQueryModal';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -176,7 +191,65 @@ function extractTableAliases(sqlText: string): Map<string, string> {
   return aliasMap;
 }
 
+function detectSqlParameters(sqlText: string): string[] {
+  const params: string[] = [];
+  const seen = new Set<string>();
+
+  // Match :paramName (ensure not ::type cast by checking preceding char is not :)
+  const namedRegex = /(?<!:):([a-zA-Z][a-zA-Z0-9_]*)\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = namedRegex.exec(sqlText)) !== null) {
+    const p = match[0];
+    if (!seen.has(p)) {
+      seen.add(p);
+      params.push(p);
+    }
+  }
+
+  // Match $1, $2
+  const posRegex = /\$([0-9]+)\b/g;
+  while ((match = posRegex.exec(sqlText)) !== null) {
+    const p = match[0];
+    if (!seen.has(p)) {
+      seen.add(p);
+      params.push(p);
+    }
+  }
+
+  // Match ? (only if no named or $ params were found)
+  if (params.length === 0 && sqlText.includes('?')) {
+    let qIdx = 1;
+    const qMatches = sqlText.match(/\?/g);
+    if (qMatches) {
+      qMatches.forEach(() => {
+        const name = `?${qIdx++}`;
+        if (!seen.has(name)) {
+          seen.add(name);
+          params.push(name);
+        }
+      });
+    }
+  }
+
+  return params;
+}
+
+function isDangerousQuery(sqlText: string): boolean {
+  const clean = sqlText.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const upper = clean.toUpperCase();
+  const isUpdate = /^UPDATE\s+/i.test(upper);
+  const isDelete = /^DELETE\s+FROM\s+/i.test(upper);
+
+  if (isUpdate || isDelete) {
+    if (!/\bWHERE\b/i.test(upper)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 interface SqlWorksheetProps {
+  tabId?: string;
   sql: string;
   connection?: ConnectionConfig;
   database: string;
@@ -188,9 +261,12 @@ interface SqlWorksheetProps {
   onExecute: (statementSql: string, explicitDatabase?: string) => void;
   onCancel: () => void;
   onDatabaseChange?: (newDatabase: string) => void;
+  onExplain?: (statementSql: string, isAnalyze: boolean) => void;
+  onTxStatusChange?: (status: { mode: 'auto' | 'manual'; isOpen: boolean; count: number }) => void;
 }
 
 export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
+  tabId,
   sql,
   connection,
   database,
@@ -202,6 +278,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   onExecute,
   onCancel,
   onDatabaseChange,
+  onExplain,
+  onTxStatusChange,
 }) => {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [isDbOpen, setIsDbOpen] = useState(false);
@@ -212,6 +290,37 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const showMinimap = useSettingsStore((s) => s.showMinimap);
   const theme = useSettingsStore((s) => s.theme);
   const visibleDatabases = useConnectionStore((s) => s.visibleDatabases);
+
+  const [txMode, setTxMode] = useState<'auto' | 'manual'>('auto');
+  const [isTxOpen, setIsTxOpen] = useState(false);
+  const [txCount, setTxCount] = useState(0);
+
+  const [pendingParams, setPendingParams] = useState<{
+    parameters: string[];
+    sql: string;
+    targetDb?: string;
+  } | null>(null);
+
+  const [pendingDangerous, setPendingDangerous] = useState<{
+    sql: string;
+    targetDb?: string;
+  } | null>(null);
+
+  const [isExplainOpen, setIsExplainOpen] = useState(false);
+  const explainDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        explainDropdownRef.current &&
+        !explainDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsExplainOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Filter available databases so that only visible databases are shown in the dropdown
   const displayedDatabases = React.useMemo(() => {
@@ -602,14 +711,167 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     return candidate || fullText.trim();
   }, []);
 
+  const proceedExecution = useCallback(
+    async (statementText: string, targetDb?: string) => {
+      const effectiveDb = targetDb || databaseRef.current;
+      if (txMode === 'manual' && tabId && connection?.id && !isTxOpen) {
+        try {
+          const st = await QueryService.BeginTransaction(tabId, connection.id, effectiveDb);
+          if (st) {
+            setIsTxOpen(true);
+            setTxCount(0);
+            onTxStatusChange?.({ mode: 'manual', isOpen: true, count: 0 });
+          }
+        } catch (err) {
+          console.warn('BeginTransaction failed:', err);
+        }
+      }
+
+      if (txMode === 'manual') {
+        setTxCount((c) => {
+          const next = c + 1;
+          onTxStatusChange?.({ mode: 'manual', isOpen: true, count: next });
+          return next;
+        });
+      }
+
+      onExecuteRef.current(statementText, effectiveDb);
+    },
+    [txMode, tabId, connection?.id, isTxOpen, onTxStatusChange]
+  );
+
+  const executeWithChecks = useCallback(
+    (statementText: string, targetDb?: string) => {
+      const trimmed = statementText.trim();
+      if (!trimmed) return;
+
+      // Check parameters
+      const params = detectSqlParameters(trimmed);
+      if (params.length > 0) {
+        setPendingParams({
+          parameters: params,
+          sql: trimmed,
+          targetDb,
+        });
+        return;
+      }
+
+      // Check dangerous query
+      if (isDangerousQuery(trimmed)) {
+        setPendingDangerous({
+          sql: trimmed,
+          targetDb,
+        });
+        return;
+      }
+
+      proceedExecution(trimmed, targetDb);
+    },
+    [proceedExecution]
+  );
+
+  const handleFormatSql = () => {
+    try {
+      const drv = connection?.driver || 'sqlite';
+      let lang: any = 'sql';
+      if (drv === 'postgres') lang = 'postgresql';
+      else if (drv === 'mysql') lang = 'mysql';
+      else if (drv === 'sqlite') lang = 'sqlite';
+
+      const formatted = format(sql, {
+        language: lang,
+        tabWidth: 2,
+        useTabs: false,
+        keywordCase: 'upper',
+        linesBetweenQueries: 2,
+      });
+      onChange(formatted);
+    } catch (e) {
+      console.warn('Formatting failed:', e);
+    }
+  };
+
+  const handleExplain = (isAnalyze: boolean) => {
+    setIsExplainOpen(false);
+    const stmt = extractActiveStatement();
+    if (!stmt) return;
+
+    const drv = connection?.driver || 'sqlite';
+    let prefix = 'EXPLAIN ';
+    if (drv === 'postgres') {
+      prefix = isAnalyze
+        ? 'EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS) '
+        : 'EXPLAIN (COSTS, VERBOSE) ';
+    } else if (drv === 'mysql') {
+      prefix = isAnalyze ? 'EXPLAIN ANALYZE ' : 'EXPLAIN ';
+    } else if (drv === 'sqlite') {
+      prefix = 'EXPLAIN QUERY PLAN ';
+    }
+
+    const explainSql = prefix + stmt;
+    if (onExplain) {
+      onExplain(explainSql, isAnalyze);
+    } else {
+      executeWithChecks(explainSql, databaseRef.current);
+    }
+  };
+
+  const handleCommitTx = async () => {
+    if (!tabId) return;
+    try {
+      await QueryService.CommitTransaction(tabId);
+      setIsTxOpen(false);
+      setTxCount(0);
+      onTxStatusChange?.({ mode: 'manual', isOpen: false, count: 0 });
+    } catch (e: any) {
+      alert(`Commit failed: ${e?.message || e}`);
+    }
+  };
+
+  const handleRollbackTx = async () => {
+    if (!tabId) return;
+    try {
+      await QueryService.RollbackTransaction(tabId);
+      setIsTxOpen(false);
+      setTxCount(0);
+      onTxStatusChange?.({ mode: 'manual', isOpen: false, count: 0 });
+    } catch (e: any) {
+      alert(`Rollback failed: ${e?.message || e}`);
+    }
+  };
+
+  const toggleTxMode = () => {
+    if (txMode === 'auto') {
+      setTxMode('manual');
+      onTxStatusChange?.({ mode: 'manual', isOpen: isTxOpen, count: txCount });
+    } else {
+      if (isTxOpen) {
+        if (!confirm('You have an active transaction. Switching to Auto will rollback uncommitted changes. Proceed?')) {
+          return;
+        }
+        handleRollbackTx();
+      }
+      setTxMode('auto');
+      onTxStatusChange?.({ mode: 'auto', isOpen: false, count: 0 });
+    }
+  };
+
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
-    // Shortcut Ctrl+Enter / Cmd+Enter to execute statement at cursor with fresh database ref
+    // Shortcut Ctrl+Enter / Cmd+Enter to execute statement at cursor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       const stmt = extractActiveStatement();
-      if (stmt) onExecuteRef.current(stmt, databaseRef.current);
+      if (stmt) executeWithChecks(stmt, databaseRef.current);
     });
+
+    // Shortcut Shift+Alt+F to format SQL
+    editor.addCommand(
+      monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+      () => {
+        handleFormatSql();
+      }
+    );
 
     // Intercept Ctrl+S / Cmd+S in editor to prevent browser save dialog
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {});
@@ -630,7 +892,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         <div className="flex items-center gap-2">
           {!isRunning ? (
             <button
-              onClick={() => onExecute(extractActiveStatement(), database)}
+              onClick={() => executeWithChecks(extractActiveStatement(), database)}
               className="flex items-center gap-1.5 rounded bg-emerald-600/90 px-2.5 py-1 font-medium text-white hover:bg-emerald-500 transition-colors shadow-sm cursor-pointer"
               title={`Execute Statement at Cursor (${modKey}+Enter)`}
             >
@@ -647,6 +909,104 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               <span>Stop</span>
             </button>
           )}
+
+          {/* Explain Split Button */}
+          <div className="relative" ref={explainDropdownRef}>
+            <div className="flex items-center rounded bg-[#22242c] border border-[#272932]">
+              <button
+                type="button"
+                onClick={() => handleExplain(false)}
+                className="flex items-center gap-1 px-2 py-1 text-zinc-300 hover:text-white hover:bg-[#2b2e3b] rounded-l transition-colors cursor-pointer"
+                title="Explain Query Execution Plan"
+              >
+                <Activity className="h-3.5 w-3.5 text-blue-400" />
+                <span>Explain</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsExplainOpen(!isExplainOpen)}
+                className="px-1 py-1 text-zinc-400 hover:text-white hover:bg-[#2b2e3b] rounded-r border-l border-[#272932] transition-colors cursor-pointer"
+                title="Explain Options"
+              >
+                <ChevronDown className="h-3 w-3" />
+              </button>
+            </div>
+            {isExplainOpen && (
+              <div className="absolute top-full left-0 mt-1 w-44 rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <button
+                  type="button"
+                  onClick={() => handleExplain(false)}
+                  className="w-full text-left px-2.5 py-1.5 rounded hover:bg-[#2c303c] text-zinc-200 text-xs flex items-center justify-between"
+                >
+                  <span>Explain Plan</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExplain(true)}
+                  className="w-full text-left px-2.5 py-1.5 rounded hover:bg-[#2c303c] text-amber-300 text-xs flex items-center justify-between"
+                >
+                  <span>Explain Analyze</span>
+                  <Zap className="h-3 w-3 text-amber-400" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Format SQL Button */}
+          <button
+            type="button"
+            onClick={handleFormatSql}
+            className="flex items-center gap-1.5 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] px-2 py-1 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+            title="Format SQL (Shift+Alt+F)"
+          >
+            <AlignLeft className="h-3.5 w-3.5 text-zinc-400" />
+            <span>Format</span>
+          </button>
+
+          <div className="h-4 w-[1px] bg-[#272932] mx-1" />
+
+          {/* Transaction Controls */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleTxMode}
+              className={`px-2 py-1 rounded border font-mono text-[11px] font-semibold transition-colors cursor-pointer ${
+                txMode === 'manual'
+                  ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
+                  : 'bg-[#22242c] border-[#272932] text-zinc-400 hover:text-zinc-200'
+              }`}
+              title={`Transaction Mode: ${txMode.toUpperCase()} (Click to toggle)`}
+            >
+              Tx: {txMode.toUpperCase()}
+            </button>
+
+            {txMode === 'manual' && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={!isTxOpen || isRunning}
+                  onClick={handleCommitTx}
+                  className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[11px] font-medium"
+                  title="Commit Transaction"
+                >
+                  <Check className="h-3 w-3" />
+                  <span>Commit</span>
+                  {txCount > 0 && <span className="text-[10px] bg-emerald-500/30 px-1 rounded-full">{txCount}</span>}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!isTxOpen || isRunning}
+                  onClick={handleRollbackTx}
+                  className="flex items-center gap-1 px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[11px] font-medium"
+                  title="Rollback Transaction"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  <span>Rollback</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className="h-4 w-[1px] bg-[#272932] mx-1" />
 
@@ -793,6 +1153,37 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           }}
         />
       </div>
+
+      {/* Parameter Prompt Modal */}
+      <ParameterPromptModal
+        isOpen={pendingParams !== null}
+        parameters={pendingParams?.parameters || []}
+        sql={pendingParams?.sql || ''}
+        onClose={() => setPendingParams(null)}
+        onSubmit={(subSql) => {
+          const target = pendingParams?.targetDb;
+          setPendingParams(null);
+          if (isDangerousQuery(subSql)) {
+            setPendingDangerous({ sql: subSql, targetDb: target });
+          } else {
+            proceedExecution(subSql, target);
+          }
+        }}
+      />
+
+      {/* Dangerous Query Modal */}
+      <DangerousQueryModal
+        isOpen={pendingDangerous !== null}
+        sql={pendingDangerous?.sql || ''}
+        isProduction={connEnv === 'prod'}
+        onClose={() => setPendingDangerous(null)}
+        onConfirm={() => {
+          const sqlToRun = pendingDangerous?.sql || '';
+          const target = pendingDangerous?.targetDb;
+          setPendingDangerous(null);
+          proceedExecution(sqlToRun, target);
+        }}
+      />
     </div>
   );
 };

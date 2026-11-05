@@ -195,6 +195,7 @@ export class ObjectSummary {
 export class QueryRequest {
     "executionId": string;
     "connectionId": string;
+    "tabId"?: string;
     "database": string;
     "schema": string;
     "sql": string;
