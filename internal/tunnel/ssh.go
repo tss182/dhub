@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"dhub/internal/config"
+
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -33,13 +35,12 @@ type Tunnel struct {
 
 var knownHostsMu sync.Mutex
 
-// knownHostsPath returns DHub's own known_hosts file (<user config dir>/dhub/known_hosts).
+// knownHostsPath returns DHub's own known_hosts file (<user config dir>/known_hosts).
 func knownHostsPath() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := config.GetConfigDir()
 	if err != nil {
 		return "", err
 	}
-	dir = filepath.Join(dir, "dhub")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -107,7 +108,16 @@ func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to read ssh key file: %w", err)
 		}
-		signer, err := ssh.ParsePrivateKey(keyBytes)
+		var signer ssh.Signer
+		if cfg.Password != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(keyBytes, []byte(cfg.Password))
+		}
+		if signer == nil {
+			signer, err = ssh.ParsePrivateKey(keyBytes)
+			if err != nil && cfg.Password != "" {
+				signer, err = ssh.ParsePrivateKeyWithPassphrase(keyBytes, []byte(cfg.Password))
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse ssh private key: %w", err)
 		}

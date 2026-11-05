@@ -19,6 +19,8 @@ import { format } from 'sql-formatter';
 import { ConnectionConfig, ColumnMeta, ForeignKeyMeta, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
+import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
+import { alertError, alertSuccess, confirmDialog } from '../../stores/useAlertStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
 import * as QueryService from '../../../bindings/dhub/internal/services/queryservice';
 import { ParameterPromptModal } from '../modals/ParameterPromptModal';
@@ -308,9 +310,17 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const theme = useSettingsStore((s) => s.theme);
   const visibleDatabases = useConnectionStore((s) => s.visibleDatabases);
 
-  const [txMode, setTxMode] = useState<'auto' | 'manual'>('auto');
+  const [txMode, setTxMode] = useState<'auto' | 'manual'>(() => {
+    return (connection?.txMode as any) === 'manual' ? 'manual' : 'auto';
+  });
   const [isTxOpen, setIsTxOpen] = useState(false);
   const [txCount, setTxCount] = useState(0);
+
+  useEffect(() => {
+    if (connection?.txMode) {
+      setTxMode(connection.txMode === 'manual' ? 'manual' : 'auto');
+    }
+  }, [connection?.id, connection?.txMode]);
 
   const [pendingParams, setPendingParams] = useState<{
     parameters: string[];
@@ -988,8 +998,9 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       setIsTxOpen(false);
       setTxCount(0);
       onTxStatusChange?.({ mode: 'manual', isOpen: false, count: 0 });
+      alertSuccess('Transaction committed successfully');
     } catch (e: any) {
-      alert(`Commit failed: ${e?.message || e}`);
+      alertError(e?.message || e, 'Commit Failed');
     }
   };
 
@@ -1000,21 +1011,29 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       setIsTxOpen(false);
       setTxCount(0);
       onTxStatusChange?.({ mode: 'manual', isOpen: false, count: 0 });
+      alertSuccess('Transaction rolled back');
     } catch (e: any) {
-      alert(`Rollback failed: ${e?.message || e}`);
+      alertError(e?.message || e, 'Rollback Failed');
     }
   };
 
-  const toggleTxMode = () => {
+  const toggleTxMode = async () => {
     if (txMode === 'auto') {
       setTxMode('manual');
       onTxStatusChange?.({ mode: 'manual', isOpen: isTxOpen, count: txCount });
     } else {
       if (isTxOpen) {
-        if (!confirm('You have an active transaction. Switching to Auto will rollback uncommitted changes. Proceed?')) {
+        const ok = await confirmDialog({
+          title: 'Switch to Auto-Commit?',
+          message: 'You have an active transaction. Switching to Auto-Commit will rollback uncommitted changes. Proceed?',
+          confirmLabel: 'Rollback & Switch',
+          cancelLabel: 'Keep Manual Mode',
+          isDanger: true,
+        });
+        if (!ok) {
           return;
         }
-        handleRollbackTx();
+        await handleRollbackTx();
       }
       setTxMode('auto');
       onTxStatusChange?.({ mode: 'auto', isOpen: false, count: 0 });
@@ -1040,6 +1059,19 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
     // Intercept Ctrl+S / Cmd+S in editor to prevent browser save dialog
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {});
+
+    // Shortcut Ctrl+F2 / Cmd+F2 to cancel running query
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F2, () => {
+      onCancel();
+    });
+
+    // Shortcut Ctrl+W / Cmd+W to close active tab
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, () => {
+      const activeId = useWorkbenchStore.getState().activeTabId;
+      if (activeId) {
+        useWorkbenchStore.getState().closeTab(activeId);
+      }
+    });
   };
 
   const connEnv = resolveConnectionEnv(connection);

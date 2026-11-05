@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"dhub/internal/driver"
@@ -221,6 +222,15 @@ func (s *SQLiteDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, e
 	return s.db.BeginTx(ctx, nil)
 }
 
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (s *SQLiteDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	for _, c := range changes {
@@ -228,9 +238,9 @@ func (s *SQLiteDriver) GenerateDMLPreview(database, schema, table string, change
 		case "insert":
 			cols := []string{}
 			vals := []string{}
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, fmt.Sprintf(`"%s"`, k))
-				vals = append(vals, formatSQLVal(v))
+				vals = append(vals, formatSQLVal(c.Changes[k]))
 			}
 			stmt := fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s);`, table, strings.Join(cols, ", "), strings.Join(vals, ", "))
 			if len(cols) == 0 {
@@ -239,18 +249,18 @@ func (s *SQLiteDriver) GenerateDMLPreview(database, schema, table string, change
 			statements = append(statements, stmt)
 		case "update":
 			sets := []string{}
-			for k, v := range c.Changes {
-				sets = append(sets, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(v)))
+			for _, k := range sortedKeys(c.Changes) {
+				sets = append(sets, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(c.Changes[k])))
 			}
 			where := []string{}
-			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(v)))
+			for _, k := range sortedKeys(c.PrimaryKey) {
+				where = append(where, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf(`UPDATE "%s" SET %s WHERE %s;`, table, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
-			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(v)))
+			for _, k := range sortedKeys(c.PrimaryKey) {
+				where = append(where, fmt.Sprintf(`"%s" = %s`, k, formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf(`DELETE FROM "%s" WHERE %s;`, table, strings.Join(where, " AND ")))
 		}
@@ -272,10 +282,10 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table
 			cols := []string{}
 			placeholders := []string{}
 			vals := []any{}
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, fmt.Sprintf(`"%s"`, k))
 				placeholders = append(placeholders, "?")
-				vals = append(vals, v)
+				vals = append(vals, c.Changes[k])
 			}
 			stmt := fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s)`, table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 			if len(cols) == 0 {
@@ -290,14 +300,14 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table
 		case "update":
 			sets := []string{}
 			vals := []any{}
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				sets = append(sets, fmt.Sprintf(`"%s" = ?`, k))
-				vals = append(vals, v)
+				vals = append(vals, c.Changes[k])
 			}
 			where := []string{}
-			for k, v := range c.PrimaryKey {
+			for _, k := range sortedKeys(c.PrimaryKey) {
 				where = append(where, fmt.Sprintf(`"%s" = ?`, k))
-				vals = append(vals, v)
+				vals = append(vals, c.PrimaryKey[k])
 			}
 			stmt := fmt.Sprintf(`UPDATE "%s" SET %s WHERE %s`, table, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -309,9 +319,9 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table
 		case "delete":
 			where := []string{}
 			vals := []any{}
-			for k, v := range c.PrimaryKey {
+			for _, k := range sortedKeys(c.PrimaryKey) {
 				where = append(where, fmt.Sprintf(`"%s" = ?`, k))
-				vals = append(vals, v)
+				vals = append(vals, c.PrimaryKey[k])
 			}
 			stmt := fmt.Sprintf(`DELETE FROM "%s" WHERE %s`, table, strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)

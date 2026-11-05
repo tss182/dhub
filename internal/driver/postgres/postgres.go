@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -521,6 +522,15 @@ func (p *PostgresDriver) BeginTx(ctx context.Context, database string) (*sql.Tx,
 	return db.BeginTx(ctx, nil)
 }
 
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (p *PostgresDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	prefix := qualifiedName(schema, table)
@@ -530,9 +540,9 @@ func (p *PostgresDriver) GenerateDMLPreview(database, schema, table string, chan
 		case "insert":
 			cols := []string{}
 			vals := []string{}
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, quoteIdent(k))
-				vals = append(vals, formatSQLVal(v))
+				vals = append(vals, formatSQLVal(c.Changes[k]))
 			}
 			stmt := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s);`, prefix, strings.Join(cols, ", "), strings.Join(vals, ", "))
 			if len(cols) == 0 {
@@ -541,18 +551,18 @@ func (p *PostgresDriver) GenerateDMLPreview(database, schema, table string, chan
 			statements = append(statements, stmt)
 		case "update":
 			sets := []string{}
-			for k, v := range c.Changes {
-				sets = append(sets, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(v)))
+			for _, k := range sortedKeys(c.Changes) {
+				sets = append(sets, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.Changes[k])))
 			}
 			where := []string{}
-			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(v)))
+			for _, k := range sortedKeys(c.PrimaryKey) {
+				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf(`UPDATE %s SET %s WHERE %s;`, prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
-			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(v)))
+			for _, k := range sortedKeys(c.PrimaryKey) {
+				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf(`DELETE FROM %s WHERE %s;`, prefix, strings.Join(where, " AND ")))
 		}
@@ -581,10 +591,10 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, tab
 			placeholders := []string{}
 			vals := []any{}
 			idx := 1
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, quoteIdent(k))
 				placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
-				vals = append(vals, v)
+				vals = append(vals, c.Changes[k])
 				idx++
 			}
 			stmt := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`, prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
@@ -601,15 +611,15 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, tab
 			sets := []string{}
 			vals := []any{}
 			idx := 1
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				sets = append(sets, fmt.Sprintf(`%s = $%d`, quoteIdent(k), idx))
-				vals = append(vals, v)
+				vals = append(vals, c.Changes[k])
 				idx++
 			}
 			where := []string{}
-			for k, v := range c.PrimaryKey {
+			for _, k := range sortedKeys(c.PrimaryKey) {
 				where = append(where, fmt.Sprintf(`%s = $%d`, quoteIdent(k), idx))
-				vals = append(vals, v)
+				vals = append(vals, c.PrimaryKey[k])
 				idx++
 			}
 			stmt := fmt.Sprintf(`UPDATE %s SET %s WHERE %s`, prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
@@ -623,9 +633,9 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, tab
 			where := []string{}
 			vals := []any{}
 			idx := 1
-			for k, v := range c.PrimaryKey {
+			for _, k := range sortedKeys(c.PrimaryKey) {
 				where = append(where, fmt.Sprintf(`%s = $%d`, quoteIdent(k), idx))
-				vals = append(vals, v)
+				vals = append(vals, c.PrimaryKey[k])
 				idx++
 			}
 			stmt := fmt.Sprintf(`DELETE FROM %s WHERE %s`, prefix, strings.Join(where, " AND "))

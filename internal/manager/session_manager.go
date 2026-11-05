@@ -2,8 +2,11 @@ package manager
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/url"
+	"os"
 	"sync"
 
 	"dhub/internal/driver"
@@ -12,6 +15,8 @@ import (
 	"dhub/internal/driver/sqlite"
 	"dhub/internal/store"
 	"dhub/internal/tunnel"
+
+	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
 type Session struct {
@@ -191,13 +196,65 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 		q := u.Query()
 		q.Set("sslmode", sslMode)
+		if cfg.SSLCAPath != "" {
+			q.Set("sslrootcert", cfg.SSLCAPath)
+		}
+		if cfg.SSLCertPath != "" {
+			q.Set("sslcert", cfg.SSLCertPath)
+		}
+		if cfg.SSLKeyPath != "" {
+			q.Set("sslkey", cfg.SSLKeyPath)
+		}
 		u.RawQuery = q.Encode()
 		return postgres.NewPostgresDriver(u.String())
 	case "mysql":
-		// user:password@tcp(host:port)/dbname?parseTime=true&multiStatements=true
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&multiStatements=true",
-			cfg.Username, cfg.Password, host, port, cfg.DatabaseName)
-		return mysql.NewMySQLDriver(dsn)
+		mc := mysqldriver.NewConfig()
+		mc.User = cfg.Username
+		mc.Passwd = cfg.Password
+		mc.Net = "tcp"
+		mc.Addr = fmt.Sprintf("%s:%d", host, port)
+		mc.DBName = cfg.DatabaseName
+		mc.ParseTime = true
+		mc.MultiStatements = true
+
+		// Handle SSL/TLS configuration
+		if cfg.SSLCAPath != "" || (cfg.SSLCertPath != "" && cfg.SSLKeyPath != "") {
+			tlsCfg := &tls.Config{}
+			if cfg.SSLCAPath != "" {
+				rootCertPool := x509.NewCertPool()
+				pem, err := os.ReadFile(cfg.SSLCAPath)
+				if err == nil {
+					rootCertPool.AppendCertsFromPEM(pem)
+					tlsCfg.RootCAs = rootCertPool
+				}
+			}
+			if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
+				cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath)
+				if err == nil {
+					tlsCfg.Certificates = []tls.Certificate{cert}
+				}
+			}
+			if cfg.SSLMode == "required" || cfg.SSLMode == "require" {
+				tlsCfg.InsecureSkipVerify = true
+			}
+			tlsConfigName := fmt.Sprintf("custom_tls_%s", cfg.ID)
+			if err := mysqldriver.RegisterTLSConfig(tlsConfigName, tlsCfg); err == nil {
+				mc.TLSConfig = tlsConfigName
+			}
+		} else {
+			switch cfg.SSLMode {
+			case "preferred":
+				mc.TLSConfig = "preferred"
+			case "required", "require":
+				mc.TLSConfig = "skip-verify"
+			case "verify-ca", "verify-identity", "verify-full":
+				mc.TLSConfig = "true"
+			default:
+				mc.TLSConfig = "false"
+			}
+		}
+
+		return mysql.NewMySQLDriver(mc.FormatDSN())
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}

@@ -80,6 +80,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     connectionFolders,
     activeConnectionId,
     activeDatabase,
+    activeSchema,
     setConnections,
     loadConnectionsAndFolders,
     setActiveConnection,
@@ -203,6 +204,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
     };
   }, []);
+
+  // PostgreSQL discovered schemas per database: key = `${connId}:${dbName}`
+  const [treeSchemas, setTreeSchemas] = useState<Record<string, string[]>>({});
 
   // Drag & Drop state for sorting and grouping connections/folders
   const [draggedItem, setDraggedItem] = useState<{
@@ -666,15 +670,32 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
         // Pre-fetch objects for visible databases in background
         for (const dbName of prefetchedDbs) {
-          const targetSchema = conn?.driver === 'postgres' ? 'public' : dbName;
-          const sKey = `${connId}:${dbName}:${targetSchema}`;
-          SchemaService.GetObjects(connId, dbName, targetSchema)
-            .then((objs) => {
-              if (objs) {
-                setTreeObjects(sKey, objs as any);
-              }
-            })
-            .catch(() => {});
+          if (conn?.driver === 'postgres') {
+            SchemaService.GetSchemas(connId, dbName)
+              .then((schemas) => {
+                const safeSchemas = schemas && schemas.length > 0 ? schemas : ['public'];
+                setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
+                for (const s of safeSchemas) {
+                  const sKey = `${connId}:${dbName}:${s}`;
+                  SchemaService.GetObjects(connId, dbName, s)
+                    .then((objs) => {
+                      if (objs) setTreeObjects(sKey, objs as any);
+                    })
+                    .catch(() => {});
+                }
+              })
+              .catch(() => {});
+          } else {
+            const targetSchema = dbName;
+            const sKey = `${connId}:${dbName}:${targetSchema}`;
+            SchemaService.GetObjects(connId, dbName, targetSchema)
+              .then((objs) => {
+                if (objs) {
+                  setTreeObjects(sKey, objs as any);
+                }
+              })
+              .catch(() => {});
+          }
         }
       } catch (e) {
         console.error('Failed to load databases for connection:', e);
@@ -688,16 +709,40 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const nodeKey = `${connId}:${dbName}`;
     toggleNode(nodeKey);
     const conn = connections.find((c) => c.id === connId);
-    const targetSchema = conn?.driver === 'postgres' ? 'public' : dbName;
-    setActiveConnection(connId, dbName, targetSchema);
 
-    const schemaKey = `${connId}:${dbName}:${targetSchema}`;
-    if (!expandedNodes[nodeKey] && !treeObjects[schemaKey]) {
+    if (conn?.driver === 'postgres') {
       try {
-        const objects = (await SchemaService.GetObjects(connId, dbName, targetSchema)) ?? [];
-        setTreeObjects(schemaKey, objects as any);
+        let schemas = treeSchemas[nodeKey];
+        if (!schemas || schemas.length === 0) {
+          schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
+          if (schemas.length === 0) schemas = ['public'];
+          setTreeSchemas((prev) => ({ ...prev, [nodeKey]: schemas }));
+        }
+        const activeS = schemas.includes('public') ? 'public' : schemas[0] || 'public';
+        setActiveConnection(connId, dbName, activeS);
+        // Pre-fetch objects for discovered schemas
+        for (const s of schemas) {
+          const sKey = `${connId}:${dbName}:${s}`;
+          if (!treeObjects[sKey]) {
+            const objs = (await SchemaService.GetObjects(connId, dbName, s)) ?? [];
+            setTreeObjects(sKey, objs as any);
+          }
+        }
       } catch (e) {
-        console.error(`Failed to load objects for ${dbName}:`, e);
+        console.error(`Failed to load schemas for ${dbName}:`, e);
+      }
+    } else {
+      const targetSchema = dbName;
+      setActiveConnection(connId, dbName, targetSchema);
+
+      const schemaKey = `${connId}:${dbName}:${targetSchema}`;
+      if (!expandedNodes[nodeKey] && !treeObjects[schemaKey]) {
+        try {
+          const objects = (await SchemaService.GetObjects(connId, dbName, targetSchema)) ?? [];
+          setTreeObjects(schemaKey, objects as any);
+        } catch (e) {
+          console.error(`Failed to load objects for ${dbName}:`, e);
+        }
       }
     }
   };
@@ -846,26 +891,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
   const handleEditDatabase = (conn: ConnectionConfig, dbName: string) => {
     if (conn.driver === 'postgres') {
-      const newName = prompt(`Enter new name for database "${dbName}":`, dbName);
-      if (!newName || newName.trim() === '' || newName === dbName) return;
-      const execId = 'rename-db-' + Date.now();
-      QueryService.ExecuteQuery({
-        executionId: execId,
+      openTab({
+        id: `console-alter-${Date.now()}`,
+        type: 'worksheet',
+        title: `alter_${dbName}.sql`,
         connectionId: conn.id,
         database: 'postgres',
         schema: 'public',
-        sql: `ALTER DATABASE "${dbName}" RENAME TO "${newName.trim()}";`,
-        limit: 10,
-        offset: 0,
-      } as any)
-        .then(async () => {
-          const dbs = (await SchemaService.GetDatabases(conn.id)) ?? [];
-          setTreeDatabases(conn.id, dbs);
-          alertSuccess(`Database successfully renamed to "${newName.trim()}"`, 'Database Renamed');
-        })
-        .catch((err: any) => {
-          alertError(err?.message || String(err), 'Failed to Rename Database');
-        });
+        content: `-- Rename or Modify Database: ${dbName}\n-- Note: You must be connected to an administrative database (e.g. postgres) to rename.\nALTER DATABASE "${dbName}" RENAME TO "${dbName}_renamed";\n`,
+      });
     } else if (conn.driver === 'mysql') {
       // Open a query console pre-populated with ALTER DATABASE statement
       openTab({
@@ -1491,63 +1525,307 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                       {/* Tables & Views under this database */}
                       {isDbExpanded && (
                         <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
-                          <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
-                            <div className="flex items-center gap-1">
-                              <Folder className="h-2.5 w-2.5" />
-                              <span>tables ({tables.length})</span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenCreateTable(c, dbName, targetSchema);
-                              }}
-                              className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                              title={`Create New Table in "${dbName}"`}
-                            >
-                              <Plus className="h-2.5 w-2.5" />
-                            </button>
-                          </div>
-                          {tables.map((obj) => (
-                            <div
-                              key={obj.name}
-                              onClick={() => {
-                                handleItemMouseLeave();
-                                handleTableClick(c.id, dbName, targetSchema, obj.name);
-                              }}
-                              onContextMenu={(e) => {
-                                handleItemMouseLeave();
-                                openContextMenu(e, 'table', {
-                                  connection: c,
-                                  database: dbName,
-                                  schema: targetSchema,
-                                  table: obj,
-                                });
-                              }}
-                              onMouseEnter={(e) =>
-                                handleItemMouseEnter(e, {
-                                  kind: 'table',
-                                  title: obj.name,
-                                  badge: 'TABLE',
-                                  subtitle: `${c.name} / ${dbName}`,
-                                })
-                              }
-                              onMouseLeave={handleItemMouseLeave}
-                              title={obj.name}
-                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                            >
-                              <Table className="h-3 w-3 shrink-0 text-emerald-400" />
-                              <span className="truncate">{obj.name}</span>
-                            </div>
-                          ))}
+                          {c.driver === 'postgres' ? (
+                            (treeSchemas[`${c.id}:${dbName}`] || ['public']).map((sName) => {
+                              const sNodeKey = `${c.id}:${dbName}:schema:${sName}`;
+                              const isSExpanded = expandedNodes[sNodeKey] !== false; // default open
+                              const sKey = `${c.id}:${dbName}:${sName}`;
+                              const sAllObjects = treeObjects[sKey] || [];
+                              const sMatchingObjects = filterLower
+                                ? sAllObjects.filter((o) => o.name.toLowerCase().includes(filterLower))
+                                : sAllObjects;
+                              const sBaseList = filterLower && !dbMatches ? sMatchingObjects : sAllObjects;
+                              const sTables = sBaseList.filter((o) => o.type === 'table' || (!o.type && o.type !== 'view'));
+                              const sViews = sBaseList.filter((o) => o.type === 'view');
+                              const sMatViews = sBaseList.filter((o) => o.type === 'materialized_view');
+                              const sRoutines = sBaseList.filter((o) => o.type === 'routine');
+                              const sTriggers = sBaseList.filter((o) => o.type === 'trigger');
+                              const isSchemaActive = activeConnectionId === c.id && activeDatabase === dbName && activeSchema === sName;
 
-                          {views.length > 0 && (
+                              return (
+                                <div key={sName} className="mb-0.5">
+                                  {/* Schema Node Header */}
+                                  <div
+                                    onClick={() => {
+                                      handleItemMouseLeave();
+                                      toggleNode(sNodeKey);
+                                      setActiveConnection(c.id, dbName, sName);
+                                      if (!treeObjects[sKey]) {
+                                        SchemaService.GetObjects(c.id, dbName, sName)
+                                          .then((objs) => {
+                                            if (objs) setTreeObjects(sKey, objs as any);
+                                          })
+                                          .catch(() => {});
+                                      }
+                                    }}
+                                    className={`group/sch flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
+                                      isSchemaActive ? 'bg-[#22242c] text-zinc-100 font-medium' : ''
+                                    }`}
+                                  >
+                                    {isSExpanded ? (
+                                      <ChevronDown className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
+                                    ) : (
+                                      <ChevronRight className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
+                                    )}
+                                    <Layers className="h-3 w-3 text-cyan-400 shrink-0" />
+                                    <span className="truncate flex-1 text-[11px]">{sName}</span>
+                                    <div
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="opacity-0 group-hover/sch:opacity-100 flex items-center transition-opacity"
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenCreateTable(c, dbName, sName);
+                                        }}
+                                        className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
+                                        title={`Create New Table in schema "${sName}"`}
+                                      >
+                                        <Plus className="h-2.5 w-2.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Schema Tables & Views */}
+                                  {isSExpanded && (
+                                    <div className="ml-3 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
+                                      <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
+                                        <div className="flex items-center gap-1">
+                                          <Folder className="h-2.5 w-2.5" />
+                                          <span>tables ({sTables.length})</span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenCreateTable(c, dbName, sName);
+                                          }}
+                                          className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                          title={`Create New Table in schema "${sName}"`}
+                                        >
+                                          <Plus className="h-2.5 w-2.5" />
+                                        </button>
+                                      </div>
+                                      {sTables.map((obj) => (
+                                        <div
+                                          key={obj.name}
+                                          onClick={() => {
+                                            handleItemMouseLeave();
+                                            handleTableClick(c.id, dbName, sName, obj.name);
+                                          }}
+                                          onContextMenu={(e) => {
+                                            handleItemMouseLeave();
+                                            openContextMenu(e, 'table', {
+                                              connection: c,
+                                              database: dbName,
+                                              schema: sName,
+                                              table: obj,
+                                            });
+                                          }}
+                                          onMouseEnter={(e) =>
+                                            handleItemMouseEnter(e, {
+                                              kind: 'table',
+                                              title: obj.name,
+                                              badge: 'TABLE',
+                                              subtitle: `${c.name} / ${dbName}.${sName}`,
+                                            })
+                                          }
+                                          onMouseLeave={handleItemMouseLeave}
+                                          title={obj.name}
+                                          className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                        >
+                                          <Table className="h-3 w-3 shrink-0 text-emerald-400" />
+                                          <span className="truncate">{obj.name}</span>
+                                        </div>
+                                      ))}
+
+                                      {sViews.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>views ({sViews.length})</span>
+                                          </div>
+                                          {sViews.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              onClick={() => {
+                                                handleItemMouseLeave();
+                                                handleTableClick(c.id, dbName, sName, obj.name);
+                                              }}
+                                              onContextMenu={(e) => {
+                                                handleItemMouseLeave();
+                                                openContextMenu(e, 'table', {
+                                                  connection: c,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  table: obj,
+                                                });
+                                              }}
+                                              onMouseEnter={(e) =>
+                                                handleItemMouseEnter(e, {
+                                                  kind: 'view',
+                                                  title: obj.name,
+                                                  badge: 'VIEW',
+                                                  subtitle: `${c.name} / ${dbName}.${sName}`,
+                                                })
+                                              }
+                                              onMouseLeave={handleItemMouseLeave}
+                                              title={obj.name}
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <Eye className="h-3 w-3 shrink-0 text-purple-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+
+                                      {sMatViews.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>materialized views ({sMatViews.length})</span>
+                                          </div>
+                                          {sMatViews.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              onClick={() => {
+                                                handleItemMouseLeave();
+                                                handleTableClick(c.id, dbName, sName, obj.name);
+                                              }}
+                                              onContextMenu={(e) => {
+                                                handleItemMouseLeave();
+                                                openContextMenu(e, 'table', {
+                                                  connection: c,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  table: obj,
+                                                });
+                                              }}
+                                              onMouseEnter={(e) =>
+                                                handleItemMouseEnter(e, {
+                                                  kind: 'view',
+                                                  title: obj.name,
+                                                  badge: 'MAT VIEW',
+                                                  subtitle: `${c.name} / ${dbName}.${sName}`,
+                                                })
+                                              }
+                                              onMouseLeave={handleItemMouseLeave}
+                                              title={obj.name}
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <Layers className="h-3 w-3 shrink-0 text-blue-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+
+                                      {sRoutines.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>routines ({sRoutines.length})</span>
+                                          </div>
+                                          {sRoutines.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              onClick={() => {
+                                                handleItemMouseLeave();
+                                              }}
+                                              onContextMenu={(e) => {
+                                                handleItemMouseLeave();
+                                                openContextMenu(e, 'table', {
+                                                  connection: c,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  table: obj,
+                                                });
+                                              }}
+                                              onMouseEnter={(e) =>
+                                                handleItemMouseEnter(e, {
+                                                  kind: 'table',
+                                                  title: obj.name,
+                                                  badge: 'ROUTINE',
+                                                  subtitle: `${c.name} / ${dbName}.${sName}`,
+                                                })
+                                              }
+                                              onMouseLeave={handleItemMouseLeave}
+                                              title={obj.name}
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+
+                                      {sTriggers.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>triggers ({sTriggers.length})</span>
+                                          </div>
+                                          {sTriggers.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              onClick={() => {
+                                                handleItemMouseLeave();
+                                              }}
+                                              onContextMenu={(e) => {
+                                                handleItemMouseLeave();
+                                                openContextMenu(e, 'table', {
+                                                  connection: c,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  table: obj,
+                                                });
+                                              }}
+                                              onMouseEnter={(e) =>
+                                                handleItemMouseEnter(e, {
+                                                  kind: 'table',
+                                                  title: obj.name,
+                                                  badge: 'TRIGGER',
+                                                  subtitle: `${c.name} / ${dbName}.${sName}`,
+                                                })
+                                              }
+                                              onMouseLeave={handleItemMouseLeave}
+                                              title={obj.name}
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <Zap className="h-3 w-3 shrink-0 text-rose-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
                             <>
-                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
-                                <Folder className="h-2.5 w-2.5" />
-                                <span>views ({views.length})</span>
+                              <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
+                                <div className="flex items-center gap-1">
+                                  <Folder className="h-2.5 w-2.5" />
+                                  <span>tables ({tables.length})</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenCreateTable(c, dbName, targetSchema);
+                                  }}
+                                  className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                  title={`Create New Table in "${dbName}"`}
+                                >
+                                  <Plus className="h-2.5 w-2.5" />
+                                </button>
                               </div>
-                              {views.map((obj) => (
+                              {tables.map((obj) => (
                                 <div
                                   key={obj.name}
                                   onClick={() => {
@@ -1565,90 +1843,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                   }}
                                   onMouseEnter={(e) =>
                                     handleItemMouseEnter(e, {
-                                      kind: 'view',
-                                      title: obj.name,
-                                      badge: 'VIEW',
-                                      subtitle: `${c.name} / ${dbName}`,
-                                    })
-                                  }
-                                  onMouseLeave={handleItemMouseLeave}
-                                  title={obj.name}
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                >
-                                  <Eye className="h-3 w-3 shrink-0 text-purple-400" />
-                                  <span className="truncate">{obj.name}</span>
-                                </div>
-                              ))}
-                            </>
-                          )}
-
-                          {matViews.length > 0 && (
-                            <>
-                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
-                                <Folder className="h-2.5 w-2.5" />
-                                <span>materialized views ({matViews.length})</span>
-                              </div>
-                              {matViews.map((obj) => (
-                                <div
-                                  key={obj.name}
-                                  onClick={() => {
-                                    handleItemMouseLeave();
-                                    handleTableClick(c.id, dbName, targetSchema, obj.name);
-                                  }}
-                                  onContextMenu={(e) => {
-                                    handleItemMouseLeave();
-                                    openContextMenu(e, 'table', {
-                                      connection: c,
-                                      database: dbName,
-                                      schema: targetSchema,
-                                      table: obj,
-                                    });
-                                  }}
-                                  onMouseEnter={(e) =>
-                                    handleItemMouseEnter(e, {
-                                      kind: 'view',
-                                      title: obj.name,
-                                      badge: 'MAT VIEW',
-                                      subtitle: `${c.name} / ${dbName}`,
-                                    })
-                                  }
-                                  onMouseLeave={handleItemMouseLeave}
-                                  title={obj.name}
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                >
-                                  <Layers className="h-3 w-3 shrink-0 text-blue-400" />
-                                  <span className="truncate">{obj.name}</span>
-                                </div>
-                              ))}
-                            </>
-                          )}
-
-                          {routines.length > 0 && (
-                            <>
-                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
-                                <Folder className="h-2.5 w-2.5" />
-                                <span>routines ({routines.length})</span>
-                              </div>
-                              {routines.map((obj) => (
-                                <div
-                                  key={obj.name}
-                                  onClick={() => {
-                                    handleItemMouseLeave();
-                                  }}
-                                  onContextMenu={(e) => {
-                                    handleItemMouseLeave();
-                                    openContextMenu(e, 'table', {
-                                      connection: c,
-                                      database: dbName,
-                                      schema: targetSchema,
-                                      table: obj,
-                                    });
-                                  }}
-                                  onMouseEnter={(e) =>
-                                    handleItemMouseEnter(e, {
                                       kind: 'table',
                                       title: obj.name,
-                                      badge: 'ROUTINE',
+                                      badge: 'TABLE',
                                       subtitle: `${c.name} / ${dbName}`,
                                     })
                                   }
@@ -1656,50 +1853,172 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                   title={obj.name}
                                   className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                 >
-                                  <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                  <Table className="h-3 w-3 shrink-0 text-emerald-400" />
                                   <span className="truncate">{obj.name}</span>
                                 </div>
                               ))}
-                            </>
-                          )}
 
-                          {triggers.length > 0 && (
-                            <>
-                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
-                                <Folder className="h-2.5 w-2.5" />
-                                <span>triggers ({triggers.length})</span>
-                              </div>
-                              {triggers.map((obj) => (
-                                <div
-                                  key={obj.name}
-                                  onClick={() => {
-                                    handleItemMouseLeave();
-                                  }}
-                                  onContextMenu={(e) => {
-                                    handleItemMouseLeave();
-                                    openContextMenu(e, 'table', {
-                                      connection: c,
-                                      database: dbName,
-                                      schema: targetSchema,
-                                      table: obj,
-                                    });
-                                  }}
-                                  onMouseEnter={(e) =>
-                                    handleItemMouseEnter(e, {
-                                      kind: 'table',
-                                      title: obj.name,
-                                      badge: 'TRIGGER',
-                                      subtitle: `${c.name} / ${dbName}`,
-                                    })
-                                  }
-                                  onMouseLeave={handleItemMouseLeave}
-                                  title={obj.name}
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                >
-                                  <Zap className="h-3 w-3 shrink-0 text-rose-400" />
-                                  <span className="truncate">{obj.name}</span>
-                                </div>
-                              ))}
+                              {views.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                    <Folder className="h-2.5 w-2.5" />
+                                    <span>views ({views.length})</span>
+                                  </div>
+                                  {views.map((obj) => (
+                                    <div
+                                      key={obj.name}
+                                      onClick={() => {
+                                        handleItemMouseLeave();
+                                        handleTableClick(c.id, dbName, targetSchema, obj.name);
+                                      }}
+                                      onContextMenu={(e) => {
+                                        handleItemMouseLeave();
+                                        openContextMenu(e, 'table', {
+                                          connection: c,
+                                          database: dbName,
+                                          schema: targetSchema,
+                                          table: obj,
+                                        });
+                                      }}
+                                      onMouseEnter={(e) =>
+                                        handleItemMouseEnter(e, {
+                                          kind: 'view',
+                                          title: obj.name,
+                                          badge: 'VIEW',
+                                          subtitle: `${c.name} / ${dbName}`,
+                                        })
+                                      }
+                                      onMouseLeave={handleItemMouseLeave}
+                                      title={obj.name}
+                                      className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                    >
+                                      <Eye className="h-3 w-3 shrink-0 text-purple-400" />
+                                      <span className="truncate">{obj.name}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+
+                              {matViews.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                    <Folder className="h-2.5 w-2.5" />
+                                    <span>materialized views ({matViews.length})</span>
+                                  </div>
+                                  {matViews.map((obj) => (
+                                    <div
+                                      key={obj.name}
+                                      onClick={() => {
+                                        handleItemMouseLeave();
+                                        handleTableClick(c.id, dbName, targetSchema, obj.name);
+                                      }}
+                                      onContextMenu={(e) => {
+                                        handleItemMouseLeave();
+                                        openContextMenu(e, 'table', {
+                                          connection: c,
+                                          database: dbName,
+                                          schema: targetSchema,
+                                          table: obj,
+                                        });
+                                      }}
+                                      onMouseEnter={(e) =>
+                                        handleItemMouseEnter(e, {
+                                          kind: 'view',
+                                          title: obj.name,
+                                          badge: 'MAT VIEW',
+                                          subtitle: `${c.name} / ${dbName}`,
+                                        })
+                                      }
+                                      onMouseLeave={handleItemMouseLeave}
+                                      title={obj.name}
+                                      className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                    >
+                                      <Layers className="h-3 w-3 shrink-0 text-blue-400" />
+                                      <span className="truncate">{obj.name}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+
+                              {routines.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                    <Folder className="h-2.5 w-2.5" />
+                                    <span>routines ({routines.length})</span>
+                                  </div>
+                                  {routines.map((obj) => (
+                                    <div
+                                      key={obj.name}
+                                      onClick={() => {
+                                        handleItemMouseLeave();
+                                      }}
+                                      onContextMenu={(e) => {
+                                        handleItemMouseLeave();
+                                        openContextMenu(e, 'table', {
+                                          connection: c,
+                                          database: dbName,
+                                          schema: targetSchema,
+                                          table: obj,
+                                        });
+                                      }}
+                                      onMouseEnter={(e) =>
+                                        handleItemMouseEnter(e, {
+                                          kind: 'table',
+                                          title: obj.name,
+                                          badge: 'ROUTINE',
+                                          subtitle: `${c.name} / ${dbName}`,
+                                        })
+                                      }
+                                      onMouseLeave={handleItemMouseLeave}
+                                      title={obj.name}
+                                      className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                    >
+                                      <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                      <span className="truncate">{obj.name}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+
+                              {triggers.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                    <Folder className="h-2.5 w-2.5" />
+                                    <span>triggers ({triggers.length})</span>
+                                  </div>
+                                  {triggers.map((obj) => (
+                                    <div
+                                      key={obj.name}
+                                      onClick={() => {
+                                        handleItemMouseLeave();
+                                      }}
+                                      onContextMenu={(e) => {
+                                        handleItemMouseLeave();
+                                        openContextMenu(e, 'table', {
+                                          connection: c,
+                                          database: dbName,
+                                          schema: targetSchema,
+                                          table: obj,
+                                        });
+                                      }}
+                                      onMouseEnter={(e) =>
+                                        handleItemMouseEnter(e, {
+                                          kind: 'table',
+                                          title: obj.name,
+                                          badge: 'TRIGGER',
+                                          subtitle: `${c.name} / ${dbName}`,
+                                        })
+                                      }
+                                      onMouseLeave={handleItemMouseLeave}
+                                      title={obj.name}
+                                      className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                    >
+                                      <Zap className="h-3 w-3 shrink-0 text-rose-400" />
+                                      <span className="truncate">{obj.name}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
                             </>
                           )}
                         </div>

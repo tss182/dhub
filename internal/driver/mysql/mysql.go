@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -324,6 +325,15 @@ func (m *MySQLDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, er
 	return tx, nil
 }
 
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	effectiveSchema := schema
@@ -340,9 +350,9 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 		case "insert":
 			cols := []string{}
 			vals := []string{}
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, fmt.Sprintf("`%s`", k))
-				vals = append(vals, formatSQLVal(v))
+				vals = append(vals, formatSQLVal(c.Changes[k]))
 			}
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);", prefix, strings.Join(cols, ", "), strings.Join(vals, ", "))
 			if len(cols) == 0 {
@@ -351,18 +361,18 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 			statements = append(statements, stmt)
 		case "update":
 			sets := []string{}
-			for k, v := range c.Changes {
-				sets = append(sets, fmt.Sprintf("`%s` = %s", k, formatSQLVal(v)))
+			for _, k := range sortedKeys(c.Changes) {
+				sets = append(sets, fmt.Sprintf("`%s` = %s", k, formatSQLVal(c.Changes[k])))
 			}
 			where := []string{}
-			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf("`%s` = %s", k, formatSQLVal(v)))
+			for _, k := range sortedKeys(c.PrimaryKey) {
+				where = append(where, fmt.Sprintf("`%s` = %s", k, formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf("UPDATE %s SET %s WHERE %s;", prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
-			for k, v := range c.PrimaryKey {
-				where = append(where, fmt.Sprintf("`%s` = %s", k, formatSQLVal(v)))
+			for _, k := range sortedKeys(c.PrimaryKey) {
+				where = append(where, fmt.Sprintf("`%s` = %s", k, formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf("DELETE FROM %s WHERE %s;", prefix, strings.Join(where, " AND ")))
 		}
@@ -413,10 +423,10 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			cols := []string{}
 			placeholders := []string{}
 			vals := []any{}
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, fmt.Sprintf("`%s`", k))
 				placeholders = append(placeholders, "?")
-				vals = append(vals, normalizeMySQLValue(v))
+				vals = append(vals, normalizeMySQLValue(c.Changes[k]))
 			}
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 			if len(cols) == 0 {
@@ -431,14 +441,14 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 		case "update":
 			sets := []string{}
 			vals := []any{}
-			for k, v := range c.Changes {
+			for _, k := range sortedKeys(c.Changes) {
 				sets = append(sets, fmt.Sprintf("`%s` = ?", k))
-				vals = append(vals, normalizeMySQLValue(v))
+				vals = append(vals, normalizeMySQLValue(c.Changes[k]))
 			}
 			where := []string{}
-			for k, v := range c.PrimaryKey {
+			for _, k := range sortedKeys(c.PrimaryKey) {
 				where = append(where, fmt.Sprintf("`%s` = ?", k))
-				vals = append(vals, normalizeMySQLValue(v))
+				vals = append(vals, normalizeMySQLValue(c.PrimaryKey[k]))
 			}
 			stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -450,9 +460,9 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 		case "delete":
 			where := []string{}
 			vals := []any{}
-			for k, v := range c.PrimaryKey {
+			for _, k := range sortedKeys(c.PrimaryKey) {
 				where = append(where, fmt.Sprintf("`%s` = ?", k))
-				vals = append(vals, normalizeMySQLValue(v))
+				vals = append(vals, normalizeMySQLValue(c.PrimaryKey[k]))
 			}
 			stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", prefix, strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
