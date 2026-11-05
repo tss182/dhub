@@ -14,7 +14,7 @@ export {
     WorkspaceService
 };
 
-export {
+export type {
     ColumnMapping,
     ExportRequest,
     ExportResult,

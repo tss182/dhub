@@ -17,6 +17,7 @@ import { Popover } from './components/common/Popover';
 import { TableStructureModal } from './components/modals/CreateTableModal';
 import { QueryHistoryPanel } from './components/history/QueryHistoryPanel';
 import { ExplainPlanPanel } from './components/explain/ExplainPlanPanel';
+import { ERDiagramView } from './components/diagram/ERDiagramView';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
@@ -2026,6 +2027,29 @@ export function App() {
               return (
                 <div className="flex-1 min-h-0 flex flex-col">
                   <UserManager tab={activeTab} connection={usersConn} />
+                </div>
+              );
+            })() : activeTab?.type === 'er_diagram' ? (() => {
+              return (
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <ERDiagramView
+                    connectionId={activeTab.connectionId}
+                    database={activeTab.database}
+                    schema={activeTab.schema}
+                    onOpenTable={(tableName) => {
+                      const conn = connections.find((c) => c.id === activeTab.connectionId);
+                      openTab({
+                        id: `table-${activeTab.connectionId}-${activeTab.database}-${tableName}`,
+                        type: 'table_data',
+                        title: tableName,
+                        connectionId: activeTab.connectionId,
+                        driver: conn?.driver,
+                        database: activeTab.database,
+                        schema: activeTab.schema,
+                        table: tableName,
+                      });
+                    }}
+                  />
                 </div>
               );
             })() : (

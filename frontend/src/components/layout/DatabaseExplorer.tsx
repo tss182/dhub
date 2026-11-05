@@ -31,6 +31,8 @@ import {
   Filter,
   User,
   Search,
+  Zap,
+  Layers,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -942,6 +944,19 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     });
   };
 
+  const handleOpenERDiagram = (connId: string, db: string, schema: string) => {
+    const conn = connections.find((c) => c.id === connId);
+    openTab({
+      id: `erd-${connId}-${db}-${schema || 'public'}`,
+      type: 'er_diagram',
+      title: `ERD: ${db}${schema && schema !== db && schema !== 'main' ? `.${schema}` : ''}`,
+      connectionId: connId,
+      driver: conn?.driver,
+      database: db,
+      schema: schema || (conn?.driver === 'postgres' ? 'public' : db),
+    });
+  };
+
   const handleEditTableStructure = (conn: ConnectionConfig, db: string, schema: string, tableName: string) => {
     openEditTableModal(conn, db, schema, tableName);
   };
@@ -1360,6 +1375,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                       >
                         {obj.type === 'view' ? (
                           <Eye className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+                        ) : obj.type === 'trigger' ? (
+                          <Zap className="h-3.5 w-3.5 text-rose-400 shrink-0" />
                         ) : (
                           <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                         )}
@@ -1405,12 +1422,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
                   const isDbExpanded =
                     !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
-                  const tables = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
-                    (o) => o.type !== 'view'
-                  );
-                  const views = (filterLower && !dbMatches ? matchingObjects : allObjects).filter(
-                    (o) => o.type === 'view'
-                  );
+                  const baseList = filterLower && !dbMatches ? matchingObjects : allObjects;
+                  const tables = baseList.filter((o) => o.type === 'table' || (!o.type && o.type !== 'view'));
+                  const views = baseList.filter((o) => o.type === 'view');
+                  const matViews = baseList.filter((o) => o.type === 'materialized_view');
+                  const routines = baseList.filter((o) => o.type === 'routine');
+                  const triggers = baseList.filter((o) => o.type === 'trigger');
                   const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
 
                   return (
@@ -1559,6 +1576,127 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                   className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                 >
                                   <Eye className="h-3 w-3 shrink-0 text-purple-400" />
+                                  <span className="truncate">{obj.name}</span>
+                                </div>
+                              ))}
+                            </>
+                          )}
+
+                          {matViews.length > 0 && (
+                            <>
+                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                <Folder className="h-2.5 w-2.5" />
+                                <span>materialized views ({matViews.length})</span>
+                              </div>
+                              {matViews.map((obj) => (
+                                <div
+                                  key={obj.name}
+                                  onClick={() => {
+                                    handleItemMouseLeave();
+                                    handleTableClick(c.id, dbName, targetSchema, obj.name);
+                                  }}
+                                  onContextMenu={(e) => {
+                                    handleItemMouseLeave();
+                                    openContextMenu(e, 'table', {
+                                      connection: c,
+                                      database: dbName,
+                                      schema: targetSchema,
+                                      table: obj,
+                                    });
+                                  }}
+                                  onMouseEnter={(e) =>
+                                    handleItemMouseEnter(e, {
+                                      kind: 'view',
+                                      title: obj.name,
+                                      badge: 'MAT VIEW',
+                                      subtitle: `${c.name} / ${dbName}`,
+                                    })
+                                  }
+                                  onMouseLeave={handleItemMouseLeave}
+                                  title={obj.name}
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                >
+                                  <Layers className="h-3 w-3 shrink-0 text-blue-400" />
+                                  <span className="truncate">{obj.name}</span>
+                                </div>
+                              ))}
+                            </>
+                          )}
+
+                          {routines.length > 0 && (
+                            <>
+                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                <Folder className="h-2.5 w-2.5" />
+                                <span>routines ({routines.length})</span>
+                              </div>
+                              {routines.map((obj) => (
+                                <div
+                                  key={obj.name}
+                                  onClick={() => {
+                                    handleItemMouseLeave();
+                                  }}
+                                  onContextMenu={(e) => {
+                                    handleItemMouseLeave();
+                                    openContextMenu(e, 'table', {
+                                      connection: c,
+                                      database: dbName,
+                                      schema: targetSchema,
+                                      table: obj,
+                                    });
+                                  }}
+                                  onMouseEnter={(e) =>
+                                    handleItemMouseEnter(e, {
+                                      kind: 'table',
+                                      title: obj.name,
+                                      badge: 'ROUTINE',
+                                      subtitle: `${c.name} / ${dbName}`,
+                                    })
+                                  }
+                                  onMouseLeave={handleItemMouseLeave}
+                                  title={obj.name}
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                >
+                                  <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                  <span className="truncate">{obj.name}</span>
+                                </div>
+                              ))}
+                            </>
+                          )}
+
+                          {triggers.length > 0 && (
+                            <>
+                              <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                <Folder className="h-2.5 w-2.5" />
+                                <span>triggers ({triggers.length})</span>
+                              </div>
+                              {triggers.map((obj) => (
+                                <div
+                                  key={obj.name}
+                                  onClick={() => {
+                                    handleItemMouseLeave();
+                                  }}
+                                  onContextMenu={(e) => {
+                                    handleItemMouseLeave();
+                                    openContextMenu(e, 'table', {
+                                      connection: c,
+                                      database: dbName,
+                                      schema: targetSchema,
+                                      table: obj,
+                                    });
+                                  }}
+                                  onMouseEnter={(e) =>
+                                    handleItemMouseEnter(e, {
+                                      kind: 'table',
+                                      title: obj.name,
+                                      badge: 'TRIGGER',
+                                      subtitle: `${c.name} / ${dbName}`,
+                                    })
+                                  }
+                                  onMouseLeave={handleItemMouseLeave}
+                                  title={obj.name}
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                >
+                                  <Zap className="h-3 w-3 shrink-0 text-rose-400" />
                                   <span className="truncate">{obj.name}</span>
                                 </div>
                               ))}
@@ -2110,6 +2248,22 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 type="button"
                 onClick={() => {
                   closeContextMenu();
+                  handleOpenERDiagram(
+                    contextMenu.connection!.id,
+                    contextMenu.database!,
+                    contextMenu.schema || contextMenu.database!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>Open ER Diagram...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
                   handleEditConnection(contextMenu.connection!.id);
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -2269,6 +2423,22 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 type="button"
                 onClick={() => {
                   closeContextMenu();
+                  handleOpenERDiagram(
+                    contextMenu.connection!.id,
+                    contextMenu.database!,
+                    contextMenu.schema || contextMenu.database!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>Open ER Diagram...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
                   handleEditDatabase(contextMenu.connection!, contextMenu.database!);
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -2400,6 +2570,22 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               >
                 <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>New Query Console</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleOpenERDiagram(
+                    contextMenu.connection!.id,
+                    contextMenu.database!,
+                    contextMenu.schema || contextMenu.database!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>Open ER Diagram...</span>
               </button>
 
               <button

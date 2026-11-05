@@ -83,12 +83,14 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     try {
       const preview = await ExportService.PreviewImportFile(filePath.trim(), delimiter, hasHeader);
       if (preview) {
-        setPreviewColumns(preview.columns);
-        setPreviewRows(preview.rows);
+        const cols = preview.columns || [];
+        const safeRows: string[][] = (preview.rows || []).map((r) => r || []);
+        setPreviewColumns(cols);
+        setPreviewRows(safeRows);
 
         // Auto map matching column names (case-insensitive)
         const initialMap: Record<string, string> = {};
-        preview.columns.forEach((fCol) => {
+        cols.forEach((fCol) => {
           const matched = tableColumns.find(
             (tCol) => tCol.toLowerCase() === fCol.toLowerCase()
           );
@@ -115,7 +117,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     try {
       const mappingList: ColumnMapping[] = Object.entries(mappings)
         .filter(([_, tCol]) => tCol !== '')
-        .map(([fCol, tCol]) => new ColumnMapping({
+        .map(([fCol, tCol]) => ({
           fileColumn: fCol,
           tableColumn: tCol,
         }));
@@ -124,7 +126,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         throw new Error('Please map at least one file column to a table column.');
       }
 
-      const req = new ImportRequest({
+      const req: ImportRequest = {
         connectionId,
         database,
         schema,
@@ -134,7 +136,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         delimiter,
         hasHeader,
         mappings: mappingList,
-      });
+      };
 
       const res = await ExportService.ImportFileToTable(req);
       if (res) {

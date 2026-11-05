@@ -72,7 +72,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     setLoading(true);
 
     try {
-      const req = new ExportRequest({
+      const req: ExportRequest = {
         connectionId,
         database,
         schema,
@@ -82,7 +82,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         filePath: filePath.trim(),
         delimiter,
         includeHeader,
-      });
+      };
 
       const res = await ExportService.ExportToFile(req);
       if (res) {

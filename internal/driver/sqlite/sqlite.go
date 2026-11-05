@@ -48,7 +48,7 @@ func (s *SQLiteDriver) ListSchemas(ctx context.Context, database string) ([]stri
 }
 
 func (s *SQLiteDriver) ListObjects(ctx context.Context, database, schema string) ([]driver.ObjectSummary, error) {
-	query := `SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name`
+	query := `SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err

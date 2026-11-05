@@ -89,6 +89,41 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 			})
 		}
 	}
+
+	// Routines (Procedures & Functions)
+	rRows, rErr := m.db.QueryContext(ctx, `SELECT ROUTINE_NAME FROM information_schema.routines WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_NAME`, database)
+	if rErr == nil {
+		defer rRows.Close()
+		for rRows.Next() {
+			var rName string
+			if err := rRows.Scan(&rName); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      database,
+					Name:        rName,
+					Type:        "routine",
+					RowEstimate: -1,
+				})
+			}
+		}
+	}
+
+	// Triggers
+	tRows, tErr := m.db.QueryContext(ctx, `SELECT TRIGGER_NAME FROM information_schema.triggers WHERE TRIGGER_SCHEMA = ? ORDER BY TRIGGER_NAME`, database)
+	if tErr == nil {
+		defer tRows.Close()
+		for tRows.Next() {
+			var tName string
+			if err := tRows.Scan(&tName); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      database,
+					Name:        tName,
+					Type:        "trigger",
+					RowEstimate: -1,
+				})
+			}
+		}
+	}
+
 	return objects, nil
 }
 

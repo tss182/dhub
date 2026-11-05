@@ -107,7 +107,7 @@ export interface IndexMeta {
 export interface ObjectSummary {
   schema: string;
   name: string;
-  type: 'table' | 'view' | 'materialized_view' | 'routine';
+  type: 'table' | 'view' | 'materialized_view' | 'routine' | 'trigger';
   rowEstimate: number;
   sizePretty?: string;
 }
@@ -171,7 +171,7 @@ export interface QueryHistoryEntry {
   executedAt: string;
 }
 
-export type WorkbenchTabType = 'worksheet' | 'table_data' | 'ddl' | 'users';
+export type WorkbenchTabType = 'worksheet' | 'table_data' | 'ddl' | 'users' | 'er_diagram';
 
 export interface WorkbenchTab {
   id: string;

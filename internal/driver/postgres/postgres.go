@@ -190,6 +190,58 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 			})
 		}
 	}
+
+	// Materialized Views
+	matRows, matErr := db.QueryContext(ctx, `SELECT matviewname FROM pg_matviews WHERE schemaname = $1 ORDER BY matviewname`, schema)
+	if matErr == nil {
+		defer matRows.Close()
+		for matRows.Next() {
+			var mName string
+			if err := matRows.Scan(&mName); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      schema,
+					Name:        mName,
+					Type:        "materialized_view",
+					RowEstimate: -1,
+				})
+			}
+		}
+	}
+
+	// Routines (Functions & Stored Procedures)
+	routineRows, rErr := db.QueryContext(ctx, `SELECT routine_name FROM information_schema.routines WHERE routine_schema = $1 ORDER BY routine_name`, schema)
+	if rErr == nil {
+		defer routineRows.Close()
+		for routineRows.Next() {
+			var rName string
+			if err := routineRows.Scan(&rName); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      schema,
+					Name:        rName,
+					Type:        "routine",
+					RowEstimate: -1,
+				})
+			}
+		}
+	}
+
+	// Triggers
+	triggerRows, tErr := db.QueryContext(ctx, `SELECT DISTINCT trigger_name FROM information_schema.triggers WHERE trigger_schema = $1 ORDER BY trigger_name`, schema)
+	if tErr == nil {
+		defer triggerRows.Close()
+		for triggerRows.Next() {
+			var tName string
+			if err := triggerRows.Scan(&tName); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      schema,
+					Name:        tName,
+					Type:        "trigger",
+					RowEstimate: -1,
+				})
+			}
+		}
+	}
+
 	return objects, nil
 }
 

@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -13,33 +13,19 @@ import * as $models from "./models.js";
  * ExportToFile streams query or table rows directly into a file on disk.
  */
 export function ExportToFile(req: $models.ExportRequest): $CancellablePromise<$models.ExportResult | null> {
-    return $Call.ByID(2816116151, req).then(($result: any) => {
-        return $$createType1($result);
-    });
+    return $Call.ByID(2816116151, req);
 }
 
 /**
  * ImportFileToTable imports CSV rows into a database table using batch inserts.
  */
 export function ImportFileToTable(req: $models.ImportRequest): $CancellablePromise<$models.ImportResult | null> {
-    return $Call.ByID(3443859660, req).then(($result: any) => {
-        return $$createType3($result);
-    });
+    return $Call.ByID(3443859660, req);
 }
 
 /**
  * PreviewImportFile parses the first 10 rows of a CSV file for column mapping preview.
  */
 export function PreviewImportFile(filePath: string, delimiter: string, hasHeader: boolean): $CancellablePromise<$models.FilePreview | null> {
-    return $Call.ByID(4004112981, filePath, delimiter, hasHeader).then(($result: any) => {
-        return $$createType5($result);
-    });
+    return $Call.ByID(4004112981, filePath, delimiter, hasHeader);
 }
-
-// Private type creation functions
-const $$createType0 = $models.ExportResult.createFrom;
-const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = $models.ImportResult.createFrom;
-const $$createType3 = $Create.Nullable($$createType2);
-const $$createType4 = $models.FilePreview.createFrom;
-const $$createType5 = $Create.Nullable($$createType4);
