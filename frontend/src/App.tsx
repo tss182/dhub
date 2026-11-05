@@ -1219,74 +1219,10 @@ export function App() {
       {/* Top Titlebar / Islands Header */}
       <header className="flex h-11 items-center justify-between border-b border-[#272932] px-4 bg-[#14151a]">
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggleLeftPanel}
-            className={`flex items-center justify-center h-7 w-7 rounded border transition-colors cursor-pointer ${
-              isLeftPanelOpen
-                ? 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
-                : 'bg-[#22242c] border-blue-500/50 text-blue-400 hover:text-blue-300'
-            }`}
-            title={isLeftPanelOpen ? `Minimize Explorer (${isMac ? '⌘B' : 'Ctrl+B'})` : `Expand Explorer (${isMac ? '⌘B' : 'Ctrl+B'})`}
-          >
-            {isLeftPanelOpen ? (
-              <PanelLeftClose className="h-4 w-4" />
-            ) : (
-              <PanelLeftOpen className="h-4 w-4" />
-            )}
-          </button>
           <DHubLogo variant="full" size={26} />
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Toggle Consoles Panel Button */}
-          <button
-            onClick={() => {
-              if (!isRightPanelOpen) {
-                setRightPanelOpen(true);
-                setActiveRightSidebarTab('consoles');
-              } else if (activeRightSidebarTab === 'consoles') {
-                setRightPanelOpen(false);
-              } else {
-                setActiveRightSidebarTab('consoles');
-              }
-            }}
-            className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
-              isRightPanelOpen && activeRightSidebarTab === 'consoles'
-                ? 'bg-[#22242c] border-zinc-500 text-zinc-100 font-medium'
-                : 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
-            }`}
-            title="Toggle Consoles List Panel"
-          >
-            <Terminal className="h-3.5 w-3.5 text-blue-400" />
-            <span>Console</span>
-            <span className="rounded bg-[#2a2d37] px-1 text-[10px] font-mono">
-              {consoles.length}
-            </span>
-          </button>
-
-          {/* Toggle Views Panel Button */}
-          <button
-            onClick={() => {
-              if (!isRightPanelOpen) {
-                setRightPanelOpen(true);
-                setActiveRightSidebarTab('views');
-              } else if (activeRightSidebarTab === 'views') {
-                setRightPanelOpen(false);
-              } else {
-                setActiveRightSidebarTab('views');
-              }
-            }}
-            className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
-              isRightPanelOpen && activeRightSidebarTab === 'views'
-                ? 'bg-[#22242c] border-zinc-500 text-zinc-100 font-medium'
-                : 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
-            }`}
-            title="Toggle Views / Value Viewer Panel (F7)"
-          >
-            <PanelRight className="h-3.5 w-3.5 text-blue-400" />
-            <span>Views</span>
-          </button>
-
           {/* Search Everywhere Trigger */}
           <button
             onClick={() => setSearchEverywhereOpen(true)}
