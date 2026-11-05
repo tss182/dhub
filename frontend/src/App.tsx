@@ -18,6 +18,9 @@ import { TableStructureModal } from './components/modals/CreateTableModal';
 import { QueryHistoryPanel } from './components/history/QueryHistoryPanel';
 import { ExplainPlanPanel } from './components/explain/ExplainPlanPanel';
 import { ERDiagramView } from './components/diagram/ERDiagramView';
+import { ExportModal } from './components/modals/ExportModal';
+import { ImportModal } from './components/modals/ImportModal';
+import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
@@ -41,6 +44,8 @@ import {
   Pencil,
   Copy,
   Check,
+  Download,
+  Upload,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRight,
@@ -105,6 +110,8 @@ export function App() {
   const [activeExecIdByTab, setActiveExecIdByTab] = useState<Record<string, string>>({});
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
   const [copiedResultRawSql, setCopiedResultRawSql] = useState(false);
+  const [isTableExportOpen, setIsTableExportOpen] = useState(false);
+  const [isTableImportOpen, setIsTableImportOpen] = useState(false);
 
   const handleCopyResultRawSql = async (rawSql: string) => {
     if (!rawSql) return;
@@ -1975,20 +1982,43 @@ export function App() {
                       {tableDataByTab[activeTab.id]?.rows?.length ?? 0} rows
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {tableDataByTab[activeTab.id]?.whereClause && (
                       <button
                         onClick={() => {
                           const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
                           loadTableData(activeTab, 0, currentSize, false, 1, '');
                         }}
-                        className="flex items-center gap-1 h-6 px-2 rounded text-[11px] text-rose-400 hover:text-white hover:bg-rose-900/40 border border-rose-800/40 transition-colors cursor-pointer"
+                        className="flex items-center gap-1 h-6 px-2 rounded text-[11px] text-rose-400 hover:text-white hover:bg-rose-900/40 border border-rose-800/40 transition-colors cursor-pointer mr-0.5"
                         title="Reset WHERE filter to show all rows"
                       >
                         <RotateCcw className="h-3 w-3" />
                         <span>Reset Filter</span>
                       </button>
                     )}
+
+                    <CopyFormatSelector />
+
+                    <button
+                      type="button"
+                      onClick={() => setIsTableExportOpen(true)}
+                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                      title="Export Data (CSV, JSON, SQL Insert)"
+                    >
+                      <Download className="h-3.5 w-3.5 text-blue-400" />
+                    </button>
+
+                    {activeTab.table && !tableConn?.isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setIsTableImportOpen(true)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                        title="Import Data Wizard (CSV)"
+                      >
+                        <Upload className="h-3.5 w-3.5 text-emerald-400" />
+                      </button>
+                    )}
+
                     <button
                       onClick={() => loadTableData(activeTab)}
                       disabled={tableDataByTab[activeTab.id]?.isLoading}
@@ -2053,6 +2083,29 @@ export function App() {
                       onSubmitChanges={handleSubmitChanges}
                       onPreviewChanges={handlePreviewChanges}
                       isReadOnly={Boolean(tableConn?.isReadOnly)}
+                    />
+                  )}
+
+                  {isTableExportOpen && (
+                    <ExportModal
+                      isOpen={isTableExportOpen}
+                      onClose={() => setIsTableExportOpen(false)}
+                      connectionId={activeTab.connectionId}
+                      database={activeTab.database}
+                      schema={activeTab.schema}
+                      table={activeTab.table}
+                    />
+                  )}
+
+                  {isTableImportOpen && activeTab.table && (
+                    <ImportModal
+                      isOpen={isTableImportOpen}
+                      onClose={() => setIsTableImportOpen(false)}
+                      connectionId={activeTab.connectionId}
+                      database={activeTab.database || ''}
+                      schema={activeTab.schema || ''}
+                      table={activeTab.table}
+                      onImportComplete={() => loadTableData(activeTab)}
                     />
                   )}
                 </div>

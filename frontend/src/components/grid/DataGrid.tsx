@@ -2443,12 +2443,8 @@ ${setClauses};`;
               >
                 <Trash2 className="h-3.5 w-3.5 text-rose-400" />
               </button>
-
-              <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
             </>
           )}
-
-          <CopyFormatSelector />
 
           {rawSql && (
             <button
@@ -2475,57 +2471,8 @@ ${setClauses};`;
             </button>
           )}
 
-          {onRefresh && (
-            <button
-              onClick={onRefresh}
-              className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-400 hover:text-white transition-colors cursor-pointer"
-              title="Reload / Refresh Data"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={handleToggleValuePanel}
-            className={`flex items-center gap-1.5 h-7 px-2 rounded font-sans text-xs transition-colors cursor-pointer select-none ${
-              isValuePanelOpen
-                ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
-                : 'bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932]'
-            }`}
-            title="View As / Value Viewer (F7)"
-          >
-            <PanelRight className="h-3.5 w-3.5 text-blue-400" />
-            <span className="text-[11px] font-medium hidden sm:inline">View As</span>
-            <kbd className="text-[9px] text-zinc-500 font-mono hidden md:inline">F7</kbd>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsExportOpen(true)}
-            className="flex items-center gap-1.5 h-7 px-2 rounded font-sans text-xs bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932] transition-colors cursor-pointer select-none"
-            title="Export Data (CSV, JSON, SQL Insert)"
-          >
-            <Download className="h-3.5 w-3.5 text-blue-400" />
-            <span className="text-[11px] font-medium hidden sm:inline">Export</span>
-          </button>
-
-          {tableName && !isReadOnly && (
-            <button
-              type="button"
-              onClick={() => setIsImportOpen(true)}
-              className="flex items-center gap-1.5 h-7 px-2 rounded font-sans text-xs bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932] transition-colors cursor-pointer select-none"
-              title="Import Data Wizard (CSV)"
-            >
-              <Upload className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="text-[11px] font-medium hidden sm:inline">Import</span>
-            </button>
-          )}
-
           {stagedCount > 0 && (
             <>
-              <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
-
               <button
                 onClick={onPreviewChanges}
                 className="flex h-7 w-7 items-center justify-center rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 transition-colors cursor-pointer"
@@ -2558,8 +2505,8 @@ ${setClauses};`;
           )}
         </div>
 
-        {/* Toolbar Right: Active Multi-Sort Chips + Quick Filter */}
-        <div className="flex items-center gap-2.5">
+        {/* Toolbar Right: Multi-Sort Chips + Quick Filter */}
+        <div className="flex items-center gap-2">
           {localSortConfigs.length > 0 && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#101115] border border-[#2b2e3a] text-[11px] font-mono select-none">
               <span className="text-[10px] uppercase font-bold text-zinc-500 font-sans tracking-wider">
@@ -2627,179 +2574,7 @@ ${setClauses};`;
         </div>
       </div>
 
-      {/* SQL WHERE Filter Bar (Below Add Row toolbar) */}
-      {isTableTab && (
-        <div className={`flex items-center gap-2 px-3 py-1.5 border-b ${gridBarBg}`}>
-          <div className="flex items-center shrink-0 select-none">
-            <div className="inline-flex items-center gap-1 font-mono text-[11px] font-bold text-blue-400 bg-blue-950/40 border border-blue-800/40 px-2 py-0.5 rounded">
-              <span>WHERE</span>
-              {whereInput && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWhereInput('');
-                    onApplyWhere?.('');
-                    setShowWhereSuggestions(false);
-                  }}
-                  className="text-blue-400/60 hover:text-white transition-colors cursor-pointer ml-0.5"
-                  title="Clear WHERE condition"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          </div>
 
-          <div ref={whereContainerRef} className="relative flex-1 flex items-center">
-            <Filter className="h-3.5 w-3.5 text-blue-400 absolute left-2.5 pointer-events-none shrink-0" />
-            <input
-              ref={whereInputRef}
-              type="text"
-              data-where-input="true"
-              placeholder="e.g. status = 'active' and total > 100 (Type column to autocomplete, Enter to apply)"
-              value={whereInput}
-              onChange={(e) => {
-                setWhereInput(e.target.value);
-                setWhereCursorPos(e.target.selectionStart ?? e.target.value.length);
-                setForceShowSuggestions(false);
-                setShowWhereSuggestions(true);
-                setSelectedSuggestionIndex(0);
-              }}
-              onFocus={(e) => {
-                setWhereCursorPos(e.target.selectionStart ?? e.target.value.length);
-                setForceShowSuggestions(false);
-              }}
-              onClick={(e) => {
-                setWhereCursorPos(e.currentTarget.selectionStart ?? whereInput.length);
-                setForceShowSuggestions(false);
-              }}
-              onKeyUp={(e) => {
-                if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter' && e.key !== 'Escape') {
-                  setWhereCursorPos(e.currentTarget.selectionStart ?? whereInput.length);
-                }
-              }}
-              onKeyDown={handleWhereKeyDown}
-              className={`w-full h-7 rounded bg-[#101115] border pl-8 pr-7 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none transition-colors ${
-                errorMessage
-                  ? 'border-rose-500/80 focus:border-rose-500 ring-1 ring-rose-500/30'
-                  : 'border-[#2b2e3a] focus:border-blue-500'
-              }`}
-            />
-            {whereInput && (
-              <button
-                type="button"
-                onClick={() => {
-                  setWhereInput('');
-                  onApplyWhere?.('');
-                  setShowWhereSuggestions(false);
-                }}
-                className="absolute right-2 text-zinc-500 hover:text-white cursor-pointer"
-                title="Clear WHERE filter"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-
-            {/* Autocomplete Dropdown */}
-            {showWhereSuggestions && whereSuggestions.length > 0 && (
-              <div
-                ref={suggestionListRef}
-                className="absolute left-0 top-full mt-1 w-full max-w-md max-h-64 overflow-y-auto rounded-lg bg-[#14151b] border border-[#2b2e3a] shadow-2xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
-              >
-                <div className="px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-zinc-500 border-b border-[#22242d] flex items-center justify-between select-none">
-                  <span>Fields & Keywords ({whereSuggestions.length})</span>
-                  <span className="text-zinc-600">Tab / Enter ↵ • ↑↓ to navigate</span>
-                </div>
-                {whereSuggestions.map((item, idx) => {
-                  const isSelected = idx === selectedSuggestionIndex;
-                  return (
-                    <div
-                      key={item.id}
-                      data-suggestion-index={idx}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyWhereSuggestion(item);
-                      }}
-                      onMouseEnter={() => setSelectedSuggestionIndex(idx)}
-                      className={`flex items-center justify-between px-2.5 py-1.5 cursor-pointer text-xs font-mono transition-colors select-none ${
-                        isSelected
-                          ? 'bg-blue-600/30 text-white border-l-2 border-blue-400 pl-2'
-                          : 'text-zinc-300 hover:bg-[#1f212a] hover:text-white'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        {item.type === 'column' ? (
-                          item.isPK ? (
-                            <Key className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                          ) : item.iconType === 'number' ? (
-                            <Hash className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-                          ) : item.iconType === 'date' ? (
-                            <Clock className="h-3.5 w-3.5 text-purple-400 shrink-0" />
-                          ) : (
-                            <FileText className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                          )
-                        ) : (
-                          <Code className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
-                        )}
-                        <span className={`truncate font-medium ${item.type === 'keyword' ? 'text-cyan-300 font-bold' : ''}`}>
-                          {item.name}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0 ml-3">
-                        {item.isPK && (
-                          <span className="px-1 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            PK
-                          </span>
-                        )}
-                        {item.dataType && (
-                          <span className="text-[10px] text-zinc-500 font-mono">
-                            {item.dataType}
-                          </span>
-                        )}
-                        {item.type === 'keyword' && (
-                          <span className="text-[9px] font-mono text-zinc-600 uppercase">
-                            SQL
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              setShowWhereSuggestions(false);
-              onApplyWhere?.(whereInput);
-            }}
-            className="flex items-center gap-1.5 h-7 px-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs shrink-0"
-            title="Apply WHERE filter (Enter)"
-          >
-            <Filter className="h-3 w-3" />
-            <span>Apply</span>
-          </button>
-
-          {whereInput && (
-            <button
-              type="button"
-              onClick={() => {
-                setWhereInput('');
-                onApplyWhere?.('');
-                setShowWhereSuggestions(false);
-              }}
-              className="flex items-center gap-1 h-7 px-2.5 rounded bg-[#20222b] hover:bg-rose-950/40 hover:text-rose-300 text-zinc-400 border border-[#272932] text-xs transition-colors cursor-pointer shrink-0"
-              title="Reset WHERE filter"
-            >
-              <RotateCcw className="h-3 w-3" />
-              <span>Reset</span>
-            </button>
-          )}
-        </div>
-      )}
 
       {/* Error Banner when query or WHERE filter fails */}
       {errorMessage && (
