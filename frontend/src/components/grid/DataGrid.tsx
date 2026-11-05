@@ -3,7 +3,7 @@ import { ColumnMeta, ConnectionEnvType } from '../../types/domain';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
-import { useAlertStore } from '../../stores/useAlertStore';
+import { useAlertStore, alertWarning, alertSuccess } from '../../stores/useAlertStore';
 import { CopyFormatSelector, COPY_FORMAT_LABELS } from './CopyFormatSelector';
 import {
   Plus,
@@ -160,12 +160,261 @@ function normalizeDateCommitValue(val: string, inputType: 'date' | 'datetime-loc
   return trimmed;
 }
 
+function unquoteIdentifier(ident: string): string {
+  const trimmed = ident.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith('`') && trimmed.endsWith('`')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  ) {
+    return trimmed.slice(1, -1).replace(/""|``|\]\]/g, (m) => m[0]);
+  }
+  return trimmed;
+}
+
+function unquoteSqlLiteral(literal: string): string | null {
+  const trimmed = literal.trim();
+  if (/^null$/i.test(trimmed)) return null;
+  if (/^default$/i.test(trimmed)) return null;
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed
+      .slice(1, -1)
+      .replace(/''|\\'/g, "'")
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t');
+  }
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/""|\\"/g, '"');
+  }
+  return trimmed;
+}
+
+function splitSqlList(str: string): string[] {
+  const items: string[] = [];
+  let curr = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+  let parenDepth = 0;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === "'" && !inDoubleQuote && !inBacktick) {
+      if (inSingleQuote && str[i + 1] === "'") {
+        curr += "''";
+        i++;
+      } else {
+        inSingleQuote = !inSingleQuote;
+        curr += ch;
+      }
+    } else if (ch === '"' && !inSingleQuote && !inBacktick) {
+      if (inDoubleQuote && str[i + 1] === '"') {
+        curr += '""';
+        i++;
+      } else {
+        inDoubleQuote = !inDoubleQuote;
+        curr += ch;
+      }
+    } else if (ch === '`' && !inSingleQuote && !inDoubleQuote) {
+      inBacktick = !inBacktick;
+      curr += ch;
+    } else if (ch === '(' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
+      parenDepth++;
+      curr += ch;
+    } else if (ch === ')' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
+      parenDepth = Math.max(0, parenDepth - 1);
+      curr += ch;
+    } else if (ch === ',' && !inSingleQuote && !inDoubleQuote && !inBacktick && parenDepth === 0) {
+      items.push(curr.trim());
+      curr = '';
+    } else {
+      curr += ch;
+    }
+  }
+  if (curr.trim().length > 0) {
+    items.push(curr.trim());
+  }
+  return items;
+}
+
+function tryParseSqlInsert(sqlText: string): { headers?: string[]; rows: (string | null)[][] } | null {
+  const clean = sqlText.trim();
+  if (!/^INSERT\s+INTO\b/i.test(clean)) return null;
+
+  const insertMatch = clean.match(/^INSERT\s+INTO\s+[^\(]+?(?:\(([\s\S]+?)\))?\s*VALUES\s*([\s\S]+)$/i);
+  if (!insertMatch) return null;
+
+  let headers: string[] | undefined;
+  if (insertMatch[1]) {
+    headers = splitSqlList(insertMatch[1]).map(unquoteIdentifier);
+  }
+
+  const rawValues = insertMatch[2];
+  const rows: (string | null)[][] = [];
+
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+  let parenDepth = 0;
+  let tupleStart = -1;
+
+  for (let i = 0; i < rawValues.length; i++) {
+    const ch = rawValues[i];
+    if (ch === "'" && !inDoubleQuote && !inBacktick) {
+      if (inSingleQuote && rawValues[i + 1] === "'") {
+        i++;
+      } else {
+        inSingleQuote = !inSingleQuote;
+      }
+    } else if (ch === '"' && !inSingleQuote && !inBacktick) {
+      if (inDoubleQuote && rawValues[i + 1] === '"') {
+        i++;
+      } else {
+        inDoubleQuote = !inDoubleQuote;
+      }
+    } else if (ch === '`' && !inSingleQuote && !inDoubleQuote) {
+      inBacktick = !inBacktick;
+    } else if (ch === '(' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
+      if (parenDepth === 0) tupleStart = i + 1;
+      parenDepth++;
+    } else if (ch === ')' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
+      parenDepth--;
+      if (parenDepth === 0 && tupleStart !== -1) {
+        const tupleContent = rawValues.substring(tupleStart, i);
+        const cellLiterals = splitSqlList(tupleContent);
+        rows.push(cellLiterals.map(unquoteSqlLiteral));
+        tupleStart = -1;
+      }
+    } else if (parenDepth === 0 && (ch === ';' || /^[oO][nN]\s/i.test(rawValues.slice(i)))) {
+      break;
+    }
+  }
+
+  if (rows.length > 0) {
+    return { headers, rows };
+  }
+  return null;
+}
+
+function tryParseSqlUpdate(sqlText: string): { headers?: string[]; rows: (string | null)[][] } | null {
+  const clean = sqlText.trim();
+  if (!/^UPDATE\s+/i.test(clean)) return null;
+
+  const statements = clean.split(/;\s*(?=UPDATE\b)/i).filter((s) => s.trim().length > 0);
+  const rows: (string | null)[][] = [];
+  const headerSet: string[] = [];
+  const parsedStatements: Array<Record<string, string | null>> = [];
+
+  for (const stmt of statements) {
+    const setMatch = stmt.match(/SET\s+([\s\S]+?)(?:\s+WHERE\b|$|;)/i);
+    if (!setMatch) continue;
+
+    const setClauses = splitSqlList(setMatch[1]);
+    const rowObj: Record<string, string | null> = {};
+
+    for (const clause of setClauses) {
+      const eqIdx = clause.indexOf('=');
+      if (eqIdx === -1) continue;
+      const colName = unquoteIdentifier(clause.substring(0, eqIdx));
+      const valStr = unquoteSqlLiteral(clause.substring(eqIdx + 1));
+      rowObj[colName] = valStr;
+      if (!headerSet.includes(colName)) {
+        headerSet.push(colName);
+      }
+    }
+
+    if (Object.keys(rowObj).length > 0) {
+      parsedStatements.push(rowObj);
+    }
+  }
+
+  if (parsedStatements.length === 0) return null;
+
+  for (const rowObj of parsedStatements) {
+    rows.push(headerSet.map((h) => rowObj[h] ?? null));
+  }
+
+  return { headers: headerSet, rows };
+}
+
+function tryParseJson(text: string): { headers?: string[]; rows: (string | null)[][] } | null {
+  const trimmed = text.trim();
+  if (!((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}')))) {
+    return null;
+  }
+  try {
+    const json = JSON.parse(trimmed);
+    if (Array.isArray(json)) {
+      if (json.length === 0) return null;
+
+      if (Array.isArray(json[0])) {
+        const rows = json.map((subArr) =>
+          Array.isArray(subArr)
+            ? subArr.map((v) =>
+                v === null || v === undefined ? null : typeof v === 'object' ? JSON.stringify(v) : String(v)
+              )
+            : [String(subArr)]
+        );
+        return { rows };
+      }
+
+      if (typeof json[0] === 'object' && json[0] !== null) {
+        const keys: string[] = [];
+        json.forEach((item) => {
+          if (typeof item === 'object' && item !== null) {
+            Object.keys(item).forEach((k) => {
+              if (!keys.includes(k)) keys.push(k);
+            });
+          }
+        });
+        const rows = json.map((item) =>
+          keys.map((k) => {
+            const v = item?.[k];
+            if (v === null || v === undefined) return null;
+            return typeof v === 'object' ? JSON.stringify(v) : String(v);
+          })
+        );
+        return { headers: keys, rows };
+      }
+
+      const rows = json.map((v) => [v === null || v === undefined ? null : String(v)]);
+      return { rows };
+    }
+
+    if (typeof json === 'object' && json !== null) {
+      const keys = Object.keys(json);
+      const row = keys.map((k) => {
+        const v = json[k];
+        if (v === null || v === undefined) return null;
+        return typeof v === 'object' ? JSON.stringify(v) : String(v);
+      });
+      return { headers: keys, rows: [row] };
+    }
+  } catch {}
+  return null;
+}
+
 function cleanPastedValue(val: any, dataType?: string): any {
   if (val === null || val === undefined) return null;
-  const str = String(val).trim();
+  let str = String(val).trim();
   if (str === '' || str.toUpperCase() === 'NULL' || str.toLowerCase() === '<null>') {
     return null;
   }
+  // Strip surrounding quotes if present
+  if ((str.startsWith("'") && str.endsWith("'")) || (str.startsWith('"') && str.endsWith('"'))) {
+    str = str.slice(1, -1).trim();
+  }
+  if (str === '' || str.toUpperCase() === 'NULL' || str.toLowerCase() === '<null>') {
+    return null;
+  }
+
+  const upperType = (dataType || '').toUpperCase();
+  if (upperType.includes('BOOL') || upperType.includes('BIT')) {
+    if (str === 'true' || str === 't' || str === '1') return true;
+    if (str === 'false' || str === 'f' || str === '0') return false;
+  }
+
   const inputType = getColumnInputType(dataType);
   if (inputType !== 'text') {
     return normalizeDateCommitValue(str, inputType);
@@ -1525,33 +1774,42 @@ ${setClauses};`;
 
   const handlePasteData = (text: string) => {
     if (!text || columns.length === 0) return;
+    if (isReadOnly) {
+      alertWarning('Cannot paste: this connection or table is in Read-Only mode.', 'Read-Only Mode');
+      return;
+    }
     const trimmed = text.trim();
     if (!trimmed) return;
 
     let parsedRows: (string | null)[][] = [];
     let detectedHeaders: string[] | undefined;
 
-    // A. Check if JSON
-    if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
-      try {
-        const json = JSON.parse(trimmed);
-        const arr = Array.isArray(json) ? json : [json];
-        if (arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-          const keys: string[] = [];
-          arr.forEach((item) => {
-            Object.keys(item).forEach((k) => {
-              if (!keys.includes(k)) keys.push(k);
-            });
-          });
-          detectedHeaders = keys;
-          parsedRows = arr.map((item) =>
-            keys.map((k) => (item[k] === null || item[k] === undefined ? null : String(item[k])))
-          );
-        }
-      } catch {}
+    // A. Check if SQL INSERT (e.g. from copyFormat = 'sql_insert' or 'sql_upsert')
+    const sqlInsertResult = tryParseSqlInsert(trimmed);
+    if (sqlInsertResult) {
+      parsedRows = sqlInsertResult.rows;
+      detectedHeaders = sqlInsertResult.headers;
     }
 
-    // B. Check if TSV or CSV
+    // B. Check if SQL UPDATE (e.g. from copyFormat = 'sql_update')
+    if (parsedRows.length === 0) {
+      const sqlUpdateResult = tryParseSqlUpdate(trimmed);
+      if (sqlUpdateResult) {
+        parsedRows = sqlUpdateResult.rows;
+        detectedHeaders = sqlUpdateResult.headers;
+      }
+    }
+
+    // C. Check if JSON (e.g. from copyFormat = 'json')
+    if (parsedRows.length === 0) {
+      const jsonResult = tryParseJson(trimmed);
+      if (jsonResult) {
+        parsedRows = jsonResult.rows;
+        detectedHeaders = jsonResult.headers;
+      }
+    }
+
+    // D. Check if TSV or CSV
     if (parsedRows.length === 0) {
       const rawLines = trimmed.split(/\r?\n/).filter((l) => l.length > 0);
       if (rawLines.length === 0) return;
@@ -1595,7 +1853,10 @@ ${setClauses};`;
       }
     }
 
-    if (parsedRows.length === 0) return;
+    if (parsedRows.length === 0) {
+      alertWarning('Clipboard content could not be parsed into grid cells.', 'Paste Warning');
+      return;
+    }
 
     // Detect if first row is headers matching column names
     if (!detectedHeaders && parsedRows.length > 1) {
@@ -1629,14 +1890,26 @@ ${setClauses};`;
       maxAffectedVIdx = Math.max(maxAffectedVIdx, targetVIdx);
 
       const targetColMap: Array<{ colIdx: number; col: ColumnMeta; val: string | null }> = [];
-      if (detectedHeaders) {
-        detectedHeaders.forEach((h, hIdx) => {
-          const colIdx = columns.findIndex((col) => col.name.toLowerCase() === h.toLowerCase());
-          if (colIdx !== -1) {
-            targetColMap.push({ colIdx, col: columns[colIdx], val: rowVals[hIdx] ?? null });
-          }
-        });
-      } else {
+      let mappedByHeader = false;
+
+      // Only map by header if multiple columns were provided and headers actually match the table
+      if (detectedHeaders && detectedHeaders.length > 1) {
+        const matchingCols = detectedHeaders.filter((h) =>
+          columns.some((col) => col.name.toLowerCase() === h.toLowerCase())
+        );
+        if (matchingCols.length > 0) {
+          detectedHeaders.forEach((h, hIdx) => {
+            const colIdx = columns.findIndex((col) => col.name.toLowerCase() === h.toLowerCase());
+            if (colIdx !== -1) {
+              targetColMap.push({ colIdx, col: columns[colIdx], val: rowVals[hIdx] ?? null });
+            }
+          });
+          mappedByHeader = targetColMap.length > 0;
+        }
+      }
+
+      // If headers didn't match or single column, map positionally from startC
+      if (!mappedByHeader) {
         rowVals.forEach((val, cOffset) => {
           const colIdx = startC + cOffset;
           if (colIdx < columns.length) {
