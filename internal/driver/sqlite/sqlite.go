@@ -32,14 +32,21 @@ func NewSQLiteDriver(filePath string) (*SQLiteDriver, error) {
 	}
 
 	dsn := cleanPath
-	if cleanPath != ":memory:" && !strings.Contains(cleanPath, "?") {
-		dsn = cleanPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	if cleanPath != ":memory:" {
+		if !strings.Contains(cleanPath, "?") {
+			dsn = cleanPath + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+		} else if !strings.Contains(cleanPath, "busy_timeout") {
+			dsn = cleanPath + "&_pragma=busy_timeout(10000)"
+		}
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(5)
+	// SQLite embedded single-file storage requires serializing transactions on a single connection to eliminate SQLITE_BUSY
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 	return &SQLiteDriver{db: db, filePath: cleanPath}, nil
 }
 
