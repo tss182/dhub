@@ -4,13 +4,16 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
 import { ConsoleList } from './ConsoleList';
 import { ValueViewerPanel } from '../grid/ValueViewerPanel';
+import { Popover } from '../common/Popover';
 import {
   Terminal,
   PanelRight,
-  PanelRightClose,
   Plus,
+  X,
 } from 'lucide-react';
 import { alertWarning } from '../../stores/useAlertStore';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 
 interface RightSidebarProps {
   onRename: (id: string, currentTitle: string) => void;
@@ -119,24 +122,31 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         {/* Right Header Controls */}
         <div className="flex items-center gap-1">
           {activeRightSidebarTab === 'consoles' && (
-            <button
-              type="button"
-              onClick={handleCreateNewConsole}
-              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
-              title="New Query Console"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+            <Popover content="New Query Console" side="bottom" align="end">
+              <button
+                type="button"
+                onClick={handleCreateNewConsole}
+                className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </Popover>
           )}
 
-          <button
-            type="button"
-            onClick={toggleRightPanel}
-            className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
-            title="Collapse Sidebar"
+          <Popover
+            content="Close Sidebar"
+            shortcut={isMac ? '⌘R' : 'Ctrl+R'}
+            side="bottom"
+            align="end"
           >
-            <PanelRightClose className="h-3.5 w-3.5" />
-          </button>
+            <button
+              type="button"
+              onClick={toggleRightPanel}
+              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Popover>
         </div>
       </div>
 

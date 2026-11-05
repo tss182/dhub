@@ -13,6 +13,7 @@ import { SearchEverywhere } from './components/modals/SearchEverywhere';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { AlertModal } from './components/modals/AlertModal';
 import { ToastContainer } from './components/common/ToastContainer';
+import { Popover } from './components/common/Popover';
 import { TableStructureModal } from './components/modals/CreateTableModal';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
@@ -473,6 +474,13 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         toggleLeftPanel();
+        return;
+      }
+
+      // Toggle Right Sidebar: Ctrl+R / Cmd+R
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        toggleRightPanel();
         return;
       }
 
@@ -1278,24 +1286,23 @@ export function App() {
           </>
         ) : (
           /* Minimized Left Sidebar Strip */
-          <div className="h-full w-9 shrink-0 bg-[#16171d] border-r border-[#272932] flex flex-col items-center py-2 select-none z-10">
-            <button
-              onClick={toggleLeftPanel}
-              className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-[#22242c] transition-colors cursor-pointer"
-              title={`Expand Database Explorer (${isMac ? '⌘B' : 'Ctrl+B'})`}
+          <div className="h-full w-9 shrink-0 bg-[#16171d] border-r border-[#272932] flex flex-col items-center py-3 select-none z-10">
+            <Popover
+              content="Expand Database Explorer"
+              shortcut={isMac ? '⌘B' : 'Ctrl+B'}
+              side="right"
+              align="start"
             >
-              <PanelLeftOpen className="h-4 w-4" />
-            </button>
-            <div
-              onClick={toggleLeftPanel}
-              className="mt-6 flex flex-1 flex-col items-center cursor-pointer group"
-              title="Click to expand Database Explorer"
-            >
-              <Database className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-3" />
-              <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl] rotate-180">
-                EXPLORER
+              <div
+                onClick={toggleLeftPanel}
+                className="flex flex-1 flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
+              >
+                <Database className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-3" />
+                <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl] rotate-180">
+                  EXPLORER
+                </div>
               </div>
-            </div>
+            </Popover>
           </div>
         )}
 
@@ -2164,44 +2171,48 @@ export function App() {
           </>
         ) : (
           /* Minimized Right Sidebar Strip */
-          <div className="h-full w-9 shrink-0 bg-[#16171d] border-l border-[#272932] flex flex-col items-center py-2 select-none z-10">
-            <button
-              onClick={toggleRightPanel}
-              className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-[#22242c] transition-colors cursor-pointer"
-              title="Expand Right Sidebar (F7)"
-            >
-              <PanelRightOpen className="h-4 w-4" />
-            </button>
-
+          <div className="h-full w-9 shrink-0 bg-[#16171d] border-l border-[#272932] flex flex-col items-center py-3 select-none z-10">
             {/* VIEWS Button */}
-            <div
-              onClick={() => {
-                setRightPanelOpen(true);
-                setActiveRightSidebarTab('views');
-              }}
-              className="mt-6 flex flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
-              title="Open Views / Value Viewer (F7)"
+            <Popover
+              content="Open Views"
+              shortcut={isMac ? '⌘R' : 'Ctrl+R'}
+              side="left"
+              align="start"
             >
-              <PanelRight className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-2" />
-              <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl]">
-                VIEWS
+              <div
+                onClick={() => {
+                  setRightPanelOpen(true);
+                  setActiveRightSidebarTab('views');
+                }}
+                className="flex flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
+              >
+                <PanelRight className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-2" />
+                <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl]">
+                  VIEWS
+                </div>
               </div>
-            </div>
+            </Popover>
 
             {/* CONSOLES Button */}
-            <div
-              onClick={() => {
-                setRightPanelOpen(true);
-                setActiveRightSidebarTab('consoles');
-              }}
-              className="mt-6 flex flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
-              title="Open Consoles"
+            <Popover
+              content="Open Consoles"
+              shortcut={isMac ? '⌘R' : 'Ctrl+R'}
+              side="left"
+              align="start"
             >
-              <Terminal className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-2" />
-              <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl]">
-                CONSOLES
+              <div
+                onClick={() => {
+                  setRightPanelOpen(true);
+                  setActiveRightSidebarTab('consoles');
+                }}
+                className="mt-6 flex flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
+              >
+                <Terminal className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-2" />
+                <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl]">
+                  CONSOLES
+                </div>
               </div>
-            </div>
+            </Popover>
           </div>
         )}
       </div>
