@@ -594,6 +594,24 @@ export const SettingsModal: React.FC = () => {
                         Ctrl+W / ⌘W
                       </kbd>
                     </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Format SQL Code</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Shift+Alt+F
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Stop Query Execution</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+F2 / ⌘F2
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">View As / Value Panel</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        F7
+                      </kbd>
+                    </div>
                   </div>
                 </div>
               </div>

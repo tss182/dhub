@@ -3,82 +3,22 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Create as $Create } from "@wailsio/runtime";
-
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as driver$0 from "../driver/models.js";
 
-export class CachedObject {
+export interface CachedObject {
     "connectionId": string;
     "databaseName": string;
     "schemaName": string;
     "objectType": string;
     "objectName": string;
-    "columns": driver$0.ColumnMeta[];
-    "indexes": driver$0.IndexMeta[];
-    "foreignKeys": driver$0.ForeignKeyMeta[];
+    "columns": driver$0.ColumnMeta[] | null;
+    "indexes": driver$0.IndexMeta[] | null;
+    "foreignKeys": driver$0.ForeignKeyMeta[] | null;
     "rowEstimate": number;
     "syncedAt": string;
-
-    /** Creates a new CachedObject instance. */
-    constructor($$source: Partial<CachedObject> = {}) {
-        if (!("connectionId" in $$source)) {
-            this["connectionId"] = "";
-        }
-        if (!("databaseName" in $$source)) {
-            this["databaseName"] = "";
-        }
-        if (!("schemaName" in $$source)) {
-            this["schemaName"] = "";
-        }
-        if (!("objectType" in $$source)) {
-            this["objectType"] = "";
-        }
-        if (!("objectName" in $$source)) {
-            this["objectName"] = "";
-        }
-        if (!("columns" in $$source)) {
-            this["columns"] = [];
-        }
-        if (!("indexes" in $$source)) {
-            this["indexes"] = [];
-        }
-        if (!("foreignKeys" in $$source)) {
-            this["foreignKeys"] = [];
-        }
-        if (!("rowEstimate" in $$source)) {
-            this["rowEstimate"] = 0;
-        }
-        if (!("syncedAt" in $$source)) {
-            this["syncedAt"] = "0001-01-01T00:00:00.000Z";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new CachedObject instance from a string or object.
-     */
-    static createFrom($$source: any = {}): CachedObject {
-        const $$createField5_0 = $$createType1;
-        const $$createField6_0 = $$createType3;
-        const $$createField7_0 = $$createType5;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("columns" in $$parsedSource) {
-            $$parsedSource["columns"] = $$createField5_0($$parsedSource["columns"]);
-        }
-        if ("indexes" in $$parsedSource) {
-            $$parsedSource["indexes"] = $$createField6_0($$parsedSource["indexes"]);
-        }
-        if ("foreignKeys" in $$parsedSource) {
-            $$parsedSource["foreignKeys"] = $$createField7_0($$parsedSource["foreignKeys"]);
-        }
-        return new CachedObject($$parsedSource as Partial<CachedObject>);
-    }
 }
 
-export class ConnectionConfig {
+export interface ConnectionConfig {
     "id": string;
     "folderId": string | null;
     "name": string;
@@ -128,171 +68,24 @@ export class ConnectionConfig {
     "sortOrder": number;
     "createdAt": string;
     "updatedAt": string;
-
-    /** Creates a new ConnectionConfig instance. */
-    constructor($$source: Partial<ConnectionConfig> = {}) {
-        if (!("id" in $$source)) {
-            this["id"] = "";
-        }
-        if (!("folderId" in $$source)) {
-            this["folderId"] = null;
-        }
-        if (!("name" in $$source)) {
-            this["name"] = "";
-        }
-        if (!("driver" in $$source)) {
-            this["driver"] = "";
-        }
-        if (!("envType" in $$source)) {
-            this["envType"] = "";
-        }
-        if (!("colorTag" in $$source)) {
-            this["colorTag"] = "";
-        }
-        if (!("isReadOnly" in $$source)) {
-            this["isReadOnly"] = false;
-        }
-        if (!("txMode" in $$source)) {
-            this["txMode"] = "";
-        }
-        if (!("host" in $$source)) {
-            this["host"] = "";
-        }
-        if (!("port" in $$source)) {
-            this["port"] = 0;
-        }
-        if (!("username" in $$source)) {
-            this["username"] = "";
-        }
-        if (!("databaseName" in $$source)) {
-            this["databaseName"] = "";
-        }
-        if (!("filePath" in $$source)) {
-            this["filePath"] = "";
-        }
-        if (!("sslMode" in $$source)) {
-            this["sslMode"] = "";
-        }
-        if (!("sslCaPath" in $$source)) {
-            this["sslCaPath"] = "";
-        }
-        if (!("sslCertPath" in $$source)) {
-            this["sslCertPath"] = "";
-        }
-        if (!("sslKeyPath" in $$source)) {
-            this["sslKeyPath"] = "";
-        }
-        if (!("sshEnabled" in $$source)) {
-            this["sshEnabled"] = false;
-        }
-        if (!("sshHost" in $$source)) {
-            this["sshHost"] = "";
-        }
-        if (!("sshPort" in $$source)) {
-            this["sshPort"] = 0;
-        }
-        if (!("sshUser" in $$source)) {
-            this["sshUser"] = "";
-        }
-        if (!("sshAuthType" in $$source)) {
-            this["sshAuthType"] = "";
-        }
-        if (!("sshKeyPath" in $$source)) {
-            this["sshKeyPath"] = "";
-        }
-        if (!("optionsJson" in $$source)) {
-            this["optionsJson"] = "";
-        }
-        if (!("sortOrder" in $$source)) {
-            this["sortOrder"] = 0;
-        }
-        if (!("createdAt" in $$source)) {
-            this["createdAt"] = "0001-01-01T00:00:00.000Z";
-        }
-        if (!("updatedAt" in $$source)) {
-            this["updatedAt"] = "0001-01-01T00:00:00.000Z";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ConnectionConfig instance from a string or object.
-     */
-    static createFrom($$source: any = {}): ConnectionConfig {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ConnectionConfig($$parsedSource as Partial<ConnectionConfig>);
-    }
 }
 
-export class ConnectionFolder {
+export interface ConnectionFolder {
     "id": string;
     "name": string;
     "color": string;
     "parentId": string | null;
     "sortOrder": number;
     "createdAt"?: string;
-
-    /** Creates a new ConnectionFolder instance. */
-    constructor($$source: Partial<ConnectionFolder> = {}) {
-        if (!("id" in $$source)) {
-            this["id"] = "";
-        }
-        if (!("name" in $$source)) {
-            this["name"] = "";
-        }
-        if (!("color" in $$source)) {
-            this["color"] = "";
-        }
-        if (!("parentId" in $$source)) {
-            this["parentId"] = null;
-        }
-        if (!("sortOrder" in $$source)) {
-            this["sortOrder"] = 0;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ConnectionFolder instance from a string or object.
-     */
-    static createFrom($$source: any = {}): ConnectionFolder {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ConnectionFolder($$parsedSource as Partial<ConnectionFolder>);
-    }
 }
 
-export class ConnectionLayoutUpdate {
+export interface ConnectionLayoutUpdate {
     "id": string;
     "folderId": string | null;
     "sortOrder": number;
-
-    /** Creates a new ConnectionLayoutUpdate instance. */
-    constructor($$source: Partial<ConnectionLayoutUpdate> = {}) {
-        if (!("id" in $$source)) {
-            this["id"] = "";
-        }
-        if (!("folderId" in $$source)) {
-            this["folderId"] = null;
-        }
-        if (!("sortOrder" in $$source)) {
-            this["sortOrder"] = 0;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ConnectionLayoutUpdate instance from a string or object.
-     */
-    static createFrom($$source: any = {}): ConnectionLayoutUpdate {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ConnectionLayoutUpdate($$parsedSource as Partial<ConnectionLayoutUpdate>);
-    }
 }
 
-export class QueryHistoryEntry {
+export interface QueryHistoryEntry {
     "id": number;
     "connectionId": string;
     "databaseName": string;
@@ -303,53 +96,9 @@ export class QueryHistoryEntry {
     "status": string;
     "errorMessage": string;
     "executedAt": string;
-
-    /** Creates a new QueryHistoryEntry instance. */
-    constructor($$source: Partial<QueryHistoryEntry> = {}) {
-        if (!("id" in $$source)) {
-            this["id"] = 0;
-        }
-        if (!("connectionId" in $$source)) {
-            this["connectionId"] = "";
-        }
-        if (!("databaseName" in $$source)) {
-            this["databaseName"] = "";
-        }
-        if (!("schemaName" in $$source)) {
-            this["schemaName"] = "";
-        }
-        if (!("sqlText" in $$source)) {
-            this["sqlText"] = "";
-        }
-        if (!("durationMs" in $$source)) {
-            this["durationMs"] = 0;
-        }
-        if (!("rowsAffected" in $$source)) {
-            this["rowsAffected"] = 0;
-        }
-        if (!("status" in $$source)) {
-            this["status"] = "";
-        }
-        if (!("errorMessage" in $$source)) {
-            this["errorMessage"] = "";
-        }
-        if (!("executedAt" in $$source)) {
-            this["executedAt"] = "0001-01-01T00:00:00.000Z";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new QueryHistoryEntry instance from a string or object.
-     */
-    static createFrom($$source: any = {}): QueryHistoryEntry {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new QueryHistoryEntry($$parsedSource as Partial<QueryHistoryEntry>);
-    }
 }
 
-export class Worksheet {
+export interface Worksheet {
     "id": string;
     "connectionId": string;
     "title": string;
@@ -361,59 +110,4 @@ export class Worksheet {
     "cursorCol": number;
     "sortOrder": number;
     "updatedAt": string;
-
-    /** Creates a new Worksheet instance. */
-    constructor($$source: Partial<Worksheet> = {}) {
-        if (!("id" in $$source)) {
-            this["id"] = "";
-        }
-        if (!("connectionId" in $$source)) {
-            this["connectionId"] = "";
-        }
-        if (!("title" in $$source)) {
-            this["title"] = "";
-        }
-        if (!("content" in $$source)) {
-            this["content"] = "";
-        }
-        if (!("targetDatabase" in $$source)) {
-            this["targetDatabase"] = "";
-        }
-        if (!("targetSchema" in $$source)) {
-            this["targetSchema"] = "";
-        }
-        if (!("isPinned" in $$source)) {
-            this["isPinned"] = false;
-        }
-        if (!("cursorLine" in $$source)) {
-            this["cursorLine"] = 0;
-        }
-        if (!("cursorCol" in $$source)) {
-            this["cursorCol"] = 0;
-        }
-        if (!("sortOrder" in $$source)) {
-            this["sortOrder"] = 0;
-        }
-        if (!("updatedAt" in $$source)) {
-            this["updatedAt"] = "0001-01-01T00:00:00.000Z";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new Worksheet instance from a string or object.
-     */
-    static createFrom($$source: any = {}): Worksheet {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new Worksheet($$parsedSource as Partial<Worksheet>);
-    }
 }
-
-// Private type creation functions
-const $$createType0 = driver$0.ColumnMeta.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = driver$0.IndexMeta.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = driver$0.ForeignKeyMeta.createFrom;
-const $$createType5 = $Create.Array($$createType4);

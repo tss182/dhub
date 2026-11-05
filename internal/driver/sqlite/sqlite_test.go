@@ -121,3 +121,77 @@ func TestDeepPagingReturnsCorrectPage(t *testing.T) {
 		t.Fatalf("mid page rows=%d hasMore=%v, want 100/true", len(mid.Rows), mid.HasMore)
 	}
 }
+
+func TestSQLiteApplyChangesAndDMLPreview(t *testing.T) {
+	drv := newTestDriver(t)
+	ctx := context.Background()
+
+	_, err := drv.Execute(ctx, driver.QueryRequest{SQL: `
+		CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL);
+		INSERT INTO products (id, name, price) VALUES (1, 'Book', 12.50), (2, 'Pen', 1.50);
+	`})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	changes := []driver.RowChange{
+		{
+			Type: "insert",
+			Changes: map[string]any{
+				"id":    3,
+				"name":  "Notebook",
+				"price": 5.0,
+			},
+		},
+		{
+			Type: "update",
+			PrimaryKey: map[string]any{
+				"id": 1,
+			},
+			Changes: map[string]any{
+				"price": 15.0,
+			},
+		},
+		{
+			Type: "delete",
+			PrimaryKey: map[string]any{
+				"id": 2,
+			},
+		},
+	}
+
+	// 1. GenerateDMLPreview
+	preview, err := drv.GenerateDMLPreview("main", "main", "products", changes)
+	if err != nil {
+		t.Fatalf("GenerateDMLPreview failed: %v", err)
+	}
+	if len(preview) != 3 {
+		t.Fatalf("expected 3 statements in preview, got %d", len(preview))
+	}
+
+	// 2. ApplyChanges
+	affected, err := drv.ApplyChanges(ctx, "main", "main", "products", changes)
+	if err != nil {
+		t.Fatalf("ApplyChanges failed: %v", err)
+	}
+	if affected != 3 {
+		t.Errorf("expected 3 rows affected, got %d", affected)
+	}
+
+	// 3. Verify final table state
+	res, err := drv.Execute(ctx, driver.QueryRequest{SQL: "SELECT id, name, price FROM products ORDER BY id;"})
+	if err != nil {
+		t.Fatalf("query products: %v", err)
+	}
+	if len(res.Rows) != 2 {
+		t.Fatalf("expected 2 remaining rows, got %d", len(res.Rows))
+	}
+	// Row 1: id=1, price=15.0
+	if res.Rows[0][0].(int64) != 1 || res.Rows[0][2].(float64) != 15.0 {
+		t.Errorf("unexpected updated row: %+v", res.Rows[0])
+	}
+	// Row 2: id=3, name=Notebook
+	if res.Rows[1][0].(int64) != 3 || res.Rows[1][1].(string) != "Notebook" {
+		t.Errorf("unexpected inserted row: %+v", res.Rows[1])
+	}
+}

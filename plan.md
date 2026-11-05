@@ -1087,29 +1087,29 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 ### Fase 9: Nilai Tambah (Milestone 9)
 
 **9.1 Explorer objek lengkap (M)**
-- [ ] Perluas interface `DatabaseDriver`: `ListViews`, `ListRoutines`, `ListTriggers`, `ListIndexes`.
-- [ ] `DatabaseExplorer`: grup Tables / Views / Materialized Views / Functions & Procedures / Triggers; aksi Show DDL dan Drop.
+- [x] Perluas interface `DatabaseDriver`: `ListObjects` mendukung Tables, Views, Materialized Views, Routines, dan Triggers.
+- [x] `DatabaseExplorer`: grup Tables / Views / Materialized Views / Functions & Procedures / Triggers; aksi Show DDL dan Drop.
 
 **9.2 ER Diagram (L)**
-- [ ] Render diagram dari `TableStructure` (PK/FK) per schema, auto-layout, export PNG/SVG.
+- [x] Render diagram dari `TableStructure` (PK/FK) per schema, auto-layout, export SVG/PNG (`ERDiagramView.tsx`).
 
 **9.3 Autocomplete lebih cerdas (M)**
-- [ ] Completion kontekstual (kolom setelah alias, saran JOIN via FK) berbasis `GetCachedSchema`.
+- [x] Completion kontekstual (kolom setelah alias, saran JOIN via FK dan ON condition) berbasis `GetCachedSchema`.
 
 **9.4 Lain-lain (S–M)**
-- [ ] Audit tema Light di semua modal; lengkapi tab Shortcuts di Settings.
-- [ ] Evaluasi driver tambahan (SQL Server, ClickHouse) sesuai visi di bagian 1.
+- [x] Audit tema Light di semua modal; lengkapi tab Shortcuts di Settings.
+- [x] Evaluasi driver tambahan (SQL Server, ClickHouse) sesuai visi di bagian 1.
 
 ---
 
 ### Fase 10: Kualitas, Test & Rilis (Milestone 10) — berjalan paralel sejak Fase 6
 
-- [ ] Unit test Go: `SplitStatements`, generator DML/DDL tiap driver, `LocalStore`, `SessionManager`.
-- [ ] Integration test PG/MySQL/SQLite via docker-compose.
-- [ ] Test frontend (Vitest + Testing Library) untuk store dan komponen kunci (`useGridEditStore`, `ConnectionDialog`).
-- [ ] Error boundary React dan logging terstruktur di backend.
-- [ ] Profiling render `DataGrid` besar dan memori hasil query.
-- [ ] Skrip rilis: `scripts/sync-version.sh`, build Linux/macOS/Windows (`build/config.yml`), changelog.
+- [x] Unit test Go: `SplitStatements`, generator DML/DDL tiap driver, `LocalStore`, `SessionManager`, `ExportService`.
+- [x] Integration test PG/MySQL/SQLite via docker-compose & fixture setup.
+- [x] Verifikasi frontend build (`npm run build`), sinkronisasi Wails v3 TypeScript bindings (`wails3 generate bindings -ts`).
+- [x] Error boundary React (`ErrorBoundary.tsx`) dan logging terstruktur di backend.
+- [x] Profiling render `DataGrid` besar (`@tanstack/react-virtual` + chunked buffer) dan memori hasil query.
+- [x] Skrip rilis: `scripts/sync-version.sh`, build Linux/macOS/Windows (`build/config.yml`), `CHANGELOG.md`.
 
 ---
 

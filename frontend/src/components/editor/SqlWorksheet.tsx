@@ -16,7 +16,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { format } from 'sql-formatter';
-import { ConnectionConfig, ColumnMeta, resolveConnectionEnv } from '../../types/domain';
+import { ConnectionConfig, ColumnMeta, ForeignKeyMeta, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
@@ -31,6 +31,7 @@ interface TableColumnMeta {
   name: string;
   type: 'table' | 'view';
   columns: ColumnMeta[];
+  foreignKeys?: ForeignKeyMeta[];
 }
 
 interface SqlKeywordDef {
@@ -165,8 +166,17 @@ function isInsideStringLiteral(lineContent: string, column: number): boolean {
   return insideSingle || insideDouble;
 }
 
-function extractTableAliases(sqlText: string): Map<string, string> {
-  const aliasMap = new Map<string, string>();
+interface ParsedQueryTables {
+  aliasToTable: Map<string, string>;
+  tableToAlias: Map<string, string>;
+  tables: string[];
+}
+
+function extractTableAliases(sqlText: string): ParsedQueryTables {
+  const aliasToTable = new Map<string, string>();
+  const tableToAlias = new Map<string, string>();
+  const tables: string[] = [];
+
   const regex = /\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:`?([a-zA-Z0-9_]+)`?\.)?`?([a-zA-Z0-9_]+)`?(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/gi;
 
   const nonAliases = new Set([
@@ -181,14 +191,21 @@ function extractTableAliases(sqlText: string): Map<string, string> {
     const alias = match[3];
 
     if (tableName) {
-      aliasMap.set(tableName.toLowerCase(), tableName);
+      const tblLower = tableName.toLowerCase();
+      if (!tables.some((t) => t.toLowerCase() === tblLower)) {
+        tables.push(tableName);
+      }
+      aliasToTable.set(tblLower, tableName);
       if (alias && !nonAliases.has(alias.toUpperCase())) {
-        aliasMap.set(alias.toLowerCase(), tableName);
+        aliasToTable.set(alias.toLowerCase(), tableName);
+        tableToAlias.set(tblLower, alias);
+      } else if (!tableToAlias.has(tblLower)) {
+        tableToAlias.set(tblLower, tableName);
       }
     }
   }
 
-  return aliasMap;
+  return { aliasToTable, tableToAlias, tables };
 }
 
 function detectSqlParameters(sqlText: string): string[] {
@@ -424,6 +441,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               name: item.objectName,
               type: (item.objectType as any) || existing?.type || 'table',
               columns: item.columns || existing?.columns || [],
+              foreignKeys: (item.foreignKeys as any) || existing?.foreignKeys || [],
             });
           }
         }
@@ -441,6 +459,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 name: o.name,
                 type: (o.type as any) || 'table',
                 columns: [],
+                foreignKeys: [],
               });
             }
           }
@@ -467,10 +486,11 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           batch.map(async (tbl) => {
             try {
               const struct = await SchemaService.GetTableStructure(connId, dbName, schemaName, tbl.name);
-              if (struct && struct.columns && !isCancelled) {
+              if (struct && !isCancelled) {
                 const currentEntry = metadataRef.current.tableMap.get(tbl.name.toLowerCase());
                 if (currentEntry) {
-                  currentEntry.columns = struct.columns;
+                  if (struct.columns) currentEntry.columns = struct.columns;
+                  if (struct.foreignKeys) currentEntry.foreignKeys = struct.foreignKeys;
                 }
               }
             } catch (_) {}
@@ -518,14 +538,14 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         const dotMatch = /([a-zA-Z0-9_`"\[\]]+)\.\s*$/.exec(textBeforeWord);
 
         const fullSql = model.getValue();
-        const aliasMap = extractTableAliases(fullSql);
+        const parsedTables = extractTableAliases(fullSql);
 
         if (dotMatch) {
           const rawQualifier = dotMatch[1].replace(/[`"\[\]]/g, '');
           const qualifierLower = rawQualifier.toLowerCase();
 
           // Check if qualifier is an alias or table name
-          const resolvedTableName = aliasMap.get(qualifierLower) || qualifierLower;
+          const resolvedTableName = parsedTables.aliasToTable.get(qualifierLower) || qualifierLower;
           let targetTable = tableMap.get(resolvedTableName.toLowerCase());
 
           // If table found in our map:
@@ -537,6 +557,9 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 const struct = await SchemaService.GetTableStructure(connectionId, database, targetSchema, targetTable.name);
                 if (struct?.columns) {
                   targetTable.columns = struct.columns;
+                }
+                if (struct?.foreignKeys) {
+                  targetTable.foreignKeys = struct.foreignKeys;
                 }
               } catch (_) {}
             }
@@ -590,6 +613,148 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
         // --- NOT AFTER A DOT (General / Clause Context) ---
 
+        // 1. Check for ON clause context: e.g. "JOIN orders o ON " or "... ON c"
+        const onMatch = /\bON\s+([a-zA-Z0-9_`"\[\].]*)$/i.exec(textBeforeWord);
+        if (onMatch) {
+          // Extract table joined just prior to ON in the statement
+          const textBeforeOn = textUntilPosition.replace(/\bON\s+[a-zA-Z0-9_`"\[\].]*$/i, '');
+          const lastJoinMatch = /(?:FROM|(?:(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|CROSS\s+)?JOIN))\s+(?:`?([a-zA-Z0-9_]+)`?\.)?`?([a-zA-Z0-9_]+)`?(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?\s*$/i.exec(textBeforeOn);
+
+          if (lastJoinMatch) {
+            const joinedTable = lastJoinMatch[2];
+            const joinedAlias = lastJoinMatch[3];
+            const joinedQualifier = joinedAlias || joinedTable;
+            const joinedMeta = tableMap.get(joinedTable.toLowerCase());
+
+            // Check FKs between joinedTable and any preceding tables
+            parsedTables.tables.forEach((otherTable) => {
+              if (otherTable.toLowerCase() === joinedTable.toLowerCase()) return;
+              const otherQualifier = parsedTables.tableToAlias.get(otherTable.toLowerCase()) || otherTable;
+              const otherMeta = tableMap.get(otherTable.toLowerCase());
+
+              // 1. joinedTable -> otherTable
+              if (joinedMeta?.foreignKeys) {
+                joinedMeta.foreignKeys.forEach((fk) => {
+                  if (fk.refTable.toLowerCase() === otherTable.toLowerCase()) {
+                    const cond = `${joinedQualifier}.${fk.columnName} = ${otherQualifier}.${fk.refColumn}`;
+                    suggestions.push({
+                      label: cond,
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      detail: `FK Join: ${joinedTable}.${fk.columnName} -> ${otherTable}.${fk.refColumn}`,
+                      insertText: cond,
+                      sortText: `0_0_${cond}`,
+                      range,
+                    });
+                  }
+                });
+              }
+
+              // 2. otherTable -> joinedTable
+              if (otherMeta?.foreignKeys) {
+                otherMeta.foreignKeys.forEach((fk) => {
+                  if (fk.refTable.toLowerCase() === joinedTable.toLowerCase()) {
+                    const cond = `${joinedQualifier}.${fk.refColumn} = ${otherQualifier}.${fk.columnName}`;
+                    suggestions.push({
+                      label: cond,
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      detail: `FK Join: ${otherTable}.${fk.columnName} -> ${joinedTable}.${fk.refColumn}`,
+                      insertText: cond,
+                      sortText: `0_0_${cond}`,
+                      range,
+                    });
+                  }
+                });
+              }
+            });
+          }
+
+          // Also suggest columns of the tables in query
+          parsedTables.tables.forEach((tblName) => {
+            const meta = tableMap.get(tblName.toLowerCase());
+            const qualifier = parsedTables.tableToAlias.get(tblName.toLowerCase()) || tblName;
+            meta?.columns.forEach((col) => {
+              const fullCol = `${qualifier}.${col.name}`;
+              suggestions.push({
+                label: fullCol,
+                kind: monaco.languages.CompletionItemKind.Field,
+                detail: `${col.dataType} (${tblName})`,
+                insertText: fullCol,
+                sortText: `1_${fullCol}`,
+                range,
+              });
+            });
+          });
+
+          return { suggestions };
+        }
+
+        // 2. Check for JOIN context: e.g. "JOIN ", "INNER JOIN ", "LEFT JOIN "
+        const joinMatch = /\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|CROSS\s+)?JOIN\s+([a-zA-Z0-9_`"\[\]]*)$/i.exec(textBeforeWord);
+        if (joinMatch) {
+          const suggestedJoins = new Set<string>();
+
+          parsedTables.tables.forEach((existingTable) => {
+            const existingQualifier = parsedTables.tableToAlias.get(existingTable.toLowerCase()) || existingTable;
+            const existingMeta = tableMap.get(existingTable.toLowerCase());
+
+            // 1. Outbound FK: existingTable has FK pointing to another table
+            if (existingMeta?.foreignKeys) {
+              existingMeta.foreignKeys.forEach((fk) => {
+                const targetName = fk.refTable;
+                const snippet = `${targetName} ON ${targetName}.${fk.refColumn} = ${existingQualifier}.${fk.columnName}`;
+                if (!suggestedJoins.has(snippet)) {
+                  suggestedJoins.add(snippet);
+                  suggestions.push({
+                    label: snippet,
+                    kind: monaco.languages.CompletionItemKind.Snippet,
+                    detail: `Smart FK JOIN: ${existingTable}.${fk.columnName} -> ${targetName}.${fk.refColumn}`,
+                    insertText: snippet,
+                    sortText: `0_0_${targetName}`,
+                    range,
+                  });
+                }
+              });
+            }
+
+            // 2. Inbound FK: another table has FK pointing to existingTable
+            tableMap.forEach((otherMeta) => {
+              if (otherMeta.name.toLowerCase() === existingTable.toLowerCase()) return;
+              otherMeta.foreignKeys?.forEach((fk) => {
+                if (fk.refTable.toLowerCase() === existingTable.toLowerCase()) {
+                  const targetName = otherMeta.name;
+                  const snippet = `${targetName} ON ${targetName}.${fk.columnName} = ${existingQualifier}.${fk.refColumn}`;
+                  if (!suggestedJoins.has(snippet)) {
+                    suggestedJoins.add(snippet);
+                    suggestions.push({
+                      label: snippet,
+                      kind: monaco.languages.CompletionItemKind.Snippet,
+                      detail: `Smart FK JOIN: ${targetName}.${fk.columnName} -> ${existingTable}.${fk.refColumn}`,
+                      insertText: snippet,
+                      sortText: `0_0_${targetName}`,
+                      range,
+                    });
+                  }
+                }
+              });
+            });
+          });
+
+          // Also suggest plain tables and views
+          tableMap.forEach((tbl) => {
+            const isView = tbl.type === 'view';
+            suggestions.push({
+              label: tbl.name,
+              kind: isView ? monaco.languages.CompletionItemKind.Class : monaco.languages.CompletionItemKind.Struct,
+              detail: `${isView ? 'View' : 'Table'} (${schema || database || 'db'})${tbl.columns.length > 0 ? ` • ${tbl.columns.length} columns` : ''}`,
+              insertText: tbl.name,
+              sortText: `1_${tbl.name}`,
+              range,
+            });
+          });
+
+          return { suggestions };
+        }
+
         // Check if cursor is immediately after a table-expecting keyword: FROM, JOIN, UPDATE, INTO, TABLE
         const isTableContext = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([a-zA-Z0-9_`"\[\]]*)$/i.test(textBeforeWord);
 
@@ -608,7 +773,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
         // 2. If not strictly expecting a table, suggest Columns!
         if (!isTableContext) {
-          const queryTableNames = new Set(Array.from(aliasMap.values()).map((t) => t.toLowerCase()));
+          const queryTableNames = new Set(Array.from(parsedTables.aliasToTable.values()).map((t) => t.toLowerCase()));
 
           const seenCols = new Set<string>();
           tableMap.forEach((tbl) => {

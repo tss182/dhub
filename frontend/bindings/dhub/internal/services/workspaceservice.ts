@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -13,28 +13,20 @@ export function DeleteWorksheet(id: string): $CancellablePromise<void> {
     return $Call.ByID(825634916, id);
 }
 
-export function GetQueryHistory(connectionID: string, limit: number): $CancellablePromise<store$0.QueryHistoryEntry[]> {
-    return $Call.ByID(659553081, connectionID, limit).then(($result: any) => {
-        return $$createType1($result);
-    });
+export function GetQueryHistory(connectionID: string, limit: number): $CancellablePromise<store$0.QueryHistoryEntry[] | null> {
+    return $Call.ByID(659553081, connectionID, limit);
 }
 
-export function GetSettings(): $CancellablePromise<{ [_ in string]?: string }> {
-    return $Call.ByID(522312764).then(($result: any) => {
-        return $$createType2($result);
-    });
+export function GetSettings(): $CancellablePromise<{ [_ in string]?: string } | null> {
+    return $Call.ByID(522312764);
 }
 
 export function GetWorksheet(id: string): $CancellablePromise<store$0.Worksheet | null> {
-    return $Call.ByID(3848255231, id).then(($result: any) => {
-        return $$createType4($result);
-    });
+    return $Call.ByID(3848255231, id);
 }
 
-export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[]> {
-    return $Call.ByID(3290411218, connectionID).then(($result: any) => {
-        return $$createType5($result);
-    });
+export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[] | null> {
+    return $Call.ByID(3290411218, connectionID);
 }
 
 export function SaveSetting(key: string, value: string): $CancellablePromise<void> {
@@ -44,11 +36,3 @@ export function SaveSetting(key: string, value: string): $CancellablePromise<voi
 export function SaveWorksheet(ws: store$0.Worksheet): $CancellablePromise<string> {
     return $Call.ByID(3347542458, ws);
 }
-
-// Private type creation functions
-const $$createType0 = store$0.QueryHistoryEntry.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $Create.Map($Create.Any, $Create.Any);
-const $$createType3 = store$0.Worksheet.createFrom;
-const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = $Create.Array($$createType3);

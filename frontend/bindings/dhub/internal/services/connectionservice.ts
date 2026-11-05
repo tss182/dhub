@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -26,21 +26,15 @@ export function Disconnect(id: string): $CancellablePromise<void> {
 }
 
 export function GetConnection(id: string): $CancellablePromise<store$0.ConnectionConfig | null> {
-    return $Call.ByID(701245564, id).then(($result: any) => {
-        return $$createType1($result);
-    });
+    return $Call.ByID(701245564, id);
 }
 
-export function ListConnections(): $CancellablePromise<store$0.ConnectionConfig[]> {
-    return $Call.ByID(3351772953).then(($result: any) => {
-        return $$createType2($result);
-    });
+export function ListConnections(): $CancellablePromise<store$0.ConnectionConfig[] | null> {
+    return $Call.ByID(3351772953);
 }
 
-export function ListFolders(): $CancellablePromise<store$0.ConnectionFolder[]> {
-    return $Call.ByID(3442141661).then(($result: any) => {
-        return $$createType4($result);
-    });
+export function ListFolders(): $CancellablePromise<store$0.ConnectionFolder[] | null> {
+    return $Call.ByID(3442141661);
 }
 
 export function MoveConnectionToFolder(connectionID: string, folderID: string | null): $CancellablePromise<void> {
@@ -59,17 +53,10 @@ export function TestConnection(cfg: store$0.ConnectionConfig): $CancellablePromi
     return $Call.ByID(505073892, cfg);
 }
 
-export function UpdateConnectionsLayout(items: store$0.ConnectionLayoutUpdate[]): $CancellablePromise<void> {
+export function UpdateConnectionsLayout(items: store$0.ConnectionLayoutUpdate[] | null): $CancellablePromise<void> {
     return $Call.ByID(2704334404, items);
 }
 
-export function UpdateFoldersOrder(folderIDs: string[]): $CancellablePromise<void> {
+export function UpdateFoldersOrder(folderIDs: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(2539395134, folderIDs);
 }
-
-// Private type creation functions
-const $$createType0 = store$0.ConnectionConfig.createFrom;
-const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = $Create.Array($$createType0);
-const $$createType3 = store$0.ConnectionFolder.createFrom;
-const $$createType4 = $Create.Array($$createType3);
