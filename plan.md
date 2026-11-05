@@ -985,3 +985,141 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 2. Tambahkan eksportir hasil query ke **CSV, JSON, SQL Insert Statements, dan Markdown Table**.
 3. Tambahkan visualisasi **Explain Plan** (`EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON)` untuk PostgreSQL).
 
+
+---
+
+## 10. Roadmap Lanjutan: Perbaikan Kekurangan & Fitur Baru (Fase 6–10)
+
+> Fase 1–5 di atas sudah terealisasi pada kode saat ini. Bagian ini adalah hasil audit kode dan berisi tahapan untuk menutup kekurangan serta menambah fitur. Estimasi: **S** (<1 hari), **M** (1–3 hari), **L** (3–7 hari). Centang `[x]` saat selesai.
+
+### Aturan Umum Tiap Fase
+- Kerjakan di branch terpisah per fase (`feat/fase-6-...`).
+- Setiap ada perubahan method/struct pada service Go, jalankan `wails3 generate bindings` agar `frontend/bindings` sinkron.
+- Tulis test bersamaan dengan fitur; jalankan `go test ./...` dan `npm run build` (di `frontend/`) sebelum merge.
+
+---
+
+### Fase 6: Persiapan & Perbaikan Bug Kritis Backend (Milestone 6)
+
+**6.0 Persiapan (S)**
+- [x] Siapkan `docker-compose.yml` untuk PostgreSQL & MySQL lokal (testing integrasi) dan fixture SQLite.
+- [x] Ganti `README.md` bawaan template Wails dengan dokumentasi DHub (dev, build, fitur).
+
+**6.1 Multi-database PostgreSQL (L)** — `internal/driver/postgres/postgres.go`, `internal/manager/session_manager.go`
+- [x] Simpan pool per database (`map[string]*sql.DB`, dibuat lazy dengan path database berbeda pada connection string).
+- [x] Gunakan parameter `database` di `ListSchemas`, `ListObjects`, `GetTableStructure`, `Execute` (saat ini diabaikan).
+- [x] `ApplyChanges` & `GenerateDMLPreview` membawa parameter `database`: interface `DatabaseDriver`, driver PostgreSQL routing transaction ke `p.dbFor(database)`, driver MySQL & SQLite, `QueryService.SubmitChanges/PreviewChanges`, bindings TypeScript, dan pemanggil di `App.tsx`.
+- [x] `Close()` menutup semua pool; SSH tunnel dipakai bersama oleh semua pool.
+- [x] Test: routing pool per database (`postgres_test.go`). Test integrasi dengan server nyata: belum dijalankan.
+
+**6.2 Metadata struktur tabel lengkap (M)**
+- [x] PostgreSQL: indexes, auto-increment (serial/identity), komentar kolom & tabel, `onUpdate/onDelete` FK; lengkapi DDL.
+- [x] MySQL: foreign keys (`key_column_usage` + `referential_constraints`).
+- [x] SQLite: indexes (`PRAGMA index_list` + `index_info`), deteksi autoincrement.
+- [x] Unit test: SQLite (index, FK, autoincrement) dan DDL PostgreSQL. Test MySQL/PG terhadap server nyata: belum.
+
+**6.3 Pagination efisien (M)** — `internal/driver/executor.go`
+- [x] Untuk SELECT tanpa LIMIT/OFFSET sendiri, bungkus `SELECT * FROM (<sql>) t LIMIT n OFFSET m` agar offset dikerjakan server (hanya saat offset > 0; fallback otomatis jika gagal).
+- [x] Fallback skip-scan untuk statement yang tidak aman dibungkus (`WITH`, `SHOW`, `EXPLAIN`, dll.).
+
+**6.4 Backup/Restore lewat SSH tunnel (M)** — `internal/services/schema_service.go`
+- [x] Bila `SSHEnabled`, buka tunnel dan arahkan `mysqldump/mysql/pg_dump/psql` ke `127.0.0.1:<LocalPort>`; tutup setelah selesai. (PG juga meneruskan `PGSSLMODE`.)
+
+**6.5 Keamanan (S)**
+- [x] Ganti `ssh.InsecureIgnoreHostKey()` dengan verifikasi host key: trust-on-first-use ke `known_hosts` milik DHub, tolak jika key berubah. (Dialog konfirmasi di UI: belum.)
+- [x] Quoting identifier aman untuk `SET search_path`, `USE`, `SHOW CREATE TABLE`, dan `PRAGMA`.
+
+**Selesai bila:** PG multi-db berfungsi, metadata lengkap di 3 driver, backup lewat tunnel berhasil, `go test ./...` hijau.
+
+---
+
+### Fase 7: Melengkapi Fitur Setengah Jadi (Milestone 7)
+
+**7.1 ConnectionDialog lengkap (M)** — `frontend/src/components/modals/ConnectionDialog.tsx`
+- [x] Pecah menjadi tab: General, SSH Tunnel, SSL/TLS, Advanced.
+- [x] Field SSH (host, port, user, auth password/key, key path, password) dan SSL (mode, CA, cert, key); hentikan hardcode `sshEnabled: false`, `sslMode: 'disable'`, `isReadOnly: false`.
+- [x] Toggle Read-Only dan Transaction Mode (auto/manual).
+- [x] Tombol Browse (`Dialogs.OpenFile`) untuk file SQLite & SSH key; hapus default path hardcode `/home/tss/...`.
+- [x] Mode edit memuat semua field dari `GetConnection`; `TestConnection` memakai semua opsi (termasuk tunnel).
+
+**7.2 Enforcement Read-Only (S–M)**
+- [x] Backend: `QueryService.ExecuteQuery` dan `SubmitChanges` menolak statement non-SELECT jika `IsReadOnly` dengan pesan error jelas.
+- [x] Frontend: nonaktifkan edit/insert/delete di `DataGrid` dan tampilkan badge READ-ONLY di toolbar.
+
+**7.3 Cancel query sungguhan (S)**
+- [x] `SqlWorksheet.onCancel` memanggil `QueryService.CancelQuery(executionId)` dan menghentikan context eksekusi backend.
+- [x] Simpan `executionId` aktif per tab (`activeExecIdByTab`).
+
+**7.4 Hasil query per-tab & refactor `App.tsx` (M–L)**
+- [x] Pindahkan `queryResult`, `activeResultIndex`, `queryPagination`, `isRunning`, `statusMessage`, `activeExecId` ke state per `tabId`; bersihkan saat tab ditutup via garbage-collection effect.
+
+**7.5 Query History UI (M)**
+- [x] Tab History di bottom panel terintegrasi dengan `QueryHistoryPanel`: filter koneksi/status/teks, aksi Insert to editor, Run again, Copy SQL.
+- [x] Unit test backend untuk Read-Only enforcement di `internal/services/query_service_test.go`.
+
+**Selesai bila:** semua opsi koneksi tersimpan & berfungsi, read-only terjaga, cancel menghentikan query di server, tiap tab punya hasil sendiri, history tampil.
+
+---
+
+### Fase 8: Produktivitas IDE (Milestone 8)
+
+**8.1 Export / Import data (L)**
+- [ ] Backend `ExportService` streaming ke file (CSV, JSON, SQL INSERT, XLSX) untuk tabel penuh atau hasil query, dengan progres via event.
+- [ ] Dialog Export (format, delimiter, header, encoding, lokasi via `Dialogs.SaveFile`).
+- [ ] Import wizard CSV/JSON: pilih file → mapping kolom → preview → insert batch dalam transaksi.
+
+**8.2 SQL Formatter & parameter (M)**
+- [ ] Tombol/shortcut Format SQL (`Shift+Alt+F`) memakai `sql-formatter` sesuai dialek.
+- [ ] Deteksi placeholder (`:name`, `$1`, `?`) lalu dialog input nilai sebelum eksekusi.
+
+**8.3 Transaksi manual (M)**
+- [ ] Backend: session transaksi per tab (`BeginTx`/`Commit`/`Rollback`) dengan koneksi dedicated.
+- [ ] UI: toggle Auto/Manual, tombol Commit/Rollback, peringatan saat menutup tab dengan transaksi terbuka; status bar menampilkan mode nyata (saat ini statis `Tx: AUTO`).
+
+**8.4 Explain plan (M)**
+- [ ] Tombol Explain / Explain Analyze → tab `explain` (teks, lalu tree view untuk PG JSON).
+
+**8.5 Pengaturan tambahan (S)**
+- [ ] Retensi history, timeout query, default limit, konfirmasi query berbahaya (DELETE/UPDATE tanpa WHERE, khusus env PROD).
+
+---
+
+### Fase 9: Nilai Tambah (Milestone 9)
+
+**9.1 Explorer objek lengkap (M)**
+- [ ] Perluas interface `DatabaseDriver`: `ListViews`, `ListRoutines`, `ListTriggers`, `ListIndexes`.
+- [ ] `DatabaseExplorer`: grup Tables / Views / Materialized Views / Functions & Procedures / Triggers; aksi Show DDL dan Drop.
+
+**9.2 ER Diagram (L)**
+- [ ] Render diagram dari `TableStructure` (PK/FK) per schema, auto-layout, export PNG/SVG.
+
+**9.3 Autocomplete lebih cerdas (M)**
+- [ ] Completion kontekstual (kolom setelah alias, saran JOIN via FK) berbasis `GetCachedSchema`.
+
+**9.4 Lain-lain (S–M)**
+- [ ] Audit tema Light di semua modal; lengkapi tab Shortcuts di Settings.
+- [ ] Evaluasi driver tambahan (SQL Server, ClickHouse) sesuai visi di bagian 1.
+
+---
+
+### Fase 10: Kualitas, Test & Rilis (Milestone 10) — berjalan paralel sejak Fase 6
+
+- [ ] Unit test Go: `SplitStatements`, generator DML/DDL tiap driver, `LocalStore`, `SessionManager`.
+- [ ] Integration test PG/MySQL/SQLite via docker-compose.
+- [ ] Test frontend (Vitest + Testing Library) untuk store dan komponen kunci (`useGridEditStore`, `ConnectionDialog`).
+- [ ] Error boundary React dan logging terstruktur di backend.
+- [ ] Profiling render `DataGrid` besar dan memori hasil query.
+- [ ] Skrip rilis: `scripts/sync-version.sh`, build Linux/macOS/Windows (`build/config.yml`), changelog.
+
+---
+
+### Urutan Eksekusi yang Disarankan
+1. **6.0 → 6.1 → 6.2 → 7.1 → 7.3 → 7.4 → 7.5** (dampak terbesar, risiko rendah).
+2. **6.3, 6.4, 6.5, 7.2**.
+3. **Fase 8**: 8.1 → 8.3 → 8.2 → 8.4 → 8.5.
+4. **Fase 9** sesuai kebutuhan; **Fase 10** paralel.
+
+### Risiko & Catatan
+- Perubahan interface `DatabaseDriver` memengaruhi 3 driver sekaligus; lakukan bertahap.
+- Refactor `App.tsx` (7.4) sebaiknya dilakukan sebelum menambah fitur UI besar agar utang teknis tidak bertambah.
+- Kredensial (password/SSH) tetap di keyring; jangan masuk ke log, history, atau hasil export.

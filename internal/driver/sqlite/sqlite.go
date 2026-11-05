@@ -77,8 +77,10 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 		Indexes:     []driver.IndexMeta{},
 	}
 
+	quotedTable := quoteLiteral(table)
+
 	// 1. Get Columns via PRAGMA table_info
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info('%s')", table))
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", quotedTable))
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +112,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 	}
 
 	// 2. Get Foreign Keys via PRAGMA foreign_key_list
-	fkRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA foreign_key_list('%s')", table))
+	fkRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA foreign_key_list(%s)", quotedTable))
 	if err == nil {
 		defer fkRows.Close()
 		for fkRows.Next() {
@@ -130,6 +132,58 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 		}
 	}
 
+	// 2b. Detect auto-assigned keys: a single INTEGER PRIMARY KEY is a rowid alias
+	// and gets a value automatically (with or without the AUTOINCREMENT keyword).
+	if len(structure.PrimaryKeys) == 1 {
+		for i := range structure.Columns {
+			c := &structure.Columns[i]
+			if c.IsPrimaryKey && strings.EqualFold(strings.TrimSpace(c.DataType), "INTEGER") {
+				c.IsAutoIncr = true
+			}
+		}
+	}
+
+	// 2c. Get Indexes via PRAGMA index_list + index_info
+	idxRows, idxErr := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list(%s)", quotedTable))
+	if idxErr == nil {
+		type rawIdx struct {
+			name   string
+			unique bool
+			origin string
+		}
+		var rawIdxs []rawIdx
+		for idxRows.Next() {
+			var seq, unique, partial int
+			var name, origin string
+			if err := idxRows.Scan(&seq, &name, &unique, &origin, &partial); err == nil {
+				rawIdxs = append(rawIdxs, rawIdx{name: name, unique: unique == 1, origin: origin})
+			}
+		}
+		idxRows.Close()
+
+		for _, ri := range rawIdxs {
+			cols := []string{}
+			if infoRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info(%s)", quoteLiteral(ri.name))); err == nil {
+				for infoRows.Next() {
+					var seqno, cid int
+					var colName *string
+					if err := infoRows.Scan(&seqno, &cid, &colName); err == nil && colName != nil {
+						cols = append(cols, *colName)
+					}
+				}
+				infoRows.Close()
+			}
+			structure.Indexes = append(structure.Indexes, driver.IndexMeta{
+				Name:      ri.name,
+				Columns:   cols,
+				IsUnique:  ri.unique,
+				IsPrimary: ri.origin == "pk",
+				Type:      "BTREE",
+				Method:    "BTREE",
+			})
+		}
+	}
+
 	// 3. Get DDL
 	var ddl string
 	_ = s.db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&ddl)
@@ -142,7 +196,7 @@ func (s *SQLiteDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 	return driver.ExecuteStatements(ctx, s.db, req)
 }
 
-func (s *SQLiteDriver) GenerateDMLPreview(schema, table string, changes []driver.RowChange) ([]string, error) {
+func (s *SQLiteDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	for _, c := range changes {
 		switch c.Type {
@@ -179,7 +233,7 @@ func (s *SQLiteDriver) GenerateDMLPreview(schema, table string, changes []driver
 	return statements, nil
 }
 
-func (s *SQLiteDriver) ApplyChanges(ctx context.Context, schema, table string, changes []driver.RowChange) (int64, error) {
+func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -248,6 +302,11 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, schema, table string, c
 		return 0, err
 	}
 	return totalAffected, nil
+}
+
+// quoteLiteral returns s as a single-quoted SQL string literal with quotes escaped.
+func quoteLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func formatSQLVal(v any) string {

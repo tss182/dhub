@@ -1,59 +1,37 @@
-# Welcome to Your New Wails3 Project!
+# DHub
 
-Congratulations on generating your Wails3 application! This README will guide you through the next steps to get your project up and running.
+Desktop database client yang ringan dan *keyboard-first* (PostgreSQL, MySQL/MariaDB, SQLite), dibangun dengan **Go + Wails v3** dan **React + TypeScript + Tailwind CSS v4 + Monaco Editor**.
 
-## Getting Started
+Blueprint arsitektur dan roadmap ada di [plan.md](plan.md).
 
-1. Navigate to your project directory in the terminal.
+## Menjalankan
 
-2. To run your application in development mode, use the following command:
+```bash
+wails3 dev        # development dengan hot-reload
+wails3 build      # build produksi (hasil di folder bin/)
+```
 
-   ```
-   wails3 dev
-   ```
+Setelah mengubah method/struct pada service Go, regenerate TypeScript bindings:
 
-   This will start your application and enable hot-reloading for both frontend and backend changes.
+```bash
+wails3 generate bindings
+```
 
-3. To build your application for production, use:
+## Testing
 
-   ```
-   wails3 build
-   ```
+```bash
+go test ./...                 # unit test (tidak butuh server database)
+docker compose up -d          # PostgreSQL (:55432) & MySQL (:53306) untuk uji manual/integrasi
+```
 
-   This will create a production-ready executable in the `build` directory.
+`docker compose` menyiapkan PostgreSQL dengan dua database (`dhub`, `dhub_extra`) untuk menguji browsing multi-database dalam satu koneksi.
 
-## Exploring Wails3 Features
+## Struktur
 
-Now that you have your project set up, it's time to explore the features that Wails3 offers:
-
-1. **Check out the examples**: The best way to learn is by example. Visit the `examples` directory in the `v3/examples` directory to see various sample applications.
-
-2. **Run an example**: To run any of the examples, navigate to the example's directory and use:
-
-   ```
-   go run .
-   ```
-
-   Note: Some examples may be under development during the alpha phase.
-
-3. **Explore the documentation**: Visit the [Wails3 documentation](https://v3.wails.io/) for in-depth guides and API references.
-
-4. **Join the community**: Have questions or want to share your progress? Join the [Wails Discord](https://discord.gg/JDdSxwjhGf) or visit the [Wails discussions on GitHub](https://github.com/wailsapp/wails/discussions).
-
-## Project Structure
-
-Take a moment to familiarize yourself with your project structure:
-
-- `frontend/`: Contains your frontend code (HTML, CSS, JavaScript/TypeScript)
-- `main.go`: The entry point of your Go backend
-- `app.go`: Define your application structure and methods here
-- `wails.json`: Configuration file for your Wails project
-
-## Next Steps
-
-1. Modify the frontend in the `frontend/` directory to create your desired UI.
-2. Add backend functionality in `main.go`.
-3. Use `wails3 dev` to see your changes in real-time.
-4. When ready, build your application with `wails3 build`.
-
-Happy coding with Wails3! If you encounter any issues or have questions, don't hesitate to consult the documentation or reach out to the Wails community.
+- `main.go` — entry point Wails, registrasi service & event
+- `internal/driver` — kontrak `DatabaseDriver` + implementasi `postgres`, `mysql`, `sqlite`
+- `internal/manager` — session/pool manager (termasuk SSH tunnel)
+- `internal/services` — service Wails (Connection, Schema, Query, Workspace)
+- `internal/store` — penyimpanan lokal SQLite (koneksi, worksheet, history, cache schema)
+- `internal/tunnel` — SSH tunnel (host key diverifikasi lewat `known_hosts` milik DHub, TOFU)
+- `frontend/` — UI React

@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -14,13 +14,22 @@ export function CancelQuery(executionID: string): $CancellablePromise<boolean> {
 }
 
 export function ExecuteQuery(req: driver$0.QueryRequest): $CancellablePromise<driver$0.QueryResult | null> {
-    return $Call.ByID(1999955655, req);
+    return $Call.ByID(1999955655, req).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
-export function PreviewChanges(connectionID: string, schema: string, table: string, changes: driver$0.RowChange[] | null): $CancellablePromise<string[] | null> {
-    return $Call.ByID(1080152811, connectionID, schema, table, changes);
+export function PreviewChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[]): $CancellablePromise<string[]> {
+    return $Call.ByID(1080152811, connectionID, database, schema, table, changes).then(($result: any) => {
+        return $$createType2($result);
+    });
 }
 
-export function SubmitChanges(connectionID: string, schema: string, table: string, changes: driver$0.RowChange[] | null): $CancellablePromise<number> {
-    return $Call.ByID(2611702279, connectionID, schema, table, changes);
+export function SubmitChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[]): $CancellablePromise<number> {
+    return $Call.ByID(2611702279, connectionID, database, schema, table, changes);
 }
+
+// Private type creation functions
+const $$createType0 = driver$0.QueryResult.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = $Create.Array($Create.Any);

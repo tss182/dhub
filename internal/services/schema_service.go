@@ -17,6 +17,7 @@ import (
 	"dhub/internal/driver"
 	"dhub/internal/manager"
 	"dhub/internal/store"
+	"dhub/internal/tunnel"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -184,6 +185,33 @@ func (s *SchemaService) GetDefaultBackupPath(database string) (string, error) {
 	return filepath.Join(homeDir, filename), nil
 }
 
+// withSSHTunnel returns a copy of conn whose host/port point at a local SSH tunnel when
+// SSH is enabled, so external tools (mysqldump, pg_dump, ...) reach the remote database.
+// The returned func closes the tunnel and is always safe to call.
+func withSSHTunnel(conn *store.ConnectionConfig) (*store.ConnectionConfig, func(), error) {
+	noop := func() {}
+	if conn == nil || !conn.SSHEnabled || conn.Driver == "sqlite" {
+		return conn, noop, nil
+	}
+	tun, err := tunnel.OpenSSHTunnel(tunnel.SSHTunnelConfig{
+		Host:       conn.SSHHost,
+		Port:       conn.SSHPort,
+		User:       conn.SSHUser,
+		AuthType:   conn.SSHAuthType,
+		Password:   conn.SSHPassword,
+		KeyPath:    conn.SSHKeyPath,
+		RemoteHost: conn.Host,
+		RemotePort: conn.Port,
+	})
+	if err != nil {
+		return nil, noop, fmt.Errorf("ssh tunnel failed: %w", err)
+	}
+	cp := *conn
+	cp.Host = "127.0.0.1"
+	cp.Port = tun.LocalPort
+	return &cp, func() { _ = tun.Close() }, nil
+}
+
 type BackupOptions struct {
 	Mode              string   `json:"mode"`              // "full", "schema_only", "data_only"
 	TableSelection    string   `json:"tableSelection"`    // "all", "include", "exclude"
@@ -202,6 +230,11 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 	if err != nil {
 		return "", fmt.Errorf("failed to get connection config: %w", err)
 	}
+	conn, closeTunnel, err := withSSHTunnel(conn)
+	if err != nil {
+		return "", err
+	}
+	defer closeTunnel()
 
 	database = strings.TrimSpace(database)
 	if database == "" {
@@ -414,6 +447,9 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		if conn.Password != "" {
 			cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
 		}
+		if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
+			cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
+		}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
@@ -482,6 +518,11 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 	if err != nil {
 		return "", fmt.Errorf("failed to get connection config: %w", err)
 	}
+	conn, closeTunnel, err := withSSHTunnel(conn)
+	if err != nil {
+		return "", err
+	}
+	defer closeTunnel()
 
 	database = strings.TrimSpace(database)
 	if database == "" {
@@ -586,6 +627,9 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 		cmd.Env = os.Environ()
 		if conn.Password != "" {
 			cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
+		}
+		if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
+			cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
 		}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			msg := strings.TrimSpace(string(out))

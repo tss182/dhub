@@ -2,12 +2,16 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type SSHTunnelConfig struct {
@@ -25,6 +29,72 @@ type Tunnel struct {
 	client   *ssh.Client
 	listener net.Listener
 	LocalPort int
+}
+
+var knownHostsMu sync.Mutex
+
+// knownHostsPath returns DHub's own known_hosts file (<user config dir>/dhub/known_hosts).
+func knownHostsPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	dir = filepath.Join(dir, "dhub")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "known_hosts")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	_ = f.Close()
+	return path, nil
+}
+
+// trustOnFirstUseCallback verifies SSH host keys against DHub's known_hosts file.
+// Unknown hosts are trusted and recorded on first connection (TOFU); a changed key for a
+// known host is rejected to protect against man-in-the-middle attacks.
+func trustOnFirstUseCallback() ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		knownHostsMu.Lock()
+		defer knownHostsMu.Unlock()
+
+		path, err := knownHostsPath()
+		if err != nil {
+			return fmt.Errorf("cannot access known_hosts: %w", err)
+		}
+		check, err := knownhosts.New(path)
+		if err != nil {
+			return fmt.Errorf("cannot read known_hosts: %w", err)
+		}
+
+		err = check(hostname, remote, key)
+		if err == nil {
+			return nil
+		}
+
+		var keyErr *knownhosts.KeyError
+		if !errors.As(err, &keyErr) {
+			return err
+		}
+		if len(keyErr.Want) > 0 {
+			return fmt.Errorf("SSH host key for %s has CHANGED (possible man-in-the-middle attack); "+
+				"remove the old entry from %s if the change is expected", hostname, path)
+		}
+
+		// Unknown host: remember it (trust on first use).
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("cannot record host key: %w", err)
+		}
+		defer f.Close()
+		line := knownhosts.Line([]string{knownhosts.Normalize(hostname)}, key)
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			return fmt.Errorf("cannot record host key: %w", err)
+		}
+		return nil
+	}
 }
 
 func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
@@ -47,7 +117,7 @@ func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 	clientConfig := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: trustOnFirstUseCallback(),
 		Timeout:         10 * time.Second,
 	}
 

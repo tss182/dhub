@@ -13,6 +13,27 @@ type QueryExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+// wrapSelectForPaging wraps a plain SELECT in a derived table with LIMIT/OFFSET so the
+// database applies the offset. It fetches limit+1 rows so the caller can detect "has more".
+// Returns ok=false for anything that is not a simple SELECT (CTEs, SHOW, EXPLAIN, statements
+// that already contain LIMIT/OFFSET/FETCH, or when no offset is needed).
+func wrapSelectForPaging(stmt string, limit, offset int) (string, bool) {
+	if offset <= 0 || limit <= 0 {
+		return "", false
+	}
+	trimmed := strings.TrimRight(strings.TrimSpace(stmt), "; \t\r\n")
+	upper := strings.ToUpper(trimmed)
+	if !strings.HasPrefix(upper, "SELECT") {
+		return "", false
+	}
+	for _, kw := range []string{" LIMIT ", " OFFSET ", " FETCH ", " FOR UPDATE", " INTO ", "--", "/*"} {
+		if strings.Contains(upper, kw) {
+			return "", false
+		}
+	}
+	return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page LIMIT %d OFFSET %d", trimmed, limit+1, offset), true
+}
+
 // ExecuteStatements splits a SQL string into individual statements and executes each in sequence.
 // It returns a QueryResult containing all individual statement results in Results, with the main
 // view defaulting to the last SELECT statement (or the last executed statement).
@@ -46,7 +67,21 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 		isSelect := IsQueryReturningRows(stmt)
 
 		if isSelect {
-			rows, err := execer.QueryContext(ctx, stmt)
+			// Push OFFSET to the server for plain SELECTs so deep pages do not stream
+			// and discard every preceding row. Falls back to client-side skipping.
+			stmtOffset := offset
+			queryText := stmt
+			if wrapped, ok := wrapSelectForPaging(stmt, limit, offset); ok {
+				queryText = wrapped
+				stmtOffset = 0
+			}
+
+			rows, err := execer.QueryContext(ctx, queryText)
+			if err != nil && stmtOffset == 0 && queryText != stmt {
+				// Wrapping can fail (e.g. duplicate column names in a derived table).
+				stmtOffset = offset
+				rows, err = execer.QueryContext(ctx, stmt)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("error in statement %d: %w\nSQL: %s", i+1, err, TruncateSQL(stmt, 100))
 			}
@@ -77,7 +112,7 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 			hasMore := false
 
 			for rows.Next() {
-				if skipped < offset {
+				if skipped < stmtOffset {
 					if err := rows.Scan(valuePtrs...); err == nil {
 						skipped++
 					}

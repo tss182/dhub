@@ -15,6 +15,7 @@ import { AlertModal } from './components/modals/AlertModal';
 import { ToastContainer } from './components/common/ToastContainer';
 import { Popover } from './components/common/Popover';
 import { TableStructureModal } from './components/modals/CreateTableModal';
+import { QueryHistoryPanel } from './components/history/QueryHistoryPanel';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { DHubLogo } from './components/common/DHubLogo';
@@ -95,10 +96,11 @@ export function App() {
     setTreeDatabases,
     setActiveConnection,
   } = useConnectionStore();
-  const [isRunning, setIsRunning] = useState(false);
-  const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
-  const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const [statusMessage, setStatusMessage] = useState('Ready');
+  const [isRunningByTab, setIsRunningByTab] = useState<Record<string, boolean>>({});
+  const [queryResultByTab, setQueryResultByTab] = useState<Record<string, QueryResult | null>>({});
+  const [activeResultIndexByTab, setActiveResultIndexByTab] = useState<Record<string, number>>({});
+  const [statusMessageByTab, setStatusMessageByTab] = useState<Record<string, string>>({});
+  const [activeExecIdByTab, setActiveExecIdByTab] = useState<Record<string, string>>({});
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
   const [copiedResultRawSql, setCopiedResultRawSql] = useState(false);
 
@@ -166,24 +168,21 @@ export function App() {
     >
   >({});
 
-  // Query Result pagination & lazy load state
-  const [queryPagination, setQueryPagination] = useState<{
-    page: number;
-    pageSize: number;
-    isLoadingMore: boolean;
-    lastSql: string;
-    connectionId: string;
-    database: string;
-    schema: string;
-  }>({
-    page: 1,
-    pageSize: useSettingsStore.getState().defaultPageSize || 100,
-    isLoadingMore: false,
-    lastSql: '',
-    connectionId: '',
-    database: '',
-    schema: '',
-  });
+  // Query Result pagination & lazy load state per tab
+  const [queryPaginationByTab, setQueryPaginationByTab] = useState<
+    Record<
+      string,
+      {
+        page: number;
+        pageSize: number;
+        isLoadingMore: boolean;
+        lastSql: string;
+        connectionId: string;
+        database: string;
+        schema: string;
+      }
+    >
+  >({});
 
   // Left & Right sidebar resizable widths
   const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
@@ -455,6 +454,118 @@ export function App() {
   };
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
+  const currentTabId = activeTab?.id || '';
+
+  const isRunning = isRunningByTab[currentTabId] || false;
+  const queryResult = queryResultByTab[currentTabId] || null;
+  const activeResultIndex = activeResultIndexByTab[currentTabId] || 0;
+  const statusMessage = statusMessageByTab[currentTabId] || 'Ready';
+  const defaultPageSize = useSettingsStore.getState().defaultPageSize || 100;
+  const queryPagination = queryPaginationByTab[currentTabId] || {
+    page: 1,
+    pageSize: defaultPageSize,
+    isLoadingMore: false,
+    lastSql: '',
+    connectionId: '',
+    database: '',
+    schema: '',
+  };
+
+  const setQueryResult = (
+    res: QueryResult | null | ((prev: QueryResult | null) => QueryResult | null)
+  ) => {
+    if (!currentTabId) return;
+    setQueryResultByTab((prev) => {
+      const current = prev[currentTabId] || null;
+      const next = typeof res === 'function' ? (res as any)(current) : res;
+      return { ...prev, [currentTabId]: next };
+    });
+  };
+
+  const setActiveResultIndex = (idx: number | ((prev: number) => number)) => {
+    if (!currentTabId) return;
+    setActiveResultIndexByTab((prev) => {
+      const current = prev[currentTabId] || 0;
+      const next = typeof idx === 'function' ? (idx as any)(current) : idx;
+      return { ...prev, [currentTabId]: next };
+    });
+  };
+
+  const setIsRunning = (running: boolean | ((prev: boolean) => boolean)) => {
+    if (!currentTabId) return;
+    setIsRunningByTab((prev) => {
+      const current = prev[currentTabId] || false;
+      const next = typeof running === 'function' ? (running as any)(current) : running;
+      return { ...prev, [currentTabId]: next };
+    });
+  };
+
+  const setStatusMessage = (msg: string | ((prev: string) => string)) => {
+    if (!currentTabId) return;
+    setStatusMessageByTab((prev) => {
+      const current = prev[currentTabId] || 'Ready';
+      const next = typeof msg === 'function' ? (msg as any)(current) : msg;
+      return { ...prev, [currentTabId]: next };
+    });
+  };
+
+  const setQueryPagination = (
+    val:
+      | {
+          page: number;
+          pageSize: number;
+          isLoadingMore: boolean;
+          lastSql: string;
+          connectionId: string;
+          database: string;
+          schema: string;
+        }
+      | ((prev: {
+          page: number;
+          pageSize: number;
+          isLoadingMore: boolean;
+          lastSql: string;
+          connectionId: string;
+          database: string;
+          schema: string;
+        }) => {
+          page: number;
+          pageSize: number;
+          isLoadingMore: boolean;
+          lastSql: string;
+          connectionId: string;
+          database: string;
+          schema: string;
+        })
+  ) => {
+    if (!currentTabId) return;
+    setQueryPaginationByTab((prev) => {
+      const current = prev[currentTabId] || {
+        page: 1,
+        pageSize: defaultPageSize,
+        isLoadingMore: false,
+        lastSql: '',
+        connectionId: '',
+        database: '',
+        schema: '',
+      };
+      const next = typeof val === 'function' ? (val as any)(current) : val;
+      return { ...prev, [currentTabId]: next };
+    });
+  };
+
+  const handleCancelQuery = async (tabId: string) => {
+    const execId = activeExecIdByTab[tabId];
+    if (execId) {
+      try {
+        await QueryService.CancelQuery(execId);
+      } catch (err) {
+        console.error('CancelQuery error:', err);
+      }
+    }
+    setIsRunningByTab((prev) => ({ ...prev, [tabId]: false }));
+    setStatusMessageByTab((prev) => ({ ...prev, [tabId]: 'Query execution cancelled' }));
+  };
 
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
   const searchShortcutLabel = isMac ? '⌘P' : 'Ctrl+P';
@@ -850,16 +961,27 @@ export function App() {
     }
   }, [activeTabId, tabRefreshTrigger[activeTabId || '']]);
 
-  // Free cached rows of closed tabs so they can be garbage collected
+  // Free cached rows and query results of closed tabs so they can be garbage collected
   useEffect(() => {
-    setTableDataByTab((prev) => {
-      const openIds = new Set(tabs.map((t) => t.id));
-      const staleKeys = Object.keys(prev).filter((id) => !openIds.has(id));
-      if (staleKeys.length === 0) return prev;
+    const openIds = new Set(tabs.map((t) => t.id));
+    const cleanStale = <T extends Record<string, any>>(prev: T): T => {
+      let changed = false;
       const next = { ...prev };
-      staleKeys.forEach((id) => delete next[id]);
-      return next;
-    });
+      for (const k of Object.keys(next)) {
+        if (!openIds.has(k)) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    };
+    setTableDataByTab(cleanStale);
+    setQueryResultByTab(cleanStale);
+    setActiveResultIndexByTab(cleanStale);
+    setQueryPaginationByTab(cleanStale);
+    setIsRunningByTab(cleanStale);
+    setStatusMessageByTab(cleanStale);
+    setActiveExecIdByTab(cleanStale);
   }, [tabs]);
 
   // Load saved consoles from SQLite on startup
@@ -926,6 +1048,9 @@ export function App() {
     setStatusMessage(`Executing query on [${conn?.name || 'db'}] / [${targetDb}]...`);
     try {
       const execId = 'exec-' + Date.now();
+      if (currentTab) {
+        setActiveExecIdByTab((prev) => ({ ...prev, [currentTab.id]: execId }));
+      }
       const defaultLimit = useSettingsStore.getState().defaultPageSize || 100;
       const res = await QueryService.ExecuteQuery({
         executionId: execId,
@@ -1147,7 +1272,8 @@ export function App() {
     try {
       const sqls = await QueryService.PreviewChanges(
         activeConnectionId,
-        activeTab.database || activeTab.schema || 'main',
+        activeTab.database || '',
+        activeTab.schema || '',
         activeTab.table || '',
         changeList as any
       );
@@ -1171,7 +1297,8 @@ export function App() {
       try {
         const affected = await QueryService.SubmitChanges(
           activeConnectionId,
-          activeTab.database || activeTab.schema || 'main',
+          activeTab.database || '',
+          activeTab.schema || '',
           activeTab.table || '',
           changeList as any
         );
@@ -1696,7 +1823,7 @@ export function App() {
                     isRunning={isRunning}
                     onChange={(val) => updateTabContent(activeTab.id, val)}
                     onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || effectiveDb)}
-                    onCancel={() => setIsRunning(false)}
+                    onCancel={() => handleCancelQuery(activeTab.id)}
                     onDatabaseChange={(newDb) => {
                       const currentTab = useWorkbenchStore
                         .getState()
@@ -1860,6 +1987,7 @@ export function App() {
                       }}
                       onSubmitChanges={handleSubmitChanges}
                       onPreviewChanges={handlePreviewChanges}
+                      isReadOnly={Boolean(tableConn?.isReadOnly)}
                     />
                   )}
                 </div>
@@ -1975,6 +2103,16 @@ export function App() {
                         >
                           Output Log
                         </button>
+                        <button
+                          onClick={() => setActiveBottomTab('history')}
+                          className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
+                            activeBottomTab === 'history'
+                              ? 'border-zinc-400 text-white font-semibold'
+                              : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                          }`}
+                        >
+                          Query History
+                        </button>
                       </div>
 
                       {/* Raw Query Preview & 1-Click Copy in Tab Bar */}
@@ -2086,10 +2224,27 @@ export function App() {
                             onSubmitChanges={handleSubmitChanges}
                             onPreviewChanges={handlePreviewChanges}
                             rawSql={currentResSql}
+                            isReadOnly={Boolean(
+                              connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.isReadOnly
+                            )}
                           />
                         </div>
                       );
                     })()
+                  ) : activeBottomTab === 'history' ? (
+                    <div className="flex-1 min-h-0">
+                      <QueryHistoryPanel
+                        onInsertToEditor={(sql) => {
+                          if (activeTab?.type === 'worksheet') {
+                            const existing = activeTab.content ? activeTab.content + '\n\n' : '';
+                            updateTabContent(activeTab.id, existing + sql);
+                          }
+                        }}
+                        onExecuteQuery={(sql, targetDb) => {
+                          handleExecuteQuery(sql, targetDb);
+                        }}
+                      />
+                    </div>
                   ) : (
                     <div className="flex-1 min-h-0 overflow-auto p-3 font-mono text-xs text-zinc-400 space-y-2">
                       <div>[{new Date().toLocaleTimeString()}] Status: {statusMessage}</div>

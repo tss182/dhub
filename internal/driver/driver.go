@@ -118,7 +118,7 @@ type DatabaseDriver interface {
 
 	// Execution & Staged Changes
 	Execute(ctx context.Context, req QueryRequest) (*QueryResult, error)
-	ApplyChanges(ctx context.Context, schema, table string, changes []RowChange) (int64, error)
-	GenerateDMLPreview(schema, table string, changes []RowChange) ([]string, error)
+	ApplyChanges(ctx context.Context, database, schema, table string, changes []RowChange) (int64, error)
+	GenerateDMLPreview(database, schema, table string, changes []RowChange) ([]string, error)
 }
 
