@@ -4,6 +4,7 @@ import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
 import { QueryService, SchemaService, ConnectionService, WorkspaceService } from '../bindings/dhub/internal/services';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
+import { RightSidebar } from './components/layout/RightSidebar';
 import { ConsoleList } from './components/layout/ConsoleList';
 import { SqlWorksheet } from './components/editor/SqlWorksheet';
 import { DataGrid } from './components/grid/DataGrid';
@@ -38,6 +39,7 @@ import {
   Check,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRight,
   Users,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
@@ -50,6 +52,9 @@ export function App() {
     activeBottomTab,
     isBottomPanelOpen,
     isRightPanelOpen,
+    activeRightSidebarTab,
+    setActiveRightSidebarTab,
+    setRightPanelOpen,
     isLeftPanelOpen,
     consoles,
     hasLoadedConsoles,
@@ -187,7 +192,7 @@ export function App() {
 
   const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(() => {
     const saved = localStorage.getItem('dhub_right_sidebar_w');
-    return saved ? Math.max(180, Math.min(600, Number(saved))) : 256;
+    return saved ? Math.max(180, Math.min(1000, Number(saved))) : 280;
   });
   const [isDraggingRightResizer, setIsDraggingRightResizer] = useState(false);
 
@@ -374,7 +379,7 @@ export function App() {
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaX = startX - moveEvent.clientX;
-      const maxW = Math.max(220, Math.min(650, window.innerWidth - 360));
+      const maxW = Math.max(260, Math.min(1000, window.innerWidth - 200));
       const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
       latestWidth = newWidth;
       setRightSidebarWidth(newWidth);
@@ -474,6 +479,21 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
         useSettingsStore.getState().toggleSettings();
+        return;
+      }
+
+      // Views / Value Viewer: F7
+      if (e.key === 'F7') {
+        e.preventDefault();
+        const store = useWorkbenchStore.getState();
+        if (!store.isRightPanelOpen) {
+          store.setRightPanelOpen(true);
+          store.setActiveRightSidebarTab('views');
+        } else if (store.activeRightSidebarTab === 'views') {
+          store.setRightPanelOpen(false);
+        } else {
+          store.setActiveRightSidebarTab('views');
+        }
         return;
       }
 
@@ -1219,19 +1239,51 @@ export function App() {
         <div className="flex items-center gap-2">
           {/* Toggle Consoles Panel Button */}
           <button
-            onClick={toggleRightPanel}
+            onClick={() => {
+              if (!isRightPanelOpen) {
+                setRightPanelOpen(true);
+                setActiveRightSidebarTab('consoles');
+              } else if (activeRightSidebarTab === 'consoles') {
+                setRightPanelOpen(false);
+              } else {
+                setActiveRightSidebarTab('consoles');
+              }
+            }}
             className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
-              isRightPanelOpen
+              isRightPanelOpen && activeRightSidebarTab === 'consoles'
                 ? 'bg-[#22242c] border-zinc-500 text-zinc-100 font-medium'
                 : 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
             }`}
             title="Toggle Consoles List Panel"
           >
-            <Terminal className="h-3.5 w-3.5" />
-            <span>Consoles</span>
+            <Terminal className="h-3.5 w-3.5 text-blue-400" />
+            <span>Console</span>
             <span className="rounded bg-[#2a2d37] px-1 text-[10px] font-mono">
               {consoles.length}
             </span>
+          </button>
+
+          {/* Toggle Views Panel Button */}
+          <button
+            onClick={() => {
+              if (!isRightPanelOpen) {
+                setRightPanelOpen(true);
+                setActiveRightSidebarTab('views');
+              } else if (activeRightSidebarTab === 'views') {
+                setRightPanelOpen(false);
+              } else {
+                setActiveRightSidebarTab('views');
+              }
+            }}
+            className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs border transition-colors cursor-pointer ${
+              isRightPanelOpen && activeRightSidebarTab === 'views'
+                ? 'bg-[#22242c] border-zinc-500 text-zinc-100 font-medium'
+                : 'bg-[#1e2027] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:border-zinc-500'
+            }`}
+            title="Toggle Views / Value Viewer Panel (F7)"
+          >
+            <PanelRight className="h-3.5 w-3.5 text-blue-400" />
+            <span>Views</span>
           </button>
 
           {/* Search Everywhere Trigger */}
@@ -2142,14 +2194,14 @@ export function App() {
       </div>
     </div>
 
-        {/* Right Sidebar: Query Consoles List */}
+        {/* Right Sidebar: Query Consoles & Views */}
         {isRightPanelOpen && (
           <>
             {/* Right Sidebar Resizer Handle */}
             <div
               onMouseDown={handleRightResizerMouseDown}
               onDoubleClick={() => {
-                const defaultW = 256;
+                const defaultW = 280;
                 setRightSidebarWidth(defaultW);
                 localStorage.setItem('dhub_right_sidebar_w', String(defaultW));
                 WorkspaceService.SaveSetting('dhub_right_sidebar_w', String(defaultW)).catch(() => {});
@@ -2157,7 +2209,7 @@ export function App() {
               className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-l border-[#272932] ${
                 isDraggingRightResizer ? 'bg-blue-600' : ''
               }`}
-              title="Drag to resize Consoles Panel (Double-click to reset)"
+              title="Drag to resize Right Sidebar (Double-click to reset)"
             >
               <div className="w-0.5 h-8 rounded-full bg-zinc-700 group-hover:bg-blue-200 transition-colors" />
             </div>
@@ -2166,7 +2218,11 @@ export function App() {
               style={{ width: `${rightSidebarWidth}px` }}
               className="h-full shrink-0 overflow-hidden"
             >
-              <ConsoleList onRename={handleOpenRename} />
+              <RightSidebar
+                onRename={handleOpenRename}
+                width={rightSidebarWidth}
+                onWidthChange={setRightSidebarWidth}
+              />
             </div>
           </>
         )}
