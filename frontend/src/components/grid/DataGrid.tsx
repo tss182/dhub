@@ -38,7 +38,11 @@ import {
   ClipboardPaste,
   Clock,
   PanelRight,
+  Download,
+  Upload,
 } from 'lucide-react';
+import { ExportModal } from '../modals/ExportModal';
+import { ImportModal } from '../modals/ImportModal';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -268,6 +272,9 @@ function getWhereCurrentToken(text: string, cursor: number) {
 
 interface DataGridProps {
   tabId: string;
+  connectionId?: string | null;
+  database?: string;
+  schema?: string;
   tableName?: string;
   driver?: string;
   isReadOnly?: boolean;
@@ -297,6 +304,9 @@ interface DataGridProps {
 
 export const DataGrid: React.FC<DataGridProps> = ({
   tabId,
+  connectionId,
+  database,
+  schema,
   tableName,
   driver,
   isReadOnly = false,
@@ -334,6 +344,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const suggestionListRef = useRef<HTMLDivElement>(null);
   const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
   const [copiedRawSql, setCopiedRawSql] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   const handleCopyRawSql = async () => {
     if (!rawSql) return;
@@ -2215,6 +2227,28 @@ ${setClauses};`;
             <kbd className="text-[9px] text-zinc-500 font-mono hidden md:inline">F7</kbd>
           </button>
 
+          <button
+            type="button"
+            onClick={() => setIsExportOpen(true)}
+            className="flex items-center gap-1.5 h-7 px-2 rounded font-sans text-xs bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932] transition-colors cursor-pointer select-none"
+            title="Export Data (CSV, JSON, SQL Insert)"
+          >
+            <Download className="h-3.5 w-3.5 text-blue-400" />
+            <span className="text-[11px] font-medium hidden sm:inline">Export</span>
+          </button>
+
+          {tableName && !isReadOnly && (
+            <button
+              type="button"
+              onClick={() => setIsImportOpen(true)}
+              className="flex items-center gap-1.5 h-7 px-2 rounded font-sans text-xs bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932] transition-colors cursor-pointer select-none"
+              title="Import Data Wizard (CSV)"
+            >
+              <Upload className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="text-[11px] font-medium hidden sm:inline">Import</span>
+            </button>
+          )}
+
           {stagedCount > 0 && (
             <>
               <div className="h-4 w-[1px] bg-[#272932] mx-0.5" />
@@ -3351,6 +3385,30 @@ ${setClauses};`;
             <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+A</kbd>
           </button>
         </div>
+      )}
+
+      {/* Export Modal */}
+      <ExportModal
+        isOpen={isExportOpen}
+        onClose={() => setIsExportOpen(false)}
+        connectionId={connectionId || ''}
+        database={database}
+        schema={schema}
+        table={tableName}
+        sql={rawSql}
+      />
+
+      {/* Import Modal */}
+      {tableName && (
+        <ImportModal
+          isOpen={isImportOpen}
+          onClose={() => setIsImportOpen(false)}
+          connectionId={connectionId || ''}
+          database={database || ''}
+          schema={schema || ''}
+          table={tableName}
+          onImportComplete={onRefresh}
+        />
       )}
     </div>
   );

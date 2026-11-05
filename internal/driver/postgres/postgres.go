@@ -461,6 +461,14 @@ func (p *PostgresDriver) Execute(ctx context.Context, req driver.QueryRequest) (
 	return driver.ExecuteStatements(ctx, conn, req)
 }
 
+func (p *PostgresDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
+	db, err := p.dbFor(database)
+	if err != nil {
+		return nil, err
+	}
+	return db.BeginTx(ctx, nil)
+}
+
 func (p *PostgresDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	prefix := qualifiedName(schema, table)

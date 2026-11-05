@@ -275,6 +275,20 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	return driver.ExecuteStatements(ctx, conn, req)
 }
 
+func (m *MySQLDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if database != "" && database != "main" {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(database))); err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("error switching to database '%s': %w", database, err)
+		}
+	}
+	return tx, nil
+}
+
 func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	effectiveSchema := schema
