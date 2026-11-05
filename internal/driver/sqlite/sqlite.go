@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"dhub/internal/driver"
@@ -16,20 +18,35 @@ type SQLiteDriver struct {
 }
 
 func NewSQLiteDriver(filePath string) (*SQLiteDriver, error) {
-	dsn := filePath
-	if filePath != ":memory:" && !strings.Contains(filePath, "?") {
-		dsn = filePath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	cleanPath := strings.TrimSpace(filePath)
+	if cleanPath == "" {
+		return nil, fmt.Errorf("sqlite database file path cannot be empty")
+	}
+
+	if cleanPath != ":memory:" {
+		dir := filepath.Dir(cleanPath)
+		if dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0755)
+		}
+	}
+
+	dsn := cleanPath
+	if cleanPath != ":memory:" && !strings.Contains(cleanPath, "?") {
+		dsn = cleanPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(5)
-	return &SQLiteDriver{db: db, filePath: filePath}, nil
+	return &SQLiteDriver{db: db, filePath: cleanPath}, nil
 }
 
 func (s *SQLiteDriver) Ping(ctx context.Context) error {
-	return s.db.PingContext(ctx)
+	if err := s.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("cannot open sqlite database at %q: %w", s.filePath, err)
+	}
+	return nil
 }
 
 func (s *SQLiteDriver) Close() error {

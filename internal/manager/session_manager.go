@@ -169,7 +169,14 @@ func (m *SessionManager) connect(ctx context.Context, cfg store.ConnectionConfig
 func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, port int) (driver.DatabaseDriver, error) {
 	switch cfg.Driver {
 	case "sqlite":
-		return sqlite.NewSQLiteDriver(cfg.FilePath)
+		targetPath := cfg.FilePath
+		if targetPath == "" {
+			targetPath = cfg.Host
+		}
+		if targetPath == "" {
+			targetPath = cfg.DatabaseName
+		}
+		return sqlite.NewSQLiteDriver(targetPath)
 	case "postgres":
 		sslMode := cfg.SSLMode
 		if sslMode == "" {
