@@ -1875,25 +1875,73 @@ ${setClauses};`;
       : selectionAnchor
       ? selectionAnchor.r
       : 0;
+    const endR = selectionRange
+      ? selectionRange.endR
+      : startR;
     const startC = selectionRange
       ? selectionRange.startC
       : selectionAnchor
       ? selectionAnchor.c
       : 0;
+    const endC = selectionRange
+      ? selectionRange.endC
+      : startC;
+
+    const selRowCount = Math.max(1, endR - startR + 1);
+    const selColCount = Math.max(1, endC - startC + 1);
+    const hasMultiSelect = Boolean(selectionRange && (selectionRange.endR > selectionRange.startR || selectionRange.endC > selectionRange.startC));
+
+    let rowsToPaste: (string | null)[][] = parsedRows;
+
+    // If user has multi-cell selection, expand clipboard data to fill the selected cells
+    if (hasMultiSelect) {
+      const srcRowCount = parsedRows.length;
+      const srcColCount = parsedRows[0]?.length || 0;
+
+      // Case A: Single cell copied (1x1) -> fill entire selected range with that single value
+      if (srcRowCount === 1 && srcColCount === 1) {
+        const singleVal = parsedRows[0][0];
+        rowsToPaste = Array.from({ length: selRowCount }, () =>
+          Array.from({ length: selColCount }, () => singleVal)
+        );
+      }
+      // Case B: 1 row copied -> replicate row across all selected rows
+      else if (srcRowCount === 1 && selRowCount > 1) {
+        const templateRow = parsedRows[0];
+        if (selColCount > templateRow.length && templateRow.length === 1) {
+          const singleVal = templateRow[0];
+          rowsToPaste = Array.from({ length: selRowCount }, () =>
+            Array.from({ length: selColCount }, () => singleVal)
+          );
+        } else {
+          rowsToPaste = Array.from({ length: selRowCount }, () => [...templateRow]);
+        }
+      }
+      // Case C: Multi-row copied and selected area has more rows -> repeat rows modularly
+      else if (selRowCount > srcRowCount) {
+        rowsToPaste = Array.from({ length: selRowCount }, (_, rIdx) => {
+          const srcRow = parsedRows[rIdx % srcRowCount];
+          if (selColCount > srcRow.length && srcRow.length === 1) {
+            return Array.from({ length: selColCount }, () => srcRow[0]);
+          }
+          return [...srcRow];
+        });
+      }
+    }
 
     const baseInsertId = Date.now();
     let maxAffectedVIdx = startR;
     let maxAffectedCIdx = startC;
 
-    parsedRows.forEach((rowVals, rOffset) => {
+    rowsToPaste.forEach((rowVals, rOffset) => {
       const targetVIdx = startR + rOffset;
       maxAffectedVIdx = Math.max(maxAffectedVIdx, targetVIdx);
 
       const targetColMap: Array<{ colIdx: number; col: ColumnMeta; val: string | null }> = [];
       let mappedByHeader = false;
 
-      // Only map by header if multiple columns were provided and headers actually match the table
-      if (detectedHeaders && detectedHeaders.length > 1) {
+      // Only map by header if NOT multi-select (multi-selection targets the exact selected columns)
+      if (!hasMultiSelect && detectedHeaders && detectedHeaders.length > 1) {
         const matchingCols = detectedHeaders.filter((h) =>
           columns.some((col) => col.name.toLowerCase() === h.toLowerCase())
         );
@@ -1908,7 +1956,7 @@ ${setClauses};`;
         }
       }
 
-      // If headers didn't match or single column, map positionally from startC
+      // If headers didn't match or multi-selection, map positionally starting from startC
       if (!mappedByHeader) {
         rowVals.forEach((val, cOffset) => {
           const colIdx = startC + cOffset;
