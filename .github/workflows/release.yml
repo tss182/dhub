@@ -20,7 +20,7 @@ jobs:
   prepare-and-version:
     # Trigger on tag pushes (v*) or manual dispatch
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version_step.outputs.version }}
       tag_name: ${{ steps.version_step.outputs.tag_name }}
@@ -45,7 +45,7 @@ jobs:
 
       - name: Install Wails v3 CLI
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Extract Tag and Version
@@ -113,7 +113,7 @@ jobs:
 
   build-linux-windows:
     needs: prepare-and-version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GIT_COMMITTER_NAME: "github-actions[bot]"
       GIT_COMMITTER_EMAIL: "github-actions[bot]@users.noreply.github.com"
@@ -133,8 +133,6 @@ jobs:
             libc6-dev \
             libgtk-4-dev \
             libwebkitgtk-6.0-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
             nsis \
             rpm
 
@@ -151,7 +149,7 @@ jobs:
 
       - name: Install Wails v3 CLI
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Install Frontend Dependencies
@@ -231,7 +229,7 @@ jobs:
 
       - name: Install Wails v3 CLI
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Install Frontend Dependencies
@@ -270,7 +268,7 @@ jobs:
       - prepare-and-version
       - build-linux-windows
       - build-macos
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
