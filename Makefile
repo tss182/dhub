@@ -9,8 +9,8 @@ INSTALL_SCOPE ?= user
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings update-assets sync-version reset\:sqlite
-.PHONY: build-mac build-mac-bin build-mac-dmg build-deb build-rpm build-appimage build-windows build-windows-installer reset-sqlite db\:reset reset-db
+.PHONY: help dev build\:mac build\:mac\:bin build\:mac\:dmg build\:deb build\:rpm build\:appimage build\:windows build\:windows\:installer clean bindings update-assets update-asset sync-version reset\:sqlite
+.PHONY: build-mac build-mac-bin build-mac-dmg build-deb build-rpm build-appimage build-windows build-windows-installer reset-sqlite db\:reset reset-db update-asset
 
 help:
 	@echo "========================================================================"
@@ -97,6 +97,8 @@ update-assets:
 	$(WAILS) task common:update:build-assets
 	@echo "==> Syncing version across frontend and packaging manifests..."
 	@./scripts/sync-version.sh
+
+update-asset: update-assets
 
 sync-version:
 	@./scripts/sync-version.sh
