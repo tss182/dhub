@@ -177,9 +177,12 @@ jobs:
           VERSION="${{ needs.prepare-and-version.outputs.version }}"
           wails3 task windows:build ARCH=amd64
           cp bin/dhub.exe "bin/dhub-${VERSION}-windows-amd64.exe"
-          wails3 task windows:create:nsis:installer ARCH=amd64 INSTALL_SCOPE=user || true
+          wails3 task windows:create:nsis:installer ARCH=amd64 INSTALL_SCOPE=user
           if [ -f bin/dhub-amd64-installer.exe ]; then
             cp bin/dhub-amd64-installer.exe "bin/dhub-${VERSION}-windows-amd64-installer.exe"
+          else
+            echo "Error: bin/dhub-amd64-installer.exe not generated!" >&2
+            exit 1
           fi
 
       - name: Build Windows ARM (arm64) Executable and Installer (User Scope)
@@ -187,9 +190,12 @@ jobs:
           VERSION="${{ needs.prepare-and-version.outputs.version }}"
           wails3 task windows:build ARCH=arm64
           cp bin/dhub.exe "bin/dhub-${VERSION}-windows-arm64.exe"
-          wails3 task windows:create:nsis:installer ARCH=arm64 INSTALL_SCOPE=user || true
+          wails3 task windows:create:nsis:installer ARCH=arm64 INSTALL_SCOPE=user
           if [ -f bin/dhub-arm64-installer.exe ]; then
             cp bin/dhub-arm64-installer.exe "bin/dhub-${VERSION}-windows-arm64-installer.exe"
+          else
+            echo "Error: bin/dhub-arm64-installer.exe not generated!" >&2
+            exit 1
           fi
 
       - name: Upload Linux & Windows Artifacts
@@ -203,7 +209,7 @@ jobs:
             bin/dhub-${{ needs.prepare-and-version.outputs.version }}-windows-amd64-installer.exe
             bin/dhub-${{ needs.prepare-and-version.outputs.version }}-windows-arm64.exe
             bin/dhub-${{ needs.prepare-and-version.outputs.version }}-windows-arm64-installer.exe
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build-macos:
     needs: prepare-and-version
