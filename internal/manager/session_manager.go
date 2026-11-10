@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 
 	"dhub/internal/driver"
@@ -187,12 +188,19 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		if sslMode == "" {
 			sslMode = "disable"
 		}
+		dbName := strings.TrimSpace(cfg.DatabaseName)
+		if dbName == "" {
+			dbName = "postgres"
+		}
+		if !strings.HasPrefix(dbName, "/") {
+			dbName = "/" + dbName
+		}
 		// postgres://user:password@host:port/dbname?sslmode=disable
 		u := url.URL{
 			Scheme: "postgres",
 			User:   url.UserPassword(cfg.Username, cfg.Password),
 			Host:   fmt.Sprintf("%s:%d", host, port),
-			Path:   cfg.DatabaseName,
+			Path:   dbName,
 		}
 		q := u.Query()
 		q.Set("sslmode", sslMode)
