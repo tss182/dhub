@@ -28,8 +28,12 @@ Unicode true
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
 ## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
 ####
-!define REQUEST_EXECUTION_LEVEL "user"
-!define WAILS_INSTALL_SCOPE     "user"
+!ifndef REQUEST_EXECUTION_LEVEL
+    !define REQUEST_EXECUTION_LEVEL "user"
+!endif
+!ifndef WAILS_INSTALL_SCOPE
+    !define WAILS_INSTALL_SCOPE     "user"
+!endif
 ####
 ## Include the wails tools
 ####

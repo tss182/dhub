@@ -7,13 +7,12 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as services$0 from "./models.js";
+import * as $models from "./models.js";
 
-export function CheckForUpdate(): $CancellablePromise<services$0.UpdateInfo | null> {
-    return $Call.ByName("dhub/internal/services.UpdateService.CheckForUpdate");
+export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo | null> {
+    return $Call.ByID(3646453635);
 }
 
 export function OpenURL(targetURL: string): $CancellablePromise<void> {
-    return $Call.ByName("dhub/internal/services.UpdateService.OpenURL", targetURL);
+    return $Call.ByID(2300841282, targetURL);
 }
-

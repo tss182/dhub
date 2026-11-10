@@ -5,15 +5,15 @@ import * as ConnectionService from "./connectionservice.js";
 import * as ExportService from "./exportservice.js";
 import * as QueryService from "./queryservice.js";
 import * as SchemaService from "./schemaservice.js";
-import * as WorkspaceService from "./workspaceservice.js";
 import * as UpdateService from "./updateservice.js";
+import * as WorkspaceService from "./workspaceservice.js";
 export {
     ConnectionService,
     ExportService,
     QueryService,
     SchemaService,
-    WorkspaceService,
-    UpdateService
+    UpdateService,
+    WorkspaceService
 };
 
 export type {
