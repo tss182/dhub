@@ -6,12 +6,14 @@ import * as ExportService from "./exportservice.js";
 import * as QueryService from "./queryservice.js";
 import * as SchemaService from "./schemaservice.js";
 import * as WorkspaceService from "./workspaceservice.js";
+import * as UpdateService from "./updateservice.js";
 export {
     ConnectionService,
     ExportService,
     QueryService,
     SchemaService,
-    WorkspaceService
+    WorkspaceService,
+    UpdateService
 };
 
 export type {
@@ -21,5 +23,6 @@ export type {
     FilePreview,
     ImportRequest,
     ImportResult,
-    TxStatus
+    TxStatus,
+    UpdateInfo
 } from "./models.js";

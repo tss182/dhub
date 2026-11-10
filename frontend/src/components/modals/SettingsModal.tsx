@@ -15,8 +15,10 @@ import {
   Palette,
   Moon,
   Sun,
+  RefreshCw,
 } from 'lucide-react';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
+import { useUpdateStore } from '../../stores/useUpdateStore';
 import { COPY_FORMAT_LABELS } from '../grid/CopyFormatSelector';
 import { APP_VERSION } from '../../version';
 
@@ -42,6 +44,14 @@ export const SettingsModal: React.FC = () => {
     setShowMinimap,
     resetToDefaults,
   } = useSettingsStore();
+
+  const {
+    isChecking: isCheckingUpdate,
+    updateInfo,
+    error: updateError,
+    checkUpdate,
+    openUpdateModal,
+  } = useUpdateStore();
 
   const [customSizeInput, setCustomSizeInput] = useState<string>(String(defaultPageSize));
 
@@ -558,6 +568,60 @@ export const SettingsModal: React.FC = () => {
                     <span className="text-zinc-500">•</span>
                     <span className="text-emerald-400">Stable</span>
                   </div>
+                </div>
+
+                {/* Software Updates Box */}
+                <div className="p-3.5 rounded-xl bg-[#14151a] border border-[#272932] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-2">
+                        <Sparkles className="h-3.5 w-3.5 text-blue-400" />
+                        Software Updates
+                      </h4>
+                      <p className="text-[11px] text-zinc-400 mt-0.5">
+                        GitHub Releases update channel (User Scope • No Admin/Root required)
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isCheckingUpdate}
+                      onClick={() => checkUpdate(false)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#20222b] hover:bg-[#282a36] text-zinc-200 border border-[#2f3240] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${isCheckingUpdate ? 'animate-spin text-blue-400' : ''}`} />
+                      <span>{isCheckingUpdate ? 'Checking...' : 'Check for Updates'}</span>
+                    </button>
+                  </div>
+
+                  {updateInfo?.hasUpdate ? (
+                    <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-950/25 border border-emerald-800/40 text-emerald-300">
+                      <div>
+                        <span className="font-semibold text-emerald-200">
+                          New version {updateInfo.latestVersion} available!
+                        </span>
+                        <p className="text-[10px] text-zinc-400 mt-0.5">
+                          Click to view changelog and download installer
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={openUpdateModal}
+                        className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+                      >
+                        View & Install
+                      </button>
+                    </div>
+                  ) : updateInfo && !updateInfo.hasUpdate ? (
+                    <div className="p-2 rounded-lg bg-[#191b22] border border-[#232530] text-zinc-400 text-[11px] flex items-center gap-2">
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                      <span>You are running the latest version of DHub.</span>
+                    </div>
+                  ) : updateError ? (
+                    <div className="p-2 rounded-lg bg-red-950/20 border border-red-900/30 text-red-400 text-[11px]">
+                      {updateError}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="h-[1px] bg-[#272932]" />

@@ -58,5 +58,16 @@ if [ -f "$MSIX_TEMPLATE" ]; then
   echo "  [✓] Updated build/windows/msix/template.xml -> $MSIX_VERSION"
 fi
 
+# 4. Update internal/version/version.go
+VERSION_GO="$ROOT_DIR/internal/version/version.go"
+mkdir -p "$(dirname "$VERSION_GO")"
+cat <<EOF > "$VERSION_GO"
+package version
+
+// CurrentVersion defines the running application version
+const CurrentVersion = "$VERSION"
+EOF
+echo "  [✓] Updated internal/version/version.go -> $VERSION"
+
 echo "==> Version sync complete ($VERSION)."
 
