@@ -5,11 +5,11 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "AsDev" # The name of the company
+  companyName: "AskDev" # The name of the company
   productName: "DHub" # The name of the application
   productIdentifier: "com.asdev.dhub" # The unique product identifier
   description: "Database Management System" # The application description
-  copyright: "(c) 2026, AsDev" # Copyright text
+  copyright: "(c) 2026, AskDev" # Copyright text
   comments: "Product Aplication" # Comments
   version: "0.2.0" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
