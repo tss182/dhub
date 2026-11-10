@@ -66,3 +66,18 @@ export interface TxStatus {
     "startedAt": number;
     "statementsCount": number;
 }
+
+export interface UpdateInfo {
+    "hasUpdate": boolean;
+    "currentVersion": string;
+    "latestVersion": string;
+    "releaseTitle": string;
+    "releaseNotes": string;
+    "releaseUrl": string;
+    "downloadUrl": string;
+    "assetFileName": string;
+    "assetSize": number;
+    "publishedAt": string;
+    "platformOS": string;
+    "platformArch": string;
+}

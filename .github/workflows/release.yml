@@ -174,22 +174,22 @@ jobs:
             cp bin/dhub.rpm "bin/dhub-${VERSION}-1.x86_64.rpm"
           fi
 
-      - name: Build Windows x86 (amd64) Executable and Installer
+      - name: Build Windows x86 (amd64) Executable and Installer (User Scope)
         run: |
           VERSION="${{ needs.prepare-and-version.outputs.version }}"
           wails3 task windows:build ARCH=amd64
           cp bin/dhub.exe "bin/dhub-${VERSION}-windows-amd64.exe"
-          wails3 task windows:create:nsis:installer ARCH=amd64 || true
+          wails3 task windows:create:nsis:installer ARCH=amd64 INSTALL_SCOPE=user || true
           if [ -f bin/dhub-amd64-installer.exe ]; then
             cp bin/dhub-amd64-installer.exe "bin/dhub-${VERSION}-windows-amd64-installer.exe"
           fi
 
-      - name: Build Windows ARM (arm64) Executable and Installer
+      - name: Build Windows ARM (arm64) Executable and Installer (User Scope)
         run: |
           VERSION="${{ needs.prepare-and-version.outputs.version }}"
           wails3 task windows:build ARCH=arm64
           cp bin/dhub.exe "bin/dhub-${VERSION}-windows-arm64.exe"
-          wails3 task windows:create:nsis:installer ARCH=arm64 || true
+          wails3 task windows:create:nsis:installer ARCH=arm64 INSTALL_SCOPE=user || true
           if [ -f bin/dhub-arm64-installer.exe ]; then
             cp bin/dhub-arm64-installer.exe "bin/dhub-${VERSION}-windows-arm64-installer.exe"
           fi

@@ -20,9 +20,11 @@ import { ExplainPlanPanel } from './components/explain/ExplainPlanPanel';
 import { ERDiagramView } from './components/diagram/ERDiagramView';
 import { ExportModal } from './components/modals/ExportModal';
 import { ImportModal } from './components/modals/ImportModal';
+import { UpdateModal } from './components/modals/UpdateModal';
 import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
+import { useUpdateStore } from './stores/useUpdateStore';
 import { DHubLogo } from './components/common/DHubLogo';
 import { APP_VERSION } from './version';
 import {
@@ -30,6 +32,7 @@ import {
   Terminal,
   Search,
   Settings as SettingsIcon,
+  Sparkles,
   X,
   FileCode,
   Table,
@@ -112,6 +115,16 @@ export function App() {
   const [copiedResultRawSql, setCopiedResultRawSql] = useState(false);
   const [isTableExportOpen, setIsTableExportOpen] = useState(false);
   const [isTableImportOpen, setIsTableImportOpen] = useState(false);
+
+  const { updateInfo, checkUpdate, openUpdateModal } = useUpdateStore();
+
+  useEffect(() => {
+    // Check for updates silently on startup
+    const timer = setTimeout(() => {
+      checkUpdate(true);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [checkUpdate]);
 
   const handleCopyResultRawSql = async (rawSql: string) => {
     if (!rawSql) return;
@@ -2838,6 +2851,7 @@ export function App() {
       <ConnectionDialog />
       <SearchEverywhere />
       <SettingsModal />
+      <UpdateModal />
       <AlertModal />
       <ToastContainer />
       <TableStructureModal
@@ -2878,6 +2892,17 @@ export function App() {
             }
             return <span>Tx: AUTO</span>;
           })()}
+          {updateInfo?.hasUpdate && (
+            <button
+              type="button"
+              onClick={openUpdateModal}
+              className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer animate-pulse transition-colors"
+              title="New version available! Click to view details and install"
+            >
+              <Sparkles className="h-3 w-3" />
+              <span>Update ({updateInfo.latestVersion})</span>
+            </button>
+          )}
           <span>DHub Desktop v{APP_VERSION}</span>
         </div>
       </footer>
