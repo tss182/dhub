@@ -7,5 +7,6 @@ export type {
     ConnectionFolder,
     ConnectionLayoutUpdate,
     QueryHistoryEntry,
-    Worksheet
+    Worksheet,
+    WorkspaceSnapshot
 } from "./models.js";

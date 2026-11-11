@@ -163,6 +163,20 @@ func (s *LocalStore) migrate() error {
 			synced_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (connection_id, database_name, schema_name, object_type, object_name)
 		);`,
+
+		`CREATE TABLE IF NOT EXISTS workspaces (
+			id              TEXT PRIMARY KEY,
+			name            TEXT NOT NULL,
+			description     TEXT NOT NULL DEFAULT '',
+			icon            TEXT NOT NULL DEFAULT 'briefcase',
+			color_tag       TEXT NOT NULL DEFAULT '#3b82f6',
+			is_active       INTEGER NOT NULL DEFAULT 0,
+			tabs_json       TEXT NOT NULL DEFAULT '[]',
+			active_tab_id   TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active);`,
 	}
 
 	for _, q := range queries {

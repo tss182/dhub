@@ -3,6 +3,7 @@ import { useWorkbenchStore } from './stores/useWorkbenchStore';
 import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
 import { QueryService, SchemaService, ConnectionService, WorkspaceService } from '../bindings/dhub/internal/services';
+import { LeftSidebar, LeftSidebarTab } from './components/layout/LeftSidebar';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
 import { RightSidebar } from './components/layout/RightSidebar';
 import { ConsoleList } from './components/layout/ConsoleList';
@@ -25,10 +26,13 @@ import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useUpdateStore } from './stores/useUpdateStore';
+import { useWorkspaceSessionStore } from './stores/useWorkspaceSessionStore';
+import { WorkspaceSelector } from './components/layout/WorkspaceSelector';
 import { DHubLogo } from './components/common/DHubLogo';
 import { APP_VERSION } from './version';
 import {
   Database,
+  Briefcase,
   Terminal,
   Search,
   Settings as SettingsIcon,
@@ -87,6 +91,7 @@ export function App() {
     toggleBottomPanel,
     toggleRightPanel,
     toggleLeftPanel,
+    setLeftPanelOpen,
     setSearchEverywhereOpen,
     setConnectionDialogOpen,
     tabRefreshTrigger,
@@ -229,6 +234,19 @@ export function App() {
     return saved ? Math.max(180, Math.min(600, Number(saved))) : 256;
   });
   const [isDraggingLeftResizer, setIsDraggingLeftResizer] = useState(false);
+
+  const [activeLeftSidebarTab, setActiveLeftSidebarTab] = useState<LeftSidebarTab>(() => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('dhub_left_sidebar_tab');
+      if (saved === 'explorer' || saved === 'workspaces') return saved as LeftSidebarTab;
+    }
+    return 'explorer';
+  });
+
+  const handleLeftSidebarTabChange = (tab: LeftSidebarTab) => {
+    setActiveLeftSidebarTab(tab);
+    localStorage.setItem('dhub_left_sidebar_tab', tab);
+  };
 
   const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(() => {
     const saved = localStorage.getItem('dhub_right_sidebar_w');
@@ -778,9 +796,42 @@ export function App() {
     const connId = tab.connectionId || activeConnectionId;
     if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
 
+    const savedViewState = tab.tableViewState;
     const prevTabData = tableDataByTab[tab.id];
-    const whereClause = newWhereClause !== undefined ? newWhereClause : (prevTabData?.whereClause ?? '');
-    const sortConfigs = newSortConfigs !== undefined ? newSortConfigs : (prevTabData?.sortConfigs ?? []);
+
+    // Priority: new param -> prevTabData -> saved tab state -> defaults
+    const whereClause =
+      newWhereClause !== undefined
+        ? newWhereClause
+        : prevTabData?.whereClause !== undefined
+        ? prevTabData.whereClause
+        : savedViewState?.whereClause ?? '';
+
+    const sortConfigs =
+      newSortConfigs !== undefined
+        ? newSortConfigs
+        : prevTabData?.sortConfigs !== undefined
+        ? prevTabData.sortConfigs
+        : savedViewState?.sortConfigs ?? [];
+
+    const effectivePageSize =
+      limit > 0
+        ? limit
+        : prevTabData?.pageSize || savedViewState?.pageSize || useSettingsStore.getState().defaultPageSize || 100;
+
+    // Windowed / Centered Offset calculation
+    // e.g. 1M rows, active at 500k -> offset = max(0, 500000 - 50) = 499950
+    let effectiveOffset = offset;
+    let effectivePage = page;
+    if (offset === 0 && savedViewState?.activeRowIndex !== undefined && savedViewState.activeRowIndex > 0) {
+      const half = Math.floor(effectivePageSize / 2);
+      effectiveOffset = Math.max(0, savedViewState.activeRowIndex - half);
+      effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
+    } else if (offset === 0 && savedViewState?.offset !== undefined && savedViewState.offset > 0) {
+      effectiveOffset = savedViewState.offset;
+      effectivePage = savedViewState.page || Math.floor(effectiveOffset / effectivePageSize) + 1;
+    }
+
     const filtersChanged = newWhereClause !== undefined;
 
     if (append) {
@@ -804,8 +855,8 @@ export function App() {
           error: null,
           totalCount: filtersChanged ? undefined : prev[tab.id]?.totalCount,
           hasMore: false,
-          pageSize: limit,
-          page,
+          pageSize: effectivePageSize,
+          page: effectivePage,
           whereClause,
           sortConfigs,
         },
@@ -906,8 +957,8 @@ export function App() {
       }
 
       // 4. Query table data with LIMIT, OFFSET, WHERE and ORDER BY
-      const fetchLimit = limit + 1;
-      const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause} LIMIT ${fetchLimit} OFFSET ${offset};`;
+      const fetchLimit = effectivePageSize + 1;
+      const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause} LIMIT ${fetchLimit} OFFSET ${effectiveOffset};`;
 
       const execId = 'exec-tab-' + Date.now();
       const res = await QueryService.ExecuteQuery({
@@ -927,9 +978,9 @@ export function App() {
             : (res.columns || []).filter((c: any) => (c as any).isPrimaryKey).map((c: any) => c.name);
 
         const rawRows = (res.rows as any) || [];
-        const hasMore = rawRows.length > limit;
-        const fetchedRows = hasMore ? rawRows.slice(0, limit) : rawRows;
-        const currentEnd = offset + fetchedRows.length;
+        const hasMore = rawRows.length > effectivePageSize;
+        const fetchedRows = hasMore ? rawRows.slice(0, effectivePageSize) : rawRows;
+        const currentEnd = effectiveOffset + fetchedRows.length;
 
         // Merge columns: prefer structureColumns because they contain full types, size, nullable, comments, etc.
         let finalCols: ColumnMeta[] = (res.columns as any) || [];
@@ -977,8 +1028,8 @@ export function App() {
               error: null,
               totalCount: knownTotal,
               hasMore,
-              pageSize: limit,
-              page: append ? prev[tab.id]?.page || 1 : page,
+              pageSize: effectivePageSize,
+              page: append ? prev[tab.id]?.page || 1 : effectivePage,
               whereClause,
               sortConfigs,
             },
@@ -989,7 +1040,7 @@ export function App() {
           ? ` [sorted by: ${sortConfigs.map((s, idx) => `#${idx + 1} ${s.column} ${s.direction.toUpperCase()}`).join(', ')}]`
           : '';
         setStatusMessage(
-          `Loaded ${fetchedRows.length} rows (${offset + fetchedRows.length} total) from ${tab.table}${filterNotice}${sortNotice}`
+          `Loaded ${fetchedRows.length} rows (${effectiveOffset + fetchedRows.length} total) from ${tab.table}${filterNotice}${sortNotice}`
         );
       }
     } catch (e: any) {
@@ -1051,7 +1102,15 @@ export function App() {
   // Load saved consoles from SQLite on startup
   useEffect(() => {
     loadConsoles();
+    useWorkspaceSessionStore.getState().loadWorkspaces();
   }, [loadConsoles]);
+
+  // Auto-save active workspace when tabs change
+  useEffect(() => {
+    if (useWorkspaceSessionStore.getState().hasLoaded) {
+      useWorkspaceSessionStore.getState().saveCurrentWorkspace(tabs, activeTabId);
+    }
+  }, [tabs, activeTabId]);
 
   // Pre-load databases for connections so console dropdowns are always populated
   useEffect(() => {
@@ -1427,6 +1486,9 @@ export function App() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Workspace Combobox Selector */}
+          <WorkspaceSelector />
+
           {/* Search Everywhere Trigger */}
           <button
             onClick={() => setSearchEverywhereOpen(true)}
@@ -1453,14 +1515,18 @@ export function App() {
 
       {/* Main Workspace Body */}
       <div className="flex flex-1 min-h-0">
-        {/* Left Sidebar: Database Explorer */}
+        {/* Left Sidebar: Database Explorer & Workspaces */}
         {isLeftPanelOpen ? (
           <>
             <div
               style={{ width: `${leftSidebarWidth}px` }}
               className="h-full shrink-0 overflow-hidden"
             >
-              <DatabaseExplorer onCollapse={toggleLeftPanel} />
+              <LeftSidebar
+                activeTab={activeLeftSidebarTab}
+                onTabChange={handleLeftSidebarTabChange}
+                onCollapse={toggleLeftPanel}
+              />
             </div>
 
             {/* Left Sidebar Resizer Handle */}
@@ -1475,7 +1541,7 @@ export function App() {
               className={`group w-1.5 h-full bg-[#191a20] hover:bg-blue-600/90 cursor-col-resize transition-colors relative z-20 shrink-0 flex items-center justify-center border-r border-[#272932] ${
                 isDraggingLeftResizer ? 'bg-blue-600' : ''
               }`}
-              title="Drag to resize Database Explorer (Double-click to reset)"
+              title="Drag to resize Left Sidebar (Double-click to reset)"
             >
               <div className="w-0.5 h-8 rounded-full bg-zinc-700 group-hover:bg-blue-200 transition-colors" />
             </div>
@@ -1483,19 +1549,44 @@ export function App() {
         ) : (
           /* Minimized Left Sidebar Strip */
           <div className="h-full w-9 shrink-0 bg-[#16171d] border-r border-[#272932] flex flex-col items-center py-3 select-none z-10">
+            {/* EXPLORER Button */}
             <Popover
-              content="Expand Database Explorer"
+              content="Open Explorer"
               shortcut={isMac ? '⌘B' : 'Ctrl+B'}
               side="right"
               align="start"
             >
               <div
-                onClick={toggleLeftPanel}
-                className="flex flex-1 flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
+                onClick={() => {
+                  setLeftPanelOpen(true);
+                  handleLeftSidebarTabChange('explorer');
+                }}
+                className="flex flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
               >
-                <Database className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-3" />
+                <Database className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-2" />
                 <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl] rotate-180">
                   EXPLORER
+                </div>
+              </div>
+            </Popover>
+
+            {/* WORKSPACES Button */}
+            <Popover
+              content="Open Workspaces"
+              shortcut={isMac ? '⌘B' : 'Ctrl+B'}
+              side="right"
+              align="start"
+            >
+              <div
+                onClick={() => {
+                  setLeftPanelOpen(true);
+                  handleLeftSidebarTabChange('workspaces');
+                }}
+                className="mt-6 flex flex-col items-center cursor-pointer group px-1 py-2 rounded hover:bg-[#22242c]/60 transition-colors"
+              >
+                <Briefcase className="h-4 w-4 text-zinc-500 group-hover:text-blue-400 transition-colors mb-2" />
+                <div className="text-[10px] tracking-widest font-semibold uppercase text-zinc-500 group-hover:text-zinc-300 transition-colors [writing-mode:vertical-rl] rotate-180">
+                  WORKSPACES
                 </div>
               </div>
             </Popover>
@@ -2069,17 +2160,65 @@ export function App() {
                       errorMessage={tableDataByTab[activeTab.id]?.error}
                       onApplyWhere={(whereText) => {
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    whereClause: whereText,
+                                    page: 1,
+                                    offset: 0,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
                         loadTableData(activeTab, 0, currentSize, false, 1, whereText);
                       }}
                       isTableTab={true}
                       sortConfigs={tableDataByTab[activeTab.id]?.sortConfigs || []}
                       onSortChange={(newSorts) => {
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        // update tab's tableViewState
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    sortConfigs: newSorts,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
                         loadTableData(activeTab, 0, currentSize, false, 1, undefined, newSorts);
                       }}
                       onPageChange={(newPage) => {
                         const size = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        loadTableData(activeTab, (newPage - 1) * size, size, false, newPage);
+                        const newOffset = (newPage - 1) * size;
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    page: newPage,
+                                    offset: newOffset,
+                                    pageSize: size,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
+                        loadTableData(activeTab, newOffset, size, false, newPage);
                       }}
                       onPageSizeChange={(newSize) => {
                         loadTableData(activeTab, 0, newSize, false, 1);
@@ -2096,6 +2235,40 @@ export function App() {
                       onSubmitChanges={handleSubmitChanges}
                       onPreviewChanges={handlePreviewChanges}
                       isReadOnly={Boolean(tableConn?.isReadOnly)}
+                      initialFrozenColumns={activeTab.tableViewState?.frozenColumns}
+                      onFrozenColumnsChange={(frozenCols) => {
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    frozenColumns: frozenCols,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
+                      }}
+                      targetRowIndex={activeTab.tableViewState?.activeRowIndex}
+                      onActiveRowChange={(rIdx) => {
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    activeRowIndex: rIdx,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
+                      }}
                     />
                   )}
 

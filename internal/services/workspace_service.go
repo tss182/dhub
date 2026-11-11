@@ -55,3 +55,28 @@ func (w *WorkspaceService) SaveSetting(key string, value string) error {
 	return w.store.SaveSetting(key, value)
 }
 
+func (w *WorkspaceService) ListWorkspaces() ([]store.WorkspaceSnapshot, error) {
+	return w.store.ListWorkspaces(context.Background())
+}
+
+func (w *WorkspaceService) GetWorkspace(id string) (*store.WorkspaceSnapshot, error) {
+	return w.store.GetWorkspace(context.Background(), id)
+}
+
+func (w *WorkspaceService) SaveWorkspace(ws store.WorkspaceSnapshot) (string, error) {
+	return w.store.SaveWorkspace(context.Background(), ws)
+}
+
+func (w *WorkspaceService) RenameWorkspace(id, newName string) error {
+	return w.store.RenameWorkspace(context.Background(), id, newName)
+}
+
+func (w *WorkspaceService) SetActiveWorkspace(id string) error {
+	return w.store.SetActiveWorkspace(context.Background(), id)
+}
+
+func (w *WorkspaceService) DeleteWorkspace(id string) error {
+	return w.store.DeleteWorkspace(context.Background(), id)
+}
+
+

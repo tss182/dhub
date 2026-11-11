@@ -550,6 +550,10 @@ interface DataGridProps {
   onSortChange?: (sortConfigs: SortConfig[]) => void;
   envType?: ConnectionEnvType;
   rawSql?: string;
+  initialFrozenColumns?: string[];
+  onFrozenColumnsChange?: (columns: string[]) => void;
+  targetRowIndex?: number;
+  onActiveRowChange?: (rowIndex: number) => void;
 }
 
 function getColWidthsStorageKey(
@@ -631,6 +635,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onSortChange,
   envType = 'local',
   rawSql,
+  initialFrozenColumns,
+  onFrozenColumnsChange,
+  targetRowIndex,
+  onActiveRowChange,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
@@ -642,10 +650,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const whereContainerRef = useRef<HTMLDivElement>(null);
   const suggestionListRef = useRef<HTMLDivElement>(null);
   const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
-  const [frozenColumns, setFrozenColumns] = useState<string[]>(() => {
-    const pks = columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name);
-    return Array.from(new Set(pks));
-  });
+  const [frozenColumns, setFrozenColumns] = useState<string[]>(
+    initialFrozenColumns && initialFrozenColumns.length > 0
+      ? initialFrozenColumns
+      : Array.from(new Set(columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name)))
+  );
   const prevTabTableKeyRef = useRef<string>(`${tabId || ''}::${tableName || ''}`);
   const hasInitializedPKsRef = useRef<boolean>(false);
 
@@ -912,9 +921,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const handleToggleFreeze = (colName: string) => {
-    setFrozenColumns((prev) =>
-      prev.includes(colName) ? prev.filter((c) => c !== colName) : [...prev, colName]
-    );
+    setFrozenColumns((prev) => {
+      const next = prev.includes(colName) ? prev.filter((c) => c !== colName) : [...prev, colName];
+      onFrozenColumnsChange?.(next);
+      return next;
+    });
   };
 
 
@@ -1181,7 +1192,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
     };
     window.addEventListener('mousedown', handleOutsideClick);
     window.addEventListener('keydown', handleKeyDown);
-    return () => {
+  return () => {
+
       window.removeEventListener('mousedown', handleOutsideClick);
       window.removeEventListener('keydown', handleKeyDown);
     };
@@ -1581,6 +1593,18 @@ WHERE ${whereClause};`;
       cIdx <= selectionRange.endC
     );
   };
+
+  // Scroll to target row when targetRowIndex is passed (e.g. from workspace restore)
+  useEffect(() => {
+    if (targetRowIndex !== undefined && targetRowIndex >= 0 && displayedRows.length > 0) {
+      const matchIdx = visualRows.findIndex((vr) => vr.globalRowIndex === targetRowIndex);
+      if (matchIdx !== -1) {
+        setSelectionAnchor({ r: matchIdx, c: 0 });
+        setSelectionFocus({ r: matchIdx, c: Math.min(columns.length - 1, 1) });
+        scrollToCell(matchIdx, 0);
+      }
+    }
+  }, [targetRowIndex, visualRows.length]);
 
   const selectedRowKeys = useMemo(() => {
     if (!selectionRange) return new Set<number>();
@@ -2317,6 +2341,11 @@ ${setClauses};`;
       setSelectionAnchor({ r: vIdx, c: cIdx });
       setSelectionFocus({ r: vIdx, c: cIdx });
     }
+
+    const vr = visualRows[vIdx];
+    if (vr && vr.globalRowIndex !== undefined) {
+      onActiveRowChange?.(vr.globalRowIndex);
+    }
   };
 
   const handleCellMouseEnter = (vIdx: number, cIdx: number) => {
@@ -2807,6 +2836,7 @@ ${setClauses};`;
   const gridCellBorder = 'border-[#272932]';
   const gridRowClass = 'border-b border-[#22242c] bg-[#14151a] hover:bg-[#20222a] transition-colors';
 
+
   return (
     <div
       data-grid-container="true"
@@ -2990,7 +3020,10 @@ ${setClauses};`;
               </div>
               <button
                 type="button"
-                onClick={() => setFrozenColumns([])}
+                onClick={() => {
+                  setFrozenColumns([]);
+                  onFrozenColumnsChange?.([]);
+                }}
                 className="text-[10px] text-zinc-400 hover:text-rose-400 hover:underline cursor-pointer ml-1"
                 title="Clear all column freezing"
               >
@@ -3078,7 +3111,8 @@ ${setClauses};`;
                 const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
                 const w = colWidths[col.name] || 120;
 
-                return (
+              
+  return (
                   <th
                     key={col.name}
                     ref={(el) => {
@@ -3243,7 +3277,8 @@ ${setClauses};`;
                   let rowClass = gridRowClass;
                   if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
 
-                  return (
+                
+  return (
                     <tr
                       key={globalRowIndex}
                       className={`${rowClass} group/row`}
@@ -3259,7 +3294,8 @@ ${setClauses};`;
                         const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
                         const w = colWidths[col.name] || 120;
 
-                        return (
+                      
+  return (
                           <td
                             key={col.name}
                             data-vidx={vIdx}
@@ -3363,7 +3399,8 @@ ${setClauses};`;
                   const vIdx = displayedRows.length + insIdx;
                   const rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
 
-                  return (
+                
+  return (
                     <tr
                       key={change.rowIndex}
                       className={rowClass}
@@ -3380,7 +3417,8 @@ ${setClauses};`;
                         const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
                         const w = colWidths[col.name] || 120;
 
-                        return (
+                      
+  return (
                           <td
                             key={col.name}
                             data-vidx={vIdx}
@@ -3502,7 +3540,8 @@ ${setClauses};`;
             (() => {
               const totalDisplay = isExactTotalKnown ? String(effectiveTotal) : `${endRow}+`;
 
-              return (
+            
+  return (
                 <span>
                   Showing <strong className="text-zinc-200">{startRow}</strong> –{' '}
                   <strong className="text-zinc-200">{endRow}</strong> of{' '}
@@ -3622,7 +3661,8 @@ ${setClauses};`;
                 .sort((a, b) => a - b)
                 .map((size) => {
                 const isSelected = size === localPageSize;
-                return (
+              
+  return (
                   <button
                     key={size}
                     type="button"
