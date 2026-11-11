@@ -1,5 +1,13 @@
-import { Call, Browser } from '@wailsio/runtime';
+import { Call, Browser, Events } from '@wailsio/runtime';
 import { APP_VERSION } from '../version';
+
+export interface UpdateProgress {
+  status: 'idle' | 'downloading' | 'completed' | 'installing' | 'error';
+  downloaded: number;
+  total: number;
+  percent: number;
+  error?: string;
+}
 
 export interface UpdateInfo {
   hasUpdate: boolean;
@@ -138,4 +146,25 @@ export async function openUpdateURL(url: string): Promise<void> {
     window.open(url, '_blank');
   }
 }
+
+export async function downloadAndStageUpdate(downloadUrl: string, assetFileName: string): Promise<string> {
+  return await Call.ByName('dhub/internal/services.UpdateService.DownloadAndStage', downloadUrl, assetFileName);
+}
+
+export async function applyDownloadedUpdate(filePath?: string): Promise<void> {
+  return await Call.ByName('dhub/internal/services.UpdateService.ApplyUpdate', filePath || '');
+}
+
+export async function cancelUpdateDownload(): Promise<void> {
+  return await Call.ByName('dhub/internal/services.UpdateService.CancelDownload');
+}
+
+export function onUpdateProgress(callback: (progress: UpdateProgress) => void): () => void {
+  return Events.On('update:progress', (event: any) => {
+    if (event && event.data) {
+      callback(event.data as UpdateProgress);
+    }
+  });
+}
+
 

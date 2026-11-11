@@ -21,3 +21,12 @@ type ConnectionStateEvent struct {
 	Error        string `json:"error,omitempty"`
 }
 
+type UpdateProgressEvent struct {
+	Status     string  `json:"status"` // "downloading" | "completed" | "installing" | "error"
+	Downloaded int64   `json:"downloaded"`
+	Total      int64   `json:"total"`
+	Percent    float64 `json:"percent"`
+	Error      string  `json:"error,omitempty"`
+}
+
+

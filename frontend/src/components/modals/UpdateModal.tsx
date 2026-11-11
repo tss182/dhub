@@ -7,6 +7,9 @@ import {
   CheckCircle2,
   ShieldCheck,
   FileCode2,
+  Loader2,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { useUpdateStore } from '../../stores/useUpdateStore';
 
@@ -14,8 +17,15 @@ export const UpdateModal: React.FC = () => {
   const {
     isUpdateModalOpen,
     updateInfo,
+    error,
+    isDownloading,
+    isReadyToInstall,
+    isInstalling,
+    downloadProgress,
     closeUpdateModal,
     dismissUpdate,
+    startInAppUpdate,
+    applyUpdate,
     downloadUpdate,
     openReleasePage,
   } = useUpdateStore();
@@ -46,7 +56,7 @@ export const UpdateModal: React.FC = () => {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs select-none p-4 animate-in fade-in duration-150"
-      onClick={closeUpdateModal}
+      onClick={isDownloading || isInstalling ? undefined : closeUpdateModal}
     >
       <div
         className="w-full max-w-lg rounded-2xl bg-[#181920] border border-[#2b2e3a] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
@@ -66,16 +76,18 @@ export const UpdateModal: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400">
-                A new version of DHub is ready for download
+                A new version of DHub is available
               </p>
             </div>
           </div>
-          <button
-            onClick={closeUpdateModal}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#252834] transition-colors cursor-pointer"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {!isDownloading && !isInstalling && (
+            <button
+              onClick={closeUpdateModal}
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#252834] transition-colors cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         {/* Content Body */}
@@ -101,20 +113,87 @@ export const UpdateModal: React.FC = () => {
             </div>
           </div>
 
-          {/* User scope security note */}
-          <div className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-950/20 border border-blue-800/30 text-blue-300">
-            <ShieldCheck className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
-            <div className="text-[11px] leading-relaxed">
-              <span className="font-semibold text-blue-200">
-                {getPlatformLabel(updateInfo.platformOS)}
-              </span>
-              <p className="text-zinc-400 text-[10px] mt-0.5">
-                {updateInfo.platformOS === 'windows'
-                  ? 'Installs directly to your user profile directory without requiring administrator/root credentials.'
-                  : 'Download and install directly from official GitHub releases.'}
-              </p>
+          {/* Download & Install Progress Bar Card */}
+          {(isDownloading || isReadyToInstall || isInstalling) && (
+            <div className="p-4 rounded-xl bg-blue-950/20 border border-blue-800/40 space-y-2.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-semibold text-blue-200 flex items-center gap-1.5">
+                  {isInstalling ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
+                      Launching installer & restarting...
+                    </>
+                  ) : isReadyToInstall ? (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                      Download Complete! Ready to apply.
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
+                      Downloading update directly in app...
+                    </>
+                  )}
+                </span>
+                <span className="font-mono text-zinc-300 font-semibold">
+                  {Math.round(downloadProgress.percent)}%
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div className="h-2 w-full bg-[#1b1e28] rounded-full overflow-hidden p-0.5 border border-blue-950">
+                <div
+                  className="h-full bg-linear-to-r from-blue-500 to-emerald-400 rounded-full transition-all duration-200"
+                  style={{ width: `${Math.max(5, Math.min(100, downloadProgress.percent))}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                <span>
+                  {downloadProgress.downloaded > 0
+                    ? `${formatFileSize(downloadProgress.downloaded)} of ${formatFileSize(downloadProgress.total || updateInfo.assetSize)}`
+                    : updateInfo.assetFileName || 'Downloading file...'}
+                </span>
+                <span>
+                  {isReadyToInstall ? 'Verified' : 'Direct in-app download'}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Error Message if any */}
+          {error && (
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-rose-950/20 border border-rose-800/40 text-rose-300 text-[11px]">
+              <AlertCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-semibold text-rose-200">Update Error</span>
+                <p className="text-zinc-400 text-[10px]">{error}</p>
+                <button
+                  type="button"
+                  onClick={downloadUpdate}
+                  className="mt-1 text-blue-400 hover:text-blue-300 text-[10px] underline underline-offset-2 cursor-pointer flex items-center gap-1"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Try downloading in browser instead
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Platform note */}
+          {!isDownloading && !isReadyToInstall && (
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-[#14151a] border border-[#272932] text-zinc-300">
+              <ShieldCheck className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+              <div className="text-[11px] leading-relaxed">
+                <span className="font-semibold text-zinc-200">
+                  {getPlatformLabel(updateInfo.platformOS)}
+                </span>
+                <p className="text-zinc-400 text-[10px] mt-0.5">
+                  Update will be downloaded directly inside DHub and applied seamlessly without requiring browser intervention.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Release Notes */}
           {updateInfo.releaseNotes ? (
@@ -130,7 +209,7 @@ export const UpdateModal: React.FC = () => {
                   </span>
                 )}
               </div>
-              <div className="max-h-48 overflow-y-auto rounded-xl bg-[#121318] border border-[#22242c] p-3 text-[11px] text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed select-text scrollbar-thin">
+              <div className="max-h-40 overflow-y-auto rounded-xl bg-[#121318] border border-[#22242c] p-3 text-[11px] text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed select-text scrollbar-thin">
                 {updateInfo.releaseNotes}
               </div>
             </div>
@@ -149,25 +228,59 @@ export const UpdateModal: React.FC = () => {
           </button>
 
           <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={dismissUpdate}
-              className="px-3.5 py-1.5 rounded-lg border border-[#313543] text-zinc-300 hover:bg-[#20222b] text-xs font-medium transition-colors cursor-pointer"
-            >
-              Later
-            </button>
-            <button
-              type="button"
-              onClick={downloadUpdate}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/20 transition-all cursor-pointer"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>Download Update</span>
-            </button>
+            {!isDownloading && !isInstalling && (
+              <button
+                type="button"
+                onClick={dismissUpdate}
+                className="px-3.5 py-1.5 rounded-lg border border-[#313543] text-zinc-300 hover:bg-[#20222b] text-xs font-medium transition-colors cursor-pointer"
+              >
+                Later
+              </button>
+            )}
+
+            {isReadyToInstall ? (
+              <button
+                type="button"
+                onClick={applyUpdate}
+                disabled={isInstalling}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+              >
+                {isInstalling ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Applying...</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Install & Restart</span>
+                  </>
+                )}
+              </button>
+            ) : isDownloading ? (
+              <button
+                type="button"
+                disabled
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600/60 text-white/80 text-xs font-semibold cursor-not-allowed"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>Downloading... ({Math.round(downloadProgress.percent)}%)</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startInAppUpdate}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/20 transition-all cursor-pointer"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>Update Now (In-App)</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
     </div>
   );
 };
+
 
