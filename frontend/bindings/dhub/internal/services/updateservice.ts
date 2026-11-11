@@ -9,8 +9,29 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+/**
+ * ApplyUpdate launches the installer/package and terminates the current DHub process.
+ */
+export function ApplyUpdate(filePath: string): $CancellablePromise<void> {
+    return $Call.ByID(1522270514, filePath);
+}
+
+/**
+ * CancelDownload cancels an in-progress download.
+ */
+export function CancelDownload(): $CancellablePromise<void> {
+    return $Call.ByID(869968119);
+}
+
 export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo | null> {
     return $Call.ByID(3646453635);
+}
+
+/**
+ * DownloadAndStage downloads the update asset directly in-app, emitting progress events.
+ */
+export function DownloadAndStage(downloadURL: string, assetFileName: string): $CancellablePromise<string> {
+    return $Call.ByID(1417421636, downloadURL, assetFileName);
 }
 
 export function OpenURL(targetURL: string): $CancellablePromise<void> {
