@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { ColumnMeta, ConnectionEnvType } from '../../types/domain';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
@@ -21,6 +21,7 @@ import {
   X,
   Layers,
   ArrowDownCircle,
+  ArrowUpCircle,
   Filter,
   Key,
   Hash,
@@ -536,6 +537,10 @@ interface DataGridProps {
   totalCount?: number;
   hasMore?: boolean;
   isLoadingMore?: boolean;
+  hasPrevious?: boolean;
+  isLoadingPrevious?: boolean;
+  onLoadPrevious?: () => void;
+  startOffset?: number;
   page?: number;
   onPageChange?: (newPage: number) => void;
   pageSize?: number;
@@ -554,6 +559,9 @@ interface DataGridProps {
   onFrozenColumnsChange?: (columns: string[]) => void;
   targetRowIndex?: number;
   onActiveRowChange?: (rowIndex: number) => void;
+  initialScrollTop?: number;
+  initialScrollLeft?: number;
+  onScrollChange?: (scrollTop: number, scrollLeft: number, firstVisibleRowIndex: number) => void;
 }
 
 function getColWidthsStorageKey(
@@ -621,6 +629,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   totalCount,
   hasMore = false,
   isLoadingMore = false,
+  hasPrevious = false,
+  isLoadingPrevious = false,
+  onLoadPrevious,
+  startOffset = 0,
   page,
   onPageChange,
   pageSize = 100,
@@ -639,6 +651,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onFrozenColumnsChange,
   targetRowIndex,
   onActiveRowChange,
+  initialScrollTop,
+  initialScrollLeft,
+  onScrollChange,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
@@ -1123,6 +1138,47 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const batchSizeRef = useRef<HTMLDivElement>(null);
 
+  const onScrollChangeRef = useRef(onScrollChange);
+  onScrollChangeRef.current = onScrollChange;
+
+  const debouncedScrollTimerRef = useRef<any>(null);
+  const latestScrollStateRef = useRef<{ scrollTop: number; scrollLeft: number; rowIndex: number }>({
+    scrollTop: initialScrollTop || 0,
+    scrollLeft: initialScrollLeft || 0,
+    rowIndex: targetRowIndex || 0,
+  });
+
+  const scrollAdjustRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null);
+  const hasRestoredScrollRef = useRef(false);
+
+  useEffect(() => {
+    hasRestoredScrollRef.current = false;
+  }, [tabId]);
+
+  // Preserve scroll position when previous rows are prepended to grid
+  useLayoutEffect(() => {
+    if (scrollAdjustRef.current && containerRef.current) {
+      const { prevScrollHeight, prevScrollTop } = scrollAdjustRef.current;
+      const newScrollHeight = containerRef.current.scrollHeight;
+      if (newScrollHeight > prevScrollHeight) {
+        const delta = newScrollHeight - prevScrollHeight;
+        containerRef.current.scrollTop = prevScrollTop + delta;
+      }
+      scrollAdjustRef.current = null;
+    }
+  }, [rows, startOffset]);
+
+  // Flush debounced scroll change on unmount
+  useEffect(() => {
+    return () => {
+      if (debouncedScrollTimerRef.current) {
+        clearTimeout(debouncedScrollTimerRef.current);
+        const { scrollTop, scrollLeft, rowIndex } = latestScrollStateRef.current;
+        onScrollChangeRef.current?.(scrollTop, scrollLeft, rowIndex);
+      }
+    };
+  }, []);
+
   const scrollToCell = (vIdx: number, cIdx: number) => {
     requestAnimationFrame(() => {
       const container = containerRef.current;
@@ -1331,6 +1387,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const colDataType = col?.dataType;
     const formattedVal = formatSqlLiteral(newVal, colDataType);
 
+    const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+    const targetRow = rows[rowInArray] || rows[rowIndex];
+
     // Build WHERE clause using primary keys if available
     let whereClause = '';
     const detectedPKs = primaryKeys.length > 0
@@ -1342,7 +1401,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       detectedPKs.forEach((pk) => {
         const cIdx = columns.findIndex((c) => c.name === pk);
         const colMeta = columns[cIdx];
-        const pkVal = cIdx !== -1 ? rows[rowIndex]?.[cIdx] : undefined;
+        const pkVal = cIdx !== -1 ? targetRow?.[cIdx] : undefined;
         if (pkVal !== undefined && pkVal !== null) {
           pkConds.push(`${quoteIdent(pk)} = ${formatSqlLiteral(pkVal, colMeta?.dataType)}`);
         }
@@ -1356,7 +1415,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       // Fallback: match using original row values
       const fallbackConds: string[] = [];
       columns.forEach((c, idx) => {
-        const val = rows[rowIndex]?.[idx];
+        const val = targetRow?.[idx];
         if (val === null || val === undefined) {
           fallbackConds.push(`${quoteIdent(c.name)} IS NULL`);
         } else {
@@ -1367,7 +1426,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         fallbackConds.length > 0
           ? fallbackConds.join(' AND ')
           : `${quoteIdent(colName)} = ${formatSqlLiteral(
-              rows[rowIndex]?.[columns.findIndex((c) => c.name === colName)],
+              targetRow?.[columns.findIndex((c) => c.name === colName)],
               colDataType
             )}`;
     }
@@ -1424,15 +1483,17 @@ WHERE ${whereClause};`;
     } else {
       // Existing database row
       const originalRowValues: Record<string, unknown> = {};
+      const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+      const targetRow = rows[rowInArray] || rows[rowIndex];
       columns.forEach((c, idx) => {
-        originalRowValues[c.name] = rows[rowIndex]?.[idx];
+        originalRowValues[c.name] = targetRow?.[idx];
       });
 
       const pkMap: Record<string, unknown> = {};
       primaryKeys.forEach((pk) => {
         const idx = columns.findIndex((c) => c.name === pk);
         if (idx !== -1) {
-          pkMap[pk] = rows[rowIndex]?.[idx];
+          pkMap[pk] = targetRow?.[idx];
         }
       });
 
@@ -1551,7 +1612,10 @@ WHERE ${whereClause};`;
     }> = [];
 
     displayedRows.forEach((row, rIdx) => {
-      const globalRowIndex = viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
+      const globalRowIndex =
+        viewMode === 'paged'
+          ? (currentPage - 1) * localPageSize + rIdx
+          : (startOffset !== undefined ? startOffset + rIdx : rIdx);
       list.push({
         vIdx: list.length,
         rowId: globalRowIndex,
@@ -1571,7 +1635,7 @@ WHERE ${whereClause};`;
     });
 
     return list;
-  }, [displayedRows, insertedChanges, viewMode, currentPage, localPageSize]);
+  }, [displayedRows, insertedChanges, viewMode, currentPage, localPageSize, startOffset]);
 
   // Rectangular cell selection range
   const selectionRange = useMemo(() => {
@@ -1594,17 +1658,33 @@ WHERE ${whereClause};`;
     );
   };
 
-  // Scroll to target row when targetRowIndex is passed (e.g. from workspace restore)
+  // Restore initial scroll or scroll to target row on mount or workspace restore
   useEffect(() => {
-    if (targetRowIndex !== undefined && targetRowIndex >= 0 && displayedRows.length > 0) {
-      const matchIdx = visualRows.findIndex((vr) => vr.globalRowIndex === targetRowIndex);
-      if (matchIdx !== -1) {
-        setSelectionAnchor({ r: matchIdx, c: 0 });
-        setSelectionFocus({ r: matchIdx, c: Math.min(columns.length - 1, 1) });
-        scrollToCell(matchIdx, 0);
+    if (!hasRestoredScrollRef.current && containerRef.current && displayedRows.length > 0) {
+      const st = initialScrollTop;
+      const sl = initialScrollLeft;
+
+      if (st !== undefined && st > 0) {
+        containerRef.current.scrollTop = st;
       }
+      if (sl !== undefined && sl > 0) {
+        containerRef.current.scrollLeft = sl;
+      }
+
+      if (targetRowIndex !== undefined && targetRowIndex >= 0) {
+        const matchIdx = visualRows.findIndex((vr) => vr.globalRowIndex === targetRowIndex);
+        if (matchIdx !== -1) {
+          setSelectionAnchor({ r: matchIdx, c: 0 });
+          setSelectionFocus({ r: matchIdx, c: Math.min(columns.length - 1, 1) });
+          if (st === undefined || st === 0) {
+            scrollToCell(matchIdx, 0);
+          }
+        }
+      }
+
+      hasRestoredScrollRef.current = true;
     }
-  }, [targetRowIndex, visualRows.length]);
+  }, [tabId, displayedRows.length, targetRowIndex, initialScrollTop, initialScrollLeft]);
 
   const selectedRowKeys = useMemo(() => {
     if (!selectionRange) return new Set<number>();
@@ -2062,13 +2142,18 @@ ${setClauses};`;
           stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, null);
         } else {
           const originalRowValues: Record<string, unknown> = {};
+          const rowInArray =
+            vr.globalRowIndex !== undefined && vr.globalRowIndex >= (startOffset || 0)
+              ? vr.globalRowIndex - (startOffset || 0)
+              : (vr.globalRowIndex ?? 0);
+          const targetRow = vr.rowData || rows[rowInArray];
           columns.forEach((colMeta, idx) => {
-            originalRowValues[colMeta.name] = rows[vr.globalRowIndex!]?.[idx];
+            originalRowValues[colMeta.name] = targetRow?.[idx];
           });
           const pkMap: Record<string, unknown> = {};
           primaryKeys.forEach((pk) => {
             const idx = columns.findIndex((colMeta) => colMeta.name === pk);
-            if (idx !== -1) pkMap[pk] = rows[vr.globalRowIndex!]?.[idx];
+            if (idx !== -1) pkMap[pk] = targetRow?.[idx];
           });
           stageCellUpdate(tabId, vr.globalRowIndex!, pkMap, originalRowValues, col.name, null);
         }
@@ -2788,17 +2873,51 @@ ${setClauses};`;
     }
   }, [filterText, localPageSize, onPageChange]);
 
-  // Scroll listener for horizontal sticky separator and infinite scroll lazy loading
+  // Scroll listener for horizontal sticky separator, workspace scroll tracking, and bidirectional infinite scroll
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const sl = e.currentTarget.scrollLeft;
     if (sl > 0 !== isScrolledX) {
       setIsScrolledX(sl > 0);
     }
-    if (viewMode !== 'infinite') return;
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+
+    // Track scroll position and approximate visible database row for workspace auto-save
+    const rowHeight = 28;
+    const visibleRowOffset = Math.max(0, Math.floor(scrollTop / rowHeight));
+    const approxRowIndex = (startOffset || 0) + visibleRowOffset;
+
+    latestScrollStateRef.current = {
+      scrollTop,
+      scrollLeft: sl,
+      rowIndex: approxRowIndex,
+    };
+
+    if (onScrollChangeRef.current) {
+      if (debouncedScrollTimerRef.current) {
+        clearTimeout(debouncedScrollTimerRef.current);
+      }
+      debouncedScrollTimerRef.current = setTimeout(() => {
+        onScrollChangeRef.current?.(scrollTop, sl, approxRowIndex);
+      }, 200);
+    }
+
+    if (viewMode !== 'infinite') return;
+
+    // Downward infinite scroll (Load Next Batch)
     if (hasMore && !isLoadingMore && onLoadMore) {
       if (scrollHeight - scrollTop - clientHeight < 250) {
         onLoadMore();
+      }
+    }
+
+    // Upward infinite scroll (Load Previous Batch)
+    if (hasPrevious && !isLoadingPrevious && onLoadPrevious) {
+      if (scrollTop < 150) {
+        scrollAdjustRef.current = {
+          prevScrollHeight: scrollHeight,
+          prevScrollTop: scrollTop,
+        };
+        onLoadPrevious();
       }
     }
   };
@@ -3266,10 +3385,50 @@ ${setClauses};`;
               </tr>
             ) : (
               <>
+                {/* 0. Top Load Previous Rows Banner */}
+                {hasPrevious && (
+                  <tr className="bg-[#121318] border-b border-[#22242c] hover:bg-[#181a22] transition-colors">
+                    <td
+                      colSpan={columns.length + 1}
+                      className="py-1 px-3 text-center"
+                      style={{ position: 'sticky', left: 0 }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (containerRef.current) {
+                            scrollAdjustRef.current = {
+                              prevScrollHeight: containerRef.current.scrollHeight,
+                              prevScrollTop: containerRef.current.scrollTop,
+                            };
+                          }
+                          onLoadPrevious?.();
+                        }}
+                        disabled={isLoadingPrevious}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 text-[11px] font-medium border border-blue-500/30 cursor-pointer transition-colors shadow-xs"
+                        title="Load previous batch of rows"
+                      >
+                        {isLoadingPrevious ? (
+                          <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
+                        ) : (
+                          <ArrowUpCircle className="h-3 w-3" />
+                        )}
+                        <span>
+                          {isLoadingPrevious
+                            ? 'Loading previous rows...'
+                            : `Load previous rows (${Math.min(localPageSize, startOffset || 0)} rows above)`}
+                        </span>
+                      </button>
+                    </td>
+                  </tr>
+                )}
+
                 {/* 1. Existing Database Rows */}
                 {displayedRows.map((row, rIdx) => {
                   const globalRowIndex =
-                    viewMode === 'paged' ? (currentPage - 1) * localPageSize + rIdx : rIdx;
+                    viewMode === 'paged'
+                      ? (currentPage - 1) * localPageSize + rIdx
+                      : (startOffset !== undefined ? startOffset + rIdx : rIdx);
                   const vIdx = rIdx;
                   const staged = stagedChanges[globalRowIndex];
                   const isDeleted = staged?.type === 'delete';
@@ -3559,7 +3718,36 @@ ${setClauses};`;
                   <>+ rows</>
                 ) : null}{' '}
                 rows
+                {startOffset !== undefined && startOffset > 0 && (
+                  <span className="text-zinc-500 text-[10px] ml-1">
+                    (from #{startOffset + 1})
+                  </span>
+                )}
               </span>
+              {hasPrevious && onLoadPrevious && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (containerRef.current) {
+                      scrollAdjustRef.current = {
+                        prevScrollHeight: containerRef.current.scrollHeight,
+                        prevScrollTop: containerRef.current.scrollTop,
+                      };
+                    }
+                    onLoadPrevious();
+                  }}
+                  disabled={isLoadingPrevious}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 text-[10px] font-medium border border-blue-500/30 cursor-pointer ml-1 transition-colors"
+                  title="Click to load previous batch"
+                >
+                  {isLoadingPrevious ? (
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <ArrowUpCircle className="h-3 w-3" />
+                  )}
+                  <span>Prev</span>
+                </button>
+              )}
               {hasMore && onLoadMore && (
                 <button
                   type="button"
@@ -3629,8 +3817,22 @@ ${setClauses};`;
           </div>
         ) : (
           <div className="flex items-center gap-2 text-zinc-500 font-sans text-[11px]">
-            <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
-            <span>Lazy Load Active</span>
+            {isLoadingPrevious ? (
+              <>
+                <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
+                <span className="text-blue-400">Loading previous...</span>
+              </>
+            ) : isLoadingMore ? (
+              <>
+                <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
+                <span className="text-blue-400">Loading more...</span>
+              </>
+            ) : (
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+                <span>Lazy Load Active</span>
+              </>
+            )}
           </div>
         )}
 

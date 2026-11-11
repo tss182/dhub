@@ -184,11 +184,14 @@ export function App() {
         primaryKeys: string[];
         isLoading: boolean;
         isLoadingMore: boolean;
+        isLoadingPrevious?: boolean;
         error: string | null;
         totalCount?: number;
         hasMore: boolean;
+        hasPrevious?: boolean;
         pageSize: number;
         page: number;
+        startOffset?: number;
         whereClause?: string;
         sortConfigs?: { column: string; direction: 'asc' | 'desc' }[];
       }
@@ -788,11 +791,14 @@ export function App() {
     tab: WorkbenchTab,
     offset = 0,
     limit = useSettingsStore.getState().defaultPageSize || 100,
-    append = false,
+    mode: 'replace' | 'append' | 'prepend' | boolean = 'replace',
     page = 1,
     newWhereClause?: string,
     newSortConfigs?: { column: string; direction: 'asc' | 'desc' }[]
   ) => {
+    const fetchMode: 'replace' | 'append' | 'prepend' =
+      typeof mode === 'boolean' ? (mode ? 'append' : 'replace') : mode;
+
     const connId = tab.connectionId || activeConnectionId;
     if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
 
@@ -820,26 +826,52 @@ export function App() {
         : prevTabData?.pageSize || savedViewState?.pageSize || useSettingsStore.getState().defaultPageSize || 100;
 
     // Windowed / Centered Offset calculation
-    // e.g. 1M rows, active at 500k -> offset = max(0, 500000 - 50) = 499950
     let effectiveOffset = offset;
     let effectivePage = page;
-    if (offset === 0 && savedViewState?.activeRowIndex !== undefined && savedViewState.activeRowIndex > 0) {
-      const half = Math.floor(effectivePageSize / 2);
-      effectiveOffset = Math.max(0, savedViewState.activeRowIndex - half);
+    let fetchLimit = effectivePageSize + 1;
+
+    if (fetchMode === 'prepend') {
+      const currentStart = prevTabData?.startOffset || 0;
+      if (currentStart <= 0) return;
+      fetchLimit = Math.min(effectivePageSize, currentStart);
+      effectiveOffset = Math.max(0, currentStart - fetchLimit);
       effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
-    } else if (offset === 0 && savedViewState?.offset !== undefined && savedViewState.offset > 0) {
-      effectiveOffset = savedViewState.offset;
-      effectivePage = savedViewState.page || Math.floor(effectiveOffset / effectivePageSize) + 1;
+    } else if (fetchMode === 'append') {
+      const currentStart = prevTabData?.startOffset || 0;
+      const currentLength = prevTabData?.rows?.length || 0;
+      effectiveOffset = currentStart + currentLength;
+      effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
+      fetchLimit = effectivePageSize + 1;
+    } else {
+      // 'replace'
+      if (offset === 0 && savedViewState?.activeRowIndex !== undefined && savedViewState.activeRowIndex > 0) {
+        const half = Math.floor(effectivePageSize / 2);
+        effectiveOffset = Math.max(0, savedViewState.activeRowIndex - half);
+        effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
+      } else if (offset === 0 && savedViewState?.offset !== undefined && savedViewState.offset > 0) {
+        effectiveOffset = savedViewState.offset;
+        effectivePage = savedViewState.page || Math.floor(effectiveOffset / effectivePageSize) + 1;
+      }
+      fetchLimit = effectivePageSize + 1;
     }
 
     const filtersChanged = newWhereClause !== undefined;
 
-    if (append) {
+    if (fetchMode === 'append') {
       setTableDataByTab((prev) => ({
         ...prev,
         [tab.id]: {
           ...prev[tab.id],
           isLoadingMore: true,
+          error: null,
+        },
+      }));
+    } else if (fetchMode === 'prepend') {
+      setTableDataByTab((prev) => ({
+        ...prev,
+        [tab.id]: {
+          ...prev[tab.id],
+          isLoadingPrevious: true,
           error: null,
         },
       }));
@@ -852,9 +884,12 @@ export function App() {
           primaryKeys: prev[tab.id]?.primaryKeys || [],
           isLoading: true,
           isLoadingMore: false,
+          isLoadingPrevious: false,
           error: null,
           totalCount: filtersChanged ? undefined : prev[tab.id]?.totalCount,
           hasMore: false,
+          hasPrevious: effectiveOffset > 0,
+          startOffset: effectiveOffset,
           pageSize: effectivePageSize,
           page: effectivePage,
           whereClause,
@@ -928,7 +963,7 @@ export function App() {
       }
 
       // 3. Fetch total row count in background (on initial load or when filters change)
-      if (!append && (filtersChanged || tableDataByTab[tab.id]?.totalCount === undefined)) {
+      if (fetchMode === 'replace' && (filtersChanged || tableDataByTab[tab.id]?.totalCount === undefined)) {
         QueryService.ExecuteQuery({
           executionId: 'exec-count-' + Date.now(),
           connectionId: connId,
@@ -957,7 +992,6 @@ export function App() {
       }
 
       // 4. Query table data with LIMIT, OFFSET, WHERE and ORDER BY
-      const fetchLimit = effectivePageSize + 1;
       const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause} LIMIT ${fetchLimit} OFFSET ${effectiveOffset};`;
 
       const execId = 'exec-tab-' + Date.now();
@@ -978,8 +1012,16 @@ export function App() {
             : (res.columns || []).filter((c: any) => (c as any).isPrimaryKey).map((c: any) => c.name);
 
         const rawRows = (res.rows as any) || [];
-        const hasMore = rawRows.length > effectivePageSize;
-        const fetchedRows = hasMore ? rawRows.slice(0, effectivePageSize) : rawRows;
+        let fetchedRows: any[][] = [];
+        let hasMore = prevTabData?.hasMore ?? false;
+
+        if (fetchMode === 'prepend') {
+          fetchedRows = rawRows;
+        } else {
+          hasMore = rawRows.length > effectivePageSize;
+          fetchedRows = hasMore ? rawRows.slice(0, effectivePageSize) : rawRows;
+        }
+
         const currentEnd = effectiveOffset + fetchedRows.length;
 
         // Merge columns: prefer structureColumns because they contain full types, size, nullable, comments, etc.
@@ -1007,14 +1049,33 @@ export function App() {
         }
 
         setTableDataByTab((prev) => {
-          const prevRows = append ? prev[tab.id]?.rows || [] : [];
-          const combinedRows = [...prevRows, ...fetchedRows];
-          const prevTotal = prev[tab.id]?.totalCount;
-          // If we reached the end (!hasMore), the total count is at least currentEnd
-          const knownTotal = !hasMore
-            ? Math.max(prevTotal || 0, currentEnd)
+          const currentTabState = prev[tab.id];
+          let combinedRows: any[][] = [];
+          let newStartOffset = currentTabState?.startOffset || 0;
+          let newHasPrevious = false;
+          let newHasMore = hasMore;
+
+          if (fetchMode === 'append') {
+            combinedRows = [...(currentTabState?.rows || []), ...fetchedRows];
+            newStartOffset = currentTabState?.startOffset || 0;
+            newHasPrevious = newStartOffset > 0;
+          } else if (fetchMode === 'prepend') {
+            combinedRows = [...fetchedRows, ...(currentTabState?.rows || [])];
+            newStartOffset = effectiveOffset;
+            newHasPrevious = newStartOffset > 0;
+            newHasMore = currentTabState?.hasMore ?? false;
+          } else {
+            // replace
+            combinedRows = fetchedRows;
+            newStartOffset = effectiveOffset;
+            newHasPrevious = effectiveOffset > 0;
+          }
+
+          const prevTotal = currentTabState?.totalCount;
+          const knownTotal = !newHasMore
+            ? Math.max(prevTotal || 0, newStartOffset + combinedRows.length)
             : prevTotal !== undefined
-            ? Math.max(prevTotal, currentEnd)
+            ? Math.max(prevTotal, newStartOffset + combinedRows.length)
             : undefined;
 
           return {
@@ -1025,11 +1086,14 @@ export function App() {
               primaryKeys: detectedPKs,
               isLoading: false,
               isLoadingMore: false,
+              isLoadingPrevious: false,
               error: null,
               totalCount: knownTotal,
-              hasMore,
+              hasMore: newHasMore,
+              hasPrevious: newHasPrevious,
+              startOffset: newStartOffset,
               pageSize: effectivePageSize,
-              page: append ? prev[tab.id]?.page || 1 : effectivePage,
+              page: fetchMode === 'append' ? currentTabState?.page || 1 : effectivePage,
               whereClause,
               sortConfigs,
             },
@@ -1053,10 +1117,13 @@ export function App() {
           primaryKeys: primaryKeys.length > 0 ? primaryKeys : (prev[tab.id]?.primaryKeys || []),
           isLoading: false,
           isLoadingMore: false,
+          isLoadingPrevious: false,
           error: e?.message || String(e),
           hasMore: false,
+          hasPrevious: (prev[tab.id]?.startOffset || 0) > 0,
+          startOffset: prev[tab.id]?.startOffset || 0,
           pageSize: limit,
-          page: append ? prev[tab.id]?.page || 1 : page,
+          page: fetchMode === 'append' ? prev[tab.id]?.page || 1 : page,
           whereClause,
           sortConfigs,
         },
@@ -2154,6 +2221,9 @@ export function App() {
                       totalCount={tableDataByTab[activeTab.id]?.totalCount}
                       hasMore={tableDataByTab[activeTab.id]?.hasMore}
                       isLoadingMore={tableDataByTab[activeTab.id]?.isLoadingMore}
+                      hasPrevious={tableDataByTab[activeTab.id]?.hasPrevious}
+                      isLoadingPrevious={tableDataByTab[activeTab.id]?.isLoadingPrevious}
+                      startOffset={tableDataByTab[activeTab.id]?.startOffset ?? activeTab.tableViewState?.offset ?? 0}
                       page={tableDataByTab[activeTab.id]?.page || 1}
                       pageSize={tableDataByTab[activeTab.id]?.pageSize || 100}
                       whereClause={tableDataByTab[activeTab.id]?.whereClause}
@@ -2171,12 +2241,14 @@ export function App() {
                                     whereClause: whereText,
                                     page: 1,
                                     offset: 0,
+                                    scrollTop: 0,
+                                    activeRowIndex: 0,
                                   },
                                 }
                               : t
                           ),
                         });
-                        loadTableData(activeTab, 0, currentSize, false, 1, whereText);
+                        loadTableData(activeTab, 0, currentSize, 'replace', 1, whereText);
                       }}
                       isTableTab={true}
                       sortConfigs={tableDataByTab[activeTab.id]?.sortConfigs || []}
@@ -2197,7 +2269,7 @@ export function App() {
                               : t
                           ),
                         });
-                        loadTableData(activeTab, 0, currentSize, false, 1, undefined, newSorts);
+                        loadTableData(activeTab, 0, currentSize, 'replace', 1, undefined, newSorts);
                       }}
                       onPageChange={(newPage) => {
                         const size = tableDataByTab[activeTab.id]?.pageSize || 100;
@@ -2213,24 +2285,29 @@ export function App() {
                                     page: newPage,
                                     offset: newOffset,
                                     pageSize: size,
+                                    scrollTop: 0,
                                   },
                                 }
                               : t
                           ),
                         });
-                        loadTableData(activeTab, newOffset, size, false, newPage);
+                        loadTableData(activeTab, newOffset, size, 'replace', newPage);
                       }}
                       onPageSizeChange={(newSize) => {
-                        loadTableData(activeTab, 0, newSize, false, 1);
+                        loadTableData(activeTab, 0, newSize, 'replace', 1);
                       }}
                       onLoadMore={() => {
-                        const currentCount = tableDataByTab[activeTab.id]?.rows?.length || 0;
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        loadTableData(activeTab, currentCount, currentSize, true);
+                        loadTableData(activeTab, 0, currentSize, 'append');
+                      }}
+                      onLoadPrevious={() => {
+                        const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
+                        loadTableData(activeTab, 0, currentSize, 'prepend');
                       }}
                       onRefresh={() => {
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        loadTableData(activeTab, 0, currentSize, false, 1);
+                        const currentStart = tableDataByTab[activeTab.id]?.startOffset || 0;
+                        loadTableData(activeTab, currentStart, currentSize, 'replace');
                       }}
                       onSubmitChanges={handleSubmitChanges}
                       onPreviewChanges={handlePreviewChanges}
@@ -2253,6 +2330,8 @@ export function App() {
                         });
                       }}
                       targetRowIndex={activeTab.tableViewState?.activeRowIndex}
+                      initialScrollTop={activeTab.tableViewState?.scrollTop}
+                      initialScrollLeft={activeTab.tableViewState?.scrollLeft}
                       onActiveRowChange={(rIdx) => {
                         const currTabs = useWorkbenchStore.getState().tabs;
                         useWorkbenchStore.setState({
@@ -2263,6 +2342,35 @@ export function App() {
                                   tableViewState: {
                                     ...(t.tableViewState || {}),
                                     activeRowIndex: rIdx,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
+                      }}
+                      onScrollChange={(scrollTop, scrollLeft, approxRowIndex) => {
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        const currentTab = currTabs.find((t) => t.id === activeTab.id);
+                        if (!currentTab) return;
+                        const oldState = currentTab.tableViewState || {};
+                        if (
+                          oldState.scrollTop === scrollTop &&
+                          oldState.scrollLeft === scrollLeft &&
+                          oldState.activeRowIndex === approxRowIndex
+                        ) {
+                          return;
+                        }
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...oldState,
+                                    scrollTop,
+                                    scrollLeft,
+                                    activeRowIndex: approxRowIndex,
+                                    offset: tableDataByTab[activeTab.id]?.startOffset ?? oldState.offset,
                                   },
                                 }
                               : t

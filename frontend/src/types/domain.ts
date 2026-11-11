@@ -183,6 +183,7 @@ export interface TableViewState {
   pageSize?: number;
   page?: number;
   offset?: number;
+  startOffset?: number;
 }
 
 export interface WorkbenchTab {
