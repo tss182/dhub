@@ -552,6 +552,55 @@ interface DataGridProps {
   rawSql?: string;
 }
 
+function getColWidthsStorageKey(
+  connectionId?: string | null,
+  database?: string,
+  tableName?: string,
+  tabId?: string,
+  columns?: ColumnMeta[]
+): string {
+  if (tableName) {
+    return `dhub:col_widths:table:${connectionId || 'default'}:${database || ''}:${tableName}`;
+  }
+  const colSig = (columns || []).map((c) => c.name).slice(0, 10).join(',');
+  return `dhub:col_widths:query:${tabId || 'default'}:${colSig}`;
+}
+
+function saveColWidths(key: string, widths: Record<string, number>) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(key, JSON.stringify(widths));
+    }
+  } catch {}
+}
+
+function loadColWidths(key: string): Record<string, number> | null {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    }
+  } catch {}
+  return null;
+}
+
+function getInitialColumnWidth(col: ColumnMeta, sampleRows: any[][], colIdx: number): number {
+  const nameLen = (col.name || '').length;
+  let maxValLen = 0;
+  const maxRowsToCheck = Math.min(sampleRows.length, 50);
+  for (let i = 0; i < maxRowsToCheck; i++) {
+    const v = sampleRows[i]?.[colIdx];
+    if (v !== null && v !== undefined) {
+      const s = String(v);
+      if (s.length > maxValLen) maxValLen = s.length;
+    }
+  }
+  const effectiveLen = Math.max(nameLen, Math.min(maxValLen, 60));
+  // ~8.2px per character in mono font + 64px for padding (px-3), PK icon, sort indicator, freeze button
+  const calculated = Math.ceil(effectiveLen * 8.2) + 64;
+  return Math.max(90, Math.min(calculated, 420));
+}
+
 export const DataGrid: React.FC<DataGridProps> = ({
   tabId,
   connectionId,
@@ -609,6 +658,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       prevTabTableKeyRef.current = currentKey;
       hasInitializedPKsRef.current = uniquePKs.length > 0;
       setFrozenColumns(uniquePKs);
+      hasSampledRowsRef.current = false;
+      userHasResizedRef.current = false;
     } else if (!hasInitializedPKsRef.current && uniquePKs.length > 0) {
       // If table just loaded and primary keys arrived asynchronously
       hasInitializedPKsRef.current = true;
@@ -617,6 +668,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [tabId, tableName, columns, primaryKeys]);
   const thRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const [resizingCol, setResizingCol] = useState<string | null>(null);
+  const resizingRef = useRef<{ colName: string; startX: number; startWidth: number } | null>(null);
+  const isResizingRef = useRef(false);
+  const currentWidthsRef = useRef<Record<string, number>>({});
+  const userHasResizedRef = useRef<boolean>(false);
+  const hasSampledRowsRef = useRef<boolean>(false);
   const [isScrolledX, setIsScrolledX] = useState<boolean>(false);
   const [copiedRawSql, setCopiedRawSql] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -861,40 +918,123 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
 
+  const storageKey = useMemo(() => {
+    return getColWidthsStorageKey(connectionId, database, tableName, tabId, columns);
+  }, [connectionId, database, tableName, tabId, columns]);
+
+  // Initialize and load column widths from localStorage or calculate initial widths
   useEffect(() => {
-    const measure = () => {
-      const newWidths: Record<string, number> = {};
-      for (const [name, el] of Object.entries(thRefs.current)) {
-        if (el) {
-          const w = el.getBoundingClientRect().width;
-          if (w > 0) newWidths[name] = w;
-        }
+    if (!columns || columns.length === 0) return;
+
+    const saved = loadColWidths(storageKey) || {};
+    const newWidths: Record<string, number> = {};
+
+    columns.forEach((col, idx) => {
+      if (saved[col.name] && typeof saved[col.name] === 'number' && saved[col.name] >= 50) {
+        newWidths[col.name] = saved[col.name];
+      } else if (colWidths[col.name]) {
+        newWidths[col.name] = colWidths[col.name];
+      } else {
+        newWidths[col.name] = getInitialColumnWidth(col, rows, idx);
       }
+    });
+
+    setColWidths(newWidths);
+    currentWidthsRef.current = newWidths;
+  }, [columns, storageKey]);
+
+  // When rows arrive asynchronously and user hasn't resized manually, recalculate initial widths
+  useEffect(() => {
+    if (rows.length > 0 && !hasSampledRowsRef.current && !userHasResizedRef.current) {
+      hasSampledRowsRef.current = true;
+      const saved = loadColWidths(storageKey) || {};
       setColWidths((prev) => {
+        const next = { ...prev };
         let changed = false;
-        for (const k in newWidths) {
-          if (Math.abs((prev[k] || 0) - newWidths[k]) > 0.5) {
-            changed = true;
-            break;
+        columns.forEach((col, idx) => {
+          if (!saved[col.name]) {
+            const optimal = getInitialColumnWidth(col, rows, idx);
+            if (optimal > (prev[col.name] || 0)) {
+              next[col.name] = optimal;
+              changed = true;
+            }
           }
+        });
+        if (changed) {
+          currentWidthsRef.current = next;
+          return next;
         }
-        return changed ? { ...prev, ...newWidths } : prev;
+        return prev;
+      });
+    }
+  }, [rows.length, columns, storageKey]);
+
+  const handleResizeStart = (e: React.MouseEvent, colName: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizingRef.current = true;
+    setResizingCol(colName);
+
+    const startX = e.clientX;
+    const currentWidth = colWidths[colName] || thRefs.current[colName]?.offsetWidth || 120;
+    resizingRef.current = { colName, startX, startWidth: currentWidth };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    let rafId: number | null = null;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const deltaX = moveEvent.clientX - resizingRef.current.startX;
+      const nextWidth = Math.max(60, resizingRef.current.startWidth + deltaX);
+
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        setColWidths((prev) => {
+          if (prev[colName] === nextWidth) return prev;
+          const updated = { ...prev, [colName]: nextWidth };
+          currentWidthsRef.current = updated;
+          return updated;
+        });
       });
     };
 
-    measure();
-    const timer = setTimeout(measure, 50);
+    const handleMouseUp = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      resizingRef.current = null;
+      setResizingCol(null);
+      userHasResizedRef.current = true;
 
-    const container = containerRef.current;
-    if (!container) return () => clearTimeout(timer);
+      // Persist to localStorage
+      saveColWidths(storageKey, currentWidthsRef.current);
 
-    const ro = new ResizeObserver(measure);
-    ro.observe(container);
-    return () => {
-      clearTimeout(timer);
-      ro.disconnect();
+      setTimeout(() => {
+        isResizingRef.current = false;
+      }, 100);
     };
-  }, [columns, rows.length]);
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleResizeDoubleClick = (e: React.MouseEvent, colName: string, cIdx: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const col = columns[cIdx];
+    if (!col) return;
+    const autoWidth = getInitialColumnWidth(col, rows, cIdx);
+    setColWidths((prev) => {
+      const next = { ...prev, [colName]: autoWidth };
+      currentWidthsRef.current = next;
+      saveColWidths(storageKey, next);
+      return next;
+    });
+  };
 
   const frozenOffsets = useMemo(() => {
     const offsets: Record<string, number> = {};
@@ -928,6 +1068,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const hoverTimeoutRef = useRef<any>(null);
 
   const handleColMouseEnter = (e: React.MouseEvent, col: ColumnMeta, isPK: boolean) => {
+    if (isResizingRef.current || resizingRef.current) return;
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const tooltipWidth = 240;
@@ -970,6 +1111,56 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const batchSizeRef = useRef<HTMLDivElement>(null);
+
+  const scrollToCell = (vIdx: number, cIdx: number) => {
+    requestAnimationFrame(() => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const targetCell = container.querySelector<HTMLElement>(
+        `td[data-vidx="${vIdx}"][data-cidx="${cIdx}"]`
+      );
+      if (!targetCell) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const cellRect = targetCell.getBoundingClientRect();
+
+      const thead = container.querySelector('thead');
+      const theadHeight = thead ? thead.offsetHeight : 34;
+
+      const targetCol = columns[cIdx];
+      const isTargetFrozen = targetCol && frozenColumns.includes(targetCol.name);
+
+      let frozenLeftOffset = 0;
+      if (!isTargetFrozen && frozenColumns.length > 0) {
+        for (const col of columns) {
+          if (frozenColumns.includes(col.name)) {
+            frozenLeftOffset += (currentWidthsRef.current[col.name] || colWidths[col.name] || 120);
+          }
+        }
+      }
+
+      // Vertical scrolling
+      if (cellRect.top < containerRect.top + theadHeight) {
+        const diff = containerRect.top + theadHeight - cellRect.top;
+        container.scrollTop = Math.max(0, container.scrollTop - diff - 4);
+      } else if (cellRect.bottom > containerRect.bottom) {
+        const diff = cellRect.bottom - containerRect.bottom;
+        container.scrollTop = container.scrollTop + diff + 4;
+      }
+
+      // Horizontal scrolling
+      if (!isTargetFrozen) {
+        if (cellRect.left < containerRect.left + frozenLeftOffset) {
+          const diff = containerRect.left + frozenLeftOffset - cellRect.left;
+          container.scrollLeft = Math.max(0, container.scrollLeft - diff - 8);
+        } else if (cellRect.right > containerRect.right) {
+          const diff = cellRect.right - containerRect.right;
+          container.scrollLeft = container.scrollLeft + diff + 8;
+        }
+      }
+    });
+  };
 
   // Sync external page prop
   useEffect(() => {
@@ -2324,26 +2515,103 @@ ${setClauses};`;
         return;
       }
 
-      // Arrow keys navigation across grid cells
-      if (!isTyping && selectionFocus && visualRows.length > 0 && columns.length > 0) {
-        let deltaR = 0;
-        let deltaC = 0;
-        if (e.key === 'ArrowUp') deltaR = -1;
-        else if (e.key === 'ArrowDown') deltaR = 1;
-        else if (e.key === 'ArrowLeft') deltaC = -1;
-        else if (e.key === 'ArrowRight') deltaC = 1;
+      // Arrow keys / PageUp / PageDown / Home / End / Tab navigation across grid cells
+      if (!isTyping && visualRows.length > 0 && columns.length > 0) {
+        const isNavKey =
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight' ||
+          e.key === 'PageUp' ||
+          e.key === 'PageDown' ||
+          e.key === 'Home' ||
+          e.key === 'End' ||
+          e.key === 'Tab';
 
-        if (deltaR !== 0 || deltaC !== 0) {
+        if (isNavKey) {
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            const currentR = selectionFocus ? selectionFocus.r : 0;
+            const currentC = selectionFocus ? selectionFocus.c : 0;
+            let nextR = currentR;
+            let nextC = currentC + (e.shiftKey ? -1 : 1);
+            if (nextC >= columns.length) {
+              nextC = 0;
+              nextR = Math.min(visualRows.length - 1, nextR + 1);
+            } else if (nextC < 0) {
+              nextC = columns.length - 1;
+              nextR = Math.max(0, nextR - 1);
+            }
+            setSelectionAnchor({ r: nextR, c: nextC });
+            setSelectionFocus({ r: nextR, c: nextC });
+            scrollToCell(nextR, nextC);
+            return;
+          }
+
           e.preventDefault();
-          const newR = Math.max(0, Math.min(visualRows.length - 1, selectionFocus.r + deltaR));
-          const newC = Math.max(0, Math.min(columns.length - 1, selectionFocus.c + deltaC));
-          if (e.shiftKey) {
+          const currentR = selectionFocus ? selectionFocus.r : 0;
+          const currentC = selectionFocus ? selectionFocus.c : 0;
+          let targetR = currentR;
+          let targetC = currentC;
+
+          if (e.key === 'ArrowUp') targetR -= 1;
+          else if (e.key === 'ArrowDown') targetR += 1;
+          else if (e.key === 'ArrowLeft') targetC -= 1;
+          else if (e.key === 'ArrowRight') targetC += 1;
+          else if (e.key === 'PageUp') targetR -= 15;
+          else if (e.key === 'PageDown') targetR += 15;
+          else if (e.key === 'Home') {
+            if (e.ctrlKey || e.metaKey) {
+              targetR = 0;
+              targetC = 0;
+            } else {
+              targetC = 0;
+            }
+          } else if (e.key === 'End') {
+            if (e.ctrlKey || e.metaKey) {
+              targetR = visualRows.length - 1;
+              targetC = columns.length - 1;
+            } else {
+              targetC = columns.length - 1;
+            }
+          }
+
+          const newR = Math.max(0, Math.min(visualRows.length - 1, targetR));
+          const newC = Math.max(0, Math.min(columns.length - 1, targetC));
+
+          if (e.shiftKey && e.key.startsWith('Arrow')) {
             setSelectionFocus({ r: newR, c: newC });
           } else {
             setSelectionAnchor({ r: newR, c: newC });
             setSelectionFocus({ r: newR, c: newC });
           }
+          scrollToCell(newR, newC);
           return;
+        }
+      }
+
+      const isMod = isMac ? e.metaKey : e.ctrlKey;
+
+      // Enter to start editing selected cell
+      if (!isTyping && !isMod && !e.shiftKey && e.key === 'Enter') {
+        if (selectionFocus && visualRows.length > 0 && columns.length > 0 && !isReadOnly) {
+          const vr = visualRows[selectionFocus.r];
+          if (vr) {
+            e.preventDefault();
+            const col = columns[selectionFocus.c];
+            let val: any;
+            if (vr.isInsert) {
+              val = vr.insertChange?.changes[col.name] ?? (col.defaultValue ?? '');
+            } else {
+              const staged = stagedChanges[vr.globalRowIndex!];
+              val =
+                staged?.type === 'update' && staged.changes[col.name] !== undefined
+                  ? staged.changes[col.name]
+                  : vr.rowData?.[selectionFocus.c];
+            }
+            handleStartEdit(vr.rowId, selectionFocus.c, val ?? '');
+            return;
+          }
         }
       }
 
@@ -2357,7 +2625,6 @@ ${setClauses};`;
         return;
       }
 
-      const isMod = isMac ? e.metaKey : e.ctrlKey;
       if (!isMod) return;
 
       if (isTyping && !target?.closest?.('[data-grid-container]')) {
@@ -2424,7 +2691,7 @@ ${setClauses};`;
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tabId, isMac, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm, copyFormat, tableName, primaryKeys, driver]);
+  }, [tabId, isMac, isReadOnly, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm, copyFormat, tableName, primaryKeys, driver, frozenColumns, colWidths]);
 
   // Global clipboard copy event to ensure Ctrl+C always outputs the selected format
   useEffect(() => {
@@ -2784,13 +3051,24 @@ ${setClauses};`;
         {/* Grid Table Container */}
         <div
           ref={containerRef}
+          tabIndex={0}
           onScroll={handleScroll}
-          className="flex-1 overflow-auto min-h-0 relative"
+          className="flex-1 overflow-auto min-h-0 relative outline-none focus:ring-1 focus:ring-blue-500/20"
         >
-        <table className="w-full border-collapse font-mono text-[12px] text-zinc-300">
+        <table
+          className="border-collapse font-mono text-[12px] text-zinc-300 min-w-full"
+          style={{ tableLayout: 'fixed', width: 'max-content' }}
+        >
+          <colgroup>
+            {columns.map((col) => {
+              const w = colWidths[col.name] || 120;
+              return <col key={col.name} style={{ width: `${w}px`, minWidth: `${w}px` }} />;
+            })}
+            <col style={{ width: 'auto' }} />
+          </colgroup>
           <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-30`}>
             <tr className={`border-b ${gridCellBorder}`}>
-              {columns.map((col) => {
+              {columns.map((col, cIdx) => {
                 const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
                 const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
                 const isSorted = sortIndex !== -1;
@@ -2798,6 +3076,7 @@ ${setClauses};`;
                 const isFrozen = frozenColumns.includes(col.name);
                 const isLastFrozen = col.name === lastFrozenColName;
                 const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                const w = colWidths[col.name] || 120;
 
                 return (
                   <th
@@ -2806,6 +3085,7 @@ ${setClauses};`;
                       thRefs.current[col.name] = el;
                     }}
                     onClick={(e) => {
+                      if (isResizingRef.current) return;
                       if (e.altKey) {
                         handleToggleFreeze(col.name);
                         return;
@@ -2814,7 +3094,7 @@ ${setClauses};`;
                     }}
                     onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
                     onMouseLeave={handleColMouseLeave}
-                    className={`px-3 py-1.5 text-left font-semibold border-r ${gridCellBorder} text-zinc-200 group/th select-none ${
+                    className={`relative px-3 py-1.5 text-left font-semibold border-r ${gridCellBorder} text-zinc-200 group/th select-none ${
                       isFrozen ? `sticky z-40 ${gridTheadBg}` : ''
                     } ${
                       isLastFrozen && isScrolledX
@@ -2827,10 +3107,15 @@ ${setClauses};`;
                         ? 'hover:bg-emerald-950/60'
                         : 'hover:bg-[#1c1d28]'
                     } transition-colors cursor-pointer`}
-                    style={isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : undefined}
+                    style={{
+                      width: `${w}px`,
+                      minWidth: `${w}px`,
+                      maxWidth: `${w}px`,
+                      ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                    }}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 truncate">
+                    <div className="flex items-center justify-between gap-1.5 min-w-0">
+                      <div className="flex items-center gap-1.5 truncate min-w-0 flex-1">
                         {isPK && (
                           <Key className="h-3 w-3 text-amber-400 fill-amber-400/30 shrink-0" />
                         )}
@@ -2886,9 +3171,33 @@ ${setClauses};`;
                         )}
                       </div>
                     </div>
+
+                    {/* Column Resizer Divider */}
+                    <div
+                      onMouseDown={(e) => handleResizeStart(e, col.name)}
+                      onDoubleClick={(e) => handleResizeDoubleClick(e, col.name, cIdx)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                      }}
+                      className={`absolute right-0 top-0 bottom-0 w-3 -mr-1.5 cursor-col-resize z-20 flex justify-center items-center group/resizer select-none ${
+                        resizingCol === col.name ? 'bg-blue-500/20' : ''
+                      }`}
+                      title={`Resize column "${col.name}" (Double-click to auto-fit)`}
+                    >
+                      <div
+                        className={`w-[2px] h-full transition-colors ${
+                          resizingCol === col.name
+                            ? 'bg-blue-400'
+                            : 'bg-transparent group-hover/resizer:bg-blue-400/80 group-active/resizer:bg-blue-400'
+                        }`}
+                      />
+                    </div>
                   </th>
                 );
               })}
+              {/* Dummy header cell for remaining horizontal space */}
+              <th className={`p-0 border-none ${gridTheadBg}`} />
             </tr>
           </thead>
           <tbody>
@@ -2948,15 +3257,18 @@ ${setClauses};`;
                         const isFrozen = frozenColumns.includes(col.name);
                         const isLastFrozen = col.name === lastFrozenColName;
                         const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                        const w = colWidths[col.name] || 120;
 
                         return (
                           <td
                             key={col.name}
+                            data-vidx={vIdx}
+                            data-cidx={cIdx}
                             onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
                             onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
                             onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
                             onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
-                            className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs select-none transition-colors ${
+                            className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
                               isFrozen
                                 ? `sticky z-10 ${
                                     isSelected
@@ -2977,7 +3289,12 @@ ${setClauses};`;
                                 ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
                                 : ''
                             }`}
-                            style={isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : undefined}
+                            style={{
+                              width: `${w}px`,
+                              minWidth: `${w}px`,
+                              maxWidth: `${w}px`,
+                              ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                            }}
                           >
                             {isEditing ? (
                               <input
@@ -3006,8 +3323,21 @@ ${setClauses};`;
                                     e.preventDefault();
                                     handleFinishEdit();
                                     const nextCol = (cIdx + 1) % columns.length;
+                                    const nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
+                                    const nextVr = visualRows[nextVIdx];
+                                    setSelectionAnchor({ r: nextVIdx, c: nextCol });
+                                    setSelectionFocus({ r: nextVIdx, c: nextCol });
+                                    scrollToCell(nextVIdx, nextCol);
                                     setTimeout(() => {
-                                      handleStartEdit(globalRowIndex, nextCol, row[nextCol]);
+                                      if (nextVr) {
+                                        const nextColMeta = columns[nextCol];
+                                        const stagedNext = stagedChanges[nextVr.globalRowIndex!];
+                                        const nextVal =
+                                          stagedNext?.type === 'update' && stagedNext.changes[nextColMeta.name] !== undefined
+                                            ? stagedNext.changes[nextColMeta.name]
+                                            : nextVr.rowData?.[nextCol];
+                                        handleStartEdit(nextVr.rowId, nextCol, nextVal ?? '');
+                                      }
                                     }, 10);
                                   }
                                 }}
@@ -3023,6 +3353,7 @@ ${setClauses};`;
                           </td>
                         );
                       })}
+                      <td className="p-0 border-none pointer-events-none" />
                     </tr>
                   );
                 })}
@@ -3047,10 +3378,13 @@ ${setClauses};`;
                         const isFrozen = frozenColumns.includes(col.name);
                         const isLastFrozen = col.name === lastFrozenColName;
                         const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                        const w = colWidths[col.name] || 120;
 
                         return (
                           <td
                             key={col.name}
+                            data-vidx={vIdx}
+                            data-cidx={cIdx}
                             onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
                             onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
                             onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
@@ -3059,7 +3393,7 @@ ${setClauses};`;
                                 handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
                               }
                             }}
-                            className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs cursor-text select-none transition-colors ${
+                            className={`px-3 py-1 border-r border-[#22242c] truncate cursor-text select-none transition-colors ${
                               isFrozen
                                 ? `sticky z-10 ${
                                     isSelected
@@ -3078,7 +3412,12 @@ ${setClauses};`;
                                 ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
                                 : ''
                             }`}
-                            style={isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : undefined}
+                            style={{
+                              width: `${w}px`,
+                              minWidth: `${w}px`,
+                              maxWidth: `${w}px`,
+                              ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                            }}
                             title="Click to select, double click to edit"
                           >
                             {isEditing ? (
@@ -3108,9 +3447,26 @@ ${setClauses};`;
                                     e.preventDefault();
                                     handleFinishEdit();
                                     const nextCol = (cIdx + 1) % columns.length;
+                                    const nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
+                                    const nextVr = visualRows[nextVIdx];
+                                    setSelectionAnchor({ r: nextVIdx, c: nextCol });
+                                    setSelectionFocus({ r: nextVIdx, c: nextCol });
+                                    scrollToCell(nextVIdx, nextCol);
                                     setTimeout(() => {
-                                      const nextVal = change.changes[columns[nextCol].name];
-                                      handleStartEdit(change.rowIndex, nextCol, nextVal ?? '');
+                                      if (nextVr) {
+                                        const nextColMeta = columns[nextCol];
+                                        let nextVal: any;
+                                        if (nextVr.isInsert) {
+                                          nextVal = nextVr.insertChange?.changes[nextColMeta.name] ?? (nextColMeta.defaultValue ?? '');
+                                        } else {
+                                          const stagedNext = stagedChanges[nextVr.globalRowIndex!];
+                                          nextVal =
+                                            stagedNext?.type === 'update' && stagedNext.changes[nextColMeta.name] !== undefined
+                                              ? stagedNext.changes[nextColMeta.name]
+                                              : nextVr.rowData?.[nextCol];
+                                        }
+                                        handleStartEdit(nextVr.rowId, nextCol, nextVal ?? '');
+                                      }
                                     }, 10);
                                   }
                                 }}
@@ -3128,6 +3484,7 @@ ${setClauses};`;
                           </td>
                         );
                       })}
+                      <td className="p-0 border-none pointer-events-none" />
                     </tr>
                   );
                 })}
@@ -3646,6 +4003,51 @@ ${setClauses};`;
                   </div>
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  const { cIdx } = contextMenu;
+                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  if (cIdx !== null && columns[cIdx]) {
+                    const colName = columns[cIdx].name;
+                    const autoW = getInitialColumnWidth(columns[cIdx], rows, cIdx);
+                    setColWidths((prev) => {
+                      const next = { ...prev, [colName]: autoW };
+                      currentWidthsRef.current = next;
+                      saveColWidths(storageKey, next);
+                      return next;
+                    });
+                  }
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <ArrowUpDown className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white rotate-90" />
+                  <span>Auto-fit Column Width</span>
+                </div>
+                <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">2x Click</kbd>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  const resetWidths: Record<string, number> = {};
+                  columns.forEach((c, idx) => {
+                    resetWidths[c.name] = getInitialColumnWidth(c, rows, idx);
+                  });
+                  setColWidths(resetWidths);
+                  currentWidthsRef.current = resetWidths;
+                  saveColWidths(storageKey, resetWidths);
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <RotateCcw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Reset All Column Widths</span>
+                </div>
+              </button>
               <div className="my-1 border-t border-[#272932]" />
             </>
           )}
