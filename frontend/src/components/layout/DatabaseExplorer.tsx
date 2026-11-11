@@ -33,6 +33,7 @@ import {
   Search,
   Zap,
   Layers,
+  ArrowRightLeft,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -49,7 +50,7 @@ interface ContextMenuState {
   isOpen: boolean;
   x: number;
   y: number;
-  type: 'connection' | 'folder' | 'database' | 'table' | 'empty';
+  type: 'connection' | 'folder' | 'database' | 'schema' | 'table' | 'empty';
   connection?: ConnectionConfig;
   folder?: ConnectionFolder;
   database?: string;
@@ -156,7 +157,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
   // Hover Tooltip state for long folder, connection, database, table, and view names
   const [hoveredItem, setHoveredItem] = useState<{
-    kind: 'folder' | 'connection' | 'database' | 'table' | 'view';
+    kind: 'folder' | 'connection' | 'database' | 'schema' | 'table' | 'view';
     title: string;
     badge: string;
     subtitle?: string;
@@ -169,7 +170,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   const handleItemMouseEnter = (
     e: React.MouseEvent,
     item: {
-      kind: 'folder' | 'connection' | 'database' | 'table' | 'view';
+      kind: 'folder' | 'connection' | 'database' | 'schema' | 'table' | 'view';
       title: string;
       badge: string;
       subtitle?: string;
@@ -208,10 +209,14 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   // PostgreSQL discovered schemas per database: key = `${connId}:${dbName}`
   const [treeSchemas, setTreeSchemas] = useState<Record<string, string[]>>({});
 
-  // Drag & Drop state for sorting and grouping connections/folders
+  // Drag & Drop state for sorting and grouping connections/folders or moving tables between schemas
   const [draggedItem, setDraggedItem] = useState<{
-    type: 'connection' | 'folder';
+    type: 'connection' | 'folder' | 'table';
     id: string;
+    connId?: string;
+    database?: string;
+    schema?: string;
+    table?: ObjectSummary;
   } | null>(null);
 
   const [dropTarget, setDropTarget] = useState<{
@@ -381,6 +386,42 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     schema: string;
     table: string;
   }>({ isOpen: false, connId: '', db: '', schema: '', table: '' });
+
+  // Create Schema / Collection Modal state (PostgreSQL)
+  const [createSchemaModal, setCreateSchemaModal] = useState<{
+    isOpen: boolean;
+    connection: ConnectionConfig | null;
+    database: string;
+    schemaName: string;
+    authorization: string;
+  }>({
+    isOpen: false,
+    connection: null,
+    database: '',
+    schemaName: '',
+    authorization: '',
+  });
+
+  // Move Table to Another Schema / Collection Modal (PostgreSQL)
+  const [moveTableModal, setMoveTableModal] = useState<{
+    isOpen: boolean;
+    connection: ConnectionConfig | null;
+    database: string;
+    sourceSchema: string;
+    tableName: string;
+    targetSchema: string;
+    objectType: string;
+    availableSchemas: string[];
+  }>({
+    isOpen: false,
+    connection: null,
+    database: '',
+    sourceSchema: '',
+    tableName: '',
+    targetSchema: '',
+    objectType: 'table',
+    availableSchemas: [],
+  });
 
   const handleOpenBackupModal = async (conn: ConnectionConfig, database: string) => {
     let defaultPath = `${database}_backup.sql`;
@@ -876,14 +917,265 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
+  // Schema / Collection Handlers (PostgreSQL)
+  const handleOpenCreateSchema = (conn: ConnectionConfig, database: string) => {
+    setCreateSchemaModal({
+      isOpen: true,
+      connection: conn,
+      database,
+      schemaName: '',
+      authorization: '',
+    });
+  };
+
+  const handleConfirmCreateSchema = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!createSchemaModal.connection || !createSchemaModal.database || !createSchemaModal.schemaName.trim()) return;
+
+    const conn = createSchemaModal.connection;
+    const dbName = createSchemaModal.database;
+    const schemaName = createSchemaModal.schemaName.trim();
+    const auth = createSchemaModal.authorization.trim();
+
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schemaName)) {
+      alertWarning(
+        'Collection / Schema name must start with a letter or underscore, and can only contain letters, numbers, and underscores.',
+        'Invalid Schema Name'
+      );
+      return;
+    }
+
+    let sql = `CREATE SCHEMA "${schemaName}"`;
+    if (auth) {
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(auth)) {
+        alertWarning('Authorization owner name contains invalid characters.', 'Invalid Owner Name');
+        return;
+      }
+      sql += ` AUTHORIZATION "${auth}"`;
+    }
+    sql += `;`;
+
+    try {
+      const execId = 'create-schema-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: dbName,
+        schema: 'public',
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      const schemas = (await SchemaService.GetSchemas(conn.id, dbName)) ?? [];
+      const safeSchemas = schemas.length > 0 ? schemas : [schemaName];
+      const nodeKey = `${conn.id}:${dbName}`;
+      setTreeSchemas((prev) => ({ ...prev, [nodeKey]: safeSchemas }));
+
+      const sKey = `${conn.id}:${dbName}:${schemaName}`;
+      setTreeObjects(sKey, []);
+
+      if (!expandedNodes[nodeKey]) {
+        toggleNode(nodeKey);
+      }
+      setNodeExpanded(`${conn.id}:${dbName}:schema:${schemaName}`, true);
+
+      setCreateSchemaModal({
+        isOpen: false,
+        connection: null,
+        database: '',
+        schemaName: '',
+        authorization: '',
+      });
+      alertSuccess(`Collection / Schema "${schemaName}" created successfully.`, 'Collection Created');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Create Collection');
+    }
+  };
+
+  const handleRefreshSchema = async (connId: string, dbName: string, schemaName: string) => {
+    const schemaKey = `${connId}:${dbName}:${schemaName}`;
+    try {
+      const objects = (await SchemaService.GetObjects(connId, dbName, schemaName)) ?? [];
+      setTreeObjects(schemaKey, objects as any);
+      alertSuccess(`Collection / Schema "${schemaName}" refreshed.`, 'Refreshed');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Refresh Collection');
+    }
+  };
+
+  const handleDeleteSchema = async (conn: ConnectionConfig, dbName: string, schemaName: string) => {
+    if (schemaName === 'public') {
+      alertWarning('Cannot drop default "public" schema.', 'Action Not Allowed');
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Drop Collection / Schema',
+      message: `Are you sure you want to DROP collection/schema "${schemaName}" in database "${dbName}"? All tables, views, and data in this collection will be permanently deleted (CASCADE). This action cannot be undone.`,
+      confirmLabel: 'Drop Schema',
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    try {
+      const execId = 'drop-schema-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: dbName,
+        schema: schemaName,
+        sql: `DROP SCHEMA "${schemaName}" CASCADE;`,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      const nodeKey = `${conn.id}:${dbName}`;
+      const schemas = (await SchemaService.GetSchemas(conn.id, dbName)) ?? [];
+      const safeSchemas = schemas.length > 0 ? schemas : ['public'];
+      setTreeSchemas((prev) => ({ ...prev, [nodeKey]: safeSchemas }));
+      alertSuccess(`Collection / Schema "${schemaName}" dropped successfully.`, 'Schema Dropped');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Drop Schema');
+    }
+  };
+
+  const handleOpenMoveTable = async (
+    conn: ConnectionConfig,
+    database: string,
+    sourceSchema: string,
+    table: ObjectSummary
+  ) => {
+    let schemas = treeSchemas[`${conn.id}:${database}`] || [];
+    if (schemas.length === 0) {
+      try {
+        schemas = (await SchemaService.GetSchemas(conn.id, database)) ?? [];
+      } catch {
+        schemas = ['public'];
+      }
+    }
+    const otherSchemas = schemas.filter((s) => s !== sourceSchema);
+    const defaultTarget = otherSchemas.length > 0 ? otherSchemas[0] : '';
+
+    setMoveTableModal({
+      isOpen: true,
+      connection: conn,
+      database,
+      sourceSchema,
+      tableName: table.name,
+      targetSchema: defaultTarget,
+      objectType: table.type || 'table',
+      availableSchemas: schemas,
+    });
+  };
+
+  const handleConfirmMoveTable = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (
+      !moveTableModal.connection ||
+      !moveTableModal.database ||
+      !moveTableModal.tableName ||
+      !moveTableModal.targetSchema.trim()
+    ) {
+      return;
+    }
+
+    const { connection: conn, database: db, sourceSchema, targetSchema: rawTarget, tableName, objectType } = moveTableModal;
+    const targetSchema = rawTarget.trim();
+
+    if (targetSchema === sourceSchema) {
+      alertWarning('Target collection/schema must be different from current schema.', 'Same Schema');
+      return;
+    }
+
+    let keyword = 'TABLE';
+    if (objectType === 'view') {
+      keyword = 'VIEW';
+    } else if (objectType === 'materialized_view') {
+      keyword = 'MATERIALIZED VIEW';
+    } else if (objectType === 'sequence') {
+      keyword = 'SEQUENCE';
+    }
+
+    const sql = `ALTER ${keyword} "${sourceSchema}"."${tableName}" SET SCHEMA "${targetSchema}";`;
+
+    try {
+      const execId = 'move-table-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema: sourceSchema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      // Update tree: remove from old schema
+      const oldKey = `${conn.id}:${db}:${sourceSchema}`;
+      removeTreeObject(oldKey, tableName);
+
+      // Refresh both source and target schema objects
+      const [oldObjs, newObjs] = await Promise.all([
+        SchemaService.GetObjects(conn.id, db, sourceSchema).catch(() => null),
+        SchemaService.GetObjects(conn.id, db, targetSchema).catch(() => null),
+      ]);
+      if (oldObjs) setTreeObjects(oldKey, oldObjs as any);
+      if (newObjs) setTreeObjects(`${conn.id}:${db}:${targetSchema}`, newObjs as any);
+
+      // Ensure treeSchemas has targetSchema if it was new
+      const dbKey = `${conn.id}:${db}`;
+      const currSchemas = treeSchemas[dbKey] || [];
+      if (!currSchemas.includes(targetSchema)) {
+        const refreshedSchemas = (await SchemaService.GetSchemas(conn.id, db)) ?? [];
+        setTreeSchemas((prev) => ({ ...prev, [dbKey]: refreshedSchemas }));
+      }
+
+      setMoveTableModal({
+        isOpen: false,
+        connection: null,
+        database: '',
+        sourceSchema: '',
+        tableName: '',
+        targetSchema: '',
+        objectType: 'table',
+        availableSchemas: [],
+      });
+
+      alertSuccess(
+        `Moved ${keyword.toLowerCase()} "${tableName}" from "${sourceSchema}" to "${targetSchema}".`,
+        'Table Moved'
+      );
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Move Table');
+    }
+  };
+
   // Database handlers
   const handleRefreshDatabase = async (connId: string, dbName: string) => {
     const conn = connections.find((c) => c.id === connId);
-    const targetSchema = conn?.driver === 'postgres' ? 'public' : dbName;
+    if (conn?.driver === 'postgres') {
+      try {
+        const schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
+        const safeSchemas = schemas.length > 0 ? schemas : ['public'];
+        setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
+        for (const s of safeSchemas) {
+          const sKey = `${connId}:${dbName}:${s}`;
+          const objects = (await SchemaService.GetObjects(connId, dbName, s)) ?? [];
+          setTreeObjects(sKey, objects as any);
+        }
+        alertSuccess(`Database "${dbName}" refreshed.`, 'Refreshed');
+      } catch (err: any) {
+        alertError(err?.message || String(err), 'Failed to Refresh Database');
+      }
+      return;
+    }
+
+    const targetSchema = dbName;
     const schemaKey = `${connId}:${dbName}:${targetSchema}`;
     try {
       const objects = (await SchemaService.GetObjects(connId, dbName, targetSchema)) ?? [];
       setTreeObjects(schemaKey, objects as any);
+      alertSuccess(`Database "${dbName}" refreshed.`, 'Refreshed');
     } catch (err: any) {
       alertError(err?.message || String(err), 'Failed to Refresh Database');
     }
@@ -1664,8 +1956,21 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                             e.stopPropagation();
                             handleItemMouseLeave();
                           }}
-                          className="opacity-0 group-hover/db:opacity-100 flex items-center transition-opacity ml-1"
+                          className="opacity-0 group-hover/db:opacity-100 flex items-center gap-0.5 transition-opacity ml-1"
                         >
+                          {c.driver === 'postgres' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenCreateSchema(c, dbName);
+                              }}
+                              className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
+                              title={`Create New Collection / Schema in "${dbName}"`}
+                            >
+                              <Layers className="h-3 w-3 text-cyan-400" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1716,8 +2021,101 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                           .catch(() => {});
                                       }
                                     }}
-                                    className={`group/sch flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
+                                    onContextMenu={(e) => {
+                                      handleItemMouseLeave();
+                                      openContextMenu(e, 'schema', {
+                                        connection: c,
+                                        database: dbName,
+                                        schema: sName,
+                                      });
+                                    }}
+                                    onMouseEnter={(e) =>
+                                      handleItemMouseEnter(e, {
+                                        kind: 'schema',
+                                        title: sName,
+                                        badge: 'SCHEMA',
+                                        subtitle: `${c.name} / ${dbName}`,
+                                      })
+                                    }
+                                    onMouseLeave={handleItemMouseLeave}
+                                    onDragOver={(e) => {
+                                      if (
+                                        draggedItem?.type === 'table' &&
+                                        draggedItem.connId === c.id &&
+                                        draggedItem.database === dbName &&
+                                        draggedItem.schema !== sName
+                                      ) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }
+                                    }}
+                                    onDrop={async (e) => {
+                                      if (
+                                        draggedItem?.type !== 'table' ||
+                                        draggedItem.connId !== c.id ||
+                                        draggedItem.database !== dbName ||
+                                        draggedItem.schema === sName ||
+                                        !draggedItem.table
+                                      ) {
+                                        return;
+                                      }
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const sourceSchema = draggedItem.schema!;
+                                      const targetSchema = sName;
+                                      const tbl = draggedItem.table;
+                                      setDraggedItem(null);
+
+                                      const ok = await confirmDialog({
+                                        title: 'Move Table to Another Collection',
+                                        message: `Move table "${tbl.name}" from collection "${sourceSchema}" to "${targetSchema}"?`,
+                                        confirmLabel: 'Move Table',
+                                      });
+                                      if (!ok) return;
+
+                                      try {
+                                        const keyword =
+                                          tbl.type === 'view'
+                                            ? 'VIEW'
+                                            : tbl.type === 'materialized_view'
+                                            ? 'MATERIALIZED VIEW'
+                                            : 'TABLE';
+                                        const sql = `ALTER ${keyword} "${sourceSchema}"."${tbl.name}" SET SCHEMA "${targetSchema}";`;
+                                        const execId = 'move-table-' + Date.now();
+                                        await QueryService.ExecuteQuery({
+                                          executionId: execId,
+                                          connectionId: c.id,
+                                          database: dbName,
+                                          schema: sourceSchema,
+                                          sql,
+                                          limit: 10,
+                                          offset: 0,
+                                        } as any);
+
+                                        const oldKey = `${c.id}:${dbName}:${sourceSchema}`;
+                                        removeTreeObject(oldKey, tbl.name);
+
+                                        const [oldObjs, newObjs] = await Promise.all([
+                                          SchemaService.GetObjects(c.id, dbName, sourceSchema).catch(() => null),
+                                          SchemaService.GetObjects(c.id, dbName, targetSchema).catch(() => null),
+                                        ]);
+                                        if (oldObjs) setTreeObjects(oldKey, oldObjs as any);
+                                        if (newObjs) setTreeObjects(`${c.id}:${dbName}:${targetSchema}`, newObjs as any);
+
+                                        alertSuccess(`Moved table "${tbl.name}" to "${targetSchema}".`, 'Table Moved');
+                                      } catch (err: any) {
+                                        alertError(err?.message || String(err), 'Failed to Move Table');
+                                      }
+                                    }}
+                                    className={`group/sch flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 transition-colors ${
                                       isSchemaActive ? 'bg-[#22242c] text-zinc-100 font-medium' : ''
+                                    } ${
+                                      draggedItem?.type === 'table' &&
+                                      draggedItem.connId === c.id &&
+                                      draggedItem.database === dbName &&
+                                      draggedItem.schema !== sName
+                                        ? 'ring-1 ring-cyan-400 bg-cyan-950/40 text-cyan-200'
+                                        : ''
                                     }`}
                                   >
                                     {isSExpanded ? (
@@ -1729,8 +2127,19 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                     <span className="truncate flex-1 text-[11px]">{sName}</span>
                                     <div
                                       onClick={(e) => e.stopPropagation()}
-                                      className="opacity-0 group-hover/sch:opacity-100 flex items-center transition-opacity"
+                                      className="opacity-0 group-hover/sch:opacity-100 flex items-center gap-0.5 transition-opacity"
                                     >
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenCreateSchema(c, dbName);
+                                        }}
+                                        className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
+                                        title={`Create New Collection / Schema in "${dbName}"`}
+                                      >
+                                        <Layers className="h-2.5 w-2.5 text-cyan-400" />
+                                      </button>
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -1765,38 +2174,60 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                           <Plus className="h-2.5 w-2.5" />
                                         </button>
                                       </div>
-                                      {sTables.map((obj) => (
-                                        <div
-                                          key={obj.name}
-                                          onClick={() => {
-                                            handleItemMouseLeave();
-                                            handleTableClick(c.id, dbName, sName, obj.name);
-                                          }}
-                                          onContextMenu={(e) => {
-                                            handleItemMouseLeave();
-                                            openContextMenu(e, 'table', {
-                                              connection: c,
-                                              database: dbName,
-                                              schema: sName,
-                                              table: obj,
-                                            });
-                                          }}
-                                          onMouseEnter={(e) =>
-                                            handleItemMouseEnter(e, {
-                                              kind: 'table',
-                                              title: obj.name,
-                                              badge: 'TABLE',
-                                              subtitle: `${c.name} / ${dbName}.${sName}`,
-                                            })
-                                          }
-                                          onMouseLeave={handleItemMouseLeave}
-                                          title={obj.name}
-                                          className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                        >
-                                          <Table className="h-3 w-3 shrink-0 text-emerald-400" />
-                                          <span className="truncate">{obj.name}</span>
-                                        </div>
-                                      ))}
+                                      {sTables.map((obj) => {
+                                        const objDragId = `${c.id}:${dbName}:${sName}:${obj.name}`;
+                                        return (
+                                          <div
+                                            key={obj.name}
+                                            draggable={c.driver === 'postgres' && !c.isReadOnly}
+                                            onDragStart={(e) => {
+                                              e.stopPropagation();
+                                              setDraggedItem({
+                                                type: 'table',
+                                                id: objDragId,
+                                                connId: c.id,
+                                                database: dbName,
+                                                schema: sName,
+                                                table: obj,
+                                              });
+                                            }}
+                                            onDragEnd={() => {
+                                              setDraggedItem(null);
+                                            }}
+                                            onClick={() => {
+                                              handleItemMouseLeave();
+                                              handleTableClick(c.id, dbName, sName, obj.name);
+                                            }}
+                                            onContextMenu={(e) => {
+                                              handleItemMouseLeave();
+                                              openContextMenu(e, 'table', {
+                                                connection: c,
+                                                database: dbName,
+                                                schema: sName,
+                                                table: obj,
+                                              });
+                                            }}
+                                            onMouseEnter={(e) =>
+                                              handleItemMouseEnter(e, {
+                                                kind: 'table',
+                                                title: obj.name,
+                                                badge: 'TABLE',
+                                                subtitle: `${c.name} / ${dbName}.${sName}`,
+                                              })
+                                            }
+                                            onMouseLeave={handleItemMouseLeave}
+                                            title={obj.name}
+                                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
+                                              draggedItem?.type === 'table' && draggedItem.id === objDragId
+                                                ? 'opacity-40'
+                                                : ''
+                                            }`}
+                                          >
+                                            <Table className="h-3 w-3 shrink-0 text-emerald-400" />
+                                            <span className="truncate">{obj.name}</span>
+                                          </div>
+                                        );
+                                      })}
 
                                       {sViews.length > 0 && (
                                         <>
@@ -1804,38 +2235,60 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                             <Folder className="h-2.5 w-2.5" />
                                             <span>views ({sViews.length})</span>
                                           </div>
-                                          {sViews.map((obj) => (
-                                            <div
-                                              key={obj.name}
-                                              onClick={() => {
-                                                handleItemMouseLeave();
-                                                handleTableClick(c.id, dbName, sName, obj.name);
-                                              }}
-                                              onContextMenu={(e) => {
-                                                handleItemMouseLeave();
-                                                openContextMenu(e, 'table', {
-                                                  connection: c,
-                                                  database: dbName,
-                                                  schema: sName,
-                                                  table: obj,
-                                                });
-                                              }}
-                                              onMouseEnter={(e) =>
-                                                handleItemMouseEnter(e, {
-                                                  kind: 'view',
-                                                  title: obj.name,
-                                                  badge: 'VIEW',
-                                                  subtitle: `${c.name} / ${dbName}.${sName}`,
-                                                })
-                                              }
-                                              onMouseLeave={handleItemMouseLeave}
-                                              title={obj.name}
-                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                            >
-                                              <Eye className="h-3 w-3 shrink-0 text-purple-400" />
-                                              <span className="truncate">{obj.name}</span>
-                                            </div>
-                                          ))}
+                                          {sViews.map((obj) => {
+                                            const objDragId = `${c.id}:${dbName}:${sName}:${obj.name}`;
+                                            return (
+                                              <div
+                                                key={obj.name}
+                                                draggable={c.driver === 'postgres' && !c.isReadOnly}
+                                                onDragStart={(e) => {
+                                                  e.stopPropagation();
+                                                  setDraggedItem({
+                                                    type: 'table',
+                                                    id: objDragId,
+                                                    connId: c.id,
+                                                    database: dbName,
+                                                    schema: sName,
+                                                    table: obj,
+                                                  });
+                                                }}
+                                                onDragEnd={() => {
+                                                  setDraggedItem(null);
+                                                }}
+                                                onClick={() => {
+                                                  handleItemMouseLeave();
+                                                  handleTableClick(c.id, dbName, sName, obj.name);
+                                                }}
+                                                onContextMenu={(e) => {
+                                                  handleItemMouseLeave();
+                                                  openContextMenu(e, 'table', {
+                                                    connection: c,
+                                                    database: dbName,
+                                                    schema: sName,
+                                                    table: obj,
+                                                  });
+                                                }}
+                                                onMouseEnter={(e) =>
+                                                  handleItemMouseEnter(e, {
+                                                    kind: 'view',
+                                                    title: obj.name,
+                                                    badge: 'VIEW',
+                                                    subtitle: `${c.name} / ${dbName}.${sName}`,
+                                                  })
+                                                }
+                                                onMouseLeave={handleItemMouseLeave}
+                                                title={obj.name}
+                                                className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
+                                                  draggedItem?.type === 'table' && draggedItem.id === objDragId
+                                                    ? 'opacity-40'
+                                                    : ''
+                                                }`}
+                                              >
+                                                <Eye className="h-3 w-3 shrink-0 text-purple-400" />
+                                                <span className="truncate">{obj.name}</span>
+                                              </div>
+                                            );
+                                          })}
                                         </>
                                       )}
 
@@ -1845,38 +2298,60 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                             <Folder className="h-2.5 w-2.5" />
                                             <span>materialized views ({sMatViews.length})</span>
                                           </div>
-                                          {sMatViews.map((obj) => (
-                                            <div
-                                              key={obj.name}
-                                              onClick={() => {
-                                                handleItemMouseLeave();
-                                                handleTableClick(c.id, dbName, sName, obj.name);
-                                              }}
-                                              onContextMenu={(e) => {
-                                                handleItemMouseLeave();
-                                                openContextMenu(e, 'table', {
-                                                  connection: c,
-                                                  database: dbName,
-                                                  schema: sName,
-                                                  table: obj,
-                                                });
-                                              }}
-                                              onMouseEnter={(e) =>
-                                                handleItemMouseEnter(e, {
-                                                  kind: 'view',
-                                                  title: obj.name,
-                                                  badge: 'MAT VIEW',
-                                                  subtitle: `${c.name} / ${dbName}.${sName}`,
-                                                })
-                                              }
-                                              onMouseLeave={handleItemMouseLeave}
-                                              title={obj.name}
-                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                            >
-                                              <Layers className="h-3 w-3 shrink-0 text-blue-400" />
-                                              <span className="truncate">{obj.name}</span>
-                                            </div>
-                                          ))}
+                                          {sMatViews.map((obj) => {
+                                            const objDragId = `${c.id}:${dbName}:${sName}:${obj.name}`;
+                                            return (
+                                              <div
+                                                key={obj.name}
+                                                draggable={c.driver === 'postgres' && !c.isReadOnly}
+                                                onDragStart={(e) => {
+                                                  e.stopPropagation();
+                                                  setDraggedItem({
+                                                    type: 'table',
+                                                    id: objDragId,
+                                                    connId: c.id,
+                                                    database: dbName,
+                                                    schema: sName,
+                                                    table: obj,
+                                                  });
+                                                }}
+                                                onDragEnd={() => {
+                                                  setDraggedItem(null);
+                                                }}
+                                                onClick={() => {
+                                                  handleItemMouseLeave();
+                                                  handleTableClick(c.id, dbName, sName, obj.name);
+                                                }}
+                                                onContextMenu={(e) => {
+                                                  handleItemMouseLeave();
+                                                  openContextMenu(e, 'table', {
+                                                    connection: c,
+                                                    database: dbName,
+                                                    schema: sName,
+                                                    table: obj,
+                                                  });
+                                                }}
+                                                onMouseEnter={(e) =>
+                                                  handleItemMouseEnter(e, {
+                                                    kind: 'view',
+                                                    title: obj.name,
+                                                    badge: 'MAT VIEW',
+                                                    subtitle: `${c.name} / ${dbName}.${sName}`,
+                                                  })
+                                                }
+                                                onMouseLeave={handleItemMouseLeave}
+                                                title={obj.name}
+                                                className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
+                                                  draggedItem?.type === 'table' && draggedItem.id === objDragId
+                                                    ? 'opacity-40'
+                                                    : ''
+                                                }`}
+                                              >
+                                                <Layers className="h-3 w-3 shrink-0 text-blue-400" />
+                                                <span className="truncate">{obj.name}</span>
+                                              </div>
+                                            );
+                                          })}
                                         </>
                                       )}
 
@@ -2619,6 +3094,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               {contextMenu.type === 'folder' && `Folder: ${contextMenu.folder?.name}`}
               {contextMenu.type === 'connection' && `Connection: ${contextMenu.connection?.name}`}
               {contextMenu.type === 'database' && `Database: ${contextMenu.database}`}
+              {contextMenu.type === 'schema' && `Collection / Schema: ${contextMenu.schema}`}
               {contextMenu.type === 'table' &&
                 `${
                   contextMenu.table?.type === 'routine'
@@ -2898,6 +3374,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <span>New Table...</span>
               </button>
 
+              {contextMenu.connection.driver === 'postgres' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenCreateSchema(contextMenu.connection!, contextMenu.database!);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Layers className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                  <span>New Collection / Schema...</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
@@ -3006,6 +3496,113 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
                 <span>Drop Database...</span>
               </button>
+            </>
+          )}
+
+          {/* Schema / Collection Menu Items (PostgreSQL) */}
+          {contextMenu.type === 'schema' && contextMenu.connection && contextMenu.database && contextMenu.schema && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleOpenCreateTable(
+                    contextMenu.connection!,
+                    contextMenu.database!,
+                    contextMenu.schema!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+              >
+                <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>New Table in "{contextMenu.schema}"...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleOpenCreateSchema(contextMenu.connection!, contextMenu.database!);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+              >
+                <Layers className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                <span>New Collection / Schema...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleNewConsole(contextMenu.connection!.id, contextMenu.database, contextMenu.schema);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>New Query Console</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleOpenERDiagram(
+                    contextMenu.connection!.id,
+                    contextMenu.database!,
+                    contextMenu.schema!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>Open ER Diagram...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  handleRefreshSchema(
+                    contextMenu.connection!.id,
+                    contextMenu.database!,
+                    contextMenu.schema!
+                  );
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Refresh Collection / Schema</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleCopyText(contextMenu.schema!)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Copy Schema Name</span>
+              </button>
+
+              {contextMenu.schema !== 'public' && !contextMenu.connection!.isReadOnly && (
+                <>
+                  <div className="my-1 border-t border-[#272932]" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteSchema(
+                        contextMenu.connection!,
+                        contextMenu.database!,
+                        contextMenu.schema!
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Drop Collection / Schema...</span>
+                  </button>
+                </>
+              )}
             </>
           )}
 
@@ -3216,6 +3813,25 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                     <span>Copy Table Schema (DDL)</span>
                   </button>
+
+                  {contextMenu.connection!.driver === 'postgres' && !contextMenu.connection!.isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeContextMenu();
+                        handleOpenMoveTable(
+                          contextMenu.connection!,
+                          contextMenu.database || 'postgres',
+                          contextMenu.schema || 'public',
+                          contextMenu.table!
+                        );
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                      <span>Move to Another Collection / Schema...</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -4070,6 +4686,208 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           </div>
         );
       })()}
+
+      {/* Create Schema / Collection Modal (PostgreSQL) */}
+      {createSchemaModal.isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setCreateSchemaModal((prev) => ({ ...prev, isOpen: false }))}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-[#2b2e3a] bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-400">
+                  <Layers className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-zinc-100">Create New Collection / Schema</h3>
+                  <p className="text-[11px] text-zinc-400">
+                    Database: <span className="font-mono text-cyan-300 font-medium">{createSchemaModal.database}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateSchemaModal((prev) => ({ ...prev, isOpen: false }))}
+                className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-[#20222a] transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmCreateSchema} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                  Collection / Schema Name <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  placeholder="e.g. analytics, staging, v1"
+                  value={createSchemaModal.schemaName}
+                  onChange={(e) =>
+                    setCreateSchemaModal((prev) => ({ ...prev, schemaName: e.target.value }))
+                  }
+                  className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-cyan-500 focus:outline-none font-mono transition-colors"
+                />
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Must start with a letter or underscore and contain only alphanumeric characters and underscores.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                  Authorization / Owner <span className="text-zinc-500 text-[10px] font-normal lowercase">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. postgres or custom role name"
+                  value={createSchemaModal.authorization}
+                  onChange={(e) =>
+                    setCreateSchemaModal((prev) => ({ ...prev, authorization: e.target.value }))
+                  }
+                  className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-cyan-500 focus:outline-none font-mono transition-colors"
+                />
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Leave empty to create the collection under current logged-in user.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+                <button
+                  type="button"
+                  onClick={() => setCreateSchemaModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!createSchemaModal.schemaName.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+                >
+                  Create Collection
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Move Table to Another Schema / Collection Modal (PostgreSQL) */}
+      {moveTableModal.isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setMoveTableModal((prev) => ({ ...prev, isOpen: false }))}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-[#2b2e3a] bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-400">
+                  <ArrowRightLeft className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-zinc-100">
+                    Move {moveTableModal.objectType === 'view' ? 'View' : 'Table'} to Another Collection
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">
+                    Database: <span className="font-mono text-zinc-200">{moveTableModal.database}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMoveTableModal((prev) => ({ ...prev, isOpen: false }))}
+                className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-[#20222a] transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmMoveTable} className="space-y-4">
+              <div className="rounded-lg bg-[#101115] border border-[#232530] p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-400">Object Name:</span>
+                  <span className="font-mono text-zinc-100 font-semibold">{moveTableModal.tableName}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-400">Current Collection:</span>
+                  <span className="font-mono text-cyan-300 bg-cyan-950/50 border border-cyan-800/50 px-2 py-0.5 rounded text-[11px]">
+                    {moveTableModal.sourceSchema}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                  Target Collection / Schema <span className="text-rose-400">*</span>
+                </label>
+                <div className="space-y-2">
+                  <select
+                    value={moveTableModal.targetSchema}
+                    onChange={(e) =>
+                      setMoveTableModal((prev) => ({ ...prev, targetSchema: e.target.value }))
+                    }
+                    className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 focus:border-cyan-500 focus:outline-none font-mono transition-colors"
+                  >
+                    <option value="" disabled>-- Select a target schema / collection --</option>
+                    {moveTableModal.availableSchemas.map((s) => (
+                      <option key={s} value={s} disabled={s === moveTableModal.sourceSchema}>
+                        {s} {s === moveTableModal.sourceSchema ? '(Current)' : ''}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="text-[11px] text-zinc-400">
+                    Or enter another schema name:
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Enter schema name"
+                    value={moveTableModal.targetSchema}
+                    onChange={(e) =>
+                      setMoveTableModal((prev) => ({ ...prev, targetSchema: e.target.value }))
+                    }
+                    className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-cyan-500 focus:outline-none font-mono transition-colors"
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-zinc-500 font-mono">
+                  ALTER TABLE "{moveTableModal.sourceSchema}"."{moveTableModal.tableName}" SET SCHEMA "{moveTableModal.targetSchema || '...'}"
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+                <button
+                  type="button"
+                  onClick={() => setMoveTableModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    !moveTableModal.targetSchema.trim() ||
+                    moveTableModal.targetSchema.trim() === moveTableModal.sourceSchema
+                  }
+                  className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+                >
+                  Move Table
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Schema Filter Popover / Modal (e.g. 3 of 10) */}
       <SchemaFilterModal
