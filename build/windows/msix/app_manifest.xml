@@ -10,7 +10,7 @@
   <Identity 
     Name="com.asdev.dhub"
     Publisher="CN=asdev"
-    Version="0.2.4.0" 
+    Version="0.2.5.0" 
     ProcessorArchitecture="x64" />
   
   <Properties>
