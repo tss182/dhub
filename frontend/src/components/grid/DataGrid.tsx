@@ -40,6 +40,7 @@ import {
   PanelRight,
   Download,
   Upload,
+  Snowflake,
 } from 'lucide-react';
 import { ExportModal } from '../modals/ExportModal';
 import { ImportModal } from '../modals/ImportModal';
@@ -592,6 +593,31 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const whereContainerRef = useRef<HTMLDivElement>(null);
   const suggestionListRef = useRef<HTMLDivElement>(null);
   const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
+  const [frozenColumns, setFrozenColumns] = useState<string[]>(() => {
+    const pks = columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name);
+    return Array.from(new Set(pks));
+  });
+  const prevTabTableKeyRef = useRef<string>(`${tabId || ''}::${tableName || ''}`);
+  const hasInitializedPKsRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    const currentKey = `${tabId || ''}::${tableName || ''}`;
+    const pks = columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name);
+    const uniquePKs = Array.from(new Set(pks));
+
+    if (prevTabTableKeyRef.current !== currentKey) {
+      prevTabTableKeyRef.current = currentKey;
+      hasInitializedPKsRef.current = uniquePKs.length > 0;
+      setFrozenColumns(uniquePKs);
+    } else if (!hasInitializedPKsRef.current && uniquePKs.length > 0) {
+      // If table just loaded and primary keys arrived asynchronously
+      hasInitializedPKsRef.current = true;
+      setFrozenColumns((prev) => Array.from(new Set([...prev, ...uniquePKs])));
+    }
+  }, [tabId, tableName, columns, primaryKeys]);
+  const thRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const [isScrolledX, setIsScrolledX] = useState<boolean>(false);
   const [copiedRawSql, setCopiedRawSql] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -827,6 +853,69 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setLocalSortConfigs([]);
     onSortChange?.([]);
   };
+
+  const handleToggleFreeze = (colName: string) => {
+    setFrozenColumns((prev) =>
+      prev.includes(colName) ? prev.filter((c) => c !== colName) : [...prev, colName]
+    );
+  };
+
+
+  useEffect(() => {
+    const measure = () => {
+      const newWidths: Record<string, number> = {};
+      for (const [name, el] of Object.entries(thRefs.current)) {
+        if (el) {
+          const w = el.getBoundingClientRect().width;
+          if (w > 0) newWidths[name] = w;
+        }
+      }
+      setColWidths((prev) => {
+        let changed = false;
+        for (const k in newWidths) {
+          if (Math.abs((prev[k] || 0) - newWidths[k]) > 0.5) {
+            changed = true;
+            break;
+          }
+        }
+        return changed ? { ...prev, ...newWidths } : prev;
+      });
+    };
+
+    measure();
+    const timer = setTimeout(measure, 50);
+
+    const container = containerRef.current;
+    if (!container) return () => clearTimeout(timer);
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(container);
+    return () => {
+      clearTimeout(timer);
+      ro.disconnect();
+    };
+  }, [columns, rows.length]);
+
+  const frozenOffsets = useMemo(() => {
+    const offsets: Record<string, number> = {};
+    let currentLeft = 0;
+    for (const col of columns) {
+      if (frozenColumns.includes(col.name)) {
+        offsets[col.name] = currentLeft;
+        currentLeft += colWidths[col.name] || 120;
+      }
+    }
+    return offsets;
+  }, [columns, frozenColumns, colWidths]);
+
+  const lastFrozenColName = useMemo(() => {
+    for (let i = columns.length - 1; i >= 0; i--) {
+      if (frozenColumns.includes(columns[i].name)) {
+        return columns[i].name;
+      }
+    }
+    return null;
+  }, [columns, frozenColumns]);
 
   const [hoveredCol, setHoveredCol] = useState<{
     col: ColumnMeta;
@@ -2403,8 +2492,12 @@ ${setClauses};`;
     }
   }, [filterText, localPageSize, onPageChange]);
 
-  // Infinite scroll listener for lazy loading
+  // Scroll listener for horizontal sticky separator and infinite scroll lazy loading
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const sl = e.currentTarget.scrollLeft;
+    if (sl > 0 !== isScrolledX) {
+      setIsScrolledX(sl > 0);
+    }
     if (viewMode !== 'infinite') return;
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
     if (hasMore && !isLoadingMore && onLoadMore) {
@@ -2445,7 +2538,7 @@ ${setClauses};`;
       : 'bg-[#14151a] border-[#272932]';
   const gridTheadBg = 'bg-[#14151a]';
   const gridCellBorder = 'border-[#272932]';
-  const gridRowClass = 'border-b border-[#22242c] hover:bg-[#20222a] transition-colors';
+  const gridRowClass = 'border-b border-[#22242c] bg-[#14151a] hover:bg-[#20222a] transition-colors';
 
   return (
     <div
@@ -2599,6 +2692,46 @@ ${setClauses};`;
             </div>
           )}
 
+          {/* Frozen Columns Chips */}
+          {frozenColumns.length > 0 && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#101115] border border-cyan-800/40 text-[11px] font-mono select-none">
+              <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-cyan-400 font-sans tracking-wider">
+                <Snowflake className="h-3 w-3 text-cyan-400" />
+                Frozen:
+              </span>
+              <div className="flex items-center gap-1">
+                {frozenColumns.map((colName) => (
+                  <span
+                    key={colName}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0d222b] border border-cyan-500/30 text-[10px] text-cyan-200"
+                    title={`Frozen column: ${colName}`}
+                  >
+                    <span className="text-zinc-100 font-medium">{colName}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleFreeze(colName);
+                      }}
+                      className="text-zinc-400 hover:text-rose-400 cursor-pointer ml-0.5"
+                      title={`Unfreeze ${colName}`}
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setFrozenColumns([])}
+                className="text-[10px] text-zinc-400 hover:text-rose-400 hover:underline cursor-pointer ml-1"
+                title="Clear all column freezing"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
           {/* Quick Filter */}
           <div className="relative flex items-center">
             <Search className="h-3 w-3 text-zinc-500 absolute left-2 pointer-events-none" />
@@ -2655,39 +2788,46 @@ ${setClauses};`;
           className="flex-1 overflow-auto min-h-0 relative"
         >
         <table className="w-full border-collapse font-mono text-[12px] text-zinc-300">
-          <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-10`}>
+          <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-30`}>
             <tr className={`border-b ${gridCellBorder}`}>
-              <th
-                onClick={() => {
-                  if (visualRows.length > 0 && columns.length > 0) {
-                    setSelectionAnchor({ r: 0, c: 0 });
-                    setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
-                  }
-                }}
-                className={`w-12 px-2 py-1.5 text-center text-zinc-500 font-normal border-r ${gridCellBorder} select-none cursor-pointer hover:bg-zinc-800/60`}
-                title="Click to select all cells"
-              >
-                #
-              </th>
               {columns.map((col) => {
                 const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
                 const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
                 const isSorted = sortIndex !== -1;
                 const sortItem = isSorted ? localSortConfigs[sortIndex] : null;
+                const isFrozen = frozenColumns.includes(col.name);
+                const isLastFrozen = col.name === lastFrozenColName;
+                const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
 
                 return (
                   <th
                     key={col.name}
-                    onClick={(e) => handleToggleSort(col.name, e)}
+                    ref={(el) => {
+                      thRefs.current[col.name] = el;
+                    }}
+                    onClick={(e) => {
+                      if (e.altKey) {
+                        handleToggleFreeze(col.name);
+                        return;
+                      }
+                      handleToggleSort(col.name, e);
+                    }}
                     onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
                     onMouseLeave={handleColMouseLeave}
                     className={`px-3 py-1.5 text-left font-semibold border-r ${gridCellBorder} text-zinc-200 group/th select-none ${
+                      isFrozen ? `sticky z-40 ${gridTheadBg}` : ''
+                    } ${
+                      isLastFrozen && isScrolledX
+                        ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                        : ''
+                    } ${
                       envType === 'prod'
                         ? 'hover:bg-rose-950/60'
                         : envType === 'dev'
                         ? 'hover:bg-emerald-950/60'
                         : 'hover:bg-[#1c1d28]'
                     } transition-colors cursor-pointer`}
+                    style={isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : undefined}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 truncate">
@@ -2699,8 +2839,30 @@ ${setClauses};`;
                         </span>
                       </div>
 
-                      {/* Sort Indicator / Button */}
-                      <div className="flex items-center shrink-0">
+                      {/* Header Actions: Freeze & Sort */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* Freeze Indicator / Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleFreeze(col.name);
+                          }}
+                          className={`flex items-center p-1 rounded transition-all cursor-pointer ${
+                            isFrozen
+                              ? 'text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 shadow-xs'
+                              : 'text-zinc-500 opacity-0 group-hover/th:opacity-100 hover:text-cyan-300 hover:bg-zinc-800'
+                          }`}
+                          title={
+                            isFrozen
+                              ? `Unfreeze column "${col.name}"`
+                              : `Freeze column "${col.name}" (Alt+Click header)`
+                          }
+                        >
+                          <Snowflake className={`h-3 w-3 ${isFrozen ? 'text-cyan-400' : ''}`} />
+                        </button>
+
+                        {/* Sort Indicator / Button */}
                         {isSorted && sortItem ? (
                           <span
                             className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
@@ -2775,23 +2937,17 @@ ${setClauses};`;
                   return (
                     <tr
                       key={globalRowIndex}
-                      className={rowClass}
+                      className={`${rowClass} group/row`}
                     >
-                      <td
-                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                        className={`px-2 py-1 text-center text-zinc-500 border-r ${gridCellBorder} select-none text-[11px] cursor-pointer hover:text-zinc-300`}
-                        title="Click to select row"
-                      >
-                        {globalRowIndex + 1}
-                      </td>
                       {columns.map((col, cIdx) => {
                         const isSelected = isCellSelected(vIdx, cIdx);
                         const isEditing = editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
                         const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
                         const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
                         const colInputType = getColumnInputType(col.dataType);
+                        const isFrozen = frozenColumns.includes(col.name);
+                        const isLastFrozen = col.name === lastFrozenColName;
+                        const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
 
                         return (
                           <td
@@ -2801,12 +2957,27 @@ ${setClauses};`;
                             onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
                             onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
                             className={`px-3 py-1 border-r ${gridCellBorder} truncate max-w-xs select-none transition-colors ${
-                              isSelected
+                              isFrozen
+                                ? `sticky z-10 ${
+                                    isSelected
+                                      ? 'bg-[#1b4ea3] text-white font-medium'
+                                      : hasColChange
+                                      ? 'bg-blue-900/40 text-blue-200 font-medium'
+                                      : isDeleted
+                                      ? 'bg-rose-950/40 text-zinc-500 line-through'
+                                      : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
+                                  }`
+                                : isSelected
                                 ? 'bg-[#1b4ea3] text-white font-medium'
                                 : hasColChange
                                 ? 'bg-blue-900/30 text-blue-200 font-medium'
                                 : ''
+                            } ${
+                              isLastFrozen && isScrolledX
+                                ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                                : ''
                             }`}
+                            style={isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : undefined}
                           >
                             {isEditing ? (
                               <input
@@ -2866,33 +3037,6 @@ ${setClauses};`;
                       key={change.rowIndex}
                       className={rowClass}
                     >
-                      <td
-                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                        className="w-12 px-1 py-1 text-center border-r border-[#272932] select-none text-[11px] font-bold cursor-pointer"
-                        title="Click to select row"
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          <span className="text-emerald-400 font-mono text-xs" title="New Staged Row">
-                            +{insIdx + 1}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              stageRowDelete(tabId, change.rowIndex, {}, {});
-                              setSelectionAnchor(null);
-                              setSelectionFocus(null);
-                            }}
-                            className="opacity-0 group-hover/insert:opacity-100 p-0.5 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 rounded transition-opacity cursor-pointer"
-                            title="Discard this new row"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </td>
-
                       {columns.map((col, cIdx) => {
                         const isSelected = isCellSelected(vIdx, cIdx);
                         const isEditing = editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
@@ -2900,6 +3044,9 @@ ${setClauses};`;
                         const isSet = colVal !== undefined;
                         const displayVal = isSet ? colVal : (col.defaultValue || null);
                         const colInputType = getColumnInputType(col.dataType);
+                        const isFrozen = frozenColumns.includes(col.name);
+                        const isLastFrozen = col.name === lastFrozenColName;
+                        const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
 
                         return (
                           <td
@@ -2913,12 +3060,25 @@ ${setClauses};`;
                               }
                             }}
                             className={`px-3 py-1 border-r border-[#22242c] truncate max-w-xs cursor-text select-none transition-colors ${
-                              isSelected
+                              isFrozen
+                                ? `sticky z-10 ${
+                                    isSelected
+                                      ? 'bg-[#1b4ea3] text-white font-medium'
+                                      : isSet
+                                      ? 'bg-emerald-900/50 text-emerald-100 font-medium'
+                                      : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-500'
+                                  }`
+                                : isSelected
                                 ? 'bg-[#1b4ea3] text-white font-medium'
                                 : isSet
                                 ? 'bg-emerald-900/40 text-emerald-100 font-medium'
                                 : 'text-zinc-500'
+                            } ${
+                              isLastFrozen && isScrolledX
+                                ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                                : ''
                             }`}
+                            style={isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : undefined}
                             title="Click to select, double click to edit"
                           >
                             {isEditing ? (
@@ -3442,6 +3602,50 @@ ${setClauses};`;
                   <span>Set to NULL</span>
                 </div>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const { cIdx } = contextMenu;
+                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                  if (cIdx !== null && columns[cIdx]) {
+                    handleToggleFreeze(columns[cIdx].name);
+                  }
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <Snowflake
+                    className={`h-3.5 w-3.5 ${
+                      contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
+                        ? 'text-cyan-400'
+                        : 'text-zinc-400'
+                    } group-hover:text-white`}
+                  />
+                  <span>
+                    {contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
+                      ? `Unfreeze Column (${columns[contextMenu.cIdx]?.name})`
+                      : `Freeze Column (${columns[contextMenu.cIdx]?.name})`}
+                  </span>
+                </div>
+                <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Alt+Click</kbd>
+              </button>
+
+              {frozenColumns.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                    setFrozenColumns([]);
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2">
+                    <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Unfreeze All Columns ({frozenColumns.length})</span>
+                  </div>
+                </button>
+              )}
               <div className="my-1 border-t border-[#272932]" />
             </>
           )}
