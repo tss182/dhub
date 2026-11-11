@@ -16,6 +16,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   ChevronUp,
+  ChevronDown,
   RefreshCw,
   Search,
   X,
@@ -28,6 +29,8 @@ import {
   Info,
   ArrowUp,
   ArrowDown,
+  ArrowDownAZ,
+  ArrowDownZA,
   ArrowUpDown,
   Copy,
   AlertCircle,
@@ -655,7 +658,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   initialScrollLeft,
   onScrollChange,
 }) => {
-  const [filterText, setFilterText] = useState('');
   const [whereInput, setWhereInput] = useState(whereClause || '');
   const [whereCursorPos, setWhereCursorPos] = useState<number>(0);
   const [showWhereSuggestions, setShowWhereSuggestions] = useState<boolean>(false);
@@ -702,6 +704,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [copiedRawSql, setCopiedRawSql] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [showAllSortsModal, setShowAllSortsModal] = useState(false);
+  const [showAllFrozenModal, setShowAllFrozenModal] = useState(false);
 
   const handleCopyRawSql = async () => {
     if (!rawSql) return;
@@ -1541,18 +1545,11 @@ WHERE ${whereClause};`;
     }
   };
 
-  // Filter rows client-side
-  const filteredRows = useMemo(() => {
-    if (!filterText) return rows;
-    const lower = filterText.toLowerCase();
-    return rows.filter((r) => r.some((cell) => String(cell).toLowerCase().includes(lower)));
-  }, [rows, filterText]);
-
   // Sort rows client-side (when onSortChange is not provided, e.g. query console results)
   const sortedRows = useMemo(() => {
-    if (onSortChange || localSortConfigs.length === 0) return filteredRows;
+    if (onSortChange || localSortConfigs.length === 0) return rows;
 
-    return [...filteredRows].sort((rowA, rowB) => {
+    return [...rows].sort((rowA, rowB) => {
       for (const sortItem of localSortConfigs) {
         const colIdx = columns.findIndex((c) => c.name === sortItem.column);
         if (colIdx === -1) continue;
@@ -1587,7 +1584,7 @@ WHERE ${whereClause};`;
       }
       return 0;
     });
-  }, [filteredRows, localSortConfigs, onSortChange, columns]);
+  }, [rows, localSortConfigs, onSortChange, columns]);
 
   const isMultiPageInMemory = sortedRows.length > localPageSize;
 
@@ -2849,14 +2846,14 @@ ${setClauses};`;
 
   // Determine effective total rows:
   // 1. If explicit totalCount is provided and >= endRow, use it.
-  // 2. If client-side multi-page in memory, use filteredRows.length.
+  // 2. If client-side multi-page in memory, use rows.length.
   // 3. If !hasMore (we reached the end of the dataset), total is EXACTLY endRow!
   // 4. Otherwise, total is at least endRow + 1.
   const effectiveTotal =
     totalCount !== undefined && totalCount >= endRow
       ? totalCount
       : isMultiPageInMemory
-      ? filteredRows.length
+      ? rows.length
       : !hasMore
       ? endRow
       : Math.max(endRow + 1, totalCount || 0);
@@ -2866,12 +2863,12 @@ ${setClauses};`;
 
   const totalPages = Math.max(1, Math.ceil(effectiveTotal / localPageSize));
 
-  // Reset page when filter changes (only for client-side pagination)
+  // Reset page when pageSize changes (only for client-side pagination)
   useEffect(() => {
     if (!onPageChange) {
       setCurrentPage(1);
     }
-  }, [filterText, localPageSize, onPageChange]);
+  }, [localPageSize, onPageChange]);
 
   // Scroll listener for horizontal sticky separator, workspace scroll tracking, and bidirectional infinite scroll
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -2964,7 +2961,7 @@ ${setClauses};`;
     >
       {/* Table Toolbar */}
       <div className={`flex h-10 items-center justify-between border-b px-3 ${gridBarBg}`}>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           {isReadOnly && (
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 font-bold font-mono text-[10px] tracking-wider uppercase mr-1 select-none shadow-xs"
@@ -3062,115 +3059,243 @@ ${setClauses};`;
           )}
         </div>
 
-        {/* Toolbar Right: Multi-Sort Chips + Quick Filter */}
-        <div className="flex items-center gap-2">
-          {localSortConfigs.length > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#101115] border border-[#2b2e3a] text-[11px] font-mono select-none">
-              <span className="text-[10px] uppercase font-bold text-zinc-500 font-sans tracking-wider">
-                Order:
-              </span>
-              <div className="flex items-center gap-1">
-                {localSortConfigs.map((sc, idx) => (
-                  <span
-                    key={sc.column}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1e2029] border border-blue-500/30 text-[10px] text-zinc-200"
-                    title={`#${idx + 1} priority: ${sc.column} (${sc.direction.toUpperCase()})`}
-                  >
-                    <span className="flex items-center justify-center h-3 w-3 rounded-full bg-blue-600 text-white text-[8px] font-bold">
-                      {idx + 1}
-                    </span>
-                    <span className="text-zinc-100 font-medium">{sc.column}</span>
-                    <span className="text-blue-400 font-bold">{sc.direction.toUpperCase()}</span>
+        {/* Toolbar Center & Right: SQL WHERE Filter (Full width) + Chips */}
+        <div className="flex items-center gap-2.5 flex-1 min-w-0 ml-2.5">
+          {/* SQL WHERE Filter Bar (Only for Table Tabs - Takes full available space) */}
+          {(isTableTab || onApplyWhere) && (
+            <div
+              ref={whereContainerRef}
+              className="relative flex-1 min-w-[200px]"
+            >
+              <div className="relative flex items-center">
+                <div className="absolute left-2.5 flex items-center gap-1 pointer-events-none select-none">
+                  <Filter className="h-3 w-3 text-blue-400" />
+                  <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-wider">
+                    WHERE
+                  </span>
+                </div>
+                <input
+                  ref={whereInputRef}
+                  type="text"
+                  data-where-input="true"
+                  placeholder="condition, e.g. status = 'active' AND id > 10 (Enter to filter)"
+                  value={whereInput}
+                  onChange={(e) => {
+                    setWhereInput(e.target.value);
+                    setWhereCursorPos(e.target.selectionStart ?? e.target.value.length);
+                    setShowWhereSuggestions(true);
+                  }}
+                  onFocus={() => {
+                    setShowWhereSuggestions(true);
+                  }}
+                  onClick={(e) => {
+                    setWhereCursorPos((e.target as HTMLInputElement).selectionStart ?? whereInput.length);
+                  }}
+                  onKeyUp={(e) => {
+                    setWhereCursorPos((e.target as HTMLInputElement).selectionStart ?? whereInput.length);
+                  }}
+                  onKeyDown={handleWhereKeyDown}
+                  className="h-7 w-full rounded bg-[#121317] pl-[68px] pr-14 text-[11px] text-zinc-100 font-mono border border-[#272932] focus:border-blue-500 focus:bg-[#16171d] focus:outline-none placeholder:text-zinc-600 shadow-inner"
+                />
+
+                <div className="absolute right-1.5 flex items-center gap-1">
+                  {whereInput && (
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const next = localSortConfigs.filter((_, i) => i !== idx);
-                        setLocalSortConfigs(next);
-                        onSortChange?.(next);
+                      onClick={() => {
+                        setWhereInput('');
+                        setShowWhereSuggestions(false);
+                        onApplyWhere?.('');
                       }}
-                      className="text-zinc-500 hover:text-rose-400 cursor-pointer ml-0.5"
-                      title={`Remove ${sc.column} from sort`}
+                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] cursor-pointer"
+                      title="Clear WHERE filter"
                     >
-                      <X className="h-2.5 w-2.5" />
+                      <X className="h-3 w-3" />
                     </button>
-                  </span>
-                ))}
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowWhereSuggestions(false);
+                      onApplyWhere?.(whereInput);
+                    }}
+                    className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-medium font-sans cursor-pointer transition-colors shadow-xs"
+                    title="Apply WHERE condition (Enter)"
+                  >
+                    Filter
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={handleClearAllSort}
-                className="text-[10px] text-zinc-400 hover:text-rose-400 hover:underline cursor-pointer ml-1"
-                title="Clear all column sorting"
-              >
-                Clear
-              </button>
+
+              {/* Autocomplete Suggestion Popup */}
+              {showWhereSuggestions && whereSuggestions.length > 0 && (
+                <div
+                  ref={suggestionListRef}
+                  className="absolute left-0 top-full mt-1 w-full max-h-56 overflow-y-auto rounded-md bg-[#16171d] border border-[#2b2e3a] shadow-2xl z-50 p-1 font-mono text-[11px]"
+                >
+                  <div className="px-2 py-1 text-[9px] uppercase font-bold text-zinc-500 font-sans tracking-wider border-b border-[#22242c] mb-1 flex items-center justify-between">
+                    <span>Suggestions (Tab / Enter to select, Esc to close)</span>
+                    <span className="text-zinc-600">Ctrl+Space</span>
+                  </div>
+                  {whereSuggestions.map((item, sIdx) => {
+                    const isSelected = sIdx === selectedSuggestionIndex;
+                    return (
+                      <div
+                        key={item.id}
+                        data-suggestion-index={sIdx}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          applyWhereSuggestion(item);
+                        }}
+                        className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'bg-blue-600 text-white font-medium'
+                            : 'text-zinc-300 hover:bg-[#22242c]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {item.type === 'column' ? (
+                            item.isPK ? (
+                              <Key className="h-3 w-3 text-amber-400 shrink-0" />
+                            ) : item.iconType === 'number' ? (
+                              <Hash className="h-3 w-3 text-emerald-400 shrink-0" />
+                            ) : item.iconType === 'date' ? (
+                              <Clock className="h-3 w-3 text-cyan-400 shrink-0" />
+                            ) : (
+                              <FileText className="h-3 w-3 text-blue-400 shrink-0" />
+                            )
+                          ) : (
+                            <span className="px-1 rounded bg-[#2b2e3a] text-[9px] font-bold text-amber-400">
+                              SQL
+                            </span>
+                          )}
+                          <span className="truncate">{item.name}</span>
+                        </div>
+                        {item.dataType && (
+                          <span
+                            className={`text-[10px] ml-2 shrink-0 ${
+                              isSelected ? 'text-blue-100' : 'text-zinc-500'
+                            }`}
+                          >
+                            {item.dataType}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Frozen Columns Chips */}
-          {frozenColumns.length > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#101115] border border-cyan-800/40 text-[11px] font-mono select-none">
-              <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-cyan-400 font-sans tracking-wider">
-                <Snowflake className="h-3 w-3 text-cyan-400" />
-                Frozen:
-              </span>
-              <div className="flex items-center gap-1">
-                {frozenColumns.map((colName) => (
-                  <span
-                    key={colName}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0d222b] border border-cyan-500/30 text-[10px] text-cyan-200"
-                    title={`Frozen column: ${colName}`}
+          {/* Right Chips: Multi-Sort & Frozen Columns */}
+          {(localSortConfigs.length > 0 || frozenColumns.length > 0) && (
+            <div className="flex items-center gap-2 shrink-0">
+              {localSortConfigs.length > 0 && (
+                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-[#2b2e3a] text-[11px] font-mono select-none">
+                  <div className="flex items-center gap-1">
+                    {localSortConfigs.slice(0, 2).map((sc, idx) => (
+                      <span
+                        key={sc.column}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1e2029] border border-blue-500/30 text-[10px] text-zinc-200"
+                        title={`#${idx + 1} priority: ${sc.column} (${sc.direction.toUpperCase()})`}
+                      >
+                        <span className="flex items-center justify-center h-3 w-3 rounded-full bg-blue-600 text-white text-[8px] font-bold">
+                          {idx + 1}
+                        </span>
+                        <span className="text-zinc-100 font-medium">{sc.column}</span>
+                        {sc.direction === 'asc' ? (
+                          <ArrowDownAZ className="h-3.5 w-3.5 text-blue-400 stroke-[2]" />
+                        ) : (
+                          <ArrowDownZA className="h-3.5 w-3.5 text-amber-400 stroke-[2]" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = localSortConfigs.filter((s) => s.column !== sc.column);
+                            setLocalSortConfigs(next);
+                            onSortChange?.(next);
+                          }}
+                          className="text-zinc-500 hover:text-rose-400 cursor-pointer ml-0.5"
+                          title={`Remove ${sc.column} from sort`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                    {localSortConfigs.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllSortsModal(true)}
+                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#1e2029] hover:bg-[#282b37] border border-blue-500/40 text-[10px] text-blue-300 font-mono font-bold cursor-pointer transition-colors"
+                        title={`View all ${localSortConfigs.length} sorted columns (${localSortConfigs.length - 2} more)`}
+                      >
+                        ...
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleClearAllSort}
+                    className="p-0.5 rounded hover:bg-rose-950/40 text-rose-500 hover:text-rose-400 transition-colors cursor-pointer ml-0.5"
+                    title="Clear all column sorting"
                   >
-                    <span className="text-zinc-100 font-medium">{colName}</span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleToggleFreeze(colName);
-                      }}
-                      className="text-zinc-400 hover:text-rose-400 cursor-pointer ml-0.5"
-                      title={`Unfreeze ${colName}`}
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setFrozenColumns([]);
-                  onFrozenColumnsChange?.([]);
-                }}
-                className="text-[10px] text-zinc-400 hover:text-rose-400 hover:underline cursor-pointer ml-1"
-                title="Clear all column freezing"
-              >
-                Clear
-              </button>
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+
+              {/* Frozen Columns Chips */}
+              {frozenColumns.length > 0 && (
+                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-cyan-800/40 text-[11px] font-mono select-none">
+                  <div className="flex items-center gap-1">
+                    {frozenColumns.slice(0, 2).map((colName) => (
+                      <span
+                        key={colName}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0d222b] border border-cyan-500/30 text-[10px] text-cyan-200"
+                        title={`Frozen column: ${colName}`}
+                      >
+                        <span className="text-zinc-100 font-medium">{colName}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleFreeze(colName);
+                          }}
+                          className="text-zinc-400 hover:text-rose-400 cursor-pointer ml-0.5"
+                          title={`Unfreeze ${colName}`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                    {frozenColumns.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllFrozenModal(true)}
+                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#0d222b] hover:bg-[#13303d] border border-cyan-500/40 text-[10px] text-cyan-300 font-mono font-bold cursor-pointer transition-colors"
+                        title={`View all ${frozenColumns.length} frozen columns (${frozenColumns.length - 2} more)`}
+                      >
+                        ...
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFrozenColumns([]);
+                      onFrozenColumnsChange?.([]);
+                    }}
+                    className="p-0.5 rounded hover:bg-rose-950/40 text-rose-500 hover:text-rose-400 transition-colors cursor-pointer ml-0.5"
+                    title="Clear all column freezing"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
-
-          {/* Quick Filter */}
-          <div className="relative flex items-center">
-            <Search className="h-3 w-3 text-zinc-500 absolute left-2 pointer-events-none" />
-            <input
-              type="text"
-              data-filter-input="true"
-              placeholder="Filter in result..."
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              className="h-6 rounded bg-[#121317] pl-6 pr-6 text-[11px] text-zinc-200 border border-[#272932] focus:border-blue-500 focus:outline-none w-48 font-sans"
-            />
-            {filterText && (
-              <button
-                onClick={() => setFilterText('')}
-                className="absolute right-1.5 text-zinc-500 hover:text-white cursor-pointer"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
         </div>
       </div>
 
@@ -3304,13 +3429,13 @@ ${setClauses};`;
                         {isSorted && sortItem ? (
                           <span
                             className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
+                            title={`Sorted ${sortItem.direction === 'asc' ? 'A → Z (ASC)' : 'Z → A (DESC)'}${localSortConfigs.length > 1 ? ` (priority #${sortIndex + 1})` : ''}`}
                           >
                             {sortItem.direction === 'asc' ? (
-                              <ArrowUp className="h-3 w-3" />
+                              <ArrowDownAZ className="h-3.5 w-3.5 stroke-[2]" />
                             ) : (
-                              <ArrowDown className="h-3 w-3" />
+                              <ArrowDownZA className="h-3.5 w-3.5 stroke-[2] text-amber-400" />
                             )}
-                            <span className="text-[9px] font-bold">{sortItem.direction.toUpperCase()}</span>
                             {localSortConfigs.length > 1 && (
                               <span
                                 className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-blue-500 text-white text-[9px] font-bold font-mono ml-0.5"
@@ -4353,6 +4478,308 @@ ${setClauses};`;
           table={tableName}
           onImportComplete={onRefresh}
         />
+      )}
+
+      {/* All Sorted Columns Modal */}
+      {showAllSortsModal && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAllSortsModal(false);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+        >
+          <div className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#191a20] shadow-2xl flex flex-col overflow-hidden text-zinc-100">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#272932] px-4 py-3 bg-[#1e2029]">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                  <ArrowUpDown className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
+                    <span>Order By Columns</span>
+                    <span className="px-1.5 py-0.2 rounded-full bg-blue-600/20 text-blue-400 text-[10px] font-mono font-bold">
+                      {localSortConfigs.length}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">Adjust sorting priority and direction</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllSortsModal(false)}
+                className="rounded-lg p-1 text-zinc-400 hover:bg-[#272932] hover:text-zinc-200 transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* List */}
+            <div className="max-h-72 overflow-y-auto p-3 space-y-2">
+              {localSortConfigs.length === 0 ? (
+                <div className="py-8 text-center text-xs text-zinc-500">
+                  No active sorting
+                </div>
+              ) : (
+                localSortConfigs.map((sc, idx) => (
+                  <div
+                    key={sc.column}
+                    className="flex items-center justify-between p-2 rounded-lg bg-[#14151a] border border-[#272932] text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="flex items-center justify-center h-5 w-5 rounded-full bg-blue-600/20 border border-blue-500/40 text-blue-400 font-mono text-[10px] font-bold shrink-0">
+                        #{idx + 1}
+                      </span>
+                      <span className="font-mono text-zinc-100 font-medium truncate" title={sc.column}>
+                        {sc.column}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0 ml-2">
+                      {/* Direction Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextDir: 'asc' | 'desc' = sc.direction === 'asc' ? 'desc' : 'asc';
+                          const next: SortConfig[] = localSortConfigs.map((s, i) =>
+                            i === idx ? { ...s, direction: nextDir } : s
+                          );
+                          setLocalSortConfigs(next);
+                          onSortChange?.(next);
+                        }}
+                        className={`flex items-center justify-center h-6 w-6 rounded font-mono text-[10px] font-bold transition-colors cursor-pointer border ${
+                          sc.direction === 'asc'
+                            ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30'
+                            : 'bg-amber-600/20 text-amber-300 border-amber-500/40 hover:bg-amber-600/30'
+                        }`}
+                        title={`Click to toggle (${sc.direction === 'asc' ? 'A → Z (ASC) to Z → A (DESC)' : 'Z → A (DESC) to A → Z (ASC)'})`}
+                      >
+                        {sc.direction === 'asc' ? (
+                          <ArrowDownAZ className="h-4 w-4 stroke-[2]" />
+                        ) : (
+                          <ArrowDownZA className="h-4 w-4 stroke-[2]" />
+                        )}
+                      </button>
+
+                      {/* Move Up */}
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => {
+                          if (idx === 0) return;
+                          const next = [...localSortConfigs];
+                          const temp = next[idx - 1];
+                          next[idx - 1] = next[idx];
+                          next[idx] = temp;
+                          setLocalSortConfigs(next);
+                          onSortChange?.(next);
+                        }}
+                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
+                        title="Increase priority"
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </button>
+
+                      {/* Move Down */}
+                      <button
+                        type="button"
+                        disabled={idx === localSortConfigs.length - 1}
+                        onClick={() => {
+                          if (idx === localSortConfigs.length - 1) return;
+                          const next = [...localSortConfigs];
+                          const temp = next[idx + 1];
+                          next[idx + 1] = next[idx];
+                          next[idx] = temp;
+                          setLocalSortConfigs(next);
+                          onSortChange?.(next);
+                        }}
+                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
+                        title="Decrease priority"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+
+                      {/* Remove */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = localSortConfigs.filter((_, i) => i !== idx);
+                          setLocalSortConfigs(next);
+                          onSortChange?.(next);
+                          if (next.length === 0) setShowAllSortsModal(false);
+                        }}
+                        className="p-1 rounded text-rose-500 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer ml-0.5"
+                        title={`Remove ${sc.column} from sort`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between border-t border-[#272932] px-4 py-2.5 bg-[#14151a]">
+              <button
+                type="button"
+                onClick={() => {
+                  handleClearAllSort();
+                  setShowAllSortsModal(false);
+                }}
+                className="px-2.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-200 text-xs font-medium cursor-pointer transition-colors"
+              >
+                Clear All Sorts
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAllSortsModal(false)}
+                className="px-3 py-1 rounded bg-[#272932] hover:bg-[#323541] text-zinc-200 text-xs font-medium cursor-pointer transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* All Frozen Columns Modal */}
+      {showAllFrozenModal && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAllFrozenModal(false);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+        >
+          <div className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#191a20] shadow-2xl flex flex-col overflow-hidden text-zinc-100">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#272932] px-4 py-3 bg-[#1e2029]">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400">
+                  <Snowflake className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
+                    <span>Frozen Columns</span>
+                    <span className="px-1.5 py-0.2 rounded-full bg-cyan-600/20 text-cyan-400 text-[10px] font-mono font-bold">
+                      {frozenColumns.length}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">Manage columns pinned to the left table edge</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllFrozenModal(false)}
+                className="rounded-lg p-1 text-zinc-400 hover:bg-[#272932] hover:text-zinc-200 transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* List */}
+            <div className="max-h-72 overflow-y-auto p-3 space-y-2">
+              {frozenColumns.length === 0 ? (
+                <div className="py-8 text-center text-xs text-zinc-500">
+                  No frozen columns
+                </div>
+              ) : (
+                frozenColumns.map((colName, idx) => (
+                  <div
+                    key={colName}
+                    className="flex items-center justify-between p-2 rounded-lg bg-[#14151a] border border-[#272932] text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="flex items-center justify-center h-5 w-5 rounded-full bg-cyan-600/20 border border-cyan-500/40 text-cyan-400 font-mono text-[10px] font-bold shrink-0">
+                        #{idx + 1}
+                      </span>
+                      <span className="font-mono text-zinc-100 font-medium truncate" title={colName}>
+                        {colName}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0 ml-2">
+                      {/* Move Up */}
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => {
+                          if (idx === 0) return;
+                          const next = [...frozenColumns];
+                          const temp = next[idx - 1];
+                          next[idx - 1] = next[idx];
+                          next[idx] = temp;
+                          setFrozenColumns(next);
+                          onFrozenColumnsChange?.(next);
+                        }}
+                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
+                        title="Move left in freeze order"
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </button>
+
+                      {/* Move Down */}
+                      <button
+                        type="button"
+                        disabled={idx === frozenColumns.length - 1}
+                        onClick={() => {
+                          if (idx === frozenColumns.length - 1) return;
+                          const next = [...frozenColumns];
+                          const temp = next[idx + 1];
+                          next[idx + 1] = next[idx];
+                          next[idx] = temp;
+                          setFrozenColumns(next);
+                          onFrozenColumnsChange?.(next);
+                        }}
+                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
+                        title="Move right in freeze order"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+
+                      {/* Unfreeze */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = frozenColumns.filter((c) => c !== colName);
+                          setFrozenColumns(next);
+                          onFrozenColumnsChange?.(next);
+                          if (next.length === 0) setShowAllFrozenModal(false);
+                        }}
+                        className="p-1 rounded text-rose-500 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer ml-0.5"
+                        title={`Unfreeze ${colName}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between border-t border-[#272932] px-4 py-2.5 bg-[#14151a]">
+              <button
+                type="button"
+                onClick={() => {
+                  setFrozenColumns([]);
+                  onFrozenColumnsChange?.([]);
+                  setShowAllFrozenModal(false);
+                }}
+                className="px-2.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-200 text-xs font-medium cursor-pointer transition-colors"
+              >
+                Unfreeze All
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAllFrozenModal(false)}
+                className="px-3 py-1 rounded bg-[#272932] hover:bg-[#323541] text-zinc-200 text-xs font-medium cursor-pointer transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

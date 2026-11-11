@@ -9,6 +9,9 @@ export const WorkspaceSelector: React.FC = () => {
     activeWorkspaceId,
     switchWorkspace,
     createBlankWorkspace,
+    loadWorkspaces,
+    hasLoaded,
+    isLoading,
   } = useWorkspaceSessionStore();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -16,6 +19,12 @@ export const WorkspaceSelector: React.FC = () => {
   const [newWsName, setNewWsName] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!hasLoaded && !isLoading) {
+      loadWorkspaces();
+    }
+  }, [hasLoaded, isLoading, loadWorkspaces]);
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
 

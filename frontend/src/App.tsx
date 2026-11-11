@@ -465,8 +465,9 @@ export function App() {
   });
   const [isDraggingBottomResizer, setIsDraggingBottomResizer] = useState(false);
 
-  // Load persisted panel dimensions from SQLite on mount
+  // Load persisted panel dimensions and workspaces from SQLite on mount
   useEffect(() => {
+    useWorkspaceSessionStore.getState().loadWorkspaces();
     WorkspaceService.GetSettings()
       .then((settings) => {
         if (!settings) return;

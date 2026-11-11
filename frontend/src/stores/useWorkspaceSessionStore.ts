@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { WorkspaceService } from '../../bindings/dhub/internal/services';
 import { WorkspaceItem, WorkbenchTab } from '../types/domain';
 import { alertSuccess, alertError, alertWarning } from './useAlertStore';
+import { useWorkbenchStore } from './useWorkbenchStore';
 
 interface WorkspaceSessionState {
   workspaces: WorkspaceItem[];
@@ -59,6 +60,49 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       let activeId = safeList.find((w) => w.isActive)?.id || null;
       if (!activeId && safeList.length > 0) {
         activeId = safeList[0].id;
+      }
+
+      // If no workspace exists yet in SQLite, auto-create "Default Workspace"
+      if (safeList.length === 0) {
+        const currentTabs = useWorkbenchStore.getState().tabs || [];
+        const currentActiveId = useWorkbenchStore.getState().activeTabId || '';
+        const defaultWs: WorkspaceItem = {
+          id: '',
+          name: 'Default Workspace',
+          description: 'Primary workspace',
+          icon: 'briefcase',
+          colorTag: '#3b82f6',
+          isActive: true,
+          tabsJson: JSON.stringify(currentTabs),
+          activeTabId: currentActiveId,
+        };
+        try {
+          const newId = await WorkspaceService.SaveWorkspace(defaultWs as any);
+          defaultWs.id = newId;
+          safeList.push(defaultWs);
+          activeId = newId;
+        } catch (e) {
+          console.warn('Failed to auto-seed default workspace:', e);
+        }
+      } else if (activeId) {
+        // Restore active workspace tabs if workbench tabs are currently empty
+        const activeWs = safeList.find((w) => w.id === activeId);
+        if (activeWs && activeWs.tabsJson && activeWs.tabsJson !== '[]') {
+          try {
+            const currentTabs = useWorkbenchStore.getState().tabs;
+            if (!currentTabs || currentTabs.length === 0) {
+              const restoredTabs = JSON.parse(activeWs.tabsJson);
+              if (Array.isArray(restoredTabs) && restoredTabs.length > 0) {
+                useWorkbenchStore.setState({
+                  tabs: restoredTabs,
+                  activeTabId: activeWs.activeTabId || restoredTabs[0]?.id || null,
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to restore active workspace tabs:', e);
+          }
+        }
       }
 
       set({
@@ -263,4 +307,14 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
     }
   },
 }));
+
+// Auto-sync workbench tabs state into active workspace in SQLite
+if (typeof window !== 'undefined') {
+  useWorkbenchStore.subscribe((state) => {
+    const activeWsId = useWorkspaceSessionStore.getState().activeWorkspaceId;
+    if (activeWsId) {
+      useWorkspaceSessionStore.getState().saveCurrentWorkspace(state.tabs, state.activeTabId);
+    }
+  });
+}
 

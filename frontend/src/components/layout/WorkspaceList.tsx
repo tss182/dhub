@@ -24,7 +24,16 @@ export const WorkspaceList: React.FC = () => {
     switchWorkspace,
     renameWorkspace,
     deleteWorkspace,
+    loadWorkspaces,
+    hasLoaded,
+    isLoading,
   } = useWorkspaceSessionStore();
+
+  React.useEffect(() => {
+    if (!hasLoaded && !isLoading) {
+      loadWorkspaces();
+    }
+  }, [hasLoaded, isLoading, loadWorkspaces]);
 
   const { tabs, activeTabId } = useWorkbenchStore();
 
