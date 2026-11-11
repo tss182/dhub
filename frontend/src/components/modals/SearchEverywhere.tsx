@@ -19,9 +19,78 @@ interface SearchResultItem {
   consoleData?: any;
 }
 
+const computeMatchScore = (titleRaw: string, rawQuery: string): number => {
+  const q = rawQuery.trim().toLowerCase();
+  const t = (titleRaw || '').trim().toLowerCase();
+  if (!q || !t) return 0;
+
+  // 1. Exact match (highest priority)
+  if (t === q) {
+    return titleRaw.trim() === rawQuery.trim() ? 10010 : 10000;
+  }
+
+  const lenDiff = Math.max(0, t.length - q.length);
+
+  // 2. Prefix match (starts with query, e.g. "rnd_worksheet_share" for "rnd_worksheet")
+  if (t.startsWith(q)) {
+    const nextChar = t[q.length];
+    const isWordBoundary = nextChar === '_' || nextChar === '-' || nextChar === '.' || nextChar === ' ';
+    return 8000 + (isWordBoundary ? 200 : 0) - Math.min(500, lenDiff);
+  }
+
+  // 3. Contiguous substring match
+  const idx = t.indexOf(q);
+  if (idx !== -1) {
+    const prevChar = idx > 0 ? t[idx - 1] : '';
+    const isBoundaryStart = prevChar === '_' || prevChar === '-' || prevChar === '.' || prevChar === ' ';
+    const isSuffix = idx + q.length === t.length;
+
+    if (isBoundaryStart) {
+      return 6000 + (isSuffix ? 200 : 0) - Math.min(300, idx * 5) - Math.min(500, lenDiff);
+    }
+    return 4000 + (isSuffix ? 100 : 0) - Math.min(300, idx * 5) - Math.min(500, lenDiff);
+  }
+
+  // 4. Token / segment match (e.g. when only some words match or matched via column metadata)
+  const qTokens = q.split(/[_.\-\s]+/).filter(Boolean);
+  const tTokens = t.split(/[_.\-\s]+/).filter(Boolean);
+
+  if (qTokens.length > 0 && tTokens.length > 0) {
+    let exactTokenMatches = 0;
+    let partialTokenMatches = 0;
+    for (const qt of qTokens) {
+      if (tTokens.includes(qt)) {
+        exactTokenMatches++;
+      } else if (t.includes(qt)) {
+        partialTokenMatches++;
+      }
+    }
+
+    if (exactTokenMatches + partialTokenMatches === qTokens.length) {
+      return 3000 + exactTokenMatches * 50 - Math.min(500, Math.abs(t.length - q.length));
+    }
+
+    if (exactTokenMatches > 0 || partialTokenMatches > 0) {
+      const ratio = (exactTokenMatches + partialTokenMatches * 0.5) / qTokens.length;
+      return 1000 + Math.round(ratio * 500) - Math.min(300, Math.abs(t.length - q.length) * 2);
+    }
+  }
+
+  // 5. Fallback (matched only via column metadata in backend cache)
+  return 100 - Math.min(90, Math.abs(t.length - q.length));
+};
+
 export const SearchEverywhere: React.FC = () => {
   const { isSearchEverywhereOpen, setSearchEverywhereOpen, openTab, consoles } = useWorkbenchStore();
-  const { connections, treeObjects, treeDatabases, visibleDatabases, setActiveConnection } = useConnectionStore();
+  const {
+    connections,
+    activeConnectionId,
+    activeDatabase,
+    treeObjects,
+    treeDatabases,
+    visibleDatabases,
+    setActiveConnection,
+  } = useConnectionStore();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -192,7 +261,7 @@ export const SearchEverywhere: React.FC = () => {
           if (c.connectionId && !conn) {
             continue;
           }
-          items.unshift({
+          items.push({
             id: `console-${c.id}`,
             kind: 'console',
             title: c.title,
@@ -219,6 +288,43 @@ export const SearchEverywhere: React.FC = () => {
           });
         }
 
+        // 5. Sort results by closest match relevance
+        items.sort((a, b) => {
+          const scoreA = computeMatchScore(a.title, cleanQuery);
+          const scoreB = computeMatchScore(b.title, cleanQuery);
+          if (scoreA !== scoreB) {
+            return scoreB - scoreA;
+          }
+
+          // Tie-breaker 1: Active connection + active database
+          const aActiveDb =
+            a.connectionId === activeConnectionId && a.database && a.database === activeDatabase ? 1 : 0;
+          const bActiveDb =
+            b.connectionId === activeConnectionId && b.database && b.database === activeDatabase ? 1 : 0;
+          if (aActiveDb !== bActiveDb) {
+            return bActiveDb - aActiveDb;
+          }
+
+          // Tie-breaker 2: Active connection
+          const aActiveConn = a.connectionId === activeConnectionId ? 1 : 0;
+          const bActiveConn = b.connectionId === activeConnectionId ? 1 : 0;
+          if (aActiveConn !== bActiveConn) {
+            return bActiveConn - aActiveConn;
+          }
+
+          // Tie-breaker 3: Shorter title length
+          if (a.title.length !== b.title.length) {
+            return a.title.length - b.title.length;
+          }
+
+          // Tie-breaker 4: Alphabetical by title, then subtitle
+          const titleCmp = a.title.localeCompare(b.title);
+          if (titleCmp !== 0) {
+            return titleCmp;
+          }
+          return a.subtitle.localeCompare(b.subtitle);
+        });
+
         setResults(items);
         setSelectedIndex(0);
       } catch (e) {
@@ -227,7 +333,16 @@ export const SearchEverywhere: React.FC = () => {
     }, 120);
 
     return () => clearTimeout(timer);
-  }, [query, treeObjects, consoles, connections, visibleDatabases, treeDatabases]);
+  }, [
+    query,
+    treeObjects,
+    consoles,
+    connections,
+    activeConnectionId,
+    activeDatabase,
+    visibleDatabases,
+    treeDatabases,
+  ]);
 
   const handleSelectItem = (item: SearchResultItem) => {
     setSearchEverywhereOpen(false);
