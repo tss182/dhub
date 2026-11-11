@@ -14,7 +14,7 @@
     !define INFO_PRODUCTNAME "DHub"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "0.2.6"
+    !define INFO_PRODUCTVERSION "0.2.7"
 !endif
 !ifndef INFO_COPYRIGHT
     !define INFO_COPYRIGHT "(c) 2026, AskDev"
