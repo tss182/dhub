@@ -13,6 +13,10 @@ export function DeleteWorksheet(id: string): $CancellablePromise<void> {
     return $Call.ByID(825634916, id);
 }
 
+export function DeleteWorkspace(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2457642497, id);
+}
+
 export function GetQueryHistory(connectionID: string, limit: number): $CancellablePromise<store$0.QueryHistoryEntry[] | null> {
     return $Call.ByID(659553081, connectionID, limit);
 }
@@ -25,8 +29,20 @@ export function GetWorksheet(id: string): $CancellablePromise<store$0.Worksheet 
     return $Call.ByID(3848255231, id);
 }
 
+export function GetWorkspace(id: string): $CancellablePromise<store$0.WorkspaceSnapshot | null> {
+    return $Call.ByID(980400370, id);
+}
+
 export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[] | null> {
     return $Call.ByID(3290411218, connectionID);
+}
+
+export function ListWorkspaces(): $CancellablePromise<store$0.WorkspaceSnapshot[] | null> {
+    return $Call.ByID(1872458117);
+}
+
+export function RenameWorkspace(id: string, newName: string): $CancellablePromise<void> {
+    return $Call.ByID(1131596734, id, newName);
 }
 
 export function SaveSetting(key: string, value: string): $CancellablePromise<void> {
@@ -35,4 +51,12 @@ export function SaveSetting(key: string, value: string): $CancellablePromise<voi
 
 export function SaveWorksheet(ws: store$0.Worksheet): $CancellablePromise<string> {
     return $Call.ByID(3347542458, ws);
+}
+
+export function SaveWorkspace(ws: store$0.WorkspaceSnapshot): $CancellablePromise<string> {
+    return $Call.ByID(1480648211, ws);
+}
+
+export function SetActiveWorkspace(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2830475372, id);
 }

@@ -111,3 +111,16 @@ export interface Worksheet {
     "sortOrder": number;
     "updatedAt": string;
 }
+
+export interface WorkspaceSnapshot {
+    "id": string;
+    "name": string;
+    "description": string;
+    "icon": string;
+    "colorTag": string;
+    "isActive": boolean;
+    "tabsJson": string;
+    "activeTabId": string;
+    "createdAt": string;
+    "updatedAt": string;
+}

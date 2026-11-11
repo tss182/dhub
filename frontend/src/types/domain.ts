@@ -173,6 +173,18 @@ export interface QueryHistoryEntry {
 
 export type WorkbenchTabType = 'worksheet' | 'table_data' | 'ddl' | 'users' | 'er_diagram';
 
+export interface TableViewState {
+  whereClause?: string;
+  sortConfigs?: Array<{ column: string; direction: 'asc' | 'desc' }>;
+  frozenColumns?: string[];
+  activeRowIndex?: number;
+  scrollTop?: number;
+  scrollLeft?: number;
+  pageSize?: number;
+  page?: number;
+  offset?: number;
+}
+
 export interface WorkbenchTab {
   id: string;
   type: WorkbenchTabType;
@@ -185,5 +197,19 @@ export interface WorkbenchTab {
   worksheetId?: string;
   content?: string;
   isDirty?: boolean;
+  tableViewState?: TableViewState;
+}
+
+export interface WorkspaceItem {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  colorTag?: string;
+  isActive: boolean;
+  tabsJson: string;
+  activeTabId: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
