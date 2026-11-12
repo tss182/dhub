@@ -107,9 +107,10 @@ export interface IndexMeta {
 export interface ObjectSummary {
   schema: string;
   name: string;
-  type: 'table' | 'view' | 'materialized_view' | 'routine' | 'trigger';
+  type: string;
   rowEstimate: number;
   sizePretty?: string;
+  comment?: string;
 }
 
 export interface TableStructure {

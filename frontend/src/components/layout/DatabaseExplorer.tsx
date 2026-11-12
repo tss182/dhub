@@ -34,6 +34,7 @@ import {
   Zap,
   Layers,
   ArrowRightLeft,
+  Key,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -780,7 +781,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       setActiveConnection(connId, dbName, targetSchema);
 
       const schemaKey = `${connId}:${dbName}:${targetSchema}`;
-      if (!expandedNodes[nodeKey] && !treeObjects[schemaKey]) {
+      if (!expandedNodes[nodeKey] && (!treeObjects[schemaKey] || treeObjects[schemaKey].length === 0)) {
         try {
           const objects = (await SchemaService.GetObjects(connId, dbName, targetSchema)) ?? [];
           setTreeObjects(schemaKey, objects as any);
@@ -1329,19 +1330,24 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     schema: string,
     obj: ObjectSummary
   ) => {
+    const isRedis = conn.driver === 'redis';
     const isView = obj.type === 'view';
-    const keyword = isView ? 'VIEW' : 'TABLE';
+    const keyword = isRedis ? 'KEY' : isView ? 'VIEW' : 'TABLE';
 
     const ok = await confirmDialog({
-      title: `Drop ${isView ? 'View' : 'Table'}`,
-      message: `Are you sure you want to DROP ${keyword.toLowerCase()} "${obj.name}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
-      confirmLabel: `Drop ${isView ? 'View' : 'Table'}`,
+      title: isRedis ? 'Delete Key' : `Drop ${isView ? 'View' : 'Table'}`,
+      message: isRedis
+        ? `Are you sure you want to delete key "${obj.name}" from ${db}? This action cannot be undone.`
+        : `Are you sure you want to DROP ${keyword.toLowerCase()} "${obj.name}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
+      confirmLabel: isRedis ? 'Delete Key' : `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
     });
     if (!ok) return;
 
     let sql = '';
-    if (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse') {
+    if (isRedis) {
+      sql = `DEL ${obj.name}`;
+    } else if (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse') {
       sql = `DROP ${keyword} \`${obj.name}\`;`;
     } else if (conn.driver === 'mssql') {
       sql = `DROP ${keyword} [${schema}].[${obj.name}];`;
@@ -1375,8 +1381,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           if (objs) setTreeObjects(schemaKey, objs as any);
         })
         .catch(() => {});
+
+      alertSuccess(
+        isRedis ? `Deleted key "${obj.name}".` : `Dropped ${keyword.toLowerCase()} "${obj.name}".`,
+        isRedis ? 'Key Deleted' : `${keyword} Dropped`
+      );
     } catch (err: any) {
-      alertError(err?.message || String(err), `Failed to Drop ${keyword}`);
+      alertError(err?.message || String(err), isRedis ? 'Failed to Delete Key' : `Failed to Drop ${keyword}`);
     }
   };
 
@@ -1947,11 +1958,14 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   const isDbExpanded =
                     !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
                   const baseList = filterLower && !dbMatches ? matchingObjects : allObjects;
-                  const tables = baseList.filter((o) => o.type === 'table' || (!o.type && o.type !== 'view'));
-                  const views = baseList.filter((o) => o.type === 'view');
-                  const matViews = baseList.filter((o) => o.type === 'materialized_view');
-                  const routines = baseList.filter((o) => o.type === 'routine');
-                  const triggers = baseList.filter((o) => o.type === 'trigger');
+                  const tables =
+                    c.driver === 'redis'
+                      ? baseList
+                      : baseList.filter((o) => o.type === 'table' || (!o.type && o.type !== 'view'));
+                  const views = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'view');
+                  const matViews = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'materialized_view');
+                  const routines = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'routine');
+                  const triggers = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'trigger');
                   const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
 
                   return (
@@ -1998,6 +2012,17 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                           }}
                           className="opacity-0 group-hover/db:opacity-100 flex items-center gap-0.5 transition-opacity ml-1"
                         >
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRefreshDatabase(c.id, dbName);
+                            }}
+                            className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors cursor-pointer"
+                            title={`Refresh "${dbName}"`}
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                          </button>
                           {c.driver === 'postgres' && (
                             <button
                               type="button"
@@ -2005,23 +2030,25 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                 e.stopPropagation();
                                 handleOpenCreateSchema(c, dbName);
                               }}
-                              className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
+                              className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors cursor-pointer"
                               title={`Create New Collection / Schema in "${dbName}"`}
                             >
                               <Layers className="h-3 w-3 text-cyan-400" />
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenCreateTable(c, dbName, targetSchema);
-                            }}
-                            className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors"
-                            title={`Create New Table in "${dbName}"`}
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
+                          {c.driver !== 'redis' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenCreateTable(c, dbName, targetSchema);
+                              }}
+                              className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors cursor-pointer"
+                              title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -2488,19 +2515,33 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                   <Folder className="h-2.5 w-2.5" />
                                   <span>{c.driver === 'redis' ? `keys (${tables.length})` : c.driver === 'mongodb' ? `collections (${tables.length})` : `tables (${tables.length})`}</span>
                                 </div>
-                                {c.driver !== 'redis' && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleOpenCreateTable(c, dbName, targetSchema);
-                                    }}
-                                    className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                    title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
-                                  >
-                                    <Plus className="h-2.5 w-2.5" />
-                                  </button>
-                                )}
+                                <div className="flex items-center gap-0.5">
+                                  {c.driver === 'redis' ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRefreshDatabase(c.id, dbName);
+                                      }}
+                                      className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                      title={`Refresh keys in "${dbName}"`}
+                                    >
+                                      <RefreshCw className="h-2.5 w-2.5" />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenCreateTable(c, dbName, targetSchema);
+                                      }}
+                                      className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                      title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
+                                    >
+                                      <Plus className="h-2.5 w-2.5" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                               {tables.map((obj) => (
                                 <div
@@ -2522,16 +2563,25 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                     handleItemMouseEnter(e, {
                                       kind: 'table',
                                       title: obj.name,
-                                      badge: 'TABLE',
-                                      subtitle: `${c.name} / ${dbName}`,
+                                      badge: c.driver === 'redis' ? (obj.type || 'KEY').toUpperCase() : 'TABLE',
+                                      subtitle: `${c.name} / ${dbName}${obj.comment ? ` • ${obj.comment}` : ''}`,
                                     })
                                   }
                                   onMouseLeave={handleItemMouseLeave}
-                                  title={obj.name}
+                                  title={obj.comment ? `${obj.name} (${obj.comment})` : obj.name}
                                   className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                 >
-                                  <Table className="h-3 w-3 shrink-0 text-emerald-400" />
+                                  {c.driver === 'redis' ? (
+                                    <Key className="h-3 w-3 shrink-0 text-amber-400" />
+                                  ) : (
+                                    <Table className="h-3 w-3 shrink-0 text-emerald-400" />
+                                  )}
                                   <span className="truncate">{obj.name}</span>
+                                  {c.driver === 'redis' && (
+                                    <span className="ml-auto text-[9px] font-mono px-1 rounded bg-[#272932] text-zinc-400 uppercase shrink-0">
+                                      {obj.type || 'key'}
+                                    </span>
+                                  )}
                                 </div>
                               ))}
 
@@ -3139,7 +3189,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               {contextMenu.type === 'schema' && `Collection / Schema: ${contextMenu.schema}`}
               {contextMenu.type === 'table' &&
                 `${
-                  contextMenu.table?.type === 'routine'
+                  contextMenu.connection?.driver === 'redis'
+                    ? `Key (${(contextMenu.table?.type || 'key').toUpperCase()}): ${contextMenu.table?.name}`
+                    : contextMenu.table?.type === 'routine'
                     ? 'Routine'
                     : contextMenu.table?.type === 'trigger'
                     ? 'Trigger'
@@ -3753,6 +3805,87 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   >
                     <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
                     <span>Drop Trigger...</span>
+                  </button>
+                </>
+              ) : contextMenu.connection.driver === 'redis' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleTableClick(
+                        contextMenu.connection!.id,
+                        contextMenu.database || 'db0',
+                        contextMenu.schema || contextMenu.database || 'db0',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Key className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                    <span>View / Edit Key</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleNewConsole(
+                        contextMenu.connection!.id,
+                        contextMenu.database || 'db0',
+                        contextMenu.schema || contextMenu.database || 'db0',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Terminal className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>New Query Console</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleRefreshTable(
+                        contextMenu.connection!.id,
+                        contextMenu.database || 'db0',
+                        contextMenu.schema || contextMenu.database || 'db0',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Refresh Key</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(contextMenu.table!.name)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Copy Key Name</span>
+                  </button>
+
+                  <div className="my-1 border-t border-[#272932]" />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteTable(
+                        contextMenu.connection!,
+                        contextMenu.database || 'db0',
+                        contextMenu.schema || contextMenu.database || 'db0',
+                        contextMenu.table!
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Delete Key...</span>
                   </button>
                 </>
               ) : (
