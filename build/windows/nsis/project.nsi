@@ -4,29 +4,7 @@ Unicode true
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
 ## mentioned underneath.
 ## If the keyword is not defined, "wails_tools.nsh" will populate them.
-## If they are defined here, "wails_tools.nsh" will not touch them. This allows you to use this project.nsi manually
-## from outside of Wails for debugging and development of the installer.
-## 
-## For development first make a wails nsis build to populate the "wails_tools.nsh":
-## > wails build --target windows/amd64 --nsis
-## Then you can call makensis on this file with specifying the path to your binary:
-## For a AMD64 only installer:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app.exe
-## For a ARM64 only installer:
-## > makensis -DARG_WAILS_ARM64_BINARY=..\..\bin\app.exe
-## For a installer with both architectures:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app-amd64.exe -DARG_WAILS_ARM64_BINARY=..\..\bin\app-arm64.exe
-####
-## The following information is taken from the wails_tools.nsh file, but they can be overwritten here.
-####
-## !define INFO_PROJECTNAME    "my-project" # Default "dhub"
-## !define INFO_COMPANYNAME    "My Company" # Default "asdev"
-## !define INFO_PRODUCTNAME    "My Product Name" # Default "My Product"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
-## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "© 2026, asdev"
-###
-## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
-## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
+## If they are defined here, "wails_tools.nsh" will not touch them.
 ####
 !ifndef REQUEST_EXECUTION_LEVEL
     !define REQUEST_EXECUTION_LEVEL "user"
@@ -34,85 +12,127 @@ Unicode true
 !ifndef WAILS_INSTALL_SCOPE
     !define WAILS_INSTALL_SCOPE     "user"
 !endif
+
 ####
-## Include the wails tools
+## Include Wails Tools
 ####
 !include "wails_tools.nsh"
 
-# The version information for this two must consist of 4 parts
+# Version Information
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
 
-VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
-VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
-VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
-VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
-VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
-VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
+VIAddVersionKey "CompanyName"      "${INFO_COMPANYNAME}"
+VIAddVersionKey "FileDescription"  "${INFO_PRODUCTNAME} Installer"
+VIAddVersionKey "ProductVersion"   "${INFO_PRODUCTVERSION}"
+VIAddVersionKey "FileVersion"      "${INFO_PRODUCTVERSION}"
+VIAddVersionKey "LegalCopyright"   "${INFO_COPYRIGHT}"
+VIAddVersionKey "ProductName"      "${INFO_PRODUCTNAME}"
 
-# Enable HiDPI support. https://nsis.sourceforge.io/Reference/ManifestDPIAware
+# Enable HiDPI support
 ManifestDPIAware true
 
-!include "MUI.nsh"
+# High performance modern compression
+SetCompressor /SOLID lzma
 
+# Modern UI 2
+!include "MUI2.nsh"
+
+# Icons & Branding Visuals
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
-# !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
-!define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
-!define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
-!insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
-# !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
-!insertmacro MUI_PAGE_INSTFILES # Installing page.
-!insertmacro MUI_PAGE_FINISH # Finished installation page.
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_BITMAP "resources\header.bmp"
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_WELCOMEFINISHPAGE_BITMAP "resources\welcome.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "resources\welcome.bmp"
 
-!insertmacro MUI_UNPAGE_INSTFILES # Uninstalling page
+!define MUI_ABORTWARNING
 
-!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
+# Welcome Page Customization
+!define MUI_WELCOMEPAGE_TITLE "Welcome to ${INFO_PRODUCTNAME} Setup"
+!define MUI_WELCOMEPAGE_TEXT "Setup will guide you through the installation of ${INFO_PRODUCTNAME} v${INFO_PRODUCTVERSION}.\r\n\r\n${INFO_PRODUCTNAME} is a fast, modern Database Management Studio featuring interactive data grid editing, multi-tab query consoles, and intelligent schema exploration.\r\n\r\nClick Next to continue."
 
-## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
-#!uninstfinalize 'signtool --file "%1"'
-#!finalize 'signtool --file "%1"'
+# Directory Selection Page
+!define MUI_DIRECTORYPAGE_VERIFYONLEAVE
 
+# Finish Page Customization (Launch app option!)
+!define MUI_FINISHPAGE_TITLE "${INFO_PRODUCTNAME} Installation Complete"
+!define MUI_FINISHPAGE_TEXT "${INFO_PRODUCTNAME} has been successfully installed on your computer.\r\n\r\nClick Finish to close Setup."
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch ${INFO_PRODUCTNAME}"
+!define MUI_FINISHPAGE_RUN_CHECKED
+
+# Uninstaller Pages Customization
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "Setup will uninstall ${INFO_PRODUCTNAME} from your computer."
+!define MUI_UNFINISHPAGE_NOAUTOCLOSE
+
+# Installer Pages Flow
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+# Uninstaller Pages Flow
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_UNPAGE_FINISH
+
+# Languages
+!insertmacro MUI_LANGUAGE "English"
+
+# Setup General Settings
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+BrandingText "${INFO_PRODUCTNAME} v${INFO_PRODUCTVERSION} - ${INFO_COMPANYNAME}"
+OutFile "..\..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe"
+
 !if "${WAILS_INSTALL_SCOPE}" == "user"
     InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !else
     InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
 !endif
-ShowInstDetails show # This will always show the installation details.
+
+ShowInstDetails hide
+ShowUnInstDetails hide
 
 Function .onInit
-   !insertmacro wails.checkArchitecture
+    !insertmacro wails.checkArchitecture
 FunctionEnd
 
-Section
+Section "Install"
     !insertmacro wails.setShellContext
 
+    # Check and install WebView2 Runtime if needed
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
     
+    # Extract application files
     !insertmacro wails.files
 
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    # Create Program Menu & Desktop Shortcuts with App Description
+    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 "" "" "${INFO_PRODUCTNAME} - Database Management System"
+    CreateShortcut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}" "" "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 "" "" "${INFO_PRODUCTNAME} - Database Management System"
 
+    # File & Protocol associations
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
     
+    # Register uninstaller in Add/Remove Programs
     !insertmacro wails.writeUninstaller
 SectionEnd
 
-Section "uninstall" 
+Section "Uninstall"
     !insertmacro wails.setShellContext
 
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+    # Remove WebView2 application cache
+    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
 
+    # Remove installed directory
     RMDir /r $INSTDIR
 
+    # Remove shortcuts
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
 
