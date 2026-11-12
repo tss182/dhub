@@ -178,3 +178,54 @@ func TestLocalStore_SchemaCache(t *testing.T) {
 		t.Errorf("expected 1 search result, got %d", len(searchRes))
 	}
 }
+
+func TestSearchEverywhere_Deduplication(t *testing.T) {
+	st, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Insert duplicate entries for the same table with different schema variations
+	// e.g. one with "" and one with "rnd_db" and one with "main"
+	items := []CachedObject{
+		{
+			ConnectionID: "conn-mysql",
+			DatabaseName: "rnd_db",
+			SchemaName:   "",
+			ObjectType:   "table",
+			ObjectName:   "rnd_manufacture",
+		},
+		{
+			ConnectionID: "conn-mysql",
+			DatabaseName: "rnd_db",
+			SchemaName:   "rnd_db",
+			ObjectType:   "table",
+			ObjectName:   "rnd_manufacture",
+		},
+		{
+			ConnectionID: "conn-mysql",
+			DatabaseName: "rnd_db",
+			SchemaName:   "main",
+			ObjectType:   "table",
+			ObjectName:   "rnd_manufacture",
+		},
+	}
+
+	for _, it := range items {
+		if err := st.SaveSchemaCache(ctx, it); err != nil {
+			t.Fatalf("SaveSchemaCache failed: %v", err)
+		}
+	}
+
+	res, err := st.SearchEverywhere(ctx, "", "manufacture", 10)
+	if err != nil {
+		t.Fatalf("SearchEverywhere failed: %v", err)
+	}
+
+	if len(res) != 1 {
+		t.Fatalf("expected exactly 1 deduplicated result, got %d", len(res))
+	}
+	if res[0].ObjectName != "rnd_manufacture" {
+		t.Errorf("unexpected object name: %s", res[0].ObjectName)
+	}
+}

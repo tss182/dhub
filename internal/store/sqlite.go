@@ -190,6 +190,26 @@ func (s *LocalStore) migrate() error {
 	// Ensure env_type column exists on older connections tables
 	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN env_type TEXT NOT NULL DEFAULT 'local';`)
 
+	// Clean up duplicate schema_cache rows where empty or artificial schemas were stored
+	_, _ = s.db.Exec(`DELETE FROM schema_cache
+		WHERE rowid NOT IN (
+			SELECT rowid FROM (
+				SELECT rowid,
+					ROW_NUMBER() OVER (
+						PARTITION BY connection_id, database_name,
+							CASE
+								WHEN schema_name = '' OR schema_name = 'main' OR schema_name = database_name THEN ''
+								ELSE schema_name
+							END,
+							object_type, object_name
+						ORDER BY (schema_name != '' AND schema_name != 'main') DESC,
+							(columns_json != '[]' AND columns_json != 'null' AND columns_json != '') DESC,
+							rowid DESC
+					) as rn
+				FROM schema_cache
+			) WHERE rn = 1
+		);`)
+
 	return nil
 }
 

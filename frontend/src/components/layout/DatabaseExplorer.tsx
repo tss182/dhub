@@ -450,7 +450,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     });
 
     try {
-      const objs = await SchemaService.GetObjects(conn.id, database, '');
+      const targetSchema = conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : database;
+      const objs = await SchemaService.GetObjects(conn.id, database, targetSchema);
       const tables = (objs || [])
         .filter((o) => o.type === 'table')
         .map((o) => o.name)
