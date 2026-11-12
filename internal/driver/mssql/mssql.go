@@ -674,3 +674,4 @@ func (m *MSSQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 	}
 	return totalAffected, nil
 }
+
