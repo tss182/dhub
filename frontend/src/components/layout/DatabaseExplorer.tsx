@@ -884,6 +884,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       sql = `CREATE DATABASE [${dbName}];`;
     } else if (conn.driver === 'mongodb') {
       sql = `db.createCollection("init");`;
+    } else if (conn.driver === 'clickhouse') {
+      sql = `CREATE DATABASE \`${dbName}\`;`;
     } else if (conn.driver === 'postgres') {
       sql = `CREATE DATABASE "${dbName}" ENCODING '${createDbModal.charset || 'UTF8'}';`;
     }
@@ -893,7 +895,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? (conn.databaseName || 'mysql') : (conn.driver === 'mssql' ? 'master' : conn.driver === 'mongodb' ? dbName : 'postgres'),
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? (conn.databaseName || 'mysql') : (conn.driver === 'mssql' ? 'master' : conn.driver === 'mongodb' ? dbName : conn.driver === 'clickhouse' ? (conn.databaseName || 'default') : 'postgres'),
         schema: 'public',
         sql,
         limit: 10,
@@ -1240,7 +1242,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (!okDrop) return;
 
     const sql =
-      (conn.driver === 'mysql' || conn.driver === 'mariadb')
+      (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse')
         ? `DROP DATABASE \`${dbName}\`;`
         : conn.driver === 'mssql'
         ? `DROP DATABASE [${dbName}];`
@@ -1253,7 +1255,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? '' : (conn.driver === 'mssql' ? 'master' : conn.driver === 'mongodb' ? dbName : 'postgres'),
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? '' : (conn.driver === 'mssql' ? 'master' : conn.driver === 'mongodb' ? dbName : conn.driver === 'clickhouse' ? 'default' : 'postgres'),
         schema: 'public',
         sql,
         limit: 10,
@@ -1338,7 +1340,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (!ok) return;
 
     let sql = '';
-    if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
+    if (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse') {
       sql = `DROP ${keyword} \`${obj.name}\`;`;
     } else if (conn.driver === 'mssql') {
       sql = `DROP ${keyword} [${schema}].[${obj.name}];`;
@@ -1556,7 +1558,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     } else if (conn?.driver === 'mongodb') {
       content = `-- MongoDB Query Console for ${targetDb}\n-- Run Mongo shell syntax or SQL:\n-- e.g. db.${tableName || 'collection'}.find() or SELECT * FROM ${tableName || 'collection'}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `db.${tableName}.find()` : `show collections`};\n`;
     } else if (tableName) {
-      const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
+      const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb' || conn?.driver === 'clickhouse') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
       content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
     } else {
       content += `SELECT 1;\n`;

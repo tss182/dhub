@@ -861,6 +861,26 @@ function generateCreateTableSql({
     return statements.join('\n\n');
   } else if (driver === 'mongodb') {
     return `db.createCollection("${cleanTable}");`;
+  } else if (driver === 'clickhouse') {
+    const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
+    columns.forEach((col) => {
+      const cName = col.name.trim();
+      if (!cName) return;
+      let colDef = `  \`${cName}\` ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) {
+        colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (col.defaultValue.trim()) {
+        const val = col.defaultValue.trim();
+        colDef += ` DEFAULT ${val}`;
+      }
+      if (col.comment.trim()) {
+        colDef += ` COMMENT '${col.comment.trim().replace(/'/g, "\\'")}'`;
+      }
+      lines.push(colDef);
+    });
+    const orderCols = pkCols.length > 0 ? pkCols.map((c) => `\`${c.name.trim()}\``).join(', ') : 'tuple()';
+    return `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE = MergeTree() ORDER BY ${orderCols};`;
   } else {
     // SQLite
     columns.forEach((col) => {

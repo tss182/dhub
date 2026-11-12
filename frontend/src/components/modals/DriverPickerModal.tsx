@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Search, Check, Database } from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
 
-export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb';
+export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse';
 
 export interface DriverOption {
   id: DriverType;
   name: string;
-  category: 'Relational' | 'Document' | 'Key-Value';
+  category: 'Relational' | 'Document' | 'Key-Value' | 'Column-Oriented';
   tag: 'SQL' | 'NoSQL';
   description: string;
 }
@@ -61,6 +61,13 @@ export const DRIVER_OPTIONS: DriverOption[] = [
     category: 'Document',
     tag: 'NoSQL',
     description: 'High-performance document-oriented NoSQL database',
+  },
+  {
+    id: 'clickhouse',
+    name: 'ClickHouse',
+    category: 'Column-Oriented',
+    tag: 'SQL',
+    description: 'Blazing-fast column-oriented analytical database',
   },
 ];
 

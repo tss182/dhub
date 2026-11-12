@@ -184,6 +184,30 @@ func TestSessionManager_MongoDBDriver(t *testing.T) {
 	}
 }
 
+func TestSessionManager_ClickHouseDriver(t *testing.T) {
+	st, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	mgr := NewSessionManager(st)
+	cfg := store.ConnectionConfig{
+		ID:           "test-clickhouse-driver",
+		Driver:       "clickhouse",
+		Host:         "127.0.0.1",
+		Port:         9000,
+		Username:     "default",
+		Password:     "secret",
+		DatabaseName: "default",
+	}
+
+	drv, err := mgr.createDriver(cfg, cfg.Host, cfg.Port)
+	if err != nil {
+		t.Fatalf("unexpected error creating clickhouse driver: %v", err)
+	}
+	if drv == nil {
+		t.Fatal("expected driver to be created, got nil")
+	}
+}
+
 func TestSessionManager_UnsupportedDriver(t *testing.T) {
 	st, cleanup := setupTestStore(t)
 	defer cleanup()

@@ -176,7 +176,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
   const loadUsers = async () => {
     if (!connection) return;
-    if (connection.driver === 'sqlite' || connection.driver === 'redis' || connection.driver === 'mssql' || connection.driver === 'mongodb') {
+    if (connection.driver === 'sqlite' || connection.driver === 'redis' || connection.driver === 'mssql' || connection.driver === 'mongodb' || connection.driver === 'clickhouse') {
       setUsers([]);
       setIsLoading(false);
       return;
@@ -721,6 +721,23 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         </h3>
         <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
           MongoDB uses role-based access control (RBAC). You can manage users, roles, and authentication directly in the Query Console using commands such as <code className="font-mono text-zinc-200">db.createUser(...)</code>, <code className="font-mono text-zinc-200">db.updateUser(...)</code>, or <code className="font-mono text-zinc-200">db.dropUser(...)</code>.
+        </p>
+      </div>
+    );
+  }
+
+  // ClickHouse Message
+  if (connection.driver === 'clickhouse') {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#191a20] p-6 text-center select-none">
+        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-4 shadow-lg">
+          <AlertCircle className="h-7 w-7" />
+        </div>
+        <h3 className="text-base font-semibold text-zinc-100 mb-1">
+          ClickHouse User Management
+        </h3>
+        <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
+          ClickHouse supports SQL-driven user and role management. You can manage users, roles, and quotas directly in the Query Console using commands such as <code className="font-mono text-zinc-200">CREATE USER</code>, <code className="font-mono text-zinc-200">CREATE ROLE</code>, and <code className="font-mono text-zinc-200">GRANT</code>.
         </p>
       </div>
     );
