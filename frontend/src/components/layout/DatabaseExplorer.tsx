@@ -882,6 +882,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       sql = `CREATE DATABASE \`${dbName}\` CHARACTER SET ${createDbModal.charset || 'utf8mb4'} COLLATE ${createDbModal.collation || 'utf8mb4_unicode_ci'};`;
     } else if (conn.driver === 'mssql') {
       sql = `CREATE DATABASE [${dbName}];`;
+    } else if (conn.driver === 'mongodb') {
+      sql = `db.createCollection("init");`;
     } else if (conn.driver === 'postgres') {
       sql = `CREATE DATABASE "${dbName}" ENCODING '${createDbModal.charset || 'UTF8'}';`;
     }
@@ -891,7 +893,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? (conn.databaseName || 'mysql') : (conn.driver === 'mssql' ? 'master' : 'postgres'),
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? (conn.databaseName || 'mysql') : (conn.driver === 'mssql' ? 'master' : conn.driver === 'mongodb' ? dbName : 'postgres'),
         schema: 'public',
         sql,
         limit: 10,
@@ -1242,6 +1244,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         ? `DROP DATABASE \`${dbName}\`;`
         : conn.driver === 'mssql'
         ? `DROP DATABASE [${dbName}];`
+        : conn.driver === 'mongodb'
+        ? `db.dropDatabase();`
         : `DROP DATABASE "${dbName}";`;
 
     try {
@@ -1249,7 +1253,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? '' : (conn.driver === 'mssql' ? 'master' : 'postgres'),
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? '' : (conn.driver === 'mssql' ? 'master' : conn.driver === 'mongodb' ? dbName : 'postgres'),
         schema: 'public',
         sql,
         limit: 10,
@@ -1338,6 +1342,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       sql = `DROP ${keyword} \`${obj.name}\`;`;
     } else if (conn.driver === 'mssql') {
       sql = `DROP ${keyword} [${schema}].[${obj.name}];`;
+    } else if (conn.driver === 'mongodb') {
+      sql = `db.${obj.name}.drop();`;
     } else if (conn.driver === 'postgres') {
       sql = `DROP ${keyword} "${schema}"."${obj.name}";`;
     } else {
@@ -1547,6 +1553,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let content = `-- Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n`;
     if (conn?.driver === 'redis') {
       content = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
+    } else if (conn?.driver === 'mongodb') {
+      content = `-- MongoDB Query Console for ${targetDb}\n-- Run Mongo shell syntax or SQL:\n-- e.g. db.${tableName || 'collection'}.find() or SELECT * FROM ${tableName || 'collection'}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `db.${tableName}.find()` : `show collections`};\n`;
     } else if (tableName) {
       const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
       content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
@@ -2475,7 +2483,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                               <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
                                 <div className="flex items-center gap-1">
                                   <Folder className="h-2.5 w-2.5" />
-                                  <span>{c.driver === 'redis' ? `keys (${tables.length})` : `tables (${tables.length})`}</span>
+                                  <span>{c.driver === 'redis' ? `keys (${tables.length})` : c.driver === 'mongodb' ? `collections (${tables.length})` : `tables (${tables.length})`}</span>
                                 </div>
                                 {c.driver !== 'redis' && (
                                   <button
@@ -2485,7 +2493,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                       handleOpenCreateTable(c, dbName, targetSchema);
                                     }}
                                     className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                    title={`Create New Table in "${dbName}"`}
+                                    title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
                                   >
                                     <Plus className="h-2.5 w-2.5" />
                                   </button>

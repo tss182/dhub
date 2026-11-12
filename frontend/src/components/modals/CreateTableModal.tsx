@@ -859,6 +859,8 @@ function generateCreateTableSql({
     });
 
     return statements.join('\n\n');
+  } else if (driver === 'mongodb') {
+    return `db.createCollection("${cleanTable}");`;
   } else {
     // SQLite
     columns.forEach((col) => {

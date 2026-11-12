@@ -948,7 +948,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const handleFormatSql = () => {
     try {
       const drv = connection?.driver || 'sqlite';
-      if (drv === 'redis') return;
+      if (drv === 'redis' || drv === 'mongodb') return;
       let lang: any = 'sql';
       if (drv === 'postgres') lang = 'postgresql';
       else if (drv === 'mariadb') lang = 'mariadb';
@@ -976,7 +976,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     if (!stmt) return;
 
     const drv = connection?.driver || 'sqlite';
-    if (drv === 'redis') return;
+    if (drv === 'redis' || drv === 'mongodb') return;
     let prefix = 'EXPLAIN ';
     if (drv === 'postgres') {
       prefix = isAnalyze

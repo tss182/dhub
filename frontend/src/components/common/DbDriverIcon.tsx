@@ -119,6 +119,21 @@ export const DbDriverIcon: React.FC<DbDriverIconProps> = ({
     );
   }
 
+  // MongoDB
+  if (norm === 'mongodb' || norm === 'mongo') {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        fill={color || '#13AA52'}
+        className={className}
+        xmlns="http://www.w3.org/2000/svg"
+        aria-label="MongoDB"
+      >
+        <path d="M17.193 9.555c-1.264-5.18-4.713-8.02-4.97-8.227a.406.406 0 0 0-.446 0C11.52 1.536 8.07 4.375 6.807 9.555c-1.393 5.706.772 10.375 5.074 13.064.037.023.078.035.119.035s.082-.012.119-.035c4.302-2.689 6.467-7.358 5.074-13.064zm-5.193 11.83C7.994 18.99 6.27 15.022 7.42 10.306c.997-4.088 3.65-6.577 4.58-7.368v18.447z" />
+      </svg>
+    );
+  }
+
   // ClickHouse
   if (norm === 'clickhouse') {
     return (

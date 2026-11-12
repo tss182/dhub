@@ -13,7 +13,7 @@ export interface ConnectionConfig {
   folderId?: string | null;
   sortOrder?: number;
   name: string;
-  driver: 'postgres' | 'mysql' | 'sqlite' | 'mariadb' | 'redis' | 'mssql';
+  driver: 'postgres' | 'mysql' | 'sqlite' | 'mariadb' | 'redis' | 'mssql' | 'mongodb';
   envType?: ConnectionEnvType;
   colorTag: string;
   isReadOnly: boolean;
