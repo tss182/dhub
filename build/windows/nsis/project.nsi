@@ -52,14 +52,14 @@ SetCompressor /SOLID lzma
 
 # Welcome Page Customization
 !define MUI_WELCOMEPAGE_TITLE "Welcome to ${INFO_PRODUCTNAME} Setup"
-!define MUI_WELCOMEPAGE_TEXT "Setup will guide you through the installation of ${INFO_PRODUCTNAME} v${INFO_PRODUCTVERSION}.\r\n\r\n${INFO_PRODUCTNAME} is a fast, modern Database Management Studio featuring interactive data grid editing, multi-tab query consoles, and intelligent schema exploration.\r\n\r\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT "Setup will guide you through the installation of ${INFO_PRODUCTNAME} v${INFO_PRODUCTVERSION}.$\r$\n$\r$\n${INFO_PRODUCTNAME} is a fast, modern Database Management Studio featuring interactive data grid editing, multi-tab query consoles, and intelligent schema exploration.$\r$\n$\r$\nClick Next to continue."
 
 # Directory Selection Page
 !define MUI_DIRECTORYPAGE_VERIFYONLEAVE
 
 # Finish Page Customization (Launch app option!)
 !define MUI_FINISHPAGE_TITLE "${INFO_PRODUCTNAME} Installation Complete"
-!define MUI_FINISHPAGE_TEXT "${INFO_PRODUCTNAME} has been successfully installed on your computer.\r\n\r\nClick Finish to close Setup."
+!define MUI_FINISHPAGE_TEXT "${INFO_PRODUCTNAME} has been successfully installed on your computer.$\r$\n$\r$\nClick Finish to close Setup."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch ${INFO_PRODUCTNAME}"
 !define MUI_FINISHPAGE_RUN_CHECKED

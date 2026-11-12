@@ -3,7 +3,17 @@ import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
-import { Search, Table, Database, Terminal, FileCode, Settings as SettingsIcon } from 'lucide-react';
+import {
+  Search,
+  Table,
+  Database,
+  Terminal,
+  FileCode,
+  Settings as SettingsIcon,
+  Filter,
+  Check,
+  ChevronUp,
+} from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
 
 interface SearchResultItem {
@@ -97,6 +107,79 @@ export const SearchEverywhere: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const [selectedConnectionIds, setSelectedConnectionIds] = useState<string[]>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const stored = localStorage.getItem('dhub_search_filtered_connections');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+    }
+    return []; // Empty means "All Connections"
+  });
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterContainerRef = useRef<HTMLDivElement>(null);
+
+  const validSelectedConnIds = selectedConnectionIds.filter((id) =>
+    connections.some((c) => c.id === id)
+  );
+  const isAllSelected =
+    validSelectedConnIds.length === 0 || validSelectedConnIds.length === connections.length;
+
+  const handleToggleConnection = (connId: string) => {
+    let next: string[];
+    if (isAllSelected) {
+      next = connections.map((c) => c.id).filter((id) => id !== connId);
+    } else if (validSelectedConnIds.includes(connId)) {
+      next = validSelectedConnIds.filter((id) => id !== connId);
+      if (next.length === 0) {
+        next = [];
+      }
+    } else {
+      next = [...validSelectedConnIds, connId];
+      if (next.length === connections.length) {
+        next = [];
+      }
+    }
+    setSelectedConnectionIds(next);
+    try {
+      localStorage.setItem('dhub_search_filtered_connections', JSON.stringify(next));
+    } catch {}
+  };
+
+  const handleSelectOnly = (connId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = [connId];
+    setSelectedConnectionIds(next);
+    try {
+      localStorage.setItem('dhub_search_filtered_connections', JSON.stringify(next));
+    } catch {}
+  };
+
+  const handleSelectAll = () => {
+    setSelectedConnectionIds([]);
+    try {
+      localStorage.setItem('dhub_search_filtered_connections', JSON.stringify([]));
+    } catch {}
+  };
+
+  // Close filter popover on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        isFilterOpen &&
+        filterContainerRef.current &&
+        !filterContainerRef.current.contains(e.target as Node)
+      ) {
+        setIsFilterOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [isFilterOpen]);
+
   const isDatabaseVisible = (connId?: string, databaseName?: string): boolean => {
     if (!connId) return false;
     const conn = connections.find((c) => c.id === connId);
@@ -137,6 +220,7 @@ export const SearchEverywhere: React.FC = () => {
       setQuery('');
       setResults([]);
       setSelectedIndex(0);
+      setIsFilterOpen(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [isSearchEverywhereOpen]);
@@ -147,6 +231,11 @@ export const SearchEverywhere: React.FC = () => {
 
       if (e.key === 'Escape') {
         e.preventDefault();
+        if (isFilterOpen) {
+          setIsFilterOpen(false);
+          inputRef.current?.focus();
+          return;
+        }
         setSearchEverywhereOpen(false);
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -163,7 +252,7 @@ export const SearchEverywhere: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSearchEverywhereOpen, results, selectedIndex]);
+  }, [isSearchEverywhereOpen, results, selectedIndex, isFilterOpen]);
 
   // Scroll active item into view
   useEffect(() => {
@@ -186,11 +275,12 @@ export const SearchEverywhere: React.FC = () => {
         const qLower = cleanQuery.toLowerCase();
         const items: SearchResultItem[] = [];
 
-        // 1. Search cached schema objects across ALL connections from backend
-        // Passing "" as connectionID instructs backend to query across all connections
+        // 1. Search cached schema objects across connections from backend
         let backendMatches: any[] = [];
         try {
-          const resp = await SchemaService.SearchEverywhere('', cleanQuery);
+          const targetConnId =
+            !isAllSelected && validSelectedConnIds.length === 1 ? validSelectedConnIds[0] : '';
+          const resp = await SchemaService.SearchEverywhere(targetConnId, cleanQuery);
           backendMatches = resp || [];
         } catch (err) {
           console.error('Backend search everywhere error:', err);
@@ -204,6 +294,10 @@ export const SearchEverywhere: React.FC = () => {
           const connId = parts[0] || '';
           const dbName = parts[1] || '';
           const schemaName = parts[2] || '';
+
+          if (!isAllSelected && !validSelectedConnIds.includes(connId)) {
+            return;
+          }
 
           if (!isDatabaseVisible(connId, dbName)) {
             return;
@@ -222,9 +316,13 @@ export const SearchEverywhere: React.FC = () => {
           });
         });
 
-        // Deduplicate database objects & filter visible databases
+        // Deduplicate database objects & filter visible databases & filtered connections
         const seenObjMap = new Map<string, SearchResultItem>();
         for (const item of [...backendMatches, ...memoryMatches]) {
+          if (!isAllSelected && !validSelectedConnIds.includes(item.connectionId)) {
+            continue;
+          }
+
           if (!isDatabaseVisible(item.connectionId, item.databaseName)) {
             continue;
           }
@@ -281,6 +379,9 @@ export const SearchEverywhere: React.FC = () => {
         // 3. Search query consoles
         const matchingConsoles = consoles.filter((c) => c.title.toLowerCase().includes(qLower));
         for (const c of matchingConsoles) {
+          if (c.connectionId && !isAllSelected && !validSelectedConnIds.includes(c.connectionId)) {
+            continue;
+          }
           if (c.database && !isDatabaseVisible(c.connectionId, c.database)) {
             continue;
           }
@@ -302,7 +403,12 @@ export const SearchEverywhere: React.FC = () => {
         }
 
         // 4. Search connections themselves
-        const matchingConns = connections.filter((c) => c.name.toLowerCase().includes(qLower));
+        const matchingConns = connections.filter((c) => {
+          if (!isAllSelected && !validSelectedConnIds.includes(c.id)) {
+            return false;
+          }
+          return c.name.toLowerCase().includes(qLower);
+        });
         for (const c of matchingConns) {
           items.push({
             id: `conn-${c.id}`,
@@ -369,6 +475,7 @@ export const SearchEverywhere: React.FC = () => {
     activeDatabase,
     visibleDatabases,
     treeDatabases,
+    selectedConnectionIds,
   ]);
 
   const handleSelectItem = (item: SearchResultItem) => {
@@ -433,13 +540,19 @@ export const SearchEverywhere: React.FC = () => {
           <input
             ref={inputRef}
             type="text"
-            placeholder="Search all connections, tables, views, consoles everywhere..."
+            placeholder={
+              isAllSelected
+                ? 'Search all connections, tables, views, consoles everywhere...'
+                : `Search in ${validSelectedConnIds.length} selected ${validSelectedConnIds.length === 1 ? 'connection' : 'connections'}...`
+            }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
           />
           <span className="text-[10px] text-zinc-500 font-mono">
-            {connections.length} {connections.length === 1 ? 'connection' : 'connections'}
+            {isAllSelected
+              ? `${connections.length} ${connections.length === 1 ? 'connection' : 'connections'}`
+              : `${validSelectedConnIds.length}/${connections.length} connections`}
           </span>
           <kbd className="rounded bg-[#22242c] px-1.5 py-0.5 text-[10px] text-zinc-400 font-mono">
             ESC
@@ -517,14 +630,143 @@ export const SearchEverywhere: React.FC = () => {
           )}
         </div>
 
-        {/* Footer shortcuts hint */}
+        {/* Footer shortcuts hint & connection filter */}
         <div className="flex items-center justify-between border-t border-[#272932] px-3 py-1.5 bg-[#14151a] text-[10px] text-zinc-500 font-mono">
           <div className="flex items-center gap-3">
             <span>↑↓ Navigate</span>
             <span>↵ Select</span>
             <span>ESC Close</span>
           </div>
-          <span>Search Everywhere (All Connections)</span>
+
+          <div ref={filterContainerRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setIsFilterOpen((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer transition-colors border select-none ${
+                !isAllSelected
+                  ? 'bg-blue-600/20 text-blue-400 border-blue-500/40 hover:bg-blue-600/30'
+                  : 'text-zinc-400 hover:text-zinc-200 border-transparent hover:border-[#272932] hover:bg-[#1f2026]'
+              }`}
+              title="Filter search by specific connections"
+            >
+              <Filter className="h-3 w-3" />
+              <span>
+                {isAllSelected
+                  ? 'Search Everywhere (All Connections)'
+                  : `${validSelectedConnIds.length} of ${connections.length} Connections`}
+              </span>
+              <ChevronUp
+                className={`h-2.5 w-2.5 transition-transform ${isFilterOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {/* Filter Popover (upward dropdown) */}
+            {isFilterOpen && (
+              <div
+                className="absolute bottom-full right-0 mb-1.5 w-72 rounded-lg bg-[#181920] border border-[#272932] shadow-2xl p-2 z-50 text-xs font-sans text-zinc-300"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-[#272932] px-1">
+                  <div className="flex items-center gap-1.5 font-semibold text-zinc-200 text-[11px]">
+                    <Filter className="h-3 w-3 text-blue-400" />
+                    <span>Filter Connections</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSelectAll}
+                    className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                      isAllSelected
+                        ? 'text-zinc-500 cursor-default'
+                        : 'text-blue-400 hover:text-blue-300 hover:bg-blue-950/40 cursor-pointer font-medium'
+                    }`}
+                  >
+                    Select All
+                  </button>
+                </div>
+
+                <div className="max-h-56 overflow-y-auto space-y-0.5 pr-0.5">
+                  {/* All Connections option */}
+                  <div
+                    onClick={handleSelectAll}
+                    className={`group flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                      isAllSelected
+                        ? 'bg-blue-600/15 text-blue-300 font-medium'
+                        : 'hover:bg-[#22242c] text-zinc-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        className={`h-3.5 w-3.5 rounded flex items-center justify-center border transition-colors ${
+                          isAllSelected
+                            ? 'bg-blue-600 border-blue-500 text-white'
+                            : 'border-zinc-600 bg-[#121317]'
+                        }`}
+                      >
+                        {isAllSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                      </div>
+                      <span className="truncate">All Connections</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      ({connections.length})
+                    </span>
+                  </div>
+
+                  <div className="my-1 border-t border-[#23252e]" />
+
+                  {/* Individual connections */}
+                  {connections.map((c) => {
+                    const isChecked = isAllSelected || validSelectedConnIds.includes(c.id);
+                    return (
+                      <div
+                        key={c.id}
+                        onClick={() => handleToggleConnection(c.id)}
+                        className={`group flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                          !isAllSelected && validSelectedConnIds.includes(c.id)
+                            ? 'bg-blue-600/15 text-blue-300 font-medium'
+                            : 'hover:bg-[#22242c] text-zinc-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1 mr-1">
+                          <div
+                            className={`h-3.5 w-3.5 rounded flex items-center justify-center border transition-colors shrink-0 ${
+                              isChecked
+                                ? 'bg-blue-600 border-blue-500 text-white'
+                                : 'border-zinc-600 bg-[#121317]'
+                            }`}
+                          >
+                            {isChecked && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                          </div>
+
+                          <span
+                            className="h-2 w-2 rounded-full shrink-0"
+                            style={{ backgroundColor: c.colorTag || '#71717a' }}
+                          />
+
+                          <DbDriverIcon driver={c.driver} className="h-3 w-3 shrink-0 text-zinc-400" />
+
+                          <span className="truncate text-xs">{c.name}</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[10px] text-zinc-500 font-mono truncate max-w-[80px]">
+                            {c.driver}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleSelectOnly(c.id, e)}
+                            className="opacity-0 group-hover:opacity-100 px-1 py-0.2 rounded text-[9px] text-zinc-400 hover:text-white hover:bg-[#2c2f3a] transition-opacity cursor-pointer uppercase font-mono tracking-wider"
+                            title={`Filter ONLY "${c.name}"`}
+                          >
+                            Only
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
