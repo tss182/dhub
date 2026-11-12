@@ -914,7 +914,7 @@ export function App() {
         } catch {}
       }
       const conn = connList.find((c) => c.id === connId);
-      const isMySQL = (conn?.driver || tab.driver) === 'mysql';
+      const isMySQL = (conn?.driver || tab.driver) === 'mysql' || (conn?.driver || tab.driver) === 'mariadb';
       const targetDb = tab.database || conn?.databaseName || 'main';
       const targetSchema = tab.schema || ((conn?.driver || tab.driver) === 'postgres' ? 'public' : targetDb);
 

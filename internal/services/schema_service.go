@@ -287,12 +287,18 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 	}
 
 	switch conn.Driver {
-	case "mysql":
-		binPath, err := exec.LookPath("mysqldump")
+	case "mysql", "mariadb":
+		firstBin := "mysqldump"
+		secondBin := "mariadb-dump"
+		if conn.Driver == "mariadb" {
+			firstBin = "mariadb-dump"
+			secondBin = "mysqldump"
+		}
+		binPath, err := exec.LookPath(firstBin)
 		if err != nil {
-			binPath, err = exec.LookPath("mariadb-dump")
+			binPath, err = exec.LookPath(secondBin)
 			if err != nil {
-				return "", fmt.Errorf("mysqldump executable not found in PATH; please install mysql-client")
+				return "", fmt.Errorf("%s or %s executable not found in PATH; please install mysql-client or mariadb-client", firstBin, secondBin)
 			}
 		}
 
@@ -548,12 +554,18 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 	}
 
 	switch conn.Driver {
-	case "mysql":
-		binPath, err := exec.LookPath("mysql")
+	case "mysql", "mariadb":
+		firstBin := "mysql"
+		secondBin := "mariadb"
+		if conn.Driver == "mariadb" {
+			firstBin = "mariadb"
+			secondBin = "mysql"
+		}
+		binPath, err := exec.LookPath(firstBin)
 		if err != nil {
-			binPath, err = exec.LookPath("mariadb")
+			binPath, err = exec.LookPath(secondBin)
 			if err != nil {
-				return "", fmt.Errorf("mysql executable not found in PATH; please install mysql-client")
+				return "", fmt.Errorf("%s or %s executable not found in PATH; please install mysql-client or mariadb-client", firstBin, secondBin)
 			}
 		}
 

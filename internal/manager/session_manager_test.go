@@ -90,6 +90,29 @@ func TestSessionManager_SQLiteLifecycle(t *testing.T) {
 	}
 }
 
+func TestSessionManager_MariaDBDriver(t *testing.T) {
+	st, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	mgr := NewSessionManager(st)
+	cfg := store.ConnectionConfig{
+		ID:           "test-mariadb-driver",
+		Driver:       "mariadb",
+		Host:         "127.0.0.1",
+		Port:         3306,
+		Username:     "root",
+		DatabaseName: "testdb",
+	}
+
+	drv, err := mgr.createDriver(cfg, cfg.Host, cfg.Port)
+	if err != nil {
+		t.Fatalf("unexpected error creating mariadb driver: %v", err)
+	}
+	if drv == nil {
+		t.Fatal("expected driver to be created, got nil")
+	}
+}
+
 func TestSessionManager_UnsupportedDriver(t *testing.T) {
 	st, cleanup := setupTestStore(t)
 	defer cleanup()

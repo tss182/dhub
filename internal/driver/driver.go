@@ -11,6 +11,7 @@ const (
 	DriverPostgres DriverType = "postgres"
 	DriverMySQL    DriverType = "mysql"
 	DriverSQLite   DriverType = "sqlite"
+	DriverMariaDB  DriverType = "mariadb"
 )
 
 type ColumnMeta struct {

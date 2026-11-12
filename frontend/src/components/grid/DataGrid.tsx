@@ -1421,7 +1421,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const generateUpdateSql = (rowIndex: number, colName: string, newVal: any): string => {
-    const isMySQL = (driver || '').toLowerCase() === 'mysql';
+    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb';
     const quoteIdent = (name: string) =>
       isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
     const tbl = tableName || 'table_name';
@@ -1924,7 +1924,7 @@ WHERE ${whereClause};`;
     const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
     if (!selectionRange || columns.length === 0) return '';
     const tbl = tableName || 'table_name';
-    const isMySQL = (driver || '').toLowerCase() === 'mysql';
+    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb';
     const quoteIdent = (name: string) =>
       isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
     const quotedTbl = tbl.includes('.')

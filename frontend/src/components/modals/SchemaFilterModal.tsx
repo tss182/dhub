@@ -22,7 +22,7 @@ interface SchemaFilterModalProps {
 
 function isSystemDatabase(driver: string, dbName: string): boolean {
   const lower = dbName.toLowerCase();
-  if (driver === 'mysql') {
+  if (driver === 'mysql' || driver === 'mariadb') {
     return ['information_schema', 'mysql', 'performance_schema', 'sys'].includes(lower);
   }
   if (driver === 'postgres') {
