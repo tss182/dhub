@@ -2012,6 +2012,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                           }}
                           className="opacity-0 group-hover/db:opacity-100 flex items-center gap-0.5 transition-opacity ml-1"
                         >
+                          {c.driver?.toLowerCase() === 'redis' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openTab({
+                                  id: `table-${c.id}-${dbName}-keys`,
+                                  type: 'table_data',
+                                  title: `${dbName} (keys)`,
+                                  connectionId: c.id,
+                                  driver: c.driver,
+                                  database: dbName,
+                                  schema: dbName,
+                                  table: 'keys',
+                                });
+                              }}
+                              className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors cursor-pointer"
+                              title={`View Keys in "${dbName}"`}
+                            >
+                              <Eye className="h-3 w-3" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -2513,7 +2535,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                               <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
                                 <div className="flex items-center gap-1">
                                   <Folder className="h-2.5 w-2.5" />
-                                  <span>{c.driver === 'redis' ? `keys (${tables.length})` : c.driver === 'mongodb' ? `collections (${tables.length})` : `tables (${tables.length})`}</span>
+                                  <span>{c.driver?.toLowerCase() === 'redis' ? `keys (${tables.length})` : c.driver === 'mongodb' ? `collections (${tables.length})` : `tables (${tables.length})`}</span>
                                 </div>
                                 <div className="flex items-center gap-0.5">
                                   {c.driver === 'redis' ? (
@@ -3452,7 +3474,30 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           {/* Database Menu Items */}
           {contextMenu.type === 'database' && contextMenu.connection && contextMenu.database && (
             <>
-              {contextMenu.connection.driver !== 'redis' && (
+              {contextMenu.connection.driver?.toLowerCase() === 'redis' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    openTab({
+                      id: `table-${contextMenu.connection!.id}-${contextMenu.database}-keys`,
+                      type: 'table_data',
+                      title: `${contextMenu.database} (keys)`,
+                      connectionId: contextMenu.connection!.id,
+                      driver: contextMenu.connection!.driver,
+                      database: contextMenu.database!,
+                      schema: contextMenu.database!,
+                      table: 'keys',
+                    });
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>View Keys</span>
+                </button>
+              )}
+
+              {contextMenu.connection.driver?.toLowerCase() !== 'redis' && (
                 <button
                   type="button"
                   onClick={() => {

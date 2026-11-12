@@ -138,6 +138,25 @@ func (r *RedisDriver) GetTableStructure(ctx context.Context, database, schema, t
 		return nil, err
 	}
 
+	cleanTable := extractKeyName(table)
+	if cleanTable == "keys" || cleanTable == "*" {
+		return &driver.TableStructure{
+			Schema: database,
+			Name:   "keys",
+			Columns: []driver.ColumnMeta{
+				{Name: "key", DataType: "string", RawType: "string", IsPrimaryKey: true},
+				{Name: "type", DataType: "string", RawType: "string"},
+				{Name: "ttl", DataType: "string", RawType: "string"},
+				{Name: "size", DataType: "integer", RawType: "integer"},
+				{Name: "value", DataType: "string", RawType: "string"},
+			},
+			PrimaryKeys: []string{"key"},
+			ForeignKeys: []driver.ForeignKeyMeta{},
+			Indexes:     []driver.IndexMeta{},
+			Comment:     fmt.Sprintf("Redis Keys (%s)", database),
+		}, nil
+	}
+
 	kType, _ := conn.Type(ctx, table).Result()
 	if kType == "" || kType == "none" {
 		kType = "string"
@@ -230,21 +249,21 @@ func (r *RedisDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	if m := selectCountRegex.FindStringSubmatch(rawSQL); len(m) == 2 {
 		key := extractKeyName(m[1])
 		count := int64(0)
-		kType, _ := conn.Type(ctx, key).Result()
-		switch kType {
-		case "hash":
-			count, _ = conn.HLen(ctx, key).Result()
-		case "list":
-			count, _ = conn.LLen(ctx, key).Result()
-		case "set":
-			count, _ = conn.SCard(ctx, key).Result()
-		case "zset":
-			count, _ = conn.ZCard(ctx, key).Result()
-		case "string":
-			count = 1
-		default:
-			if key == "keys" || key == "*" {
-				count, _ = conn.DBSize(ctx).Result()
+		if key == "keys" || key == "*" {
+			count, _ = conn.DBSize(ctx).Result()
+		} else {
+			kType, _ := conn.Type(ctx, key).Result()
+			switch kType {
+			case "hash":
+				count, _ = conn.HLen(ctx, key).Result()
+			case "list":
+				count, _ = conn.LLen(ctx, key).Result()
+			case "set":
+				count, _ = conn.SCard(ctx, key).Result()
+			case "zset":
+				count, _ = conn.ZCard(ctx, key).Result()
+			case "string":
+				count = 1
 			}
 		}
 
@@ -320,6 +339,10 @@ func (r *RedisDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 }
 
 func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, req driver.QueryRequest, key string, start time.Time) (*driver.QueryResult, error) {
+	if key == "keys" || key == "*" {
+		return r.executeKeysListQuery(ctx, conn, req, start)
+	}
+
 	kType, _ := conn.Type(ctx, key).Result()
 
 	var cols []driver.ColumnMeta
@@ -435,6 +458,192 @@ func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, r
 		IsEditable:   true,
 		SourceSchema: req.Database,
 		SourceTable:  key,
+		PrimaryKeys:  pks,
+	}, nil
+}
+
+func (r *RedisDriver) executeKeysListQuery(ctx context.Context, conn *redis.Conn, req driver.QueryRequest, start time.Time) (*driver.QueryResult, error) {
+	cols := []driver.ColumnMeta{
+		{Name: "key", DataType: "string", RawType: "string", IsPrimaryKey: true},
+		{Name: "type", DataType: "string", RawType: "string"},
+		{Name: "ttl", DataType: "string", RawType: "string"},
+		{Name: "size", DataType: "integer", RawType: "integer"},
+		{Name: "value", DataType: "string", RawType: "string"},
+	}
+	pks := []string{"key"}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := req.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var allKeys []string
+	var cursor uint64
+	for {
+		var batch []string
+		var err error
+		batch, cursor, err = conn.Scan(ctx, cursor, "*", 500).Result()
+		if err != nil {
+			return nil, err
+		}
+		allKeys = append(allKeys, batch...)
+		if cursor == 0 || len(allKeys) >= 10000 {
+			break
+		}
+	}
+	sort.Strings(allKeys)
+
+	// In-memory filter if WHERE clause present
+	rawSQL := req.SQL
+	if strings.Contains(strings.ToUpper(rawSQL), "WHERE") {
+		filterPattern := ""
+		m := regexp.MustCompile(`(?i)(?:['"]%?([^'"%]+)%?['"]|WHERE\s*\(\s*([^\s)]+)\s*\))`).FindStringSubmatch(rawSQL)
+		if len(m) > 1 {
+			for _, sub := range m[1:] {
+				if sub != "" && !strings.EqualFold(sub, "key") && !strings.EqualFold(sub, "keys") {
+					filterPattern = strings.ToLower(sub)
+					break
+				}
+			}
+		}
+		if filterPattern != "" {
+			var filtered []string
+			for _, k := range allKeys {
+				if strings.Contains(strings.ToLower(k), filterPattern) {
+					filtered = append(filtered, k)
+				}
+			}
+			allKeys = filtered
+		}
+	}
+
+	end := offset + limit
+	if end > len(allKeys) {
+		end = len(allKeys)
+	}
+
+	var pageKeys []string
+	if offset < len(allKeys) {
+		pageKeys = allKeys[offset:end]
+	}
+
+	if len(pageKeys) == 0 {
+		return &driver.QueryResult{
+			ExecutionID:  req.ExecutionID,
+			Columns:      cols,
+			Rows:         [][]any{},
+			RowsAffected: 0,
+			ElapsedMs:    time.Since(start).Milliseconds(),
+			IsEditable:   true,
+			SourceSchema: req.Database,
+			SourceTable:  "keys",
+			PrimaryKeys:  pks,
+		}, nil
+	}
+
+	pipe := conn.Pipeline()
+	typeCmds := make(map[string]*redis.StatusCmd, len(pageKeys))
+	ttlCmds := make(map[string]*redis.DurationCmd, len(pageKeys))
+	for _, k := range pageKeys {
+		typeCmds[k] = pipe.Type(ctx, k)
+		ttlCmds[k] = pipe.TTL(ctx, k)
+	}
+	_, _ = pipe.Exec(ctx)
+
+	pipe2 := conn.Pipeline()
+	valCmds := make(map[string]*redis.StringCmd, len(pageKeys))
+	hLenCmds := make(map[string]*redis.IntCmd, len(pageKeys))
+	lLenCmds := make(map[string]*redis.IntCmd, len(pageKeys))
+	sCardCmds := make(map[string]*redis.IntCmd, len(pageKeys))
+	zCardCmds := make(map[string]*redis.IntCmd, len(pageKeys))
+
+	for _, k := range pageKeys {
+		kType := "string"
+		if cmd, ok := typeCmds[k]; ok && cmd.Err() == nil && cmd.Val() != "" {
+			kType = cmd.Val()
+		}
+		switch kType {
+		case "string":
+			valCmds[k] = pipe2.Get(ctx, k)
+		case "hash":
+			hLenCmds[k] = pipe2.HLen(ctx, k)
+		case "list":
+			lLenCmds[k] = pipe2.LLen(ctx, k)
+		case "set":
+			sCardCmds[k] = pipe2.SCard(ctx, k)
+		case "zset":
+			zCardCmds[k] = pipe2.ZCard(ctx, k)
+		}
+	}
+	_, _ = pipe2.Exec(ctx)
+
+	var rows [][]any
+	for _, k := range pageKeys {
+		kType := "string"
+		if cmd, ok := typeCmds[k]; ok && cmd.Err() == nil && cmd.Val() != "" {
+			kType = cmd.Val()
+		}
+
+		ttlStr := "no ttl"
+		if cmd, ok := ttlCmds[k]; ok && cmd.Err() == nil {
+			dur := cmd.Val()
+			if dur == -1 {
+				ttlStr = "no ttl"
+			} else if dur == -2 {
+				ttlStr = "expired"
+			} else {
+				ttlStr = fmt.Sprintf("%v", dur.Round(time.Second))
+			}
+		}
+
+		size := int64(0)
+		valStr := ""
+		switch kType {
+		case "string":
+			if cmd, ok := valCmds[k]; ok && cmd.Err() == nil {
+				valStr = cmd.Val()
+				size = int64(len(valStr))
+			}
+		case "hash":
+			if cmd, ok := hLenCmds[k]; ok && cmd.Err() == nil {
+				size = cmd.Val()
+				valStr = fmt.Sprintf("(%d fields)", size)
+			}
+		case "list":
+			if cmd, ok := lLenCmds[k]; ok && cmd.Err() == nil {
+				size = cmd.Val()
+				valStr = fmt.Sprintf("(%d items)", size)
+			}
+		case "set":
+			if cmd, ok := sCardCmds[k]; ok && cmd.Err() == nil {
+				size = cmd.Val()
+				valStr = fmt.Sprintf("(%d members)", size)
+			}
+		case "zset":
+			if cmd, ok := zCardCmds[k]; ok && cmd.Err() == nil {
+				size = cmd.Val()
+				valStr = fmt.Sprintf("(%d members)", size)
+			}
+		default:
+			valStr = fmt.Sprintf("(%s)", kType)
+		}
+
+		rows = append(rows, []any{k, kType, ttlStr, size, valStr})
+	}
+
+	return &driver.QueryResult{
+		ExecutionID:  req.ExecutionID,
+		Columns:      cols,
+		Rows:         rows,
+		RowsAffected: int64(len(rows)),
+		ElapsedMs:    time.Since(start).Milliseconds(),
+		IsEditable:   true,
+		SourceSchema: req.Database,
+		SourceTable:  "keys",
 		PrimaryKeys:  pks,
 	}, nil
 }
@@ -562,21 +771,31 @@ func (r *RedisDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, er
 
 func (r *RedisDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
+	cleanTable := extractKeyName(table)
 	for _, c := range changes {
+		targetKey := table
+		if cleanTable == "keys" || cleanTable == "*" {
+			if k, ok := c.PrimaryKey["key"]; ok && fmt.Sprintf("%v", k) != "" {
+				targetKey = fmt.Sprintf("%v", k)
+			} else if k, ok := c.Changes["key"]; ok && fmt.Sprintf("%v", k) != "" {
+				targetKey = fmt.Sprintf("%v", k)
+			}
+		}
+
 		switch c.Type {
 		case "insert", "update":
 			if val, ok := c.Changes["value"]; ok {
-				if field, okField := c.PrimaryKey["field"]; okField {
-					statements = append(statements, fmt.Sprintf("HSET %s %s %q", table, field, fmt.Sprintf("%v", val)))
+				if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
+					statements = append(statements, fmt.Sprintf("HSET %s %s %q", targetKey, field, fmt.Sprintf("%v", val)))
 				} else {
-					statements = append(statements, fmt.Sprintf("SET %s %q", table, fmt.Sprintf("%v", val)))
+					statements = append(statements, fmt.Sprintf("SET %s %q", targetKey, fmt.Sprintf("%v", val)))
 				}
 			}
 		case "delete":
-			if field, okField := c.PrimaryKey["field"]; okField {
-				statements = append(statements, fmt.Sprintf("HDEL %s %s", table, field))
+			if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
+				statements = append(statements, fmt.Sprintf("HDEL %s %s", targetKey, field))
 			} else {
-				statements = append(statements, fmt.Sprintf("DEL %s", table))
+				statements = append(statements, fmt.Sprintf("DEL %s", targetKey))
 			}
 		}
 	}
@@ -592,25 +811,35 @@ func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table 
 		return 0, err
 	}
 
+	cleanTable := extractKeyName(table)
 	var affected int64
 	for _, c := range changes {
+		targetKey := table
+		if cleanTable == "keys" || cleanTable == "*" {
+			if k, ok := c.PrimaryKey["key"]; ok && fmt.Sprintf("%v", k) != "" {
+				targetKey = fmt.Sprintf("%v", k)
+			} else if k, ok := c.Changes["key"]; ok && fmt.Sprintf("%v", k) != "" {
+				targetKey = fmt.Sprintf("%v", k)
+			}
+		}
+
 		switch c.Type {
 		case "insert", "update":
 			if val, ok := c.Changes["value"]; ok {
-				if field, okField := c.PrimaryKey["field"]; okField {
-					_ = conn.HSet(ctx, table, fmt.Sprintf("%v", field), fmt.Sprintf("%v", val)).Err()
+				if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
+					_ = conn.HSet(ctx, targetKey, fmt.Sprintf("%v", field), fmt.Sprintf("%v", val)).Err()
 					affected++
 				} else {
-					_ = conn.Set(ctx, table, fmt.Sprintf("%v", val), 0).Err()
+					_ = conn.Set(ctx, targetKey, fmt.Sprintf("%v", val), 0).Err()
 					affected++
 				}
 			}
 		case "delete":
-			if field, okField := c.PrimaryKey["field"]; okField {
-				_ = conn.HDel(ctx, table, fmt.Sprintf("%v", field)).Err()
+			if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
+				_ = conn.HDel(ctx, targetKey, fmt.Sprintf("%v", field)).Err()
 				affected++
 			} else {
-				_ = conn.Del(ctx, table).Err()
+				_ = conn.Del(ctx, targetKey).Err()
 				affected++
 			}
 		}
