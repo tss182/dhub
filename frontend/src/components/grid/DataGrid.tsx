@@ -1422,8 +1422,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   const generateUpdateSql = (rowIndex: number, colName: string, newVal: any): string => {
     const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb';
+    const isRedis = (driver || '').toLowerCase() === 'redis';
     const quoteIdent = (name: string) =>
-      isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
+      isRedis ? name : isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
     const tbl = tableName || 'table_name';
     const quotedTbl = tbl.includes('.')
       ? tbl.split('.').map(quoteIdent).join('.')
@@ -1925,8 +1926,9 @@ WHERE ${whereClause};`;
     if (!selectionRange || columns.length === 0) return '';
     const tbl = tableName || 'table_name';
     const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb';
+    const isRedis = (driver || '').toLowerCase() === 'redis';
     const quoteIdent = (name: string) =>
-      isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
+      isRedis ? name : isMySQL ? `\`${name.replace(/`/g, '``')}\`` : `"${name.replace(/"/g, '""')}"`;
     const quotedTbl = tbl.includes('.')
       ? tbl.split('.').map((p) => quoteIdent(p)).join('.')
       : quoteIdent(tbl);

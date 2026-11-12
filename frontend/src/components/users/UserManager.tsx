@@ -176,7 +176,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
   const loadUsers = async () => {
     if (!connection) return;
-    if (connection.driver === 'sqlite') {
+    if (connection.driver === 'sqlite' || connection.driver === 'redis') {
       setUsers([]);
       setIsLoading(false);
       return;
@@ -671,6 +671,23 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     return (
       <div className="flex-1 flex items-center justify-center bg-[#191a20] text-zinc-500 text-sm">
         Connection not found or no longer available.
+      </div>
+    );
+  }
+
+  // Redis Message
+  if (connection.driver === 'redis') {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#191a20] p-6 text-center select-none">
+        <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-4 shadow-lg">
+          <AlertCircle className="h-7 w-7" />
+        </div>
+        <h3 className="text-base font-semibold text-zinc-100 mb-1">
+          Redis User Management
+        </h3>
+        <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
+          Redis uses Access Control Lists (Redis 6+ ACL) or legacy AUTH passwords. You can manage users and credentials directly in the Query Console using commands such as <code className="font-mono text-zinc-200">ACL LIST</code>, <code className="font-mono text-zinc-200">ACL SETUSER</code>, or <code className="font-mono text-zinc-200">AUTH</code>.
+        </p>
       </div>
     );
   }

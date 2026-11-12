@@ -1518,7 +1518,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
     let content = `-- Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n`;
-    if (tableName) {
+    if (conn?.driver === 'redis') {
+      content = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
+    } else if (tableName) {
       const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb') ? `\`${tableName}\`` : `"${tableName}"`;
       content += `SELECT * FROM ${quoted} LIMIT 100;\n`;
     } else {
@@ -2446,19 +2448,21 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                               <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
                                 <div className="flex items-center gap-1">
                                   <Folder className="h-2.5 w-2.5" />
-                                  <span>tables ({tables.length})</span>
+                                  <span>{c.driver === 'redis' ? `keys (${tables.length})` : `tables (${tables.length})`}</span>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenCreateTable(c, dbName, targetSchema);
-                                  }}
-                                  className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                  title={`Create New Table in "${dbName}"`}
-                                >
-                                  <Plus className="h-2.5 w-2.5" />
-                                </button>
+                                {c.driver !== 'redis' && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenCreateTable(c, dbName, targetSchema);
+                                    }}
+                                    className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                    title={`Create New Table in "${dbName}"`}
+                                  >
+                                    <Plus className="h-2.5 w-2.5" />
+                                  </button>
+                                )}
                               </div>
                               {tables.map((obj) => (
                                 <div
@@ -3358,21 +3362,23 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           {/* Database Menu Items */}
           {contextMenu.type === 'database' && contextMenu.connection && contextMenu.database && (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleOpenCreateTable(
-                    contextMenu.connection!,
-                    contextMenu.database!,
-                    contextMenu.schema || contextMenu.database!
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
-              >
-                <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                <span>New Table...</span>
-              </button>
+              {contextMenu.connection.driver !== 'redis' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenCreateTable(
+                      contextMenu.connection!,
+                      contextMenu.database!,
+                      contextMenu.schema || contextMenu.database!
+                    );
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>New Table...</span>
+                </button>
+              )}
 
               {contextMenu.connection.driver === 'postgres' && (
                 <button
@@ -3400,33 +3406,37 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <span>New Query Console</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleOpenERDiagram(
-                    contextMenu.connection!.id,
-                    contextMenu.database!,
-                    contextMenu.schema || contextMenu.database!
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                <span>Open ER Diagram...</span>
-              </button>
+              {contextMenu.connection.driver !== 'redis' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenERDiagram(
+                      contextMenu.connection!.id,
+                      contextMenu.database!,
+                      contextMenu.schema || contextMenu.database!
+                    );
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>Open ER Diagram...</span>
+                </button>
+              )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleEditDatabase(contextMenu.connection!, contextMenu.database!);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Edit Database (Alter/Properties)...</span>
-              </button>
+              {contextMenu.connection.driver !== 'redis' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleEditDatabase(contextMenu.connection!, contextMenu.database!);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Edit Database (Alter/Properties)...</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -3449,53 +3459,57 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <span>Copy Database Name</span>
               </button>
 
-              <div className="my-1 border-t border-[#272932]" />
+              {contextMenu.connection.driver !== 'redis' && (
+                <>
+                  <div className="my-1 border-t border-[#272932]" />
 
-              <button
-                type="button"
-                onClick={() => {
-                  const conn = contextMenu.connection!;
-                  const db = contextMenu.database!;
-                  closeContextMenu();
-                  handleOpenBackupModal(conn, db);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
-              >
-                <Download className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
-                <span>
-                  Backup Database ({contextMenu.connection.driver === 'postgres' ? 'pg_dump' : contextMenu.connection.driver === 'mariadb' ? 'mariadb-dump' : 'mysqldump'})...
-                </span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const conn = contextMenu.connection!;
+                      const db = contextMenu.database!;
+                      closeContextMenu();
+                      handleOpenBackupModal(conn, db);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Download className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                    <span>
+                      Backup Database ({contextMenu.connection.driver === 'postgres' ? 'pg_dump' : contextMenu.connection.driver === 'mariadb' ? 'mariadb-dump' : 'mysqldump'})...
+                    </span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  const conn = contextMenu.connection!;
-                  const db = contextMenu.database!;
-                  closeContextMenu();
-                  handleOpenRestoreModal(conn, db);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group"
-              >
-                <Upload className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-                <span>
-                  Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : contextMenu.connection.driver === 'mariadb' ? 'mariadb' : 'mysql'})...
-                </span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const conn = contextMenu.connection!;
+                      const db = contextMenu.database!;
+                      closeContextMenu();
+                      handleOpenRestoreModal(conn, db);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Upload className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                    <span>
+                      Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : contextMenu.connection.driver === 'mariadb' ? 'mariadb' : 'mysql'})...
+                    </span>
+                  </button>
 
-              <div className="my-1 border-t border-[#272932]" />
+                  <div className="my-1 border-t border-[#272932]" />
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleDeleteDatabase(contextMenu.connection!, contextMenu.database!);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
-              >
-                <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                <span>Drop Database...</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteDatabase(contextMenu.connection!, contextMenu.database!);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Drop Database...</span>
+                  </button>
+                </>
+              )}
             </>
           )}
 

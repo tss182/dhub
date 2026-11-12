@@ -13,11 +13,13 @@ import (
 	"dhub/internal/driver"
 	"dhub/internal/driver/mysql"
 	"dhub/internal/driver/postgres"
+	redisdriver "dhub/internal/driver/redis"
 	"dhub/internal/driver/sqlite"
 	"dhub/internal/store"
 	"dhub/internal/tunnel"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 type Session struct {
@@ -263,6 +265,43 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 
 		return mysql.NewMySQLDriver(mc.FormatDSN())
+	case "redis":
+		if port <= 0 {
+			port = 6379
+		}
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		redisOpts := &goredis.Options{
+			Addr:     fmt.Sprintf("%s:%d", host, port),
+			Username: cfg.Username,
+			Password: cfg.Password,
+			DB:       redisdriver.ParseDB(cfg.DatabaseName),
+		}
+
+		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+			tlsCfg := &tls.Config{}
+			if cfg.SSLCAPath != "" {
+				rootCertPool := x509.NewCertPool()
+				pem, err := os.ReadFile(cfg.SSLCAPath)
+				if err == nil {
+					rootCertPool.AppendCertsFromPEM(pem)
+					tlsCfg.RootCAs = rootCertPool
+				}
+			}
+			if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
+				cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath)
+				if err == nil {
+					tlsCfg.Certificates = []tls.Certificate{cert}
+				}
+			}
+			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+				tlsCfg.InsecureSkipVerify = true
+			}
+			redisOpts.TLSConfig = tlsCfg
+		}
+
+		return redisdriver.NewRedisDriver(redisOpts)
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}

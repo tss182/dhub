@@ -948,11 +948,13 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const handleFormatSql = () => {
     try {
       const drv = connection?.driver || 'sqlite';
+      if (drv === 'redis') return;
       let lang: any = 'sql';
       if (drv === 'postgres') lang = 'postgresql';
       else if (drv === 'mariadb') lang = 'mariadb';
       else if (drv === 'mysql') lang = 'mysql';
       else if (drv === 'sqlite') lang = 'sqlite';
+      else if (drv === 'redis') lang = 'redis';
 
       const formatted = format(sql, {
         language: lang,
@@ -973,6 +975,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     if (!stmt) return;
 
     const drv = connection?.driver || 'sqlite';
+    if (drv === 'redis') return;
     let prefix = 'EXPLAIN ';
     if (drv === 'postgres') {
       prefix = isAnalyze
