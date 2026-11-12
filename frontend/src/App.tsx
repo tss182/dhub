@@ -845,13 +845,53 @@ export function App() {
       fetchLimit = effectivePageSize + 1;
     } else {
       // 'replace'
-      if (offset === 0 && savedViewState?.activeRowIndex !== undefined && savedViewState.activeRowIndex > 0) {
-        const half = Math.floor(effectivePageSize / 2);
-        effectiveOffset = Math.max(0, savedViewState.activeRowIndex - half);
-        effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
-      } else if (offset === 0 && savedViewState?.offset !== undefined && savedViewState.offset > 0) {
-        effectiveOffset = savedViewState.offset;
-        effectivePage = savedViewState.page || Math.floor(effectiveOffset / effectivePageSize) + 1;
+      if (offset === 0 && savedViewState) {
+        let targetTopRow: number | undefined = undefined;
+
+        if (savedViewState.topRowIndex !== undefined && savedViewState.topRowIndex >= 0) {
+          targetTopRow = savedViewState.topRowIndex;
+        } else if (
+          savedViewState.offset !== undefined &&
+          savedViewState.scrollTop !== undefined &&
+          savedViewState.scrollTop > 0
+        ) {
+          targetTopRow = savedViewState.offset + Math.floor(savedViewState.scrollTop / 28);
+        } else if (savedViewState.activeRowIndex !== undefined && savedViewState.activeRowIndex > 0) {
+          // If only activeRowIndex was saved, preserve it at the bottom/end of the visible viewport (~24 rows)
+          targetTopRow = Math.max(0, savedViewState.activeRowIndex - 24);
+        }
+
+        if (targetTopRow !== undefined && targetTopRow > 0) {
+          // Keep a buffer of 15 rows before targetTopRow for upward scrolling
+          const bufferBefore = Math.min(15, targetTopRow);
+          effectiveOffset = targetTopRow - bufferBefore;
+          effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
+
+          // Recompute exact scrollTop relative to effectiveOffset so targetTopRow is at the top of the viewport
+          const topRowOffset = savedViewState.topRowOffsetPx || 0;
+          const restoredScrollTop = bufferBefore * 28 + topRowOffset;
+
+          // Update tab's tableViewState with the adjusted scrollTop and offset
+          const currTabs = useWorkbenchStore.getState().tabs;
+          useWorkbenchStore.setState({
+            tabs: currTabs.map((t) =>
+              t.id === tab.id
+                ? {
+                    ...t,
+                    tableViewState: {
+                      ...(t.tableViewState || {}),
+                      offset: effectiveOffset,
+                      scrollTop: restoredScrollTop,
+                      startOffset: effectiveOffset,
+                    },
+                  }
+                : t
+            ),
+          });
+        } else if (savedViewState.offset !== undefined && savedViewState.offset > 0) {
+          effectiveOffset = savedViewState.offset;
+          effectivePage = savedViewState.page || Math.floor(effectiveOffset / effectivePageSize) + 1;
+        }
       }
       fetchLimit = effectivePageSize + 1;
     }
@@ -2350,15 +2390,17 @@ export function App() {
                           ),
                         });
                       }}
-                      onScrollChange={(scrollTop, scrollLeft, approxRowIndex) => {
+                      onScrollChange={(scrollTop, scrollLeft, approxRowIndex, topRowOffsetPx) => {
                         const currTabs = useWorkbenchStore.getState().tabs;
                         const currentTab = currTabs.find((t) => t.id === activeTab.id);
                         if (!currentTab) return;
                         const oldState = currentTab.tableViewState || {};
+                        const currentTopOffset = topRowOffsetPx ?? (scrollTop % 28);
                         if (
                           oldState.scrollTop === scrollTop &&
                           oldState.scrollLeft === scrollLeft &&
-                          oldState.activeRowIndex === approxRowIndex
+                          oldState.topRowIndex === approxRowIndex &&
+                          oldState.topRowOffsetPx === currentTopOffset
                         ) {
                           return;
                         }
@@ -2371,7 +2413,12 @@ export function App() {
                                     ...oldState,
                                     scrollTop,
                                     scrollLeft,
-                                    activeRowIndex: approxRowIndex,
+                                    topRowIndex: approxRowIndex,
+                                    topRowOffsetPx: currentTopOffset,
+                                    activeRowIndex:
+                                      oldState.activeRowIndex !== undefined
+                                        ? oldState.activeRowIndex
+                                        : approxRowIndex,
                                     offset: tableDataByTab[activeTab.id]?.startOffset ?? oldState.offset,
                                   },
                                 }

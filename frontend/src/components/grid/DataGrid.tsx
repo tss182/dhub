@@ -564,7 +564,7 @@ interface DataGridProps {
   onActiveRowChange?: (rowIndex: number) => void;
   initialScrollTop?: number;
   initialScrollLeft?: number;
-  onScrollChange?: (scrollTop: number, scrollLeft: number, firstVisibleRowIndex: number) => void;
+  onScrollChange?: (scrollTop: number, scrollLeft: number, firstVisibleRowIndex: number, topRowOffsetPx?: number) => void;
 }
 
 function getColWidthsStorageKey(
@@ -1220,7 +1220,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       if (debouncedScrollTimerRef.current) {
         clearTimeout(debouncedScrollTimerRef.current);
         const { scrollTop, scrollLeft, rowIndex } = latestScrollStateRef.current;
-        onScrollChangeRef.current?.(scrollTop, scrollLeft, rowIndex);
+        onScrollChangeRef.current?.(scrollTop, scrollLeft, rowIndex, scrollTop % 28);
       }
     };
   }, []);
@@ -1705,23 +1705,30 @@ WHERE ${whereClause};`;
       const st = initialScrollTop;
       const sl = initialScrollLeft;
 
-      if (st !== undefined && st > 0) {
-        containerRef.current.scrollTop = st;
-      }
-      if (sl !== undefined && sl > 0) {
-        containerRef.current.scrollLeft = sl;
-      }
+      const applyScrollAndSelection = () => {
+        if (!containerRef.current) return;
 
-      if (targetRowIndex !== undefined && targetRowIndex >= 0) {
-        const matchIdx = visualRows.findIndex((vr) => vr.globalRowIndex === targetRowIndex);
-        if (matchIdx !== -1) {
-          setSelectionAnchor({ r: matchIdx, c: 0 });
-          setSelectionFocus({ r: matchIdx, c: Math.min(columns.length - 1, 1) });
-          if (st === undefined || st === 0) {
-            scrollToCell(matchIdx, 0);
+        if (st !== undefined && st > 0) {
+          containerRef.current.scrollTop = st;
+        }
+        if (sl !== undefined && sl > 0) {
+          containerRef.current.scrollLeft = sl;
+        }
+
+        if (targetRowIndex !== undefined && targetRowIndex >= 0) {
+          const matchIdx = visualRows.findIndex((vr) => vr.globalRowIndex === targetRowIndex);
+          if (matchIdx !== -1) {
+            setSelectionAnchor({ r: matchIdx, c: 0 });
+            setSelectionFocus({ r: matchIdx, c: Math.min(columns.length - 1, 1) });
+            if (st === undefined || st === 0) {
+              scrollToCell(matchIdx, 0);
+            }
           }
         }
-      }
+      };
+
+      applyScrollAndSelection();
+      requestAnimationFrame(applyScrollAndSelection);
 
       hasRestoredScrollRef.current = true;
     }
@@ -1884,6 +1891,10 @@ WHERE ${whereClause};`;
       setSelectionAnchor({ r: vIdx, c: cIdx });
       setSelectionFocus({ r: vIdx, c: cIdx });
     }
+    const targetVr = visualRows[vIdx];
+    if (targetVr && targetVr.globalRowIndex !== undefined) {
+      onActiveRowChange?.(targetVr.globalRowIndex);
+    }
 
     const menuWidth = 220;
     const menuHeight = 340;
@@ -1906,6 +1917,10 @@ WHERE ${whereClause};`;
     if (!isCellSelected(vIdx, 0)) {
       setSelectionAnchor({ r: vIdx, c: 0 });
       setSelectionFocus({ r: vIdx, c: columns.length - 1 });
+    }
+    const targetVr = visualRows[vIdx];
+    if (targetVr && targetVr.globalRowIndex !== undefined) {
+      onActiveRowChange?.(targetVr.globalRowIndex);
     }
 
     const menuWidth = 220;
@@ -2494,6 +2509,11 @@ ${setClauses};`;
       setSelectionAnchor({ r: vIdx, c: 0 });
       setSelectionFocus({ r: vIdx, c: columns.length - 1 });
     }
+
+    const vr = visualRows[vIdx];
+    if (vr && vr.globalRowIndex !== undefined) {
+      onActiveRowChange?.(vr.globalRowIndex);
+    }
   };
 
   const handleRowHeaderMouseEnter = (vIdx: number) => {
@@ -2702,6 +2722,10 @@ ${setClauses};`;
             setSelectionAnchor({ r: nextR, c: nextC });
             setSelectionFocus({ r: nextR, c: nextC });
             scrollToCell(nextR, nextC);
+            const targetVr = visualRows[nextR];
+            if (targetVr && targetVr.globalRowIndex !== undefined) {
+              onActiveRowChange?.(targetVr.globalRowIndex);
+            }
             return;
           }
 
@@ -2743,6 +2767,10 @@ ${setClauses};`;
             setSelectionFocus({ r: newR, c: newC });
           }
           scrollToCell(newR, newC);
+          const navVr = visualRows[newR];
+          if (navVr && navVr.globalRowIndex !== undefined) {
+            onActiveRowChange?.(navVr.globalRowIndex);
+          }
           return;
         }
       }
@@ -2928,6 +2956,7 @@ ${setClauses};`;
     const rowHeight = 28;
     const visibleRowOffset = Math.max(0, Math.floor(scrollTop / rowHeight));
     const approxRowIndex = (startOffset || 0) + visibleRowOffset;
+    const topRowOffsetPx = scrollTop % rowHeight;
 
     latestScrollStateRef.current = {
       scrollTop,
@@ -2940,7 +2969,7 @@ ${setClauses};`;
         clearTimeout(debouncedScrollTimerRef.current);
       }
       debouncedScrollTimerRef.current = setTimeout(() => {
-        onScrollChangeRef.current?.(scrollTop, sl, approxRowIndex);
+        onScrollChangeRef.current?.(scrollTop, sl, approxRowIndex, topRowOffsetPx);
       }, 200);
     }
 
