@@ -854,8 +854,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       isOpen: true,
       connection: conn,
       dbName: '',
-      charset: conn.driver === 'mysql' ? 'utf8mb4' : 'UTF8',
-      collation: conn.driver === 'mysql' ? 'utf8mb4_unicode_ci' : '',
+      charset: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? 'utf8mb4' : 'UTF8',
+      collation: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? 'utf8mb4_unicode_ci' : '',
     });
   };
 
@@ -876,7 +876,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
 
     let sql = '';
-    if (conn.driver === 'mysql') {
+    if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `CREATE DATABASE \`${dbName}\` CHARACTER SET ${createDbModal.charset || 'utf8mb4'} COLLATE ${createDbModal.collation || 'utf8mb4_unicode_ci'};`;
     } else if (conn.driver === 'postgres') {
       sql = `CREATE DATABASE "${dbName}" ENCODING '${createDbModal.charset || 'UTF8'}';`;
@@ -887,7 +887,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: conn.driver === 'mysql' ? (conn.databaseName || 'mysql') : 'postgres',
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? (conn.databaseName || 'mysql') : 'postgres',
         schema: 'public',
         sql,
         limit: 10,
@@ -1192,7 +1192,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         schema: 'public',
         content: `-- Rename or Modify Database: ${dbName}\n-- Note: You must be connected to an administrative database (e.g. postgres) to rename.\nALTER DATABASE "${dbName}" RENAME TO "${dbName}_renamed";\n`,
       });
-    } else if (conn.driver === 'mysql') {
+    } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       // Open a query console pre-populated with ALTER DATABASE statement
       openTab({
         id: `console-alter-${Date.now()}`,
@@ -1223,7 +1223,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (!okDrop) return;
 
     const sql =
-      conn.driver === 'mysql'
+      (conn.driver === 'mysql' || conn.driver === 'mariadb')
         ? `DROP DATABASE \`${dbName}\`;`
         : `DROP DATABASE "${dbName}";`;
 
@@ -1232,7 +1232,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: conn.driver === 'mysql' ? '' : 'postgres',
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? '' : 'postgres',
         schema: 'public',
         sql,
         limit: 10,
@@ -1317,7 +1317,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (!ok) return;
 
     let sql = '';
-    if (conn.driver === 'mysql') {
+    if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `DROP ${keyword} \`${obj.name}\`;`;
     } else if (conn.driver === 'postgres') {
       sql = `DROP ${keyword} "${schema}"."${obj.name}";`;
@@ -1361,7 +1361,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let content = `-- Routine / Function / Procedure: ${routineName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
     if (conn.driver === 'postgres') {
       content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
-    } else if (conn.driver === 'mysql') {
+    } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
     } else {
       content += `-- SQLite does not support stored procedures or routines.\n`;
@@ -1387,7 +1387,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let content = `-- Trigger: ${triggerName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
     if (conn.driver === 'postgres') {
       content += `-- 1. View trigger definition:\nSELECT pg_get_triggerdef(t.oid)\nFROM pg_trigger t\nJOIN pg_class c ON c.oid = t.tgrelid\nJOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE n.nspname = '${schema}' AND t.tgname = '${triggerName}';\n`;
-    } else if (conn.driver === 'mysql') {
+    } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       content += `-- 1. View trigger definition:\nSHOW CREATE TRIGGER \`${db}\`.\`${triggerName}\`;\n`;
     } else {
       content += `-- 1. View trigger definition in SQLite:\nSELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '${triggerName}';\n`;
@@ -1419,7 +1419,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (!ok) return;
 
     let sql = '';
-    if (conn.driver === 'mysql') {
+    if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`; DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
     } else if (conn.driver === 'postgres') {
       sql = `DROP ROUTINE IF EXISTS "${schema}"."${routineName}";`;
@@ -1468,7 +1468,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (!ok) return;
 
     let sql = '';
-    if (conn.driver === 'mysql') {
+    if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `DROP TRIGGER IF EXISTS \`${db}\`.\`${triggerName}\`;`;
     } else if (conn.driver === 'postgres') {
       openTab({
@@ -1519,7 +1519,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
     let content = `-- Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n`;
     if (tableName) {
-      const quoted = conn?.driver === 'mysql' ? `\`${tableName}\`` : `"${tableName}"`;
+      const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb') ? `\`${tableName}\`` : `"${tableName}"`;
       content += `SELECT * FROM ${quoted} LIMIT 100;\n`;
     } else {
       content += `SELECT 1;\n`;
@@ -3463,7 +3463,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               >
                 <Download className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
                 <span>
-                  Backup Database ({contextMenu.connection.driver === 'postgres' ? 'pg_dump' : 'mysqldump'})...
+                  Backup Database ({contextMenu.connection.driver === 'postgres' ? 'pg_dump' : contextMenu.connection.driver === 'mariadb' ? 'mariadb-dump' : 'mysqldump'})...
                 </span>
               </button>
 
@@ -3479,7 +3479,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               >
                 <Upload className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
                 <span>
-                  Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : 'mysql'})...
+                  Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : contextMenu.connection.driver === 'mariadb' ? 'mariadb' : 'mysql'})...
                 </span>
               </button>
 
@@ -4158,7 +4158,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 />
               </div>
 
-              {createDbModal.connection?.driver === 'mysql' && (
+              {(createDbModal.connection?.driver === 'mysql' || createDbModal.connection?.driver === 'mariadb') && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[11px] font-medium text-zinc-400 mb-1">
@@ -4239,11 +4239,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             ? 'pg_dump'
             : drv === 'sqlite'
             ? 'sqlite3 .dump'
+            : drv === 'mariadb'
+            ? 'mariadb-dump'
             : 'mysqldump'
           : drv === 'postgres'
           ? 'psql'
           : drv === 'sqlite'
           ? 'sqlite3'
+          : drv === 'mariadb'
+          ? 'mariadb'
           : 'mysql';
 
         const filteredTables = backupRestoreModal.availableTables.filter((tbl) =>
@@ -4478,7 +4482,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                           />
                           <span>Include Routines (Procedures/Functions)</span>
                         </label>
-                        {drv === 'mysql' && (
+                        {(drv === 'mysql' || drv === 'mariadb') && (
                           <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
                               type="checkbox"
@@ -4495,7 +4499,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                             <span>Include Events</span>
                           </label>
                         )}
-                        {drv === 'mysql' && (
+                        {(drv === 'mysql' || drv === 'mariadb') && (
                           <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
                               type="checkbox"

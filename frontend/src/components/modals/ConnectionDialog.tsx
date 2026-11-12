@@ -41,7 +41,7 @@ export const ConnectionDialog: React.FC = () => {
   const [dialogTab, setDialogTab] = useState<DialogTab>('general');
 
   // General fields
-  const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql'>('sqlite');
+  const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql' | 'mariadb'>('sqlite');
   const [envType, setEnvType] = useState<ConnectionEnvType>('local');
   const [name, setName] = useState('');
   const [folderId, setFolderId] = useState<string>('');
@@ -99,7 +99,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' ? 3306 : 5432));
+          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -137,7 +137,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || 5432);
+          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : 5432));
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -184,9 +184,9 @@ export const ConnectionDialog: React.FC = () => {
 
   if (!isConnectionDialogOpen) return null;
 
-  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql') => {
+  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb') => {
     setDriver(d);
-    if (d === 'mysql') {
+    if (d === 'mysql' || d === 'mariadb') {
       setPort(3306);
       if (username === 'postgres') setUsername('root');
       if (databaseName === 'postgres') setDatabaseName('');
@@ -493,8 +493,8 @@ export const ConnectionDialog: React.FC = () => {
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">
                   Driver
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['sqlite', 'postgres', 'mysql'] as const).map((d) => (
+                <div className="grid grid-cols-4 gap-2">
+                  {(['sqlite', 'postgres', 'mysql', 'mariadb'] as const).map((d) => (
                     <button
                       key={d}
                       type="button"
@@ -658,13 +658,13 @@ export const ConnectionDialog: React.FC = () => {
 
                   <div>
                     <label className="block text-[11px] text-zinc-400 mb-1">
-                      Database Name {driver === 'mysql' && (
+                      Database Name {(driver === 'mysql' || driver === 'mariadb') && (
                         <span className="text-zinc-500 text-[10px] lowercase">(leave empty to show all databases)</span>
                       )}
                     </label>
                     <input
                       type="text"
-                      placeholder={driver === 'mysql' ? 'Optional (leave empty to list all databases)' : 'e.g. postgres'}
+                      placeholder={driver === 'mysql' || driver === 'mariadb' ? 'Optional (leave empty to list all databases)' : 'e.g. postgres'}
                       value={databaseName}
                       onChange={(e) => setDatabaseName(e.target.value)}
                       className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"

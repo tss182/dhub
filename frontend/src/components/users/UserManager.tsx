@@ -83,6 +83,8 @@ function generateSecurePassword(length = 16): string {
   return pass;
 }
 
+const isMySQLLike = (driver?: string) => driver === 'mysql' || driver === 'mariadb';
+
 export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => {
   const { treeDatabases } = useConnectionStore();
   const availableDatabases = useMemo(() => {
@@ -188,7 +190,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
 
     try {
-      if (connection.driver === 'mysql') {
+      if (isMySQLLike(connection.driver)) {
         let res: any = null;
         try {
           res = await QueryService.ExecuteQuery({
@@ -307,7 +309,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
 
     try {
-      if (connection.driver === 'mysql') {
+      if (isMySQLLike(connection.driver)) {
         const host = createModal.host.trim() || '%';
         const pass = createModal.password;
         const passClause = pass ? ` IDENTIFIED BY '${pass.replace(/'/g, "\\'")}'` : '';
@@ -384,7 +386,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       isExecuting: false,
     });
 
-    if (connection.driver === 'mysql') {
+    if (isMySQLLike(connection.driver)) {
       try {
         const host = u.host || '%';
         const targetDb = connection.databaseName || 'mysql';
@@ -466,7 +468,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
 
     try {
-      if (connection.driver === 'mysql') {
+      if (isMySQLLike(connection.driver)) {
         const host = user.host || '%';
         const scope = dbScope === '*.*' ? '*.*' : `\`${dbScope}\`.*`;
         const grantOpt = withGrantOption ? ' WITH GRANT OPTION' : '';
@@ -522,9 +524,9 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     }
   };
 
-  // Toggle Account Lock (MySQL only)
+  // Toggle Account Lock (MySQL / MariaDB only)
   const handleToggleLockAccount = async (u: DatabaseUser) => {
-    if (!connection || connection.driver !== 'mysql') return;
+    if (!connection || !isMySQLLike(connection.driver)) return;
     const host = u.host || '%';
     const action = u.isLocked ? 'ACCOUNT UNLOCK' : 'ACCOUNT LOCK';
     const actionLabel = u.isLocked ? 'Unlock' : 'Lock';
@@ -584,7 +586,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     try {
       let sql = '';
-      if (connection.driver === 'mysql') {
+      if (isMySQLLike(connection.driver)) {
         const host = user.host || '%';
         sql = `ALTER USER \`${user.username}\`@\`${host}\` IDENTIFIED BY '${password.replace(/'/g, "\\'")}'; FLUSH PRIVILEGES;`;
       } else if (connection.driver === 'postgres') {
@@ -614,7 +616,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     if (!connection) return;
 
     const identifier =
-      connection.driver === 'mysql'
+      isMySQLLike(connection.driver)
         ? `'${u.username}'@'${u.host || '%'}'`
         : `"${u.username}"`;
 
@@ -632,7 +634,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     try {
       const sql =
-        connection.driver === 'mysql'
+        isMySQLLike(connection.driver)
           ? `DROP USER \`${u.username}\`@\`${u.host || '%'}\`;`
           : `DROP ROLE "${u.username}";`;
 
@@ -785,9 +787,9 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
             <thead>
               <tr className="border-b border-[#272932] bg-[#191a20] text-zinc-400 font-medium">
                 <th className="py-2.5 px-3.5">User</th>
-                {connection.driver === 'mysql' && <th className="py-2.5 px-3">Host</th>}
+                {isMySQLLike(connection.driver) && <th className="py-2.5 px-3">Host</th>}
                 <th className="py-2.5 px-3">Roles / Status</th>
-                {connection.driver === 'mysql' && <th className="py-2.5 px-3">Plugin</th>}
+                {isMySQLLike(connection.driver) && <th className="py-2.5 px-3">Plugin</th>}
                 <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -833,8 +835,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                         </div>
                       </td>
 
-                      {/* Host Column (MySQL) */}
-                      {connection.driver === 'mysql' && (
+                      {/* Host Column (MySQL / MariaDB) */}
+                      {isMySQLLike(connection.driver) && (
                         <td className="py-2.5 px-3 font-mono text-zinc-300">
                           {u.host === '%' ? (
                             <span className="text-zinc-400" title="Any Host">% (any host)</span>
@@ -847,7 +849,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                       {/* Roles / Status Column */}
                       <td className="py-2.5 px-3">
                         <div className="flex flex-wrap items-center gap-1">
-                          {connection.driver === 'mysql' ? (
+                          {isMySQLLike(connection.driver) ? (
                             u.isLocked ? (
                               <span className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300">
                                 <Lock className="h-2.5 w-2.5" /> Locked
@@ -884,8 +886,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                         </div>
                       </td>
 
-                      {/* Auth Plugin (MySQL) */}
-                      {connection.driver === 'mysql' && (
+                      {/* Auth Plugin (MySQL / MariaDB) */}
+                      {isMySQLLike(connection.driver) && (
                         <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-400">
                           {u.plugin || '-'}
                         </td>
@@ -894,7 +896,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                       {/* Actions Column */}
                       <td className="py-2.5 px-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {connection.driver === 'mysql' && (
+                          {isMySQLLike(connection.driver) && (
                             <button
                               type="button"
                               onClick={() => handleToggleLockAccount(u)}
@@ -994,8 +996,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                 />
               </div>
 
-              {/* Host (MySQL) */}
-              {connection.driver === 'mysql' && (
+              {/* Host (MySQL / MariaDB) */}
+              {isMySQLLike(connection.driver) && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-zinc-300 font-medium">Host / Hostmask</label>
@@ -1071,8 +1073,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                 </div>
               </div>
 
-              {/* MySQL Privileges Presets */}
-              {connection.driver === 'mysql' && (
+              {/* MySQL / MariaDB Privileges Presets */}
+              {isMySQLLike(connection.driver) && (
                 <div>
                   <label className="block text-zinc-300 font-medium mb-1">Privilege Preset</label>
                   <div className="grid grid-cols-3 gap-2">
@@ -1213,8 +1215,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
             {/* Body */}
             <form onSubmit={handleConfirmSavePermissions} className="p-4 space-y-4">
-              {/* MySQL Section */}
-              {connection.driver === 'mysql' ? (
+              {/* MySQL / MariaDB Section */}
+              {isMySQLLike(connection.driver) ? (
                 <>
                   {/* Database Scope */}
                   <div>

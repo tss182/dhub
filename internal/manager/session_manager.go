@@ -215,7 +215,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 		u.RawQuery = q.Encode()
 		return postgres.NewPostgresDriver(u.String())
-	case "mysql":
+	case "mysql", "mariadb":
 		mc := mysqldriver.NewConfig()
 		mc.User = cfg.Username
 		mc.Passwd = cfg.Password

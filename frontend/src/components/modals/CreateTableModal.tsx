@@ -433,7 +433,7 @@ function generateAlterSql({
 }): string {
   const statements: string[] = [];
   const cleanTable = newTableName.trim() || initialTableName;
-  const isMySQL = driver === 'mysql';
+  const isMySQL = driver === 'mysql' || driver === 'mariadb';
   const isPostgres = driver === 'postgres';
 
   const dbPrefix = isMySQL && database && database !== 'main' ? `\`${database}\`.` : '';
@@ -737,7 +737,7 @@ function generateCreateTableSql({
   const pkCols = columns.filter((c) => c.isPrimaryKey && c.name.trim());
   const validColNames = columns.map((c) => c.name.trim()).filter(Boolean);
 
-  if (driver === 'mysql') {
+  if (driver === 'mysql' || driver === 'mariadb') {
     const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
     columns.forEach((col) => {
       const cName = col.name.trim();
@@ -972,7 +972,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   }, [driver]);
 
   const indexTypeOptions = useMemo(() => {
-    if (driver === 'mysql') {
+    if (driver === 'mysql' || driver === 'mariadb') {
       return [
         { value: 'INDEX', label: 'INDEX (Normal)' },
         { value: 'UNIQUE', label: 'UNIQUE' },
@@ -1698,8 +1698,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               />
             </div>
 
-            {/* Comment (MySQL) */}
-            {driver === 'mysql' && (
+            {/* Comment (MySQL / MariaDB) */}
+            {(driver === 'mysql' || driver === 'mariadb') && (
               <div className="flex-1 min-w-[200px]">
                 <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                   Table Comment
@@ -1714,8 +1714,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               </div>
             )}
 
-            {/* MySQL Engine & Charset options with custom dropdowns */}
-            {driver === 'mysql' && (
+            {/* MySQL / MariaDB Engine & Charset options with custom dropdowns */}
+            {(driver === 'mysql' || driver === 'mariadb') && (
               <>
                 <div className="w-36">
                   <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
@@ -1872,7 +1872,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   <th className="w-48 px-3 py-2 border-r border-[#272932]">Data Type</th>
                   <th className="w-32 px-3 py-2 border-r border-[#272932]">Length/Values</th>
                   <th className="w-16 px-2 py-2 text-center border-r border-[#272932]" title="Primary Key">PK</th>
-                  {driver === 'mysql' && (
+                  {(driver === 'mysql' || driver === 'mariadb') && (
                     <th className="w-16 px-2 py-2 text-center border-r border-[#272932]" title="Auto Increment">AI</th>
                   )}
                   {driver === 'sqlite' && (
@@ -2017,8 +2017,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       />
                     </td>
 
-                    {/* Auto Increment Checkbox (MySQL & SQLite) */}
-                    {(driver === 'mysql' || driver === 'sqlite') && (
+                    {/* Auto Increment Checkbox (MySQL / MariaDB & SQLite) */}
+                    {(driver === 'mysql' || driver === 'mariadb' || driver === 'sqlite') && (
                       <td className="px-2 py-1.5 text-center border-r border-[#20222a]">
                         <input
                           type="checkbox"
@@ -2143,7 +2143,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <th className="w-32 px-3 py-2 border-r border-[#272932]">Method</th>
                       )}
                       <th className="px-3 py-2 border-r border-[#272932]">Indexed Columns (Composite in Order)</th>
-                      {driver === 'mysql' && (
+                      {(driver === 'mysql' || driver === 'mariadb') && (
                         <th className="w-44 px-3 py-2 border-r border-[#272932]">Comment</th>
                       )}
                       <th className="w-20 px-2 py-2 text-center">Actions</th>
@@ -2276,7 +2276,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           </td>
 
                           {/* Comment (MySQL) */}
-                          {driver === 'mysql' && (
+                          {(driver === 'mysql' || driver === 'mariadb') && (
                             <td className="px-2 py-2 border-r border-[#20222a]">
                               <input
                                 type="text"
