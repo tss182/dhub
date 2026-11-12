@@ -599,21 +599,58 @@ function loadColWidths(key: string): Record<string, number> | null {
   return null;
 }
 
-function getInitialColumnWidth(col: ColumnMeta, sampleRows: any[][], colIdx: number): number {
+function getLongestWordLength(str: string): number {
+  if (!str) return 0;
+  // Treat underscore '_' and whitespace as word separators
+  const words = str.split(/[_\s]+/).filter(Boolean);
+  if (words.length === 0) return str.length;
+  return Math.max(...words.map((w) => w.length));
+}
+
+function getMinimumColumnWidth(col: ColumnMeta, isPK?: boolean): number {
+  // Longest word in column name with _ or space as separator
+  const longestWordLen = getLongestWordLength(col.name || '');
+  // Chrome width: 24px (px-3) + 20px (freeze button) + 40px (sort badge) + 8px (gap)
+  const chromeWidth = isPK ? 112 : 94;
+  const wordWidth = Math.ceil(longestWordLen * 8.5);
+  // Full column name width if it's reasonably short (up to 24 chars)
   const nameLen = (col.name || '').length;
-  let maxValLen = 0;
-  const maxRowsToCheck = Math.min(sampleRows.length, 50);
+  const nameWidth = Math.ceil(Math.min(nameLen, 24) * 8.5);
+
+  const calculatedMin = Math.max(wordWidth, nameWidth) + chromeWidth;
+  // Ensure minimum is at least 140px (or 160px for PK) so no column ever squishes to tiny width
+  return Math.max(isPK ? 160 : 140, Math.min(calculatedMin, 340));
+}
+
+function getInitialColumnWidth(col: ColumnMeta, sampleRows: any[][], colIdx: number, isPK?: boolean): number {
+  const minWidth = getMinimumColumnWidth(col, isPK);
+
+  let maxDataLen = 0;
+  let maxDataWordLen = 0;
+  const maxRowsToCheck = Math.min(sampleRows.length, 60);
+
   for (let i = 0; i < maxRowsToCheck; i++) {
     const v = sampleRows[i]?.[colIdx];
     if (v !== null && v !== undefined) {
-      const s = String(v);
-      if (s.length > maxValLen) maxValLen = s.length;
+      const s = String(v).trim();
+      if (s) {
+        if (s.length > maxDataLen) maxDataLen = s.length;
+        const words = s.split(/[_\s]+/).filter(Boolean);
+        for (const w of words) {
+          if (w.length > maxDataWordLen) maxDataWordLen = w.length;
+        }
+      }
     }
   }
-  const effectiveLen = Math.max(nameLen, Math.min(maxValLen, 60));
-  // ~8.2px per character in mono font + 64px for padding (px-3), PK icon, sort indicator, freeze button
-  const calculated = Math.ceil(effectiveLen * 8.2) + 64;
-  return Math.max(90, Math.min(calculated, 420));
+
+  // Cover data values up to 50 chars, or at least data words up to 30 chars
+  const effectiveDataLen = Math.max(Math.min(maxDataLen, 45), Math.min(maxDataWordLen, 30));
+  // 24px padding for data cell (px-3) + 4px buffer
+  const dataCalculated = Math.ceil(effectiveDataLen * 8.5) + 28;
+
+  // The final width is at least minWidth (which covers at least 1 word of column name + chrome),
+  // and expands to fit data content up to 480px.
+  return Math.max(minWidth, Math.min(dataCalculated, 480));
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({
@@ -960,18 +997,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const newWidths: Record<string, number> = {};
 
     columns.forEach((col, idx) => {
-      if (saved[col.name] && typeof saved[col.name] === 'number' && saved[col.name] >= 50) {
-        newWidths[col.name] = saved[col.name];
+      const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+      const minRequired = getMinimumColumnWidth(col, isPK);
+
+      if (saved[col.name] && typeof saved[col.name] === 'number') {
+        newWidths[col.name] = Math.max(saved[col.name], minRequired);
       } else if (colWidths[col.name]) {
-        newWidths[col.name] = colWidths[col.name];
+        newWidths[col.name] = Math.max(colWidths[col.name], minRequired);
       } else {
-        newWidths[col.name] = getInitialColumnWidth(col, rows, idx);
+        newWidths[col.name] = getInitialColumnWidth(col, rows, idx, isPK);
       }
     });
 
     setColWidths(newWidths);
     currentWidthsRef.current = newWidths;
-  }, [columns, storageKey]);
+  }, [columns, storageKey, primaryKeys]);
 
   // When rows arrive asynchronously and user hasn't resized manually, recalculate initial widths
   useEffect(() => {
@@ -982,8 +1022,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
         const next = { ...prev };
         let changed = false;
         columns.forEach((col, idx) => {
+          const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
           if (!saved[col.name]) {
-            const optimal = getInitialColumnWidth(col, rows, idx);
+            const optimal = getInitialColumnWidth(col, rows, idx, isPK);
             if (optimal > (prev[col.name] || 0)) {
               next[col.name] = optimal;
               changed = true;
@@ -997,7 +1038,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         return prev;
       });
     }
-  }, [rows.length, columns, storageKey]);
+  }, [rows.length, columns, storageKey, primaryKeys]);
 
   const handleResizeStart = (e: React.MouseEvent, colName: string) => {
     e.stopPropagation();
@@ -1057,7 +1098,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
     e.preventDefault();
     const col = columns[cIdx];
     if (!col) return;
-    const autoWidth = getInitialColumnWidth(col, rows, cIdx);
+    const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+    const autoWidth = getInitialColumnWidth(col, rows, cIdx, isPK);
     setColWidths((prev) => {
       const next = { ...prev, [colName]: autoWidth };
       currentWidthsRef.current = next;
