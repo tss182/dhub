@@ -617,3 +617,4 @@ func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table 
 	}
 	return affected, nil
 }
+
