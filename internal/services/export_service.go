@@ -203,6 +203,8 @@ func quoteIdentifier(driverType, name string) string {
 		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 	case "postgres", "sqlite":
 		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+	case "mssql", "sqlserver":
+		return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
 	case "redis":
 		return name
 	default:

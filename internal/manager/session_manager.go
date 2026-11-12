@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"dhub/internal/driver"
+	"dhub/internal/driver/mssql"
 	"dhub/internal/driver/mysql"
 	"dhub/internal/driver/postgres"
 	redisdriver "dhub/internal/driver/redis"
@@ -302,6 +303,45 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 
 		return redisdriver.NewRedisDriver(redisOpts)
+	case "mssql", "sqlserver":
+		if port <= 0 {
+			port = 1433
+		}
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		dbName := strings.TrimSpace(cfg.DatabaseName)
+		if dbName == "" {
+			dbName = "master"
+		}
+
+		u := &url.URL{
+			Scheme: "sqlserver",
+			Host:   fmt.Sprintf("%s:%d", host, port),
+		}
+		if cfg.Username != "" || cfg.Password != "" {
+			u.User = url.UserPassword(cfg.Username, cfg.Password)
+		}
+		q := u.Query()
+		q.Set("database", dbName)
+
+		switch cfg.SSLMode {
+		case "require", "required":
+			q.Set("encrypt", "true")
+			q.Set("trustservercertificate", "true")
+		case "verify-ca", "verify-full", "verify-identity":
+			q.Set("encrypt", "true")
+			q.Set("trustservercertificate", "false")
+			if cfg.SSLCAPath != "" {
+				q.Set("certificate", cfg.SSLCAPath)
+			}
+		default:
+			q.Set("encrypt", "disable")
+			q.Set("trustservercertificate", "true")
+		}
+
+		u.RawQuery = q.Encode()
+		return mssql.NewMSSQLDriver(u.String())
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}

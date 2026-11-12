@@ -953,6 +953,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       if (drv === 'postgres') lang = 'postgresql';
       else if (drv === 'mariadb') lang = 'mariadb';
       else if (drv === 'mysql') lang = 'mysql';
+      else if (drv === 'mssql') lang = 'transactsql';
       else if (drv === 'sqlite') lang = 'sqlite';
       else if (drv === 'redis') lang = 'redis';
 
@@ -983,6 +984,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         : 'EXPLAIN (COSTS, VERBOSE) ';
     } else if (drv === 'mysql' || drv === 'mariadb') {
       prefix = isAnalyze ? 'EXPLAIN ANALYZE ' : 'EXPLAIN ';
+    } else if (drv === 'mssql') {
+      prefix = 'SET SHOWPLAN_ALL ON; ';
     } else if (drv === 'sqlite') {
       prefix = 'EXPLAIN QUERY PLAN ';
     }

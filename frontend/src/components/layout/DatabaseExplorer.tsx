@@ -150,8 +150,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       title: `${conn.name} - Users`,
       connectionId: conn.id,
       driver: conn.driver,
-      database: conn.databaseName || (conn.driver === 'postgres' ? 'postgres' : 'mysql'),
-      schema: conn.driver === 'postgres' ? 'public' : 'main',
+      database: conn.databaseName || (conn.driver === 'postgres' ? 'postgres' : conn.driver === 'mssql' ? 'master' : 'mysql'),
+      schema: conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : 'main',
     });
   };
 
@@ -706,15 +706,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           conn?.databaseName && prefetchedDbs.includes(conn.databaseName)
             ? conn.databaseName
             : prefetchedDbs[0] || conn?.databaseName || 'main';
-        const currentSchema = conn?.driver === 'postgres' ? 'public' : currentDb;
+        const currentSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : currentDb;
         setActiveConnection(connId, currentDb, currentSchema);
 
         // Pre-fetch objects for visible databases in background
         for (const dbName of prefetchedDbs) {
-          if (conn?.driver === 'postgres') {
+          if (conn?.driver === 'postgres' || conn?.driver === 'mssql') {
             SchemaService.GetSchemas(connId, dbName)
               .then((schemas) => {
-                const safeSchemas = schemas && schemas.length > 0 ? schemas : ['public'];
+                const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : 'public';
+                const safeSchemas = schemas && schemas.length > 0 ? schemas : [defaultSchema];
                 setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
                 for (const s of safeSchemas) {
                   const sKey = `${connId}:${dbName}:${s}`;
@@ -751,15 +752,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     toggleNode(nodeKey);
     const conn = connections.find((c) => c.id === connId);
 
-    if (conn?.driver === 'postgres') {
+    if (conn?.driver === 'postgres' || conn?.driver === 'mssql') {
       try {
         let schemas = treeSchemas[nodeKey];
+        const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : 'public';
         if (!schemas || schemas.length === 0) {
           schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
-          if (schemas.length === 0) schemas = ['public'];
+          if (schemas.length === 0) schemas = [defaultSchema];
           setTreeSchemas((prev) => ({ ...prev, [nodeKey]: schemas }));
         }
-        const activeS = schemas.includes('public') ? 'public' : schemas[0] || 'public';
+        const activeS = schemas.includes(defaultSchema) ? defaultSchema : schemas[0] || defaultSchema;
         setActiveConnection(connId, dbName, activeS);
         // Pre-fetch objects for discovered schemas
         for (const s of schemas) {
@@ -800,7 +802,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
       // Refresh currently selected database objects
       const currentDb = activeDatabase || safeDbs[0];
-      const targetSchema = conn?.driver === 'postgres' ? 'public' : currentDb;
+      const targetSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : currentDb;
       const objects = (await SchemaService.GetObjects(connId, currentDb, targetSchema)) ?? [];
       setTreeObjects(`${connId}:${currentDb}:${targetSchema}`, objects as any);
     } catch (e) {
@@ -827,7 +829,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       if (activeConnectionId === connId) {
         if (list && list.length > 0) {
           const first = list[0];
-          setActiveConnection(first.id, first.databaseName || 'main', first.driver === 'postgres' ? 'public' : 'main');
+          setActiveConnection(first.id, first.databaseName || 'main', first.driver === 'postgres' ? 'public' : first.driver === 'mssql' ? 'dbo' : 'main');
         } else {
           setActiveConnection('', '', '');
         }
@@ -878,6 +880,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `CREATE DATABASE \`${dbName}\` CHARACTER SET ${createDbModal.charset || 'utf8mb4'} COLLATE ${createDbModal.collation || 'utf8mb4_unicode_ci'};`;
+    } else if (conn.driver === 'mssql') {
+      sql = `CREATE DATABASE [${dbName}];`;
     } else if (conn.driver === 'postgres') {
       sql = `CREATE DATABASE "${dbName}" ENCODING '${createDbModal.charset || 'UTF8'}';`;
     }
@@ -887,7 +891,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? (conn.databaseName || 'mysql') : 'postgres',
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? (conn.databaseName || 'mysql') : (conn.driver === 'mssql' ? 'master' : 'postgres'),
         schema: 'public',
         sql,
         limit: 10,
@@ -1153,10 +1157,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   // Database handlers
   const handleRefreshDatabase = async (connId: string, dbName: string) => {
     const conn = connections.find((c) => c.id === connId);
-    if (conn?.driver === 'postgres') {
+    if (conn?.driver === 'postgres' || conn?.driver === 'mssql') {
       try {
+        const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : 'public';
         const schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
-        const safeSchemas = schemas.length > 0 ? schemas : ['public'];
+        const safeSchemas = schemas.length > 0 ? schemas : [defaultSchema];
         setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
         for (const s of safeSchemas) {
           const sKey = `${connId}:${dbName}:${s}`;
@@ -1203,6 +1208,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         schema: dbName,
         content: `-- Modify Character Set / Collation for Database: ${dbName}\nALTER DATABASE \`${dbName}\` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;\n`,
       });
+    } else if (conn.driver === 'mssql') {
+      openTab({
+        id: `console-alter-${Date.now()}`,
+        type: 'worksheet',
+        title: `alter_${dbName}.sql`,
+        connectionId: conn.id,
+        database: 'master',
+        schema: 'dbo',
+        content: `-- Rename Database in SQL Server: ${dbName}\nALTER DATABASE [${dbName}] MODIFY NAME = [${dbName}_renamed];\n`,
+      });
     } else {
       alertInfo('SQLite databases are local files and do not support database modification queries.', 'SQLite Information');
     }
@@ -1225,6 +1240,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const sql =
       (conn.driver === 'mysql' || conn.driver === 'mariadb')
         ? `DROP DATABASE \`${dbName}\`;`
+        : conn.driver === 'mssql'
+        ? `DROP DATABASE [${dbName}];`
         : `DROP DATABASE "${dbName}";`;
 
     try {
@@ -1232,7 +1249,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: conn.id,
-        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? '' : 'postgres',
+        database: (conn.driver === 'mysql' || conn.driver === 'mariadb') ? '' : (conn.driver === 'mssql' ? 'master' : 'postgres'),
         schema: 'public',
         sql,
         limit: 10,
@@ -1319,6 +1336,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `DROP ${keyword} \`${obj.name}\`;`;
+    } else if (conn.driver === 'mssql') {
+      sql = `DROP ${keyword} [${schema}].[${obj.name}];`;
     } else if (conn.driver === 'postgres') {
       sql = `DROP ${keyword} "${schema}"."${obj.name}";`;
     } else {
@@ -1363,6 +1382,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
     } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+    } else if (conn.driver === 'mssql') {
+      content += `-- 1. View definition source:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${routineName}]'));\n\n-- 2. Execute routine:\n-- EXEC [${schema}].[${routineName}];\n`;
     } else {
       content += `-- SQLite does not support stored procedures or routines.\n`;
     }
@@ -1389,6 +1410,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       content += `-- 1. View trigger definition:\nSELECT pg_get_triggerdef(t.oid)\nFROM pg_trigger t\nJOIN pg_class c ON c.oid = t.tgrelid\nJOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE n.nspname = '${schema}' AND t.tgname = '${triggerName}';\n`;
     } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       content += `-- 1. View trigger definition:\nSHOW CREATE TRIGGER \`${db}\`.\`${triggerName}\`;\n`;
+    } else if (conn.driver === 'mssql') {
+      content += `-- 1. View trigger definition:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${triggerName}]'));\n`;
     } else {
       content += `-- 1. View trigger definition in SQLite:\nSELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '${triggerName}';\n`;
     }
@@ -1421,6 +1444,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`; DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
+    } else if (conn.driver === 'mssql') {
+      sql = `DROP PROCEDURE IF EXISTS [${schema}].[${routineName}]; DROP FUNCTION IF EXISTS [${schema}].[${routineName}];`;
     } else if (conn.driver === 'postgres') {
       sql = `DROP ROUTINE IF EXISTS "${schema}"."${routineName}";`;
     } else {
@@ -1470,6 +1495,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       sql = `DROP TRIGGER IF EXISTS \`${db}\`.\`${triggerName}\`;`;
+    } else if (conn.driver === 'mssql') {
+      sql = `DROP TRIGGER IF EXISTS [${schema}].[${triggerName}];`;
     } else if (conn.driver === 'postgres') {
       openTab({
         id: `drop-trigger-${Date.now()}`,
@@ -1513,7 +1540,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   const handleNewConsole = (connId: string, dbName?: string, schema?: string, tableName?: string) => {
     const conn = connections.find((c) => c.id === connId);
     const targetDb = dbName || conn?.databaseName || 'main';
-    const targetSchema = schema || (conn?.driver === 'postgres' ? 'public' : targetDb);
+    const targetSchema = schema || (conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : targetDb);
     const count = tabs.filter((t) => t.type === 'worksheet').length + 1;
 
     const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
@@ -1521,8 +1548,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (conn?.driver === 'redis') {
       content = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
     } else if (tableName) {
-      const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb') ? `\`${tableName}\`` : `"${tableName}"`;
-      content += `SELECT * FROM ${quoted} LIMIT 100;\n`;
+      const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
+      content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
     } else {
       content += `SELECT 1;\n`;
     }
@@ -1892,7 +1919,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               ) : (
                 databases.map((dbName) => {
                   const filterLower = filterText.toLowerCase().trim();
-                  const targetSchema = c.driver === 'postgres' ? 'public' : dbName;
+                  const targetSchema = c.driver === 'postgres' ? 'public' : c.driver === 'mssql' ? 'dbo' : dbName;
                   const schemaKey = `${c.id}:${dbName}:${targetSchema}`;
                   const allObjects = treeObjects[schemaKey] || [];
 
@@ -1990,8 +2017,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                       {/* Tables & Views under this database */}
                       {isDbExpanded && (
                         <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
-                          {c.driver === 'postgres' ? (
-                            (treeSchemas[`${c.id}:${dbName}`] || ['public']).map((sName) => {
+                          {c.driver === 'postgres' || c.driver === 'mssql' ? (
+                            (treeSchemas[`${c.id}:${dbName}`] || (c.driver === 'mssql' ? ['dbo'] : ['public'])).map((sName) => {
                               const sNodeKey = `${c.id}:${dbName}:schema:${sName}`;
                               const isSExpanded = expandedNodes[sNodeKey] !== false; // default open
                               const sKey = `${c.id}:${dbName}:${sName}`;
@@ -2181,7 +2208,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                         return (
                                           <div
                                             key={obj.name}
-                                            draggable={c.driver === 'postgres' && !c.isReadOnly}
+                                            draggable={(c.driver === 'postgres' || c.driver === 'mssql') && !c.isReadOnly}
                                             onDragStart={(e) => {
                                               e.stopPropagation();
                                               setDraggedItem({
@@ -2242,7 +2269,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                             return (
                                               <div
                                                 key={obj.name}
-                                                draggable={c.driver === 'postgres' && !c.isReadOnly}
+                                                draggable={(c.driver === 'postgres' || c.driver === 'mssql') && !c.isReadOnly}
                                                 onDragStart={(e) => {
                                                   e.stopPropagation();
                                                   setDraggedItem({
@@ -2305,7 +2332,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                             return (
                                               <div
                                                 key={obj.name}
-                                                draggable={c.driver === 'postgres' && !c.isReadOnly}
+                                                draggable={(c.driver === 'postgres' || c.driver === 'mssql') && !c.isReadOnly}
                                                 onDragStart={(e) => {
                                                   e.stopPropagation();
                                                   setDraggedItem({

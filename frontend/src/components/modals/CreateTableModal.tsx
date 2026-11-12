@@ -801,6 +801,64 @@ function generateCreateTableSql({
     });
 
     return statements.join('\n\n');
+  } else if (driver === 'mssql') {
+    const schemaPrefix = targetSchema ? `[${targetSchema}].` : '';
+    columns.forEach((col) => {
+      const cName = col.name.trim();
+      if (!cName) return;
+
+      let colDef = `  [${cName}] ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) {
+        colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (col.isAutoIncrement) {
+        colDef += ' IDENTITY(1,1)';
+      }
+      if (col.isNotNull || col.isPrimaryKey) {
+        colDef += ' NOT NULL';
+      } else {
+        colDef += ' NULL';
+      }
+      if (col.defaultValue.trim()) {
+        const val = col.defaultValue.trim();
+        if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
+          colDef += ` DEFAULT ${val}`;
+        } else if (val.startsWith("'") && val.endsWith("'")) {
+          colDef += ` DEFAULT ${val}`;
+        } else {
+          colDef += ` DEFAULT '${val}'`;
+        }
+      }
+      lines.push(colDef);
+    });
+
+    if (pkCols.length > 0) {
+      lines.push(`  PRIMARY KEY (${pkCols.map((c) => `[${c.name.trim()}]`).join(', ')})`);
+    }
+
+    const statements: string[] = [];
+    statements.push(`CREATE TABLE ${schemaPrefix}[${cleanTable}] (\n${lines.join(',\n')}\n);`);
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+      if (validCols.length === 0) return;
+
+      const colParts = validCols
+        .map((c) => {
+          let part = `[${c.name.trim()}]`;
+          if (c.order === 'DESC') part += ' DESC';
+          return part;
+        })
+        .join(', ');
+
+      const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+      const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+      const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+
+      statements.push(`CREATE ${isUnique}INDEX [${idxName}] ON ${schemaPrefix}[${cleanTable}] (${colParts});`);
+    });
+
+    return statements.join('\n\n');
   } else {
     // SQLite
     columns.forEach((col) => {
@@ -923,7 +981,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [isLoadingStructure, setIsLoadingStructure] = useState(false);
 
   const driver = connection?.driver || 'mysql';
-  const targetSchema = schema || (driver === 'postgres' ? 'public' : database);
+  const targetSchema = schema || (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : database);
 
   const typeGroups = useMemo(() => {
     if (driver === 'postgres') return POSTGRES_TYPE_GROUPS;
@@ -2011,7 +2069,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <span className="text-[#dfe1e5]">Not Null</span>
                         </label>
 
-                        {(driver === 'mysql' || driver === 'mariadb' || driver === 'sqlite') && (
+                        {(driver === 'mysql' || driver === 'mariadb' || driver === 'sqlite' || driver === 'mssql') && (
                           <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
                               type="checkbox"
@@ -2019,7 +2077,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                               onChange={(e) => handleUpdateColumn(activeCol.id, { isAutoIncrement: e.target.checked })}
                               className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
                             />
-                            <span className="text-[#dfe1e5]">Auto Increment</span>
+                            <span className="text-[#dfe1e5]">{driver === 'mssql' ? 'Identity' : 'Auto Increment'}</span>
                           </label>
                         )}
 
