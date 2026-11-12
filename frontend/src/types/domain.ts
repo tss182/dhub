@@ -178,6 +178,8 @@ export interface TableViewState {
   sortConfigs?: Array<{ column: string; direction: 'asc' | 'desc' }>;
   frozenColumns?: string[];
   activeRowIndex?: number;
+  topRowIndex?: number;
+  topRowOffsetPx?: number;
   scrollTop?: number;
   scrollLeft?: number;
   pageSize?: number;
