@@ -1172,6 +1172,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colIndex: number } | null>(null);
   const [editVal, setEditVal] = useState<string>('');
+  const isFirstEditRenderRef = useRef<boolean>(false);
   const globalViewMode = useSettingsStore((state) => state.dataViewMode);
   const globalDefaultPageSize = useSettingsStore((state) => state.defaultPageSize);
   const copyFormat = useSettingsStore((state) => state.copyFormat);
@@ -1387,12 +1388,22 @@ export const DataGrid: React.FC<DataGridProps> = ({
     );
   }, [stagedChanges]);
 
-  const handleStartEdit = (rowIndex: number, colIndex: number, currentVal: any) => {
+  const handleStartEdit = (rowIndex: number, colIndex: number, currentVal: any, initialVal?: string) => {
     if (isReadOnly) return;
     const col = columns[colIndex];
+    if (!col) return;
     const inputType = getColumnInputType(col?.dataType);
+    isFirstEditRenderRef.current = true;
     setEditingCell({ rowIndex, colIndex });
-    setEditVal(formatToDateInputValue(currentVal, inputType));
+    if (initialVal !== undefined) {
+      if (inputType === 'text') {
+        setEditVal(initialVal);
+      } else {
+        setEditVal(formatToDateInputValue(currentVal, inputType));
+      }
+    } else {
+      setEditVal(formatToDateInputValue(currentVal, inputType));
+    }
   };
 
   const handleAddRow = () => {
@@ -2476,6 +2487,8 @@ ${setClauses};`;
       handleFinishEdit();
     }
 
+    containerRef.current?.focus({ preventScroll: true });
+
     if (e.shiftKey && selectionAnchor) {
       window.getSelection()?.removeAllRanges();
       setSelectionFocus({ r: vIdx, c: cIdx });
@@ -2810,6 +2823,58 @@ ${setClauses};`;
         return;
       }
 
+      // Backspace to clear and edit selected cell
+      if (!isTyping && !isMod && !e.altKey && e.key === 'Backspace') {
+        if (
+          selectionFocus &&
+          visualRows.length > 0 &&
+          columns.length > 0 &&
+          !isReadOnly &&
+          !isExportOpen &&
+          !isImportOpen &&
+          !showAllSortsModal &&
+          !showAllFrozenModal
+        ) {
+          const vr = visualRows[selectionFocus.r];
+          if (vr) {
+            const col = columns[selectionFocus.c];
+            if (col) {
+              e.preventDefault();
+              handleStartEdit(vr.rowId, selectionFocus.c, '', '');
+              setSelectionAnchor({ r: selectionFocus.r, c: selectionFocus.c });
+              return;
+            }
+          }
+        }
+      }
+
+      // Direct typing to start editing selected cell (letters, numbers, symbols)
+      if (
+        !isTyping &&
+        !isMod &&
+        !e.altKey &&
+        e.key.length === 1 &&
+        selectionFocus &&
+        visualRows.length > 0 &&
+        columns.length > 0 &&
+        !isReadOnly &&
+        !isExportOpen &&
+        !isImportOpen &&
+        !showAllSortsModal &&
+        !showAllFrozenModal
+      ) {
+        const vr = visualRows[selectionFocus.r];
+        if (vr) {
+          const col = columns[selectionFocus.c];
+          if (col) {
+            e.preventDefault();
+            handleStartEdit(vr.rowId, selectionFocus.c, '', e.key);
+            setSelectionAnchor({ r: selectionFocus.r, c: selectionFocus.c });
+            return;
+          }
+        }
+      }
+
       if (!isMod) return;
 
       if (isTyping && !target?.closest?.('[data-grid-container]')) {
@@ -2876,7 +2941,33 @@ ${setClauses};`;
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [tabId, isMac, isReadOnly, editingCell, editVal, columns, rows, selectionAnchor, selectionFocus, selectionRange, visualRows, selectedRowKeys, onSubmitChanges, stagedCount, showCancelConfirm, copyFormat, tableName, primaryKeys, driver, frozenColumns, colWidths]);
+  }, [
+    tabId,
+    isMac,
+    isReadOnly,
+    editingCell,
+    editVal,
+    columns,
+    rows,
+    selectionAnchor,
+    selectionFocus,
+    selectionRange,
+    visualRows,
+    selectedRowKeys,
+    onSubmitChanges,
+    stagedCount,
+    showCancelConfirm,
+    copyFormat,
+    tableName,
+    primaryKeys,
+    driver,
+    frozenColumns,
+    colWidths,
+    isExportOpen,
+    isImportOpen,
+    showAllSortsModal,
+    showAllFrozenModal,
+  ]);
 
   // Global clipboard copy event to ensure Ctrl+C always outputs the selected format
   useEffect(() => {
@@ -3690,6 +3781,7 @@ ${setClauses};`;
                               maxWidth: `${w}px`,
                               ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
                             }}
+                            title="Click to select, type or double-click to edit"
                           >
                             {isEditing ? (
                               <input
@@ -3697,8 +3789,16 @@ ${setClauses};`;
                                 step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
                                 autoFocus
                                 ref={(el) => {
-                                  if (colInputType !== 'text') {
-                                    try { el?.showPicker?.(); } catch {}
+                                  if (el) {
+                                    if (colInputType !== 'text') {
+                                      try { el?.showPicker?.(); } catch {}
+                                    } else if (isFirstEditRenderRef.current) {
+                                      isFirstEditRenderRef.current = false;
+                                      try {
+                                        const len = el.value.length;
+                                        el.setSelectionRange(len, len);
+                                      } catch {}
+                                    }
                                   }
                                 }}
                                 value={editVal}
@@ -3815,7 +3915,7 @@ ${setClauses};`;
                               maxWidth: `${w}px`,
                               ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
                             }}
-                            title="Click to select, double click to edit"
+                            title="Click to select, type or double-click to edit"
                           >
                             {isEditing ? (
                               <input
@@ -3823,8 +3923,16 @@ ${setClauses};`;
                                 step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
                                 autoFocus
                                 ref={(el) => {
-                                  if (colInputType !== 'text') {
-                                    try { el?.showPicker?.(); } catch {}
+                                  if (el) {
+                                    if (colInputType !== 'text') {
+                                      try { el?.showPicker?.(); } catch {}
+                                    } else if (isFirstEditRenderRef.current) {
+                                      isFirstEditRenderRef.current = false;
+                                      try {
+                                        const len = el.value.length;
+                                        el.setSelectionRange(len, len);
+                                      } catch {}
+                                    }
                                   }
                                 }}
                                 value={editVal}
