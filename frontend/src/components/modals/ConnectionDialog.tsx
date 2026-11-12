@@ -102,7 +102,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : 5432));
+          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -140,7 +140,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : 5432));
+          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : 5432));
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -187,7 +187,7 @@ export const ConnectionDialog: React.FC = () => {
 
   if (!isConnectionDialogOpen) return null;
 
-  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb') => {
+  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse') => {
     setDriver(d);
     if (d === 'mysql' || d === 'mariadb') {
       setPort(3306);
@@ -217,6 +217,11 @@ export const ConnectionDialog: React.FC = () => {
       setPort(6379);
       if (username === 'postgres' || username === 'root' || username === 'sa') setUsername('');
       if (databaseName === 'postgres' || databaseName === 'master' || !databaseName) setDatabaseName('0');
+      setSslMode('disable');
+    } else if (d === 'clickhouse') {
+      setPort(9000);
+      if (username === 'postgres' || username === 'root' || username === 'sa') setUsername('default');
+      if (!databaseName || databaseName === 'postgres' || databaseName === 'master' || databaseName === '0' || databaseName === 'admin') setDatabaseName('default');
       setSslMode('disable');
     }
   };
@@ -711,6 +716,8 @@ export const ConnectionDialog: React.FC = () => {
                           ? 'master'
                           : driver === 'mongodb'
                           ? 'admin'
+                          : driver === 'clickhouse'
+                          ? 'default'
                           : 'e.g. postgres'
                       }
                       value={databaseName}

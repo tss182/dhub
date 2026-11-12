@@ -955,7 +955,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       else if (drv === 'mysql') lang = 'mysql';
       else if (drv === 'mssql') lang = 'transactsql';
       else if (drv === 'sqlite') lang = 'sqlite';
-      else if (drv === 'redis') lang = 'redis';
+      else if (drv === 'clickhouse') lang = 'sql';
 
       const formatted = format(sql, {
         language: lang,
@@ -988,6 +988,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       prefix = 'SET SHOWPLAN_ALL ON; ';
     } else if (drv === 'sqlite') {
       prefix = 'EXPLAIN QUERY PLAN ';
+    } else if (drv === 'clickhouse') {
+      prefix = isAnalyze ? 'EXPLAIN PIPELINE ' : 'EXPLAIN ';
     }
 
     const explainSql = prefix + stmt;

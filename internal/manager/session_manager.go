@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"dhub/internal/driver"
+	"dhub/internal/driver/clickhouse"
 	"dhub/internal/driver/mongodb"
 	"dhub/internal/driver/mssql"
 	"dhub/internal/driver/mysql"
@@ -387,6 +388,53 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 
 		u.RawQuery = q.Encode()
 		return mongodb.NewMongoDBDriver(u.String())
+	case "clickhouse":
+		connStr := strings.TrimSpace(cfg.Host)
+		if strings.HasPrefix(connStr, "clickhouse://") || strings.HasPrefix(connStr, "http://") || strings.HasPrefix(connStr, "https://") {
+			return clickhouse.NewClickHouseDriver(connStr)
+		}
+		if port <= 0 {
+			port = 9000
+		}
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		dbName := strings.TrimSpace(cfg.DatabaseName)
+		if dbName == "" {
+			dbName = "default"
+		}
+		username := strings.TrimSpace(cfg.Username)
+		if username == "" {
+			username = "default"
+		}
+
+		scheme := "clickhouse"
+		if port == 8123 {
+			scheme = "http"
+		} else if port == 8443 {
+			scheme = "https"
+		}
+
+		u := &url.URL{
+			Scheme: scheme,
+			Host:   fmt.Sprintf("%s:%d", host, port),
+			Path:   "/" + dbName,
+		}
+		if username != "" || cfg.Password != "" {
+			u.User = url.UserPassword(username, cfg.Password)
+		}
+		q := u.Query()
+		q.Set("dial_timeout", "10s")
+
+		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+			q.Set("secure", "true")
+			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+				q.Set("skip_verify", "true")
+			}
+		}
+
+		u.RawQuery = q.Encode()
+		return clickhouse.NewClickHouseDriver(u.String())
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}

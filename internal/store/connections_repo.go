@@ -14,7 +14,7 @@ type ConnectionConfig struct {
 	ID           string    `json:"id"`
 	FolderID     *string   `json:"folderId"`
 	Name         string    `json:"name"`
-	Driver       string    `json:"driver"`  // "postgres", "mysql", "sqlite", "mariadb", "redis", "mssql", "mongodb"
+	Driver       string    `json:"driver"`  // "postgres", "mysql", "sqlite", "mariadb", "redis", "mssql", "mongodb", "clickhouse"
 	EnvType      string    `json:"envType"` // "local", "dev", "prod"
 	ColorTag     string    `json:"colorTag"`
 	IsReadOnly   bool      `json:"isReadOnly"`

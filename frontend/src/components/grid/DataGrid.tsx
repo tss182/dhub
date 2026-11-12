@@ -1421,7 +1421,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const generateUpdateSql = (rowIndex: number, colName: string, newVal: any): string => {
-    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb';
+    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb' || (driver || '').toLowerCase() === 'clickhouse';
     const isMSSQL = (driver || '').toLowerCase() === 'mssql' || (driver || '').toLowerCase() === 'sqlserver';
     const isNoSQL = (driver || '').toLowerCase() === 'redis' || (driver || '').toLowerCase() === 'mongodb';
     const quoteIdent = (name: string) =>
@@ -1941,7 +1941,7 @@ WHERE ${whereClause};`;
     const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
     if (!selectionRange || columns.length === 0) return '';
     const tbl = tableName || 'table_name';
-    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb';
+    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb' || (driver || '').toLowerCase() === 'clickhouse';
     const isMSSQL = (driver || '').toLowerCase() === 'mssql' || (driver || '').toLowerCase() === 'sqlserver';
     const isNoSQL = (driver || '').toLowerCase() === 'redis' || (driver || '').toLowerCase() === 'mongodb';
     const quoteIdent = (name: string) =>

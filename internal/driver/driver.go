@@ -13,8 +13,9 @@ const (
 	DriverSQLite   DriverType = "sqlite"
 	DriverMariaDB  DriverType = "mariadb"
 	DriverRedis    DriverType = "redis"
-	DriverMSSQL    DriverType = "mssql"
-	DriverMongoDB  DriverType = "mongodb"
+	DriverMSSQL      DriverType = "mssql"
+	DriverMongoDB    DriverType = "mongodb"
+	DriverClickHouse DriverType = "clickhouse"
 )
 
 type ColumnMeta struct {
