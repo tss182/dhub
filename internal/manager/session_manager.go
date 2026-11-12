@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"dhub/internal/driver"
+	"dhub/internal/driver/mongodb"
 	"dhub/internal/driver/mssql"
 	"dhub/internal/driver/mysql"
 	"dhub/internal/driver/postgres"
@@ -342,6 +343,50 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 
 		u.RawQuery = q.Encode()
 		return mssql.NewMSSQLDriver(u.String())
+	case "mongodb", "mongo":
+		connStr := strings.TrimSpace(cfg.Host)
+		if strings.HasPrefix(connStr, "mongodb://") || strings.HasPrefix(connStr, "mongodb+srv://") {
+			return mongodb.NewMongoDBDriver(connStr)
+		}
+		if port <= 0 {
+			port = 27017
+		}
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		dbName := strings.TrimSpace(cfg.DatabaseName)
+		if dbName == "" {
+			dbName = "admin"
+		}
+
+		u := &url.URL{
+			Scheme: "mongodb",
+			Host:   fmt.Sprintf("%s:%d", host, port),
+			Path:   "/" + dbName,
+		}
+		if cfg.Username != "" || cfg.Password != "" {
+			u.User = url.UserPassword(cfg.Username, cfg.Password)
+		}
+		q := u.Query()
+		if cfg.Username != "" {
+			q.Set("authSource", dbName)
+		}
+
+		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+			q.Set("tls", "true")
+			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+				q.Set("tlsInsecure", "true")
+			}
+			if cfg.SSLCAPath != "" {
+				q.Set("tlsCAFile", cfg.SSLCAPath)
+			}
+			if cfg.SSLCertPath != "" {
+				q.Set("tlsCertificateKeyFile", cfg.SSLCertPath)
+			}
+		}
+
+		u.RawQuery = q.Encode()
+		return mongodb.NewMongoDBDriver(u.String())
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}

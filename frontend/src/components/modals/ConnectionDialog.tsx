@@ -41,7 +41,7 @@ export const ConnectionDialog: React.FC = () => {
   const [dialogTab, setDialogTab] = useState<DialogTab>('general');
 
   // General fields
-  const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql'>('sqlite');
+  const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb'>('sqlite');
   const [envType, setEnvType] = useState<ConnectionEnvType>('local');
   const [name, setName] = useState('');
   const [folderId, setFolderId] = useState<string>('');
@@ -99,7 +99,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : 5432));
+          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -137,7 +137,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : 5432));
+          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : 5432));
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -184,7 +184,7 @@ export const ConnectionDialog: React.FC = () => {
 
   if (!isConnectionDialogOpen) return null;
 
-  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql') => {
+  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb') => {
     setDriver(d);
     if (d === 'mysql' || d === 'mariadb') {
       setPort(3306);
@@ -204,6 +204,11 @@ export const ConnectionDialog: React.FC = () => {
       setPort(1433);
       if (username === 'postgres' || username === 'root') setUsername('sa');
       if (!databaseName || databaseName === 'postgres' || databaseName === '0') setDatabaseName('master');
+      setSslMode('disable');
+    } else if (d === 'mongodb') {
+      setPort(27017);
+      if (username === 'postgres' || username === 'root' || username === 'sa') setUsername('admin');
+      if (!databaseName || databaseName === 'postgres' || databaseName === 'master' || databaseName === '0') setDatabaseName('admin');
       setSslMode('disable');
     } else if (d === 'redis') {
       setPort(6379);
@@ -503,8 +508,8 @@ export const ConnectionDialog: React.FC = () => {
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">
                   Driver
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-6 gap-1.5">
-                  {(['sqlite', 'postgres', 'mysql', 'mariadb', 'redis', 'mssql'] as const).map((d) => (
+                <div className="grid grid-cols-2 sm:grid-cols-7 gap-1.5">
+                  {(['sqlite', 'postgres', 'mysql', 'mariadb', 'redis', 'mssql', 'mongodb'] as const).map((d) => (
                     <button
                       key={d}
                       type="button"
@@ -516,7 +521,7 @@ export const ConnectionDialog: React.FC = () => {
                       }`}
                     >
                       <DbDriverIcon driver={d} className="h-3.5 w-3.5 shrink-0" />
-                      <span>{d === 'mssql' ? 'SQL Server' : d}</span>
+                      <span>{d === 'mssql' ? 'SQL Server' : d === 'mongodb' ? 'MongoDB' : d}</span>
                     </button>
                   ))}
                 </div>
@@ -690,6 +695,8 @@ export const ConnectionDialog: React.FC = () => {
                           ? '0'
                           : driver === 'mssql'
                           ? 'master'
+                          : driver === 'mongodb'
+                          ? 'admin'
                           : 'e.g. postgres'
                       }
                       value={databaseName}

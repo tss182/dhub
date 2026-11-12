@@ -14,6 +14,7 @@ const (
 	DriverMariaDB  DriverType = "mariadb"
 	DriverRedis    DriverType = "redis"
 	DriverMSSQL    DriverType = "mssql"
+	DriverMongoDB  DriverType = "mongodb"
 )
 
 type ColumnMeta struct {
