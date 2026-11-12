@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"dhub/internal/driver"
@@ -125,12 +126,25 @@ func (s *LocalStore) GetCachedObjects(ctx context.Context, connectionID, databas
 	defer rows.Close()
 
 	var objects []CachedObject
+	seenKeys := make(map[string]bool)
 	for rows.Next() {
 		var o CachedObject
 		var colJSON, idxJSON, fkJSON string
 		if err := rows.Scan(&o.ConnectionID, &o.DatabaseName, &o.SchemaName, &o.ObjectType, &o.ObjectName, &colJSON, &idxJSON, &fkJSON, &o.RowEstimate, &o.SyncedAt); err != nil {
 			continue
 		}
+
+		// Normalize schema for deduplication so duplicate variations (e.g. "", "main", or database_name) collapse
+		normSchema := o.SchemaName
+		if normSchema == o.DatabaseName || normSchema == "main" {
+			normSchema = ""
+		}
+		dedupKey := fmt.Sprintf("%s:%s:%s:%s:%s", o.ConnectionID, o.DatabaseName, normSchema, o.ObjectType, o.ObjectName)
+		if seenKeys[dedupKey] {
+			continue
+		}
+		seenKeys[dedupKey] = true
+
 		_ = json.Unmarshal([]byte(colJSON), &o.Columns)
 		_ = json.Unmarshal([]byte(idxJSON), &o.Indexes)
 		_ = json.Unmarshal([]byte(fkJSON), &o.ForeignKeys)
@@ -195,12 +209,25 @@ func (s *LocalStore) SearchEverywhere(ctx context.Context, connectionID, querySt
 	defer rows.Close()
 
 	var objects []CachedObject
+	seenKeys := make(map[string]bool)
 	for rows.Next() {
 		var o CachedObject
 		var colJSON, idxJSON, fkJSON string
 		if err := rows.Scan(&o.ConnectionID, &o.DatabaseName, &o.SchemaName, &o.ObjectType, &o.ObjectName, &colJSON, &idxJSON, &fkJSON, &o.RowEstimate, &o.SyncedAt); err != nil {
 			continue
 		}
+
+		// Normalize schema for deduplication so duplicate variations (e.g. "", "main", or database_name) collapse
+		normSchema := o.SchemaName
+		if normSchema == o.DatabaseName || normSchema == "main" {
+			normSchema = ""
+		}
+		dedupKey := fmt.Sprintf("%s:%s:%s:%s:%s", o.ConnectionID, o.DatabaseName, normSchema, o.ObjectType, o.ObjectName)
+		if seenKeys[dedupKey] {
+			continue
+		}
+		seenKeys[dedupKey] = true
+
 		_ = json.Unmarshal([]byte(colJSON), &o.Columns)
 		_ = json.Unmarshal([]byte(idxJSON), &o.Indexes)
 		_ = json.Unmarshal([]byte(fkJSON), &o.ForeignKeys)

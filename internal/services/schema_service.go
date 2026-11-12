@@ -63,10 +63,17 @@ func (s *SchemaService) GetObjects(connectionID, database, schema string) ([]dri
 			ctx := context.Background()
 			cachedItems := make([]store.CachedObject, len(objs))
 			for i, o := range objs {
+				canonicalSchema := o.Schema
+				if canonicalSchema == "" {
+					canonicalSchema = schema
+				}
+				if canonicalSchema == "" {
+					canonicalSchema = database
+				}
 				cachedItems[i] = store.CachedObject{
 					ConnectionID: connectionID,
 					DatabaseName: database,
-					SchemaName:   schema,
+					SchemaName:   canonicalSchema,
 					ObjectType:   o.Type,
 					ObjectName:   o.Name,
 					RowEstimate:  o.RowEstimate,
@@ -89,10 +96,17 @@ func (s *SchemaService) GetTableStructure(connectionID, database, schema, table 
 	}
 
 	// Update background cache
+	canonicalSchema := structData.Schema
+	if canonicalSchema == "" {
+		canonicalSchema = schema
+	}
+	if canonicalSchema == "" {
+		canonicalSchema = database
+	}
 	_ = s.store.SaveSchemaCache(context.Background(), store.CachedObject{
 		ConnectionID: connectionID,
 		DatabaseName: database,
-		SchemaName:   schema,
+		SchemaName:   canonicalSchema,
 		ObjectType:   "table",
 		ObjectName:   table,
 		Columns:      structData.Columns,
@@ -130,10 +144,20 @@ func (s *SchemaService) RefreshSchema(connectionID, database, schema string) (st
 		for _, obj := range objs {
 			if obj.Type == "table" {
 				if tStruct, err := drv.GetTableStructure(ctx, database, schema, obj.Name); err == nil {
+					canonicalSchema := obj.Schema
+					if canonicalSchema == "" {
+						canonicalSchema = tStruct.Schema
+					}
+					if canonicalSchema == "" {
+						canonicalSchema = schema
+					}
+					if canonicalSchema == "" {
+						canonicalSchema = database
+					}
 					_ = s.store.SaveSchemaCache(ctx, store.CachedObject{
 						ConnectionID: connectionID,
 						DatabaseName: database,
-						SchemaName:   schema,
+						SchemaName:   canonicalSchema,
 						ObjectType:   obj.Type,
 						ObjectName:   obj.Name,
 						Columns:      tStruct.Columns,

@@ -223,32 +223,59 @@ export const SearchEverywhere: React.FC = () => {
         });
 
         // Deduplicate database objects & filter visible databases
-        const seenObjKeys = new Set<string>();
+        const seenObjMap = new Map<string, SearchResultItem>();
         for (const item of [...backendMatches, ...memoryMatches]) {
           if (!isDatabaseVisible(item.connectionId, item.databaseName)) {
             continue;
           }
 
-          const k = `${item.connectionId}:${item.databaseName}:${item.schemaName}:${item.objectName}`;
-          if (!seenObjKeys.has(k)) {
-            seenObjKeys.add(k);
-            const conn = connections.find((c) => c.id === item.connectionId);
-            const connPrefix = conn?.name ? `${conn.name} › ` : '';
-            const dbPath = item.databaseName ? `${item.databaseName}${item.schemaName ? '.' + item.schemaName : ''}` : '';
-            const isView = item.objectType?.toLowerCase() === 'view';
+          const conn = connections.find((c) => c.id === item.connectionId);
+          const driver = conn?.driver;
+          const isMultiSchema = driver === 'postgres' || driver === 'mssql';
 
-            items.push({
-              id: `obj-${k}`,
-              kind: isView ? 'view' : 'table',
-              title: item.objectName,
-              subtitle: `${connPrefix}${dbPath}`,
-              badge: isView ? 'VIEW' : 'TABLE',
-              connectionId: item.connectionId,
-              database: item.databaseName,
-              schema: item.schemaName,
-              table: item.objectName,
-            });
+          let effectiveSchema = item.schemaName || '';
+          if (!isMultiSchema) {
+            effectiveSchema = driver === 'sqlite' ? 'main' : (item.databaseName || '');
+          } else {
+            if (!effectiveSchema || effectiveSchema === 'main' || effectiveSchema === item.databaseName) {
+              effectiveSchema = driver === 'mssql' ? 'dbo' : 'public';
+            }
           }
+
+          // Dedup key:
+          // Single-schema engines: connectionId:databaseName:objectName (unique per table)
+          // Multi-schema engines: connectionId:databaseName:effectiveSchema:objectName
+          const dedupKey = isMultiSchema
+            ? `${item.connectionId}:${item.databaseName}:${effectiveSchema}:${item.objectName}`
+            : `${item.connectionId}:${item.databaseName}:${item.objectName}`;
+
+          if (seenObjMap.has(dedupKey)) {
+            continue;
+          }
+
+          let dbPath = item.databaseName || '';
+          if (isMultiSchema) {
+            dbPath = item.databaseName
+              ? `${item.databaseName}${effectiveSchema ? '.' + effectiveSchema : ''}`
+              : effectiveSchema;
+          }
+
+          const isView = item.objectType?.toLowerCase() === 'view';
+
+          const resItem: SearchResultItem = {
+            id: `obj-${dedupKey}`,
+            kind: isView ? 'view' : 'table',
+            title: item.objectName,
+            subtitle: `› ${dbPath}`,
+            badge: isView ? 'VIEW' : 'TABLE',
+            connectionId: item.connectionId,
+            database: item.databaseName,
+            schema: effectiveSchema,
+            table: item.objectName,
+          };
+
+          seenObjMap.set(dedupKey, resItem);
+          items.push(resItem);
         }
 
         // 3. Search query consoles
@@ -265,7 +292,7 @@ export const SearchEverywhere: React.FC = () => {
             id: `console-${c.id}`,
             kind: 'console',
             title: c.title,
-            subtitle: `${conn?.name || 'Console'} › Worksheet`,
+            subtitle: `› Worksheet`,
             badge: 'CONSOLE',
             connectionId: c.connectionId,
             database: c.database,
@@ -466,7 +493,7 @@ export const SearchEverywhere: React.FC = () => {
 
                     <span className="font-medium text-zinc-100 truncate">{item.title}</span>
 
-                    {conn && (
+                    {conn && item.kind !== 'connection' && (
                       <span className="flex items-center gap-1 text-[11px] text-zinc-400 font-mono shrink-0">
                         <span
                           className="h-1.5 w-1.5 rounded-full"

@@ -289,10 +289,13 @@ export function App() {
   const handleCopyCurrentTableSchema = async (tab: WorkbenchTab) => {
     if (!tab.connectionId || !tab.table) return;
     try {
+      const tabConn = connections.find((c) => c.id === tab.connectionId);
+      const targetDb = tab.database || tabConn?.databaseName || 'main';
+      const targetSchema = tab.schema || (tabConn?.driver === 'postgres' ? 'public' : tabConn?.driver === 'mssql' ? 'dbo' : targetDb);
       const struct = await SchemaService.GetTableStructure(
         tab.connectionId,
-        tab.database || 'main',
-        tab.schema || 'main',
+        targetDb,
+        targetSchema,
         tab.table
       );
       const ddl = struct?.ddl || '';
