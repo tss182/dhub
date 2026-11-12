@@ -104,3 +104,4 @@ func TestGenerateDMLPreview(t *testing.T) {
 		t.Errorf("expected HDEL mykey age, got %q", stmts[1])
 	}
 }
+
