@@ -136,6 +136,30 @@ func TestSessionManager_RedisDriver(t *testing.T) {
 	}
 }
 
+func TestSessionManager_MSSQLDriver(t *testing.T) {
+	st, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	mgr := NewSessionManager(st)
+	cfg := store.ConnectionConfig{
+		ID:           "test-mssql-driver",
+		Driver:       "mssql",
+		Host:         "127.0.0.1",
+		Port:         1433,
+		Username:     "sa",
+		Password:     "secret",
+		DatabaseName: "master",
+	}
+
+	drv, err := mgr.createDriver(cfg, cfg.Host, cfg.Port)
+	if err != nil {
+		t.Fatalf("unexpected error creating mssql driver: %v", err)
+	}
+	if drv == nil {
+		t.Fatal("expected driver to be created, got nil")
+	}
+}
+
 func TestSessionManager_UnsupportedDriver(t *testing.T) {
 	st, cleanup := setupTestStore(t)
 	defer cleanup()
