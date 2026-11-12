@@ -17,10 +17,12 @@ import {
   Lock,
   Globe,
   FileKey,
+  ChevronDown,
 } from 'lucide-react';
 import { alertError, confirmDialog } from '../../stores/useAlertStore';
 import { ConnectionEnvType, resolveConnectionEnv } from '../../types/domain';
 import { DbDriverIcon } from '../common/DbDriverIcon';
+import { DriverPickerModal, getDriverOption, DriverType } from './DriverPickerModal';
 
 type DialogTab = 'general' | 'ssh' | 'ssl' | 'advanced';
 
@@ -41,7 +43,8 @@ export const ConnectionDialog: React.FC = () => {
   const [dialogTab, setDialogTab] = useState<DialogTab>('general');
 
   // General fields
-  const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb'>('sqlite');
+  const [driver, setDriver] = useState<DriverType>('sqlite');
+  const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
   const [envType, setEnvType] = useState<ConnectionEnvType>('local');
   const [name, setName] = useState('');
   const [folderId, setFolderId] = useState<string>('');
@@ -503,28 +506,39 @@ export const ConnectionDialog: React.FC = () => {
           {/* TAB 1: GENERAL */}
           {dialogTab === 'general' && (
             <div className="space-y-4">
-              {/* Driver Selector */}
+              {/* Driver Selector Combobox */}
               <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 mb-1.5 font-semibold">
                   Driver
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-7 gap-1.5">
-                  {(['sqlite', 'postgres', 'mysql', 'mariadb', 'redis', 'mssql', 'mongodb'] as const).map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => handleDriverChange(d)}
-                      className={`flex items-center justify-center gap-1.5 rounded border py-2 px-1 text-center uppercase font-mono text-[11px] tracking-wider cursor-pointer transition-colors ${
-                        driver === d
-                          ? 'border-blue-500 bg-blue-600/20 text-blue-200'
-                          : 'border-[#272932] bg-[#14151a] text-zinc-400 hover:border-zinc-600'
-                      }`}
-                    >
-                      <DbDriverIcon driver={d} className="h-3.5 w-3.5 shrink-0" />
-                      <span>{d === 'mssql' ? 'SQL Server' : d === 'mongodb' ? 'MongoDB' : d}</span>
-                    </button>
-                  ))}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsDriverModalOpen(true)}
+                  className="flex items-center justify-between w-full px-3.5 py-2.5 rounded-lg border border-[#272932] bg-[#14151a] hover:bg-[#1c1d25] hover:border-zinc-500 transition-all text-left cursor-pointer group shadow-xs"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-md bg-[#21232d] border border-[#2f3342] flex items-center justify-center shrink-0 group-hover:border-blue-500/60 transition-colors">
+                      <DbDriverIcon driver={driver} className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm text-zinc-100 truncate">
+                          {getDriverOption(driver).name}
+                        </span>
+                        <span className="text-[10px] font-mono font-medium uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60 shrink-0">
+                          {getDriverOption(driver).tag}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 truncate mt-0.5">
+                        {getDriverOption(driver).description}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 ml-3 px-2.5 py-1.5 rounded-md bg-[#21232d] border border-[#2e313e] text-zinc-300 group-hover:border-blue-500/40 group-hover:text-blue-300 transition-colors shrink-0">
+                    <span className="text-[11px] font-medium">Select</span>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </div>
+                </button>
               </div>
 
               {/* Connection Type / Environment Selector */}
@@ -1037,6 +1051,13 @@ export const ConnectionDialog: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <DriverPickerModal
+        isOpen={isDriverModalOpen}
+        onClose={() => setIsDriverModalOpen(false)}
+        selectedDriver={driver}
+        onSelectDriver={(d) => handleDriverChange(d)}
+      />
     </div>
   );
 };
