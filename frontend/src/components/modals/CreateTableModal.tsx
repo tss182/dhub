@@ -18,6 +18,7 @@ import {
   Pencil,
   Save,
   RefreshCw,
+  GripVertical,
 } from 'lucide-react';
 import { ConnectionConfig, ColumnMeta, resolveConnectionEnv } from '../../types/domain';
 import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
@@ -456,8 +457,17 @@ function generateAlterSql({
       }
     });
 
+    // Track simulated column order in MySQL table
+    let currentOrder = originalColumns
+      .map((o) => o.name)
+      .filter((origName) =>
+        validNewCols.some(
+          (c) => c.originalName === origName || c.name.trim().toLowerCase() === origName.toLowerCase()
+        )
+      );
+
     // B. Added & Changed columns
-    validNewCols.forEach((col) => {
+    validNewCols.forEach((col, idx) => {
       const colName = col.name.trim();
       let colDef = `\`${colName}\` ${col.dataType.toUpperCase()}`;
       if (col.lengthOrValues.trim()) {
@@ -489,8 +499,11 @@ function generateAlterSql({
         (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
       );
 
+      const positionClause = idx === 0 ? ' FIRST' : ` AFTER \`${validNewCols[idx - 1].name.trim()}\``;
+
       if (!origMatch) {
-        statements.push(`ALTER TABLE ${tableTarget} ADD COLUMN ${colDef};`);
+        statements.push(`ALTER TABLE ${tableTarget} ADD COLUMN ${colDef}${positionClause};`);
+        currentOrder.splice(idx, 0, colName);
       } else {
         const origParsed = parseColumnType(origMatch.dataType);
         const nameChanged = origMatch.name !== colName;
@@ -502,8 +515,22 @@ function generateAlterSql({
         const defaultChanged = (origMatch.defaultValue || '') !== col.defaultValue.trim();
         const commentChanged = (origMatch.comment || '') !== col.comment.trim();
 
-        if (nameChanged || typeChanged || nullChanged || autoIncrChanged || defaultChanged || commentChanged) {
-          statements.push(`ALTER TABLE ${tableTarget} CHANGE COLUMN \`${origMatch.name}\` ${colDef};`);
+        const currentPos = currentOrder.findIndex(
+          (name) => name === origMatch.name || name.toLowerCase() === origMatch.name.toLowerCase()
+        );
+        const positionChanged = currentPos !== idx;
+
+        if (nameChanged || typeChanged || nullChanged || autoIncrChanged || defaultChanged || commentChanged || positionChanged) {
+          const posToAppend = positionChanged ? positionClause : '';
+          statements.push(`ALTER TABLE ${tableTarget} CHANGE COLUMN \`${origMatch.name}\` ${colDef}${posToAppend};`);
+          if (currentPos !== -1) {
+            currentOrder.splice(currentPos, 1);
+          }
+          currentOrder.splice(idx, 0, colName);
+        } else {
+          if (currentPos !== -1 && currentOrder[currentPos] !== colName) {
+            currentOrder[currentPos] = colName;
+          }
         }
       }
     });
@@ -925,6 +952,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [copiedSql, setCopiedSql] = useState(false);
   const [tableDDL, setTableDDL] = useState<string>('');
   const [copiedDDL, setCopiedDDL] = useState(false);
+  const [draggedColIndex, setDraggedColIndex] = useState<number | null>(null);
+  const [dragOverColIndex, setDragOverColIndex] = useState<number | null>(null);
 
   // States for Edit Mode tracking
   const [originalColumns, setOriginalColumns] = useState<ColumnMeta[]>([]);
@@ -979,6 +1008,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     setCopiedSql(false);
     setTableDDL('');
     setCopiedDDL(false);
+    setDraggedColIndex(null);
+    setDragOverColIndex(null);
     setActiveSubTab('columns');
 
     if (isEditMode && initialTableName && connection) {
@@ -1836,7 +1867,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead className="sticky top-0 bg-[#181920] border-b border-[#272932] shadow-xs z-10 select-none">
                 <tr className="text-zinc-400 font-semibold text-[11px]">
-                  <th className="w-10 px-2 py-2 text-center border-r border-[#272932]">#</th>
+                  <th className={`${driver === 'postgres' ? 'w-10' : 'w-14'} px-2 py-2 text-center border-r border-[#272932]`}>#</th>
                   <th className="w-56 px-3 py-2 border-r border-[#272932]">Column Name *</th>
                   <th className="w-48 px-3 py-2 border-r border-[#272932]">Data Type</th>
                   <th className="w-32 px-3 py-2 border-r border-[#272932]">Length/Values</th>
@@ -1850,21 +1881,77 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                   <th className="w-20 px-2 py-2 text-center border-r border-[#272932]" title="Not Nullable">Not Null</th>
                   <th className="w-44 px-3 py-2 border-r border-[#272932]">Default Value</th>
                   <th className="px-3 py-2 border-r border-[#272932]">Comment</th>
-                  <th className="w-24 px-2 py-2 text-center">Actions</th>
+                  <th className={`${driver === 'postgres' ? 'w-16' : 'w-24'} px-2 py-2 text-center`}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#20222a] font-mono">
-                {columns.map((col, idx) => (
-                  <tr
-                    key={col.id}
-                    className={`hover:bg-[#1a1c24] transition-colors group ${
-                      col.isPrimaryKey ? 'bg-amber-950/10' : ''
-                    }`}
-                  >
-                    {/* Index */}
-                    <td className="px-2 py-1.5 text-center text-zinc-500 border-r border-[#20222a] text-[11px]">
-                      {idx + 1}
-                    </td>
+                {columns.map((col, idx) => {
+                  const isBeingDragged = draggedColIndex === idx;
+                  const isDragOver = dragOverColIndex === idx && draggedColIndex !== idx;
+
+                  return (
+                    <tr
+                      key={col.id}
+                      onDragOver={(e) => {
+                        if (draggedColIndex === null || driver === 'postgres') return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverColIndex !== idx) {
+                          setDragOverColIndex(idx);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverColIndex === idx) {
+                          setDragOverColIndex(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (draggedColIndex === null || driver === 'postgres') return;
+                        e.preventDefault();
+                        if (draggedColIndex !== idx) {
+                          setColumns((prev) => {
+                            const copy = [...prev];
+                            const [moved] = copy.splice(draggedColIndex, 1);
+                            copy.splice(idx, 0, moved);
+                            return copy;
+                          });
+                        }
+                        setDraggedColIndex(null);
+                        setDragOverColIndex(null);
+                      }}
+                      className={`hover:bg-[#1a1c24] transition-colors group ${
+                        col.isPrimaryKey ? 'bg-amber-950/10' : ''
+                      } ${
+                        isBeingDragged ? 'opacity-35 bg-blue-950/40' : ''
+                      } ${
+                        isDragOver ? 'bg-blue-600/15 border-t-2 border-t-blue-500' : ''
+                      }`}
+                    >
+                      {/* Index & Drag Handle */}
+                      <td className="px-1.5 py-1.5 text-center text-zinc-500 border-r border-[#20222a] text-[11px] select-none">
+                        <div className="flex items-center justify-center gap-0.5">
+                          {driver !== 'postgres' && (
+                            <div
+                              draggable
+                              onDragStart={(e) => {
+                                e.stopPropagation();
+                                e.dataTransfer.effectAllowed = 'move';
+                                e.dataTransfer.setData('text/plain', String(idx));
+                                setDraggedColIndex(idx);
+                              }}
+                              onDragEnd={() => {
+                                setDraggedColIndex(null);
+                                setDragOverColIndex(null);
+                              }}
+                              className="cursor-grab active:cursor-grabbing text-zinc-600 hover:text-zinc-200 p-0.5 rounded transition-colors"
+                              title="Drag to reorder column"
+                            >
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </div>
+                          )}
+                          <span>{idx + 1}</span>
+                        </div>
+                      </td>
 
                     {/* Column Name */}
                     <td className="px-2 py-1.5 border-r border-[#20222a]">
@@ -1982,28 +2069,34 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     {/* Actions: Move Up, Move Down, Delete */}
                     <td className="px-2 py-1.5 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleMoveColumn(idx, 'up')}
-                          disabled={idx === 0}
-                          className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                          title="Move Up"
-                        >
-                          <ArrowUp className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleMoveColumn(idx, 'down')}
-                          disabled={idx === columns.length - 1}
-                          className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="h-3 w-3" />
-                        </button>
+                        {driver !== 'postgres' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveColumn(idx, 'up')}
+                              disabled={idx === 0}
+                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                              title="Move Up"
+                            >
+                              <ArrowUp className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveColumn(idx, 'down')}
+                              disabled={idx === columns.length - 1}
+                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                              title="Move Down"
+                            >
+                              <ArrowDown className="h-3 w-3" />
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleRemoveColumn(col.id)}
-                          className="p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 cursor-pointer ml-1"
+                          className={`p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 cursor-pointer ${
+                            driver !== 'postgres' ? 'ml-1' : ''
+                          }`}
                           title="Delete Column"
                         >
                           <Trash2 className="h-3 w-3" />
@@ -2011,7 +2104,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       </div>
                     </td>
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
