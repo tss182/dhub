@@ -12,6 +12,7 @@ const (
 	DriverMySQL    DriverType = "mysql"
 	DriverSQLite   DriverType = "sqlite"
 	DriverMariaDB  DriverType = "mariadb"
+	DriverRedis    DriverType = "redis"
 )
 
 type ColumnMeta struct {

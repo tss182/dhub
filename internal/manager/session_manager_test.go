@@ -113,6 +113,29 @@ func TestSessionManager_MariaDBDriver(t *testing.T) {
 	}
 }
 
+func TestSessionManager_RedisDriver(t *testing.T) {
+	st, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	mgr := NewSessionManager(st)
+	cfg := store.ConnectionConfig{
+		ID:           "test-redis-driver",
+		Driver:       "redis",
+		Host:         "127.0.0.1",
+		Port:         6379,
+		Password:     "secret",
+		DatabaseName: "0",
+	}
+
+	drv, err := mgr.createDriver(cfg, cfg.Host, cfg.Port)
+	if err != nil {
+		t.Fatalf("unexpected error creating redis driver: %v", err)
+	}
+	if drv == nil {
+		t.Fatal("expected driver to be created, got nil")
+	}
+}
+
 func TestSessionManager_UnsupportedDriver(t *testing.T) {
 	st, cleanup := setupTestStore(t)
 	defer cleanup()

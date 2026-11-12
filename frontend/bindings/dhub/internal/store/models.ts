@@ -24,7 +24,7 @@ export interface ConnectionConfig {
     "name": string;
 
     /**
-     * "postgres", "mysql", "sqlite"
+     * "postgres", "mysql", "sqlite", "mariadb", "redis"
      */
     "driver": string;
 

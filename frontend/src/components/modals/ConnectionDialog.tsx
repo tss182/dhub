@@ -41,7 +41,7 @@ export const ConnectionDialog: React.FC = () => {
   const [dialogTab, setDialogTab] = useState<DialogTab>('general');
 
   // General fields
-  const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql' | 'mariadb'>('sqlite');
+  const [driver, setDriver] = useState<'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis'>('sqlite');
   const [envType, setEnvType] = useState<ConnectionEnvType>('local');
   const [name, setName] = useState('');
   const [folderId, setFolderId] = useState<string>('');
@@ -99,7 +99,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : 5432));
+          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -137,7 +137,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : 5432));
+          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : 5432));
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -184,7 +184,7 @@ export const ConnectionDialog: React.FC = () => {
 
   if (!isConnectionDialogOpen) return null;
 
-  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb') => {
+  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis') => {
     setDriver(d);
     if (d === 'mysql' || d === 'mariadb') {
       setPort(3306);
@@ -200,6 +200,11 @@ export const ConnectionDialog: React.FC = () => {
       if (sslMode === 'preferred') {
         setSslMode('disable');
       }
+    } else if (d === 'redis') {
+      setPort(6379);
+      if (username === 'postgres' || username === 'root') setUsername('');
+      if (databaseName === 'postgres' || !databaseName) setDatabaseName('0');
+      setSslMode('disable');
     }
   };
 
@@ -493,19 +498,19 @@ export const ConnectionDialog: React.FC = () => {
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">
                   Driver
                 </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['sqlite', 'postgres', 'mysql', 'mariadb'] as const).map((d) => (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                  {(['sqlite', 'postgres', 'mysql', 'mariadb', 'redis'] as const).map((d) => (
                     <button
                       key={d}
                       type="button"
                       onClick={() => handleDriverChange(d)}
-                      className={`flex items-center justify-center gap-2 rounded border py-2 text-center uppercase font-mono tracking-wider cursor-pointer transition-colors ${
+                      className={`flex items-center justify-center gap-1.5 rounded border py-2 px-1 text-center uppercase font-mono text-[11px] tracking-wider cursor-pointer transition-colors ${
                         driver === d
                           ? 'border-blue-500 bg-blue-600/20 text-blue-200'
                           : 'border-[#272932] bg-[#14151a] text-zinc-400 hover:border-zinc-600'
                       }`}
                     >
-                      <DbDriverIcon driver={d} className="h-4 w-4 shrink-0" />
+                      <DbDriverIcon driver={d} className="h-3.5 w-3.5 shrink-0" />
                       <span>{d}</span>
                     </button>
                   ))}
@@ -636,16 +641,21 @@ export const ConnectionDialog: React.FC = () => {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">User</label>
+                      <label className="block text-[11px] text-zinc-400 mb-1">
+                        User {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
+                      </label>
                       <input
                         type="text"
+                        placeholder={driver === 'redis' ? 'default (optional)' : 'e.g. root'}
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">Password</label>
+                      <label className="block text-[11px] text-zinc-400 mb-1">
+                        Password {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(AUTH)</span>}
+                      </label>
                       <input
                         type="password"
                         placeholder="••••••••"
@@ -658,13 +668,23 @@ export const ConnectionDialog: React.FC = () => {
 
                   <div>
                     <label className="block text-[11px] text-zinc-400 mb-1">
-                      Database Name {(driver === 'mysql' || driver === 'mariadb') && (
+                      {driver === 'redis' ? 'Database Index' : 'Database Name'}{' '}
+                      {(driver === 'mysql' || driver === 'mariadb') && (
                         <span className="text-zinc-500 text-[10px] lowercase">(leave empty to show all databases)</span>
+                      )}
+                      {driver === 'redis' && (
+                        <span className="text-zinc-500 text-[10px] lowercase">(0-15, default 0)</span>
                       )}
                     </label>
                     <input
                       type="text"
-                      placeholder={driver === 'mysql' || driver === 'mariadb' ? 'Optional (leave empty to list all databases)' : 'e.g. postgres'}
+                      placeholder={
+                        driver === 'mysql' || driver === 'mariadb'
+                          ? 'Optional (leave empty to list all databases)'
+                          : driver === 'redis'
+                          ? '0'
+                          : 'e.g. postgres'
+                      }
                       value={databaseName}
                       onChange={(e) => setDatabaseName(e.target.value)}
                       className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
