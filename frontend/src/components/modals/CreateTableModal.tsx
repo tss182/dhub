@@ -3,6 +3,7 @@ import {
   X,
   Table,
   Plus,
+  Minus,
   Trash2,
   Key,
   ArrowUp,
@@ -15,10 +16,18 @@ import {
   Sparkles,
   Database,
   ChevronDown,
+  ChevronRight,
   Pencil,
   Save,
   RefreshCw,
   GripVertical,
+  HelpCircle,
+  Folder,
+  FolderOpen,
+  MoreHorizontal,
+  Hash,
+  Server,
+  Zap,
 } from 'lucide-react';
 import { ConnectionConfig, ColumnMeta, resolveConnectionEnv } from '../../types/domain';
 import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
@@ -167,18 +176,18 @@ const CustomSelect: React.FC<CustomSelectProps> = ({ value, onChange, options, c
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full h-8 rounded-lg bg-[#101115] hover:bg-[#16171f] border border-[#2b2e3a] hover:border-[#3b3e4f] px-2.5 text-xs font-mono font-medium text-white flex items-center justify-between gap-1.5 transition-colors cursor-pointer select-none"
+        className="w-full h-7 rounded bg-[#2b2d30] hover:bg-[#323438] border border-[#393b40] hover:border-[#4b4e54] px-2.5 text-xs font-mono text-[#dfe1e5] flex items-center justify-between gap-1.5 transition-colors cursor-pointer select-none"
       >
-        <span className="truncate text-white font-medium">{selectedOption.label}</span>
+        <span className="truncate">{selectedOption.label}</span>
         <ChevronDown
-          className={`h-3 w-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
-            isOpen ? 'rotate-180 text-blue-400' : ''
+          className={`h-3 w-3 text-[#999ca3] shrink-0 transition-transform duration-150 ${
+            isOpen ? 'rotate-180 text-[#3574f0]' : ''
           }`}
         />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1 min-w-full rounded-lg border border-[#2b2e3a] bg-[#16171f] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+        <div className="absolute top-full left-0 mt-1 min-w-full rounded border border-[#393b40] bg-[#2b2d30] shadow-2xl p-1 z-50 animate-in fade-in duration-100">
           {options.map((opt) => {
             const isSelected = opt.value === value;
             return (
@@ -190,8 +199,8 @@ const CustomSelect: React.FC<CustomSelectProps> = ({ value, onChange, options, c
                 }}
                 className={`flex items-center justify-between px-2.5 py-1.5 rounded text-xs font-mono transition-colors cursor-pointer ${
                   isSelected
-                    ? 'bg-blue-600 text-white font-bold'
-                    : 'text-zinc-200 hover:bg-[#252834] hover:text-white'
+                    ? 'bg-[#3574f0] text-white font-semibold'
+                    : 'text-[#dfe1e5] hover:bg-[#35373c] hover:text-white'
                 }`}
               >
                 <span>{opt.label}</span>
@@ -214,7 +223,6 @@ interface CustomTypeSelectProps {
 const CustomTypeSelect: React.FC<CustomTypeSelectProps> = ({ value, onChange, typeGroups }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
-  const [openUpwards, setOpenUpwards] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -231,16 +239,6 @@ const CustomTypeSelect: React.FC<CustomTypeSelectProps> = ({ value, onChange, ty
     };
   }, [isOpen]);
 
-  const handleToggle = () => {
-    if (!isOpen && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpwards(spaceBelow < 280);
-    }
-    setIsOpen(!isOpen);
-    setFilterText('');
-  };
-
   const filteredGroups = useMemo(() => {
     if (!filterText.trim()) return typeGroups;
     const query = filterText.trim().toUpperCase();
@@ -253,49 +251,47 @@ const CustomTypeSelect: React.FC<CustomTypeSelectProps> = ({ value, onChange, ty
   }, [typeGroups, filterText]);
 
   return (
-    <div className="relative" ref={containerRef}>
+    <div className="relative w-full" ref={containerRef}>
       <button
         type="button"
-        onClick={handleToggle}
-        className="w-full h-7 rounded bg-[#101115] hover:bg-[#16171f] border border-[#2b2e3a] hover:border-[#3b3e4f] px-2 text-xs font-mono font-semibold text-white flex items-center justify-between gap-1 transition-colors cursor-pointer select-none"
+        onClick={() => {
+          setIsOpen(!isOpen);
+          setFilterText('');
+        }}
+        className="w-full h-7 rounded bg-[#2b2d30] hover:bg-[#323438] border border-[#393b40] hover:border-[#4b4e54] px-2.5 text-xs font-mono text-[#cf8e6d] flex items-center justify-between gap-1 transition-colors cursor-pointer select-none font-semibold"
         title="Select Data Type"
       >
-        <span className="truncate text-white">{value || 'SELECT TYPE'}</span>
+        <span className="truncate">{value ? value.toLowerCase() : 'select type'}</span>
         <ChevronDown
-          className={`h-3 w-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
-            isOpen ? 'rotate-180 text-blue-400' : ''
+          className={`h-3 w-3 text-[#999ca3] shrink-0 transition-transform duration-150 ${
+            isOpen ? 'rotate-180 text-[#3574f0]' : ''
           }`}
         />
       </button>
 
       {isOpen && (
-        <div
-          className={`absolute left-0 w-64 max-h-72 overflow-y-auto rounded-lg border border-[#2b2e3a] bg-[#16171f] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100 ${
-            openUpwards ? 'bottom-full mb-1' : 'top-full mt-1'
-          }`}
-        >
-          {/* Quick search input */}
-          <div className="p-1 pb-1.5 border-b border-[#272932] sticky top-0 bg-[#16171f] z-10">
+        <div className="absolute left-0 top-full mt-1 w-64 max-h-72 overflow-y-auto rounded border border-[#393b40] bg-[#2b2d30] shadow-2xl p-1 z-50 animate-in fade-in duration-100">
+          <div className="p-1 pb-1.5 border-b border-[#393b40] sticky top-0 bg-[#2b2d30] z-10">
             <input
               type="text"
               autoFocus
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
               placeholder="Search type..."
-              className="w-full h-6 px-2 text-[11px] font-mono rounded bg-[#101115] border border-[#2d303f] text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+              className="w-full h-6 px-2 text-[11px] font-mono rounded bg-[#1e1f22] border border-[#393b40] text-[#dfe1e5] placeholder-[#6f737a] focus:border-[#3574f0] focus:outline-none"
               onClick={(e) => e.stopPropagation()}
             />
           </div>
 
           <div className="py-1">
             {filteredGroups.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-zinc-500 italic text-center">
+              <div className="px-3 py-2 text-xs text-[#6f737a] italic text-center">
                 No matching type
               </div>
             ) : (
               filteredGroups.map((grp) => (
                 <div key={grp.group} className="mb-1.5 last:mb-0">
-                  <div className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400 bg-[#121317] rounded mb-0.5 select-none">
+                  <div className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#999ca3] bg-[#1e1f22] rounded mb-0.5 select-none">
                     {grp.group}
                   </div>
                   <div className="space-y-0.5">
@@ -308,13 +304,13 @@ const CustomTypeSelect: React.FC<CustomTypeSelectProps> = ({ value, onChange, ty
                             onChange(t);
                             setIsOpen(false);
                           }}
-                          className={`flex items-center justify-between px-2.5 py-1 rounded text-xs font-mono cursor-pointer transition-colors ${
+                          className={`flex items-center justify-between px-2 py-1 rounded text-xs font-mono cursor-pointer transition-colors ${
                             isSelected
-                              ? 'bg-blue-600 text-white font-bold'
-                              : 'text-zinc-200 hover:bg-[#252834] hover:text-white'
+                              ? 'bg-[#3574f0] text-white font-bold'
+                              : 'text-[#cf8e6d] hover:bg-[#35373c] hover:text-white'
                           }`}
                         >
-                          <span>{t}</span>
+                          <span>{t.toLowerCase()}</span>
                           {isSelected && <Check className="h-3 w-3 text-white shrink-0" />}
                         </div>
                       );
@@ -324,66 +320,6 @@ const CustomTypeSelect: React.FC<CustomTypeSelectProps> = ({ value, onChange, ty
               ))
             )}
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-interface AddColumnToIndexDropdownProps {
-  columns: string[];
-  onSelect: (colName: string) => void;
-}
-
-const AddColumnToIndexDropdown: React.FC<AddColumnToIndexDropdownProps> = ({ columns, onSelect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen]);
-
-  return (
-    <div className="relative inline-block" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium text-blue-400 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 cursor-pointer transition-colors"
-        title="Add column to this index"
-      >
-        <Plus className="h-3 w-3" />
-        <span>Column</span>
-        <ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <div className="absolute left-0 top-full mt-1 min-w-[140px] max-h-48 overflow-y-auto rounded-lg border border-[#2b2e3a] bg-[#16171f] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-          <div className="px-2 py-0.5 text-[9px] font-bold uppercase text-zinc-400 border-b border-[#272932] mb-1 select-none">
-            Add Column
-          </div>
-          {columns.map((c) => (
-            <div
-              key={c}
-              onClick={() => {
-                onSelect(c);
-                setIsOpen(false);
-              }}
-              className="px-2 py-1 rounded text-xs font-mono text-zinc-200 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors flex items-center justify-between"
-            >
-              <span>{c}</span>
-              <Plus className="h-3 w-3 text-zinc-400" />
-            </div>
-          ))}
         </div>
       )}
     </div>
@@ -614,7 +550,7 @@ function generateAlterSql({
     });
 
     if (tableComment.trim() !== (originalTableComment || '').trim()) {
-      statements.push(`ALTER TABLE ${tableTarget} COMMENT = '${tableComment.trim().replace(/'/g, "\\'")}';`);
+      statements.push(`ALTER TABLE ${tableTarget} COMMENT = '${tableComment.trim().replace(/'/g, "\\")}';`);
     }
 
     if (cleanTable !== initialTableName) {
@@ -927,6 +863,20 @@ function generateCreateTableSql({
   }
 }
 
+type SelectedNodeType =
+  | { type: 'table' }
+  | { type: 'columns_folder' }
+  | { type: 'column'; id: string }
+  | { type: 'keys_folder' }
+  | { type: 'key'; id: string }
+  | { type: 'indexes_folder' }
+  | { type: 'index'; id: string }
+  | { type: 'foreign_keys_folder' }
+  | { type: 'checks_folder' }
+  | { type: 'triggers_folder' }
+  | { type: 'virtual_columns_folder' }
+  | { type: 'virtual_foreign_keys_folder' };
+
 export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   isOpen,
   mode = 'create',
@@ -946,14 +896,24 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [collation, setCollation] = useState('utf8mb4_unicode_ci');
   const [columns, setColumns] = useState<ColumnDefinition[]>([]);
   const [indexes, setIndexes] = useState<IndexDefinition[]>([]);
-  const [activeSubTab, setActiveSubTab] = useState<'columns' | 'indexes' | 'ddl'>('columns');
-  const [showSqlPreview, setShowSqlPreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
-  const [tableDDL, setTableDDL] = useState<string>('');
-  const [copiedDDL, setCopiedDDL] = useState(false);
   const [draggedColIndex, setDraggedColIndex] = useState<number | null>(null);
   const [dragOverColIndex, setDragOverColIndex] = useState<number | null>(null);
+
+  // Tree selection & expansion
+  const [selectedNode, setSelectedNode] = useState<SelectedNodeType>({ type: 'table' });
+  const [showPreviewPane, setShowPreviewPane] = useState(true);
+  const [expandedFolders, setExpandedFolders] = useState<{ [key: string]: boolean }>({
+    columns: true,
+    keys: true,
+    indexes: true,
+    foreign_keys: false,
+    checks: false,
+    triggers: false,
+    virtual_columns: false,
+    virtual_foreign_keys: false,
+  });
 
   // States for Edit Mode tracking
   const [originalColumns, setOriginalColumns] = useState<ColumnMeta[]>([]);
@@ -1001,16 +961,16 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     ];
   }, [driver]);
 
+  const toggleFolder = (key: string) => {
+    setExpandedFolders((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   useEffect(() => {
     if (!isOpen) return;
 
-    setShowSqlPreview(false);
     setCopiedSql(false);
-    setTableDDL('');
-    setCopiedDDL(false);
     setDraggedColIndex(null);
     setDragOverColIndex(null);
-    setActiveSubTab('columns');
 
     if (isEditMode && initialTableName && connection) {
       setIsLoadingStructure(true);
@@ -1023,7 +983,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       )
         .then((structure) => {
           if (!structure) return;
-          if (structure.ddl) setTableDDL(structure.ddl);
           if (structure.engine) setEngine(structure.engine);
           if (structure.collation) setCollation(structure.collation);
           const cmt = structure.comment || '';
@@ -1050,23 +1009,26 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               comment: col.comment || '',
             };
           });
-          setColumns(
+
+          const finalCols =
             mappedCols.length > 0
               ? mappedCols
               : [
                   {
                     id: 'col-1',
-                    name: '',
+                    name: 'id',
                     dataType: driver === 'sqlite' ? 'INTEGER' : driver === 'postgres' ? 'BIGINT' : 'INT',
                     lengthOrValues: '',
-                    isPrimaryKey: false,
-                    isAutoIncrement: false,
-                    isNotNull: false,
+                    isPrimaryKey: true,
+                    isAutoIncrement: true,
+                    isNotNull: true,
                     defaultValue: '',
                     comment: '',
                   },
-                ]
-          );
+                ];
+
+          setColumns(finalCols);
+          setSelectedNode({ type: 'column', id: finalCols[0].id });
 
           const idxs = (structure.indexes || []).filter(
             (idx) => !idx.isPrimary && idx.name !== 'PRIMARY'
@@ -1117,19 +1079,21 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       setOriginalTableComment('');
       setIsLoadingStructure(false);
 
-      setColumns([
+      const defaultCols: ColumnDefinition[] = [
         {
           id: 'col-1',
-          name: '',
+          name: 'id',
           dataType: driver === 'sqlite' ? 'INTEGER' : driver === 'postgres' ? 'BIGINT' : 'INT',
           lengthOrValues: '',
-          isPrimaryKey: false,
-          isAutoIncrement: false,
-          isNotNull: false,
+          isPrimaryKey: true,
+          isAutoIncrement: true,
+          isNotNull: true,
           defaultValue: '',
           comment: '',
         },
-      ]);
+      ];
+      setColumns(defaultCols);
+      setSelectedNode({ type: 'column', id: defaultCols[0].id });
     }
   }, [isOpen, isEditMode, initialTableName, connection, database, targetSchema, driver]);
 
@@ -1147,7 +1111,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const handleAddColumn = () => {
     const newCol: ColumnDefinition = {
       id: 'col-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-      name: '',
+      name: `col_${columns.length + 1}`,
       dataType: driver === 'sqlite' ? 'TEXT' : 'VARCHAR',
       lengthOrValues: driver === 'sqlite' ? '' : '255',
       isPrimaryKey: false,
@@ -1157,15 +1121,23 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       comment: '',
     };
     setColumns((prev) => [...prev, newCol]);
+    setSelectedNode({ type: 'column', id: newCol.id });
+    setExpandedFolders((prev) => ({ ...prev, columns: true }));
   };
 
   const handleRemoveColumn = (id: string) => {
-    const colToRemove = columns.find((c) => c.id === id);
     if (columns.length <= 1) {
       alertWarning('A table must have at least one column.', 'Cannot Remove Column');
       return;
     }
-    setColumns((prev) => prev.filter((c) => c.id !== id));
+    const colToRemove = columns.find((c) => c.id === id);
+    const remaining = columns.filter((c) => c.id !== id);
+    setColumns(remaining);
+
+    if (selectedNode.type === 'column' && selectedNode.id === id) {
+      setSelectedNode({ type: 'column', id: remaining[0].id });
+    }
+
     if (colToRemove?.name) {
       setIndexes((prev) =>
         prev.map((idx) => ({
@@ -1197,12 +1169,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         if (col.id !== id) return col;
         const next = { ...col, ...updates };
 
-        // If user marks as PK, ensure Not Null is enabled
         if (updates.isPrimaryKey === true) {
           next.isNotNull = true;
         }
 
-        // If user selects Auto Increment, adjust types if needed
         if (updates.isAutoIncrement === true) {
           next.isPrimaryKey = true;
           next.isNotNull = true;
@@ -1215,7 +1185,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       })
     );
 
-    // Sync renamed column into index definitions
     if (updates.name && oldName && updates.name !== oldName) {
       setIndexes((prev) =>
         prev.map((idx) => ({
@@ -1226,7 +1195,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     }
   };
 
-  // Index Management Handlers
   const handleAddIndex = () => {
     const namedCols = columns.filter((c) => c.name.trim());
     const firstCol = namedCols[0]?.name.trim() || '';
@@ -1240,6 +1208,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       comment: '',
     };
     setIndexes((prev) => [...prev, newIdx]);
+    setSelectedNode({ type: 'index', id: newIdx.id });
+    setExpandedFolders((prev) => ({ ...prev, indexes: true }));
   };
 
   const handleUpdateIndex = (id: string, updates: Partial<IndexDefinition>) => {
@@ -1247,7 +1217,11 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   };
 
   const handleRemoveIndex = (id: string) => {
-    setIndexes((prev) => prev.filter((idx) => idx.id !== id));
+    const remaining = indexes.filter((idx) => idx.id !== id);
+    setIndexes(remaining);
+    if (selectedNode.type === 'index' && selectedNode.id === id) {
+      setSelectedNode(remaining.length > 0 ? { type: 'index', id: remaining[0].id } : { type: 'indexes_folder' });
+    }
   };
 
   const handleAddColumnToIndex = (indexId: string, colName: string) => {
@@ -1257,13 +1231,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         if (idx.id !== indexId) return idx;
         if (idx.columns.some((c) => c.name === colName)) return idx;
         const newCols = [...idx.columns, { name: colName, order: 'ASC' as const }];
-        const cleanTbl = tableName.trim() || 'table';
-        const prefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
-        const autoName = `${prefix}_${cleanTbl}_${newCols.map((c) => c.name).join('_')}`;
-        const shouldUpdateName = !idx.name || idx.name.startsWith('idx_') || idx.name.startsWith('uk_');
         return {
           ...idx,
-          name: shouldUpdateName ? autoName : idx.name,
           columns: newCols,
         };
       })
@@ -1280,34 +1249,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     );
   };
 
-  const handleMoveIndexColumn = (indexId: string, colIndex: number, direction: 'left' | 'right') => {
-    setIndexes((prev) =>
-      prev.map((idx) => {
-        if (idx.id !== indexId) return idx;
-        const targetIdx = direction === 'left' ? colIndex - 1 : colIndex + 1;
-        if (targetIdx < 0 || targetIdx >= idx.columns.length) return idx;
-        const newCols = [...idx.columns];
-        const temp = newCols[colIndex];
-        newCols[colIndex] = newCols[targetIdx];
-        newCols[targetIdx] = temp;
-        return { ...idx, columns: newCols };
-      })
-    );
-  };
-
-  const handleToggleIndexColumnOrder = (indexId: string, colIndex: number) => {
-    setIndexes((prev) =>
-      prev.map((idx) => {
-        if (idx.id !== indexId) return idx;
-        const newCols = idx.columns.map((col, i) =>
-          i === colIndex ? { ...col, order: (col.order === 'ASC' ? 'DESC' : 'ASC') as 'ASC' | 'DESC' } : col
-        );
-        return { ...idx, columns: newCols };
-      })
-    );
-  };
-
-  // Generate DDL SQL string with complete composite indexing support
+  // Generate DDL SQL string
   const generatedSql = useMemo(() => {
     if (isEditMode) {
       return generateAlterSql({
@@ -1357,46 +1299,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     originalTableComment,
   ]);
 
-  // Current or generated DDL for viewing in DDL tab
-  const effectiveDDL = useMemo(() => {
-    if (tableDDL && tableDDL.trim()) {
-      return tableDDL;
-    }
-    return generateCreateTableSql({
-      driver,
-      database,
-      targetSchema,
-      tableName: tableName.trim() || initialTableName,
-      columns,
-      indexes,
-      engine,
-      charset,
-      collation,
-      tableComment,
-    });
-  }, [
-    tableDDL,
-    driver,
-    database,
-    targetSchema,
-    tableName,
-    initialTableName,
-    columns,
-    indexes,
-    engine,
-    charset,
-    collation,
-    tableComment,
-  ]);
-
-  const handleCopyDDL = () => {
-    if (!effectiveDDL) return;
-    navigator.clipboard.writeText(effectiveDDL).catch(() => {});
-    setCopiedDDL(true);
-    setTimeout(() => setCopiedDDL(false), 1500);
-    alertSuccess('Table DDL copied to clipboard');
-  };
-
   const handleCopySql = () => {
     if (!generatedSql) return;
     navigator.clipboard.writeText(generatedSql);
@@ -1413,7 +1315,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       return;
     }
 
-    // Validate table name identifier
     if (!/^[a-zA-Z0-9_$-]+$/.test(cleanTable)) {
       alertWarning(
         'Table name can only contain letters, numbers, underscores, dashes, and dollar signs.',
@@ -1422,14 +1323,12 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       return;
     }
 
-    // Validate column names
     const validCols = columns.filter((c) => c.name.trim().length > 0);
     if (validCols.length === 0) {
       alertWarning('Please define at least one column with a valid name.', 'Missing Column Names');
       return;
     }
 
-    // Check for duplicate column names
     const nameSet = new Set<string>();
     for (const c of validCols) {
       const lower = c.name.trim().toLowerCase();
@@ -1453,7 +1352,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         offset: 0,
       } as any);
 
-      // Refresh database objects
       const schemaKey = `${connection.id}:${database}:${targetSchema}`;
       try {
         const objects = await SchemaService.GetObjects(connection.id, database, targetSchema);
@@ -1462,7 +1360,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         }
       } catch {}
 
-      // Auto-open newly created table tab in Workbench
       useWorkbenchStore.getState().openTab({
         id: `table-${connection.id}-${database}-${cleanTable}`,
         title: cleanTable,
@@ -1505,14 +1402,12 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       return;
     }
 
-    // Validate column names
     const validCols = columns.filter((c) => c.name.trim().length > 0);
     if (validCols.length === 0) {
       alertWarning('Please define at least one column with a valid name.', 'Missing Column Names');
       return;
     }
 
-    // Check for duplicate column names
     const nameSet = new Set<string>();
     for (const c of validCols) {
       const lower = c.name.trim().toLowerCase();
@@ -1536,7 +1431,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         offset: 0,
       } as any);
 
-      // Refresh database objects in Explorer
       const schemaKey = `${connection.id}:${database}:${targetSchema}`;
       try {
         const objects = await SchemaService.GetObjects(connection.id, database, targetSchema);
@@ -1545,7 +1439,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         }
       } catch {}
 
-      // Refresh workbench table tab if open
       const workbenchTabs = useWorkbenchStore.getState().tabs;
       const matchingTab = workbenchTabs.find(
         (t) => t.type === 'table_data' && (t.table === initialTableName || t.table === cleanTable)
@@ -1575,8 +1468,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (isEditMode) {
       await handleEditTable();
     } else {
@@ -1586,353 +1479,211 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
   if (!isOpen) return null;
 
-  const modalEnv = resolveConnectionEnv(connection);
-  const modalHeaderClass =
-    modalEnv === 'prod'
-      ? 'bg-rose-950/75 border-rose-800/70'
-      : modalEnv === 'dev'
-      ? 'bg-emerald-950/75 border-emerald-800/70'
-      : 'bg-[#16171f] border-[#272932]';
-  const modalContainerBorderClass =
-    modalEnv === 'prod'
-      ? 'border-rose-700/60'
-      : modalEnv === 'dev'
-      ? 'border-emerald-700/60'
-      : 'border-[#2b2e3a]';
+  const pkCols = columns.filter((c) => c.isPrimaryKey && c.name.trim());
+  const activeCol =
+    selectedNode.type === 'column'
+      ? columns.find((c) => c.id === selectedNode.id) || columns[0]
+      : columns[0];
+  const activeIdx =
+    selectedNode.type === 'index'
+      ? indexes.find((i) => i.id === selectedNode.id) || indexes[0]
+      : indexes[0];
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-150 select-none"
-      onClick={onClose}
-    >
-      {/* Modal Container: wider width and taller height */}
-      <div
-        className={`w-[96vw] max-w-[1400px] h-[88vh] min-h-[550px] max-h-[94vh] rounded-2xl border ${modalContainerBorderClass} bg-[#14151a] shadow-2xl overflow-hidden flex flex-col text-zinc-200 transition-colors`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className={`flex h-14 items-center justify-between border-b px-6 shrink-0 transition-colors ${modalHeaderClass}`}>
-          <div className="flex items-center gap-3">
-            <div
-              className={`flex h-9 w-9 items-center justify-center rounded-xl border ${
-                modalEnv === 'prod'
-                  ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                  : modalEnv === 'dev'
-                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                  : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-              }`}
-            >
-              {isEditMode ? <Pencil className="h-4 w-4" /> : <Table className="h-5 w-5" />}
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <span>{isEditMode ? 'Edit Table Structure' : 'Create New Table'}</span>
-                {isEditMode && initialTableName && (
-                  <span className="font-mono text-xs px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/50">
-                    {initialTableName}
-                  </span>
-                )}
-                {modalEnv !== 'local' && (
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${
-                      modalEnv === 'prod'
-                        ? 'bg-rose-500/20 text-rose-200 border-rose-500/50'
-                        : 'bg-emerald-500/20 text-emerald-200 border-emerald-500/50'
-                    }`}
-                  >
-                    {modalEnv === 'prod' ? 'PROD' : 'DEV'}
-                  </span>
-                )}
-              </h2>
-              <div className="flex items-center gap-2 text-[11px] text-zinc-400 font-mono">
-                <span className="flex items-center gap-1 text-zinc-300">
-                  <Database className="h-3 w-3 text-blue-400" />
-                  <span>{database || 'main'}</span>
-                </span>
-                <span className="text-zinc-600">•</span>
-                <span>{connection?.name}</span>
-                <span className="rounded bg-[#20222b] px-1.5 py-0.2 text-[10px] text-zinc-400 uppercase">
-                  {driver}
-                </span>
-              </div>
-            </div>
+    <div className="fixed inset-0 z-50 bg-[#1e1f22] text-[#bcbec4] flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-100">
+      {/* 1. Window Title Bar */}
+      <div className="flex h-10 items-center justify-between border-b border-[#393b40] px-3.5 bg-[#1e1f22] shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center w-5 h-5 rounded bg-[#2e436e] text-blue-400">
+            <Table className="w-3.5 h-3.5 text-blue-300" />
           </div>
-
-          <div className="flex items-center gap-2">
-            <kbd className="hidden sm:inline-block rounded bg-[#22242c] px-1.5 py-0.5 text-[10px] text-zinc-400 font-mono border border-[#2d303d]">
-              ESC
-            </kbd>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#252834] transition-colors cursor-pointer"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          <span className="text-xs font-semibold text-[#dfe1e5]">
+            {isEditMode ? 'Modify' : 'New Table'}
+          </span>
+          {isEditMode && initialTableName && (
+            <span className="text-xs text-[#999ca3] font-mono">
+              — {initialTableName}
+            </span>
+          )}
         </div>
 
-        {/* Modal Body */}
-        {isLoadingStructure ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-400">
-            <RefreshCw className="h-6 w-6 animate-spin text-emerald-400" />
-            <span className="text-xs">Loading structure for table &ldquo;{initialTableName}&rdquo;...</span>
-          </div>
-        ) : (
-          <form onSubmit={handleSave} className="flex-1 flex flex-col min-h-0">
-          {/* Top Bar: Table Name & Options */}
-          <div className="p-5 border-b border-[#272932] bg-[#181920]/70 flex flex-wrap items-center gap-4 shrink-0">
-            {/* Table Name */}
-            <div className="flex-1 min-w-[240px]">
-              <label className="block text-xs font-semibold text-zinc-200 uppercase tracking-wider mb-1.5">
-                Table Name <span className="text-rose-400">*</span>
-              </label>
-              <input
-                type="text"
-                autoFocus
-                required
-                placeholder="e.g. users, products, orders"
-                value={tableName}
-                onChange={(e) => setTableName(e.target.value)}
-                className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 text-xs font-mono text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
-              />
-            </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-7 h-7 flex items-center justify-center rounded text-[#999ca3] hover:text-[#dfe1e5] hover:bg-[#35373c] transition-colors cursor-pointer"
+          title="Close (Esc)"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
 
-            {/* Comment (MySQL / MariaDB) */}
-            {(driver === 'mysql' || driver === 'mariadb') && (
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                  Table Comment
-                </label>
-                <input
-                  type="text"
-                  placeholder="Optional description..."
-                  value={tableComment}
-                  onChange={(e) => setTableComment(e.target.value)}
-                  className="w-full h-8 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 text-xs text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
-                />
-              </div>
-            )}
-
-            {/* MySQL / MariaDB Engine & Charset options with custom dropdowns */}
-            {(driver === 'mysql' || driver === 'mariadb') && (
-              <>
-                <div className="w-36">
-                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                    Engine
-                  </label>
-                  <CustomSelect
-                    value={engine}
-                    onChange={setEngine}
-                    options={[
-                      { value: 'InnoDB', label: 'InnoDB' },
-                      { value: 'MyISAM', label: 'MyISAM' },
-                      { value: 'MEMORY', label: 'MEMORY' },
-                    ]}
-                  />
-                </div>
-
-                <div className="w-36">
-                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                    Charset
-                  </label>
-                  <CustomSelect
-                    value={charset}
-                    onChange={(newVal) => {
-                      setCharset(newVal);
-                      if (newVal === 'utf8mb4') setCollation('utf8mb4_unicode_ci');
-                      if (newVal === 'utf8') setCollation('utf8_general_ci');
+      {isLoadingStructure ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[#999ca3]">
+          <RefreshCw className="h-6 w-6 animate-spin text-blue-400" />
+          <span className="text-xs">Loading structure for table &ldquo;{initialTableName}&rdquo;...</span>
+        </div>
+      ) : (
+        <>
+          {/* 2. Main Middle Area: Split Left Tree & Right Form Editor */}
+          <div className="flex-1 flex min-h-0 overflow-hidden">
+            {/* Left Tree Panel */}
+            <div className="w-[360px] shrink-0 border-r border-[#393b40] flex flex-col h-full bg-[#1e1f22]">
+              {/* Tree Action Toolbar */}
+              <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[#393b40] bg-[#1e1f22] shrink-0">
+                <div className="flex items-center gap-0.5">
+                  {/* Add Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedNode.type === 'index' || selectedNode.type === 'indexes_folder') {
+                        handleAddIndex();
+                      } else {
+                        handleAddColumn();
+                      }
                     }}
-                    options={[
-                      { value: 'utf8mb4', label: 'utf8mb4' },
-                      { value: 'utf8', label: 'utf8' },
-                      { value: 'latin1', label: 'latin1' },
-                    ]}
-                  />
-                </div>
+                    className="p-1 rounded text-[#999ca3] hover:text-[#dfe1e5] hover:bg-[#35373c] transition-colors cursor-pointer"
+                    title="Add (Alt+Insert)"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
 
-                <div className="w-48">
-                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                    Collation
-                  </label>
-                  <CustomSelect
-                    value={collation}
-                    onChange={setCollation}
-                    options={[
-                      { value: 'utf8mb4_unicode_ci', label: 'utf8mb4_unicode_ci' },
-                      { value: 'utf8mb4_general_ci', label: 'utf8mb4_general_ci' },
-                      { value: 'utf8mb4_0900_ai_ci', label: 'utf8mb4_0900_ai_ci' },
-                      { value: 'utf8_general_ci', label: 'utf8_general_ci' },
-                      { value: 'utf8_unicode_ci', label: 'utf8_unicode_ci' },
-                    ]}
-                  />
-                </div>
-              </>
-            )}
-          </div>
+                  {/* Remove Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedNode.type === 'column') {
+                        handleRemoveColumn(selectedNode.id);
+                      } else if (selectedNode.type === 'index') {
+                        handleRemoveIndex(selectedNode.id);
+                      }
+                    }}
+                    disabled={selectedNode.type !== 'column' && selectedNode.type !== 'index'}
+                    className="p-1 rounded text-[#999ca3] hover:text-rose-400 hover:bg-[#35373c] disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
+                    title="Remove (Delete)"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
 
-          {/* Sub-Tabs Navigation Bar: Columns vs Indexes */}
-          <div className="flex h-11 items-center justify-between px-5 bg-[#14151a] border-b border-[#272932] shrink-0">
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setActiveSubTab('columns')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  activeSubTab === 'columns'
-                    ? 'bg-blue-600/15 text-blue-400 border border-blue-500/40 shadow-xs'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f212a] border border-transparent'
-                }`}
-              >
-                <span>Columns & Fields</span>
-                <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
-                    activeSubTab === 'columns' ? 'bg-blue-500/25 text-blue-300 font-bold' : 'bg-[#22242c] text-zinc-400'
+                  {/* Edit Button */}
+                  <button
+                    type="button"
+                    className="p-1 rounded text-[#999ca3] hover:text-[#dfe1e5] hover:bg-[#35373c] transition-colors cursor-pointer"
+                    title="Edit"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+
+                  {/* Move Up Button (hidden on postgres) */}
+                  {driver !== 'postgres' && (
+                    <button
+                      type="button"
+                      disabled={
+                        selectedNode.type !== 'column' ||
+                        columns.findIndex((c) => c.id === selectedNode.id) <= 0
+                      }
+                      onClick={() => {
+                        if (selectedNode.type === 'column') {
+                          const idx = columns.findIndex((c) => c.id === selectedNode.id);
+                          if (idx > 0) handleMoveColumn(idx, 'up');
+                        }
+                      }}
+                      className="p-1 rounded text-[#999ca3] hover:text-[#dfe1e5] hover:bg-[#35373c] disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
+                      title="Move Up (Alt+Up)"
+                    >
+                      <ArrowUp className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  {/* Move Down Button (hidden on postgres) */}
+                  {driver !== 'postgres' && (
+                    <button
+                      type="button"
+                      disabled={
+                        selectedNode.type !== 'column' ||
+                        columns.findIndex((c) => c.id === selectedNode.id) === -1 ||
+                        columns.findIndex((c) => c.id === selectedNode.id) >= columns.length - 1
+                      }
+                      onClick={() => {
+                        if (selectedNode.type === 'column') {
+                          const idx = columns.findIndex((c) => c.id === selectedNode.id);
+                          if (idx !== -1 && idx < columns.length - 1) handleMoveColumn(idx, 'down');
+                        }
+                      }}
+                      className="p-1 rounded text-[#999ca3] hover:text-[#dfe1e5] hover:bg-[#35373c] disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
+                      title="Move Down (Alt+Down)"
+                    >
+                      <ArrowDown className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Tree Content */}
+              <div className="flex-1 overflow-y-auto py-1 font-mono text-xs select-none">
+                {/* 1. Table Root Node */}
+                <div
+                  onClick={() => setSelectedNode({ type: 'table' })}
+                  className={`flex items-center gap-1.5 px-3 py-1 cursor-pointer transition-colors ${
+                    selectedNode.type === 'table'
+                      ? 'bg-[#2e436e] text-white font-medium'
+                      : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
                   }`}
                 >
-                  {columns.length}
-                </span>
-              </button>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#999ca3] shrink-0" />
+                  <Table className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span className="font-semibold text-[11px] truncate">
+                    {tableName.trim() || initialTableName || 'table'}
+                  </span>
+                  <span className="text-[10px] text-[#999ca3] truncate font-normal">
+                    {database || 'db'} [{connection?.host || 'localhost'}]
+                  </span>
+                </div>
 
-              <button
-                type="button"
-                onClick={() => setActiveSubTab('indexes')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  activeSubTab === 'indexes'
-                    ? 'bg-blue-600/15 text-blue-400 border border-blue-500/40 shadow-xs'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f212a] border border-transparent'
-                }`}
-              >
-                <span>Indexes & Keys</span>
-                <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
-                    activeSubTab === 'indexes' ? 'bg-blue-500/25 text-blue-300 font-bold' : 'bg-[#22242c] text-zinc-400'
-                  }`}
-                >
-                  {indexes.length}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveSubTab('ddl')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  activeSubTab === 'ddl'
-                    ? 'bg-blue-600/15 text-blue-400 border border-blue-500/40 shadow-xs'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f212a] border border-transparent'
-                }`}
-              >
-                <FileCode className="h-3.5 w-3.5" />
-                <span>DDL</span>
-              </button>
-            </div>
-
-            {/* Contextual Action Button */}
-            {activeSubTab === 'columns' ? (
-              <button
-                type="button"
-                onClick={handleAddColumn}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Add Column</span>
-              </button>
-            ) : activeSubTab === 'indexes' ? (
-              <button
-                type="button"
-                onClick={handleAddIndex}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Add Index</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleCopyDDL}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#22242c] hover:bg-[#2b2e3a] text-zinc-200 border border-[#2e313d] text-xs font-medium transition-colors cursor-pointer shadow-xs"
-              >
-                {copiedDDL ? (
-                  <Check className="h-3.5 w-3.5 text-emerald-400" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5 text-zinc-400" />
-                )}
-                <span>{copiedDDL ? 'Copied!' : 'Copy DDL'}</span>
-              </button>
-            )}
-          </div>
-
-          {/* Tab 1 Content: Columns Table */}
-          {activeSubTab === 'columns' && (
-            <div className="flex-1 overflow-auto min-h-0 bg-[#121317]">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="sticky top-0 bg-[#181920] border-b border-[#272932] shadow-xs z-10 select-none">
-                <tr className="text-zinc-400 font-semibold text-[11px]">
-                  <th className={`${driver === 'postgres' ? 'w-10' : 'w-14'} px-2 py-2 text-center border-r border-[#272932]`}>#</th>
-                  <th className="w-56 px-3 py-2 border-r border-[#272932]">Column Name *</th>
-                  <th className="w-48 px-3 py-2 border-r border-[#272932]">Data Type</th>
-                  <th className="w-32 px-3 py-2 border-r border-[#272932]">Length/Values</th>
-                  <th className="w-16 px-2 py-2 text-center border-r border-[#272932]" title="Primary Key">PK</th>
-                  {(driver === 'mysql' || driver === 'mariadb') && (
-                    <th className="w-16 px-2 py-2 text-center border-r border-[#272932]" title="Auto Increment">AI</th>
-                  )}
-                  {driver === 'sqlite' && (
-                    <th className="w-16 px-2 py-2 text-center border-r border-[#272932]" title="Auto Increment">AI</th>
-                  )}
-                  <th className="w-20 px-2 py-2 text-center border-r border-[#272932]" title="Not Nullable">Not Null</th>
-                  <th className="w-44 px-3 py-2 border-r border-[#272932]">Default Value</th>
-                  <th className="px-3 py-2 border-r border-[#272932]">Comment</th>
-                  <th className={`${driver === 'postgres' ? 'w-16' : 'w-24'} px-2 py-2 text-center`}>Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#20222a] font-mono">
-                {columns.map((col, idx) => {
-                  const isBeingDragged = draggedColIndex === idx;
-                  const isDragOver = dragOverColIndex === idx && draggedColIndex !== idx;
-
-                  return (
-                    <tr
-                      key={col.id}
-                      onDragOver={(e) => {
-                        if (draggedColIndex === null || driver === 'postgres') return;
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'move';
-                        if (dragOverColIndex !== idx) {
-                          setDragOverColIndex(idx);
-                        }
+                <div className="pl-4">
+                  {/* 2. Columns Folder */}
+                  <div>
+                    <div
+                      onClick={() => {
+                        toggleFolder('columns');
+                        setSelectedNode({ type: 'columns_folder' });
                       }}
-                      onDragLeave={() => {
-                        if (dragOverColIndex === idx) {
-                          setDragOverColIndex(null);
-                        }
-                      }}
-                      onDrop={(e) => {
-                        if (draggedColIndex === null || driver === 'postgres') return;
-                        e.preventDefault();
-                        if (draggedColIndex !== idx) {
-                          setColumns((prev) => {
-                            const copy = [...prev];
-                            const [moved] = copy.splice(draggedColIndex, 1);
-                            copy.splice(idx, 0, moved);
-                            return copy;
-                          });
-                        }
-                        setDraggedColIndex(null);
-                        setDragOverColIndex(null);
-                      }}
-                      className={`hover:bg-[#1a1c24] transition-colors group ${
-                        col.isPrimaryKey ? 'bg-amber-950/10' : ''
-                      } ${
-                        isBeingDragged ? 'opacity-35 bg-blue-950/40' : ''
-                      } ${
-                        isDragOver ? 'bg-blue-600/15 border-t-2 border-t-blue-500' : ''
+                      className={`flex items-center justify-between px-3 py-1 cursor-pointer transition-colors ${
+                        selectedNode.type === 'columns_folder'
+                          ? 'bg-[#2e436e] text-white font-medium'
+                          : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
                       }`}
                     >
-                      {/* Index & Drag Handle */}
-                      <td className="px-1.5 py-1.5 text-center text-zinc-500 border-r border-[#20222a] text-[11px] select-none">
-                        <div className="flex items-center justify-center gap-0.5">
-                          {driver !== 'postgres' && (
+                      <div className="flex items-center gap-1.5">
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 text-[#999ca3] shrink-0 transition-transform ${
+                            expandedFolders.columns ? '' : '-rotate-90'
+                          }`}
+                        />
+                        {expandedFolders.columns ? (
+                          <FolderOpen className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        ) : (
+                          <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        )}
+                        <span className="text-[11px]">columns</span>
+                      </div>
+                      <span className="text-[10px] text-[#999ca3] pr-2 font-mono">
+                        {columns.length}
+                      </span>
+                    </div>
+
+                    {/* Columns Items */}
+                    {expandedFolders.columns && (
+                      <div className="pl-6 space-y-0.5 py-0.5">
+                        {columns.map((col, idx) => {
+                          const isSelected = selectedNode.type === 'column' && selectedNode.id === col.id;
+                          const isBeingDragged = draggedColIndex === idx;
+                          const isDragOver = dragOverColIndex === idx && draggedColIndex !== idx;
+
+                          return (
                             <div
-                              draggable
+                              key={col.id}
+                              onClick={() => setSelectedNode({ type: 'column', id: col.id })}
+                              draggable={driver !== 'postgres'}
                               onDragStart={(e) => {
                                 e.stopPropagation();
                                 e.dataTransfer.effectAllowed = 'move';
@@ -1943,502 +1694,841 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                                 setDraggedColIndex(null);
                                 setDragOverColIndex(null);
                               }}
-                              className="cursor-grab active:cursor-grabbing text-zinc-600 hover:text-zinc-200 p-0.5 rounded transition-colors"
-                              title="Drag to reorder column"
+                              onDragOver={(e) => {
+                                if (draggedColIndex === null || driver === 'postgres') return;
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = 'move';
+                                if (dragOverColIndex !== idx) setDragOverColIndex(idx);
+                              }}
+                              onDragLeave={() => {
+                                if (dragOverColIndex === idx) setDragOverColIndex(null);
+                              }}
+                              onDrop={(e) => {
+                                if (draggedColIndex === null || driver === 'postgres') return;
+                                e.preventDefault();
+                                if (draggedColIndex !== idx) {
+                                  setColumns((prev) => {
+                                    const copy = [...prev];
+                                    const [moved] = copy.splice(draggedColIndex, 1);
+                                    copy.splice(idx, 0, moved);
+                                    return copy;
+                                  });
+                                }
+                                setDraggedColIndex(null);
+                                setDragOverColIndex(null);
+                              }}
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded-sm cursor-pointer transition-colors group ${
+                                isSelected
+                                  ? 'bg-[#2e436e] text-white font-medium'
+                                  : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                              } ${isBeingDragged ? 'opacity-35 bg-blue-950/40' : ''} ${
+                                isDragOver ? 'bg-blue-600/20 border-t-2 border-t-blue-500' : ''
+                              }`}
                             >
-                              <GripVertical className="h-3.5 w-3.5" />
+                              {driver !== 'postgres' ? (
+                                <GripVertical className="w-3 h-3 text-[#6f737a] group-hover:text-[#999ca3] shrink-0 cursor-grab" />
+                              ) : null}
+
+                              <div className="w-3.5 h-3.5 flex items-center justify-center shrink-0">
+                                {col.isPrimaryKey ? (
+                                  <Key className="w-3 h-3 text-amber-400" />
+                                ) : (
+                                  <span className="text-[10px] text-[#999ca3] font-bold">🔤</span>
+                                )}
+                              </div>
+
+                              <span className="text-[11px] font-mono truncate">
+                                {col.name || 'unnamed'}
+                              </span>
+
+                              <span className="text-[10px] text-[#cf8e6d] truncate font-mono">
+                                {col.dataType.toLowerCase()}
+                                {col.lengthOrValues ? `(${col.lengthOrValues})` : ''}
+                              </span>
+
+                              {col.isAutoIncrement && (
+                                <span className="text-[9px] text-[#999ca3] truncate font-normal">
+                                  (auto increment)
+                                </span>
+                              )}
                             </div>
-                          )}
-                          <span>{idx + 1}</span>
-                        </div>
-                      </td>
-
-                    {/* Column Name */}
-                    <td className="px-2 py-1.5 border-r border-[#20222a]">
-                      <div className="flex items-center gap-1.5">
-                        {col.isPrimaryKey && (
-                          <Key className="h-3 w-3 text-amber-400 fill-amber-400/20 shrink-0" />
-                        )}
-                        <input
-                          type="text"
-                          required
-                          placeholder="column_name"
-                          value={col.name}
-                          onChange={(e) => handleUpdateColumn(col.id, { name: e.target.value })}
-                          className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
-                        />
+                          );
+                        })}
                       </div>
-                    </td>
-
-                    {/* Data Type Custom Dropdown */}
-                    <td className="px-2 py-1.5 border-r border-[#20222a]">
-                      <CustomTypeSelect
-                        value={col.dataType}
-                        typeGroups={typeGroups}
-                        onChange={(newType) => {
-                          let autoLen = col.lengthOrValues;
-                          if (newType === 'VARCHAR' && !col.lengthOrValues) autoLen = '255';
-                          if (newType === 'CHAR' && !col.lengthOrValues) autoLen = '50';
-                          if (newType === 'DECIMAL' && !col.lengthOrValues) autoLen = '10,2';
-                          if (
-                            ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DATETIME', 'TIMESTAMP', 'TEXT', 'JSON', 'BOOLEAN'].includes(newType) &&
-                            (col.lengthOrValues === '255' || col.lengthOrValues === '50')
-                          ) {
-                            autoLen = '';
-                          }
-                          handleUpdateColumn(col.id, { dataType: newType, lengthOrValues: autoLen });
-                        }}
-                      />
-                    </td>
-
-                    {/* Length / Values */}
-                    <td className="px-2 py-1.5 border-r border-[#20222a]">
-                      <input
-                        type="text"
-                        placeholder="e.g. 255"
-                        value={col.lengthOrValues}
-                        onChange={(e) => handleUpdateColumn(col.id, { lengthOrValues: e.target.value })}
-                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
-                      />
-                    </td>
-
-                    {/* Primary Key Checkbox */}
-                    <td className="px-2 py-1.5 text-center border-r border-[#20222a]">
-                      <input
-                        type="checkbox"
-                        checked={col.isPrimaryKey}
-                        onChange={(e) =>
-                          handleUpdateColumn(col.id, {
-                            isPrimaryKey: e.target.checked,
-                            isAutoIncrement: e.target.checked ? col.isAutoIncrement : false,
-                          })
-                        }
-                        className="h-4 w-4 rounded border-zinc-700 text-blue-600 focus:ring-0 cursor-pointer accent-blue-600"
-                      />
-                    </td>
-
-                    {/* Auto Increment Checkbox (MySQL / MariaDB & SQLite) */}
-                    {(driver === 'mysql' || driver === 'mariadb' || driver === 'sqlite') && (
-                      <td className="px-2 py-1.5 text-center border-r border-[#20222a]">
-                        <input
-                          type="checkbox"
-                          checked={col.isAutoIncrement}
-                          onChange={(e) =>
-                            handleUpdateColumn(col.id, { isAutoIncrement: e.target.checked })
-                          }
-                          className="h-4 w-4 rounded border-zinc-700 text-blue-600 focus:ring-0 cursor-pointer accent-blue-600"
-                        />
-                      </td>
                     )}
+                  </div>
 
-                    {/* Not Null Checkbox */}
-                    <td className="px-2 py-1.5 text-center border-r border-[#20222a]">
-                      <input
-                        type="checkbox"
-                        checked={col.isNotNull}
-                        disabled={col.isPrimaryKey}
-                        onChange={(e) =>
-                          handleUpdateColumn(col.id, { isNotNull: e.target.checked })
-                        }
-                        className="h-4 w-4 rounded border-zinc-700 text-blue-600 focus:ring-0 cursor-pointer accent-blue-600 disabled:opacity-50"
-                      />
-                    </td>
+                  {/* 3. Keys Folder */}
+                  <div>
+                    <div
+                      onClick={() => {
+                        toggleFolder('keys');
+                        setSelectedNode({ type: 'keys_folder' });
+                      }}
+                      className={`flex items-center justify-between px-3 py-1 cursor-pointer transition-colors ${
+                        selectedNode.type === 'keys_folder'
+                          ? 'bg-[#2e436e] text-white font-medium'
+                          : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 text-[#999ca3] shrink-0 transition-transform ${
+                            expandedFolders.keys ? '' : '-rotate-90'
+                          }`}
+                        />
+                        {expandedFolders.keys ? (
+                          <FolderOpen className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        ) : (
+                          <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        )}
+                        <span className="text-[11px]">keys</span>
+                      </div>
+                      <span className="text-[10px] text-[#999ca3] pr-2 font-mono">
+                        {pkCols.length > 0 ? 1 : 0}
+                      </span>
+                    </div>
 
-                    {/* Default Value */}
-                    <td className="px-2 py-1.5 border-r border-[#20222a]">
+                    {expandedFolders.keys && pkCols.length > 0 && (
+                      <div className="pl-6 py-0.5">
+                        <div
+                          onClick={() => setSelectedNode({ type: 'key', id: 'primary' })}
+                          className={`flex items-center gap-1.5 px-2 py-1 rounded-sm cursor-pointer transition-colors ${
+                            selectedNode.type === 'key'
+                              ? 'bg-[#2e436e] text-white font-medium'
+                              : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                          }`}
+                        >
+                          <Key className="w-3 h-3 text-amber-400 shrink-0" />
+                          <span className="text-[11px] font-mono">
+                            PRIMARY ({pkCols.map((c) => c.name).join(', ')})
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 4. Foreign Keys Folder */}
+                  <div>
+                    <div
+                      onClick={() => {
+                        toggleFolder('foreign_keys');
+                        setSelectedNode({ type: 'foreign_keys_folder' });
+                      }}
+                      className="flex items-center justify-between px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#dfe1e5]"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <ChevronRight className="w-3.5 h-3.5 text-[#999ca3] shrink-0" />
+                        <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        <span className="text-[11px]">foreign keys</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 5. Indexes Folder */}
+                  <div>
+                    <div
+                      onClick={() => {
+                        toggleFolder('indexes');
+                        setSelectedNode({ type: 'indexes_folder' });
+                      }}
+                      className={`flex items-center justify-between px-3 py-1 cursor-pointer transition-colors ${
+                        selectedNode.type === 'indexes_folder'
+                          ? 'bg-[#2e436e] text-white font-medium'
+                          : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 text-[#999ca3] shrink-0 transition-transform ${
+                            expandedFolders.indexes ? '' : '-rotate-90'
+                          }`}
+                        />
+                        {expandedFolders.indexes ? (
+                          <FolderOpen className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        ) : (
+                          <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        )}
+                        <span className="text-[11px]">indexes</span>
+                      </div>
+                      <span className="text-[10px] text-[#999ca3] pr-2 font-mono">
+                        {indexes.length}
+                      </span>
+                    </div>
+
+                    {expandedFolders.indexes && (
+                      <div className="pl-6 space-y-0.5 py-0.5">
+                        {indexes.map((idx) => {
+                          const isSelected = selectedNode.type === 'index' && selectedNode.id === idx.id;
+                          return (
+                            <div
+                              key={idx.id}
+                              onClick={() => setSelectedNode({ type: 'index', id: idx.id })}
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded-sm cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-[#2e436e] text-white font-medium'
+                                  : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                              }`}
+                            >
+                              <Zap className="w-3 h-3 text-emerald-400 shrink-0" />
+                              <span className="text-[11px] font-mono truncate">
+                                {idx.name} ({idx.columns.map((c) => c.name).join(', ')})
+                              </span>
+                              {idx.type === 'UNIQUE' && (
+                                <span className="text-[9px] text-[#999ca3] font-normal uppercase">
+                                  UNIQUE
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 6. Static Tree Folders like DataGrip */}
+                  <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
+                    <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                    <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                    <span className="text-[11px]">checks</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
+                    <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                    <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                    <span className="text-[11px]">triggers</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
+                    <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                    <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                    <span className="text-[11px]">virtual columns</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
+                    <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                    <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                    <span className="text-[11px]">virtual foreign keys</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Detail Properties Editor Panel */}
+            <div className="flex-1 flex flex-col h-full bg-[#1e1f22] overflow-y-auto">
+              {/* Case 1: Column Properties */}
+              {selectedNode.type === 'column' && activeCol && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  {/* Top Item Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded border border-[#6f737a] flex items-center justify-center">
+                        <Check className="w-3 h-3 text-[#3574f0]" />
+                      </div>
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        {activeCol.name || 'unnamed_column'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="p-1 rounded text-[#999ca3] hover:text-[#dfe1e5] hover:bg-[#35373c] transition-colors"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Form Grid */}
+                  <div className="space-y-3 text-xs">
+                    {/* Name */}
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Name</label>
                       <input
                         type="text"
-                        placeholder="NULL or 'value'"
-                        value={col.defaultValue}
-                        onChange={(e) => handleUpdateColumn(col.id, { defaultValue: e.target.value })}
-                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                        value={activeCol.name}
+                        onChange={(e) => handleUpdateColumn(activeCol.id, { name: e.target.value })}
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
                       />
-                    </td>
+                    </div>
 
                     {/* Comment */}
-                    <td className="px-2 py-1.5 border-r border-[#20222a]">
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Comment</label>
                       <input
                         type="text"
-                        placeholder="Optional comment..."
-                        value={col.comment}
-                        onChange={(e) => handleUpdateColumn(col.id, { comment: e.target.value })}
-                        className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none font-sans"
+                        value={activeCol.comment}
+                        onChange={(e) => handleUpdateColumn(activeCol.id, { comment: e.target.value })}
+                        placeholder=""
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5]"
                       />
-                    </td>
+                    </div>
 
-                    {/* Actions: Move Up, Move Down, Delete */}
-                    <td className="px-2 py-1.5 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        {driver !== 'postgres' && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleMoveColumn(idx, 'up')}
-                              disabled={idx === 0}
-                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                              title="Move Up"
-                            >
-                              <ArrowUp className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleMoveColumn(idx, 'down')}
-                              disabled={idx === columns.length - 1}
-                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#252834] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                              title="Move Down"
-                            >
-                              <ArrowDown className="h-3 w-3" />
-                            </button>
-                          </>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveColumn(col.id)}
-                          className={`p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 cursor-pointer ${
-                            driver !== 'postgres' ? 'ml-1' : ''
-                          }`}
-                          title="Delete Column"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
+                    {/* Data Type */}
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Data Type</label>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <CustomTypeSelect
+                            value={activeCol.dataType}
+                            typeGroups={typeGroups}
+                            onChange={(newType) => {
+                              let autoLen = activeCol.lengthOrValues;
+                              if (newType === 'VARCHAR' && !activeCol.lengthOrValues) autoLen = '255';
+                              if (newType === 'CHAR' && !activeCol.lengthOrValues) autoLen = '50';
+                              if (newType === 'DECIMAL' && !activeCol.lengthOrValues) autoLen = '10,2';
+                              if (
+                                ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DATETIME', 'TIMESTAMP', 'TEXT', 'JSON', 'BOOLEAN'].includes(newType) &&
+                                (activeCol.lengthOrValues === '255' || activeCol.lengthOrValues === '50')
+                              ) {
+                                autoLen = '';
+                              }
+                              handleUpdateColumn(activeCol.id, { dataType: newType, lengthOrValues: autoLen });
+                            }}
+                          />
+                        </div>
+                        {/* Length / Precision */}
+                        <input
+                          type="text"
+                          placeholder="Length"
+                          value={activeCol.lengthOrValues}
+                          onChange={(e) => handleUpdateColumn(activeCol.id, { lengthOrValues: e.target.value })}
+                          className="w-28 h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-[11px]"
+                        />
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              </tbody>
-            </table>
-          </div>
-          )}
+                    </div>
 
-          {/* Tab 2 Content: Indexes & Keys Table (Composite Indexing Support) */}
-          {activeSubTab === 'indexes' && (
-            <div className="flex-1 overflow-auto min-h-0 bg-[#121317]">
-              {indexes.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center p-8 text-center text-zinc-500 select-none">
-                  <div className="h-12 w-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-3">
-                    <Key className="h-6 w-6 stroke-[1.5]" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-zinc-200">No Indexes Configured</h3>
-                  <p className="text-xs text-zinc-400 mt-1 max-w-md">
-                    Indexes speed up queries and enforce uniqueness. You can configure single or composite indexes across multiple columns.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleAddIndex}
-                    className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
-                  >
-                    <Plus className="h-4 w-4" />
-                    <span>Create First Index</span>
-                  </button>
-                </div>
-              ) : (
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead className="sticky top-0 bg-[#181920] border-b border-[#272932] shadow-xs z-10 select-none">
-                    <tr className="text-zinc-400 font-semibold text-[11px]">
-                      <th className="w-10 px-2 py-2 text-center border-r border-[#272932]">#</th>
-                      <th className="w-64 px-3 py-2 border-r border-[#272932]">Index Name *</th>
-                      <th className="w-44 px-3 py-2 border-r border-[#272932]">Index Type</th>
-                      {driver !== 'sqlite' && (
-                        <th className="w-32 px-3 py-2 border-r border-[#272932]">Method</th>
-                      )}
-                      <th className="px-3 py-2 border-r border-[#272932]">Indexed Columns (Composite in Order)</th>
-                      {(driver === 'mysql' || driver === 'mariadb') && (
-                        <th className="w-44 px-3 py-2 border-r border-[#272932]">Comment</th>
-                      )}
-                      <th className="w-20 px-2 py-2 text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#20222a] font-mono">
-                    {indexes.map((idx, indexIdx) => {
-                      const availableColsForIndex = columns
-                        .map((c) => c.name.trim())
-                        .filter((name) => name && !idx.columns.some((ic) => ic.name === name));
+                    {/* Checkboxes: Not Null, Auto Increment, Primary Key */}
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4 py-1">
+                      <div />
+                      <div className="flex items-center gap-8">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={activeCol.isNotNull}
+                            disabled={activeCol.isPrimaryKey}
+                            onChange={(e) => handleUpdateColumn(activeCol.id, { isNotNull: e.target.checked })}
+                            className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
+                          />
+                          <span className="text-[#dfe1e5]">Not Null</span>
+                        </label>
 
-                      return (
-                        <tr key={idx.id} className="hover:bg-[#1a1c24] transition-colors group">
-                          {/* Number */}
-                          <td className="px-2 py-2 text-center text-zinc-500 border-r border-[#20222a] text-[11px]">
-                            {indexIdx + 1}
-                          </td>
-
-                          {/* Index Name */}
-                          <td className="px-2 py-2 border-r border-[#20222a]">
+                        {(driver === 'mysql' || driver === 'mariadb' || driver === 'sqlite') && (
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
-                              type="text"
-                              placeholder="e.g. idx_table_col1_col2"
-                              value={idx.name}
-                              onChange={(e) => handleUpdateIndex(idx.id, { name: e.target.value })}
-                              className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs font-mono text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                              type="checkbox"
+                              checked={activeCol.isAutoIncrement}
+                              onChange={(e) => handleUpdateColumn(activeCol.id, { isAutoIncrement: e.target.checked })}
+                              className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
                             />
-                          </td>
+                            <span className="text-[#dfe1e5]">Auto Increment</span>
+                          </label>
+                        )}
 
-                          {/* Index Type Dropdown */}
-                          <td className="px-2 py-2 border-r border-[#20222a]">
-                            <CustomSelect
-                              value={idx.type}
-                              onChange={(val) => {
-                                const newType = val as any;
-                                const cleanTbl = tableName.trim() || 'table';
-                                const prefix = newType === 'UNIQUE' ? 'uk' : 'idx';
-                                const autoName = `${prefix}_${cleanTbl}_${idx.columns.map((c) => c.name).join('_')}`;
-                                const shouldUpdate = !idx.name || idx.name.startsWith('idx_') || idx.name.startsWith('uk_');
-                                handleUpdateIndex(idx.id, {
-                                  type: newType,
-                                  name: shouldUpdate && idx.columns.length > 0 ? autoName : idx.name,
-                                });
-                              }}
-                              options={indexTypeOptions}
-                            />
-                          </td>
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={activeCol.isPrimaryKey}
+                            onChange={(e) =>
+                              handleUpdateColumn(activeCol.id, {
+                                isPrimaryKey: e.target.checked,
+                                isAutoIncrement: e.target.checked ? activeCol.isAutoIncrement : false,
+                              })
+                            }
+                            className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
+                          />
+                          <span className="text-[#dfe1e5] flex items-center gap-1">
+                            <Key className="w-3 h-3 text-amber-400" />
+                            <span>Primary Key</span>
+                          </span>
+                        </label>
+                      </div>
+                    </div>
 
-                          {/* Method Dropdown */}
-                          {driver !== 'sqlite' && (
-                            <td className="px-2 py-2 border-r border-[#20222a]">
-                              <CustomSelect
-                                value={idx.method}
-                                onChange={(val) => handleUpdateIndex(idx.id, { method: val })}
-                                options={indexMethodOptions}
-                              />
-                            </td>
-                          )}
+                    {/* Column Kind */}
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Column Kind</label>
+                      <select
+                        className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-xs"
+                        defaultValue="NORMAL"
+                      >
+                        <option value="NORMAL">NORMAL</option>
+                        <option value="VIRTUAL">VIRTUAL</option>
+                        <option value="STORED">STORED</option>
+                      </select>
+                    </div>
 
-                          {/* Indexed Columns (Composite in Order) */}
-                          <td className="px-3 py-2 border-r border-[#20222a]">
-                            <div className="flex flex-wrap items-center gap-1.5 min-h-[30px]">
-                              {idx.columns.map((col, cIdx) => (
-                                <div
-                                  key={col.name + '-' + cIdx}
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#20222b] border border-[#323647] text-white text-xs font-mono group/col shadow-xs"
-                                >
-                                  <span className="font-semibold text-emerald-300">{col.name}</span>
+                    {/* Default Expression */}
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Default Expression</label>
+                      <input
+                        type="text"
+                        placeholder=""
+                        value={activeCol.defaultValue}
+                        onChange={(e) => handleUpdateColumn(activeCol.id, { defaultValue: e.target.value })}
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      />
+                    </div>
 
-                                  {/* Order toggle: ASC / DESC */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleToggleIndexColumnOrder(idx.id, cIdx)}
-                                    className="px-1.5 py-0.2 rounded text-[10px] font-bold text-blue-400 hover:text-white hover:bg-blue-600/40 cursor-pointer transition-colors"
-                                    title="Toggle ASC / DESC"
-                                  >
-                                    {col.order}
-                                  </button>
+                    {/* Hidden */}
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <div />
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
+                        />
+                        <span className="text-[#dfe1e5]">Hidden</span>
+                      </label>
+                    </div>
 
-                                  {/* Reorder in composite */}
-                                  {idx.columns.length > 1 && (
-                                    <div className="flex items-center opacity-60 group-hover/col:opacity-100">
-                                      <button
-                                        type="button"
-                                        disabled={cIdx === 0}
-                                        onClick={() => handleMoveIndexColumn(idx.id, cIdx, 'left')}
-                                        className="px-1 text-zinc-400 hover:text-white disabled:opacity-20 cursor-pointer"
-                                        title="Move Left (Higher Priority)"
-                                      >
-                                        ←
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={cIdx === idx.columns.length - 1}
-                                        onClick={() => handleMoveIndexColumn(idx.id, cIdx, 'right')}
-                                        className="px-1 text-zinc-400 hover:text-white disabled:opacity-20 cursor-pointer"
-                                        title="Move Right (Lower Priority)"
-                                      >
-                                        →
-                                      </button>
-                                    </div>
-                                  )}
+                    {/* On Update (MySQL) */}
+                    {(driver === 'mysql' || driver === 'mariadb') && (
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                        <label className="text-[#999ca3] font-medium">On Update</label>
+                        <input
+                          type="text"
+                          placeholder=""
+                          className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                        />
+                      </div>
+                    )}
 
-                                  {/* Remove column from index */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveColumnFromIndex(idx.id, cIdx)}
-                                    className="text-zinc-500 hover:text-rose-400 cursor-pointer ml-0.5"
-                                    title="Remove from Index"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              ))}
+                    {/* Collation */}
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Collation</label>
+                      <select
+                        value={collation}
+                        onChange={(e) => setCollation(e.target.value)}
+                        className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-xs"
+                      >
+                        <option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option>
+                        <option value="utf8mb4_general_ci">utf8mb4_general_ci</option>
+                        <option value="utf8mb4_0900_ai_ci">utf8mb4_0900_ai_ci</option>
+                        <option value="utf8_general_ci">utf8_general_ci</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-                              {/* Add Column Dropdown */}
-                              {availableColsForIndex.length > 0 ? (
-                                <AddColumnToIndexDropdown
-                                  columns={availableColsForIndex}
-                                  onSelect={(c) => handleAddColumnToIndex(idx.id, c)}
-                                />
-                              ) : idx.columns.length === 0 ? (
-                                <span className="text-[11px] text-zinc-500 italic">
-                                  {columns.filter((c) => c.name.trim()).length === 0
-                                    ? 'Add column names first in Columns tab'
-                                    : 'No column selected'}
-                                </span>
-                              ) : null}
-                            </div>
-                          </td>
+              {/* Case 2: Table Properties */}
+              {selectedNode.type === 'table' && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center gap-2 pb-3 border-b border-[#393b40]/60">
+                    <Table className="w-4 h-4 text-blue-400" />
+                    <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                      {tableName || initialTableName || 'table'}
+                    </span>
+                  </div>
 
-                          {/* Comment (MySQL) */}
-                          {(driver === 'mysql' || driver === 'mariadb') && (
-                            <td className="px-2 py-2 border-r border-[#20222a]">
-                              <input
-                                type="text"
-                                placeholder="Optional comment..."
-                                value={idx.comment || ''}
-                                onChange={(e) => handleUpdateIndex(idx.id, { comment: e.target.value })}
-                                className="w-full h-7 rounded bg-[#101115] border border-[#2b2e3a] px-2 text-xs text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
-                              />
-                            </td>
-                          )}
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Table Name *</label>
+                      <input
+                        type="text"
+                        required
+                        value={tableName}
+                        onChange={(e) => setTableName(e.target.value)}
+                        placeholder="e.g. users, products, orders"
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      />
+                    </div>
 
-                          {/* Actions */}
-                          <td className="px-2 py-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveIndex(idx.id)}
-                              className="p-1 rounded text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 cursor-pointer transition-colors"
-                              title="Delete Index"
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Database / Schema</label>
+                      <div className="text-[#dfe1e5] font-mono text-xs px-2.5 py-1 bg-[#2b2d30]/60 rounded border border-[#393b40]">
+                        {database || 'main'} {targetSchema ? `(${targetSchema})` : ''}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Comment</label>
+                      <input
+                        type="text"
+                        value={tableComment}
+                        onChange={(e) => setTableComment(e.target.value)}
+                        placeholder="Optional table comment..."
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5]"
+                      />
+                    </div>
+
+                    {(driver === 'mysql' || driver === 'mariadb') && (
+                      <>
+                        <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                          <label className="text-[#999ca3] font-medium">Engine</label>
+                          <CustomSelect
+                            value={engine}
+                            onChange={setEngine}
+                            options={[
+                              { value: 'InnoDB', label: 'InnoDB' },
+                              { value: 'MyISAM', label: 'MyISAM' },
+                              { value: 'MEMORY', label: 'MEMORY' },
+                            ]}
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                          <label className="text-[#999ca3] font-medium">Charset</label>
+                          <CustomSelect
+                            value={charset}
+                            onChange={(val) => {
+                              setCharset(val);
+                              if (val === 'utf8mb4') setCollation('utf8mb4_unicode_ci');
+                              if (val === 'utf8') setCollation('utf8_general_ci');
+                            }}
+                            options={[
+                              { value: 'utf8mb4', label: 'utf8mb4' },
+                              { value: 'utf8', label: 'utf8' },
+                              { value: 'latin1', label: 'latin1' },
+                            ]}
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                          <label className="text-[#999ca3] font-medium">Collation</label>
+                          <CustomSelect
+                            value={collation}
+                            onChange={setCollation}
+                            options={[
+                              { value: 'utf8mb4_unicode_ci', label: 'utf8mb4_unicode_ci' },
+                              { value: 'utf8mb4_general_ci', label: 'utf8mb4_general_ci' },
+                              { value: 'utf8mb4_0900_ai_ci', label: 'utf8mb4_0900_ai_ci' },
+                              { value: 'utf8_general_ci', label: 'utf8_general_ci' },
+                              { value: 'utf8_unicode_ci', label: 'utf8_unicode_ci' },
+                            ]}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Case 3: Index Properties */}
+              {selectedNode.type === 'index' && activeIdx && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center gap-2 pb-3 border-b border-[#393b40]/60">
+                    <Zap className="w-4 h-4 text-emerald-400" />
+                    <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                      {activeIdx.name}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Index Name</label>
+                      <input
+                        type="text"
+                        value={activeIdx.name}
+                        onChange={(e) => handleUpdateIndex(activeIdx.id, { name: e.target.value })}
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Index Type</label>
+                      <CustomSelect
+                        value={activeIdx.type}
+                        onChange={(val) => handleUpdateIndex(activeIdx.id, { type: val as any })}
+                        options={indexTypeOptions}
+                      />
+                    </div>
+
+                    {driver !== 'sqlite' && (
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                        <label className="text-[#999ca3] font-medium">Method</label>
+                        <CustomSelect
+                          value={activeIdx.method}
+                          onChange={(val) => handleUpdateIndex(activeIdx.id, { method: val })}
+                          options={indexMethodOptions}
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-[140px_1fr] items-start gap-4">
+                      <label className="text-[#999ca3] font-medium pt-1">Indexed Columns</label>
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {activeIdx.columns.map((c, i) => (
+                            <span
+                              key={c.name}
+                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[#2b2d30] border border-[#393b40] text-xs font-mono"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                              <span>{c.name}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleUpdateIndex(activeIdx.id, {
+                                    columns: activeIdx.columns.map((col, idx) =>
+                                      idx === i
+                                        ? { ...col, order: col.order === 'ASC' ? 'DESC' : 'ASC' }
+                                        : col
+                                    ),
+                                  })
+                                }
+                                className="text-[10px] text-blue-400 font-bold hover:underline"
+                              >
+                                {c.order}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveColumnFromIndex(activeIdx.id, i)}
+                                className="text-[#999ca3] hover:text-rose-400"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+
+                        {/* Add Column Dropdown */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <select
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                handleAddColumnToIndex(activeIdx.id, e.target.value);
+                                e.target.value = '';
+                              }
+                            }}
+                            className="h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] text-xs font-mono text-[#dfe1e5]"
+                            defaultValue=""
+                          >
+                            <option value="" disabled>
+                              + Add column to index...
+                            </option>
+                            {columns
+                              .filter((c) => c.name.trim() && !activeIdx.columns.some((ic) => ic.name === c.name.trim()))
+                              .map((c) => (
+                                <option key={c.id} value={c.name.trim()}>
+                                  {c.name.trim()}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Comment</label>
+                      <input
+                        type="text"
+                        value={activeIdx.comment || ''}
+                        onChange={(e) => handleUpdateIndex(activeIdx.id, { comment: e.target.value })}
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Case 4: Keys Folder or Primary Key */}
+              {(selectedNode.type === 'key' || selectedNode.type === 'keys_folder') && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center gap-2 pb-3 border-b border-[#393b40]/60">
+                    <Key className="w-4 h-4 text-amber-400" />
+                    <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                      PRIMARY KEY
+                    </span>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <p className="text-[#999ca3]">
+                      Select the columns that make up the primary key constraint:
+                    </p>
+
+                    <div className="space-y-1.5 border border-[#393b40] rounded p-2 bg-[#2b2d30]/40">
+                      {columns.map((c) => (
+                        <label
+                          key={c.id}
+                          className="flex items-center gap-2 px-2 py-1 hover:bg-[#2b2d30] rounded cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={c.isPrimaryKey}
+                            onChange={(e) =>
+                              handleUpdateColumn(c.id, {
+                                isPrimaryKey: e.target.checked,
+                                isAutoIncrement: e.target.checked ? c.isAutoIncrement : false,
+                              })
+                            }
+                            className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
+                          />
+                          <span className="font-mono text-[#dfe1e5]">{c.name || 'unnamed'}</span>
+                          <span className="text-[#999ca3] font-mono text-[10px]">
+                            ({c.dataType.toLowerCase()})
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Case 5: Columns Folder */}
+              {selectedNode.type === 'columns_folder' && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-[#e5a065]" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        Columns ({columns.length})
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleAddColumn}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#3574f0] hover:bg-[#3068d9] text-white text-xs font-medium cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Column</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    {columns.map((c) => (
+                      <div
+                        key={c.id}
+                        onClick={() => setSelectedNode({ type: 'column', id: c.id })}
+                        className="flex items-center justify-between p-2 rounded hover:bg-[#2b2d30] border border-[#393b40]/50 cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center gap-2 font-mono text-xs">
+                          {c.isPrimaryKey && <Key className="w-3 h-3 text-amber-400" />}
+                          <span className="font-semibold text-[#dfe1e5]">{c.name || 'unnamed'}</span>
+                          <span className="text-[#cf8e6d]">
+                            {c.dataType.toLowerCase()}
+                            {c.lengthOrValues ? `(${c.lengthOrValues})` : ''}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-[#999ca3]">
+                          {c.isNotNull ? 'NOT NULL' : 'NULL'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Case 6: Indexes Folder */}
+              {selectedNode.type === 'indexes_folder' && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-[#e5a065]" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        Indexes ({indexes.length})
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleAddIndex}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#3574f0] hover:bg-[#3068d9] text-white text-xs font-medium cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Index</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    {indexes.map((idx) => (
+                      <div
+                        key={idx.id}
+                        onClick={() => setSelectedNode({ type: 'index', id: idx.id })}
+                        className="flex items-center justify-between p-2 rounded hover:bg-[#2b2d30] border border-[#393b40]/50 cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center gap-2 font-mono text-xs">
+                          <Zap className="w-3 h-3 text-emerald-400" />
+                          <span className="font-semibold text-[#dfe1e5]">{idx.name}</span>
+                          <span className="text-[#999ca3]">
+                            ({idx.columns.map((c) => c.name).join(', ')})
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-blue-400 font-mono">{idx.type}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-          )}
+          </div>
 
-          {/* Tab 3 Content: Table DDL Schema View */}
-          {activeSubTab === 'ddl' && (
-            <div className="flex-1 flex flex-col min-h-0 bg-[#121317] p-5 overflow-hidden">
-              <div className="flex items-center justify-between pb-3 select-none">
-                <div className="flex items-center gap-2">
-                  <FileCode className="h-4 w-4 text-blue-400" />
-                  <span className="text-xs font-semibold text-zinc-200">
-                    Table Schema Definition (CREATE TABLE DDL)
-                  </span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#20222a] text-zinc-400 border border-[#2b2e3a]">
-                    {driver.toUpperCase()}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCopyDDL}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#282a36] text-zinc-200 border border-[#2d303f] text-xs font-medium transition-colors cursor-pointer shadow-xs"
-                >
-                  {copiedDDL ? (
-                    <>
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                      <span className="text-emerald-400 font-semibold">Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5 text-zinc-400" />
-                      <span>Copy DDL</span>
-                    </>
-                  )}
-                </button>
+          {/* 3. Live DDL Preview Panel (Collapsible) */}
+          <div className="border-t border-[#393b40] flex flex-col shrink-0 bg-[#1e1f22]">
+            <div
+              className="flex h-7 items-center justify-between px-3 bg-[#1e1f22] border-b border-[#393b40]/70 cursor-pointer select-none hover:bg-[#2b2d30]/60 transition-colors"
+              onClick={() => setShowPreviewPane((prev) => !prev)}
+            >
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[#dfe1e5]">
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-[#999ca3] transition-transform duration-150 ${
+                    showPreviewPane ? '' : '-rotate-90'
+                  }`}
+                />
+                <span>Preview</span>
               </div>
 
-              <div className="flex-1 overflow-auto rounded-lg border border-[#272932] bg-[#0d0e12] p-4">
-                {isLoadingStructure ? (
-                  <div className="flex h-full items-center justify-center text-xs text-zinc-500 font-mono">
-                    Loading table schema DDL...
-                  </div>
-                ) : (
-                  <pre className="font-mono text-xs text-blue-300 leading-relaxed select-text whitespace-pre-wrap break-all">
-                    {effectiveDDL}
-                  </pre>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* SQL Preview Drawer */}
-          {showSqlPreview && (
-            <div className="border-t border-[#272932] bg-[#101115] p-4 shrink-0 max-h-48 overflow-auto">
-              <div className="flex items-center justify-between mb-2 select-none">
-                <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Code className="h-3.5 w-3.5 text-blue-400" />
-                  <span>Generated DDL Statement</span>
-                </span>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleCopySql}
-                  className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCopySql();
+                  }}
+                  className="p-0.5 rounded text-[#999ca3] hover:text-[#dfe1e5] hover:bg-[#35373c] transition-colors"
+                  title="Copy SQL"
                 >
                   {copiedSql ? (
-                    <>
-                      <Check className="h-3 w-3 text-emerald-400" />
-                      <span className="text-emerald-400">Copied!</span>
-                    </>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
                   ) : (
-                    <>
-                      <Copy className="h-3 w-3" />
-                      <span>Copy SQL</span>
-                    </>
+                    <Copy className="w-3.5 h-3.5" />
                   )}
                 </button>
+                <span title="Valid DDL statement" className="flex items-center">
+                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                </span>
               </div>
-              <pre className="font-mono text-xs text-blue-300 bg-[#16171f] p-3 rounded-lg border border-[#272932] overflow-x-auto select-text leading-relaxed">
-                {generatedSql}
-              </pre>
             </div>
-          )}
 
-          {/* Footer Controls */}
-          <div className="flex h-14 items-center justify-between border-t border-[#272932] px-6 bg-[#16171f] shrink-0">
+            {showPreviewPane && (
+              <div className="h-44 bg-[#141517] overflow-auto p-3 font-mono text-[11px] leading-relaxed text-[#a9b7c6] border-b border-[#393b40]/50">
+                <pre className="whitespace-pre-wrap selection:bg-[#2e436e]">{generatedSql}</pre>
+              </div>
+            )}
+          </div>
+
+          {/* 4. Footer Bar */}
+          <div className="flex h-11 items-center justify-between px-4 bg-[#1e1f22] border-t border-[#393b40] shrink-0">
             <button
               type="button"
-              onClick={() => setShowSqlPreview(!showSqlPreview)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
-                showSqlPreview
-                  ? 'bg-blue-600/15 border-blue-500/50 text-blue-400'
-                  : 'bg-[#20222a] border-[#2d303f] text-zinc-300 hover:text-white hover:bg-[#282a36]'
-              }`}
+              className="w-5 h-5 rounded-full border border-[#4e5157] text-[#999ca3] hover:text-[#dfe1e5] hover:border-[#6f737a] flex items-center justify-center text-xs font-bold transition-colors cursor-pointer"
+              title="Help"
             >
-              <Code className="h-3.5 w-3.5" />
-              <span>{showSqlPreview ? 'Hide SQL Preview' : 'Preview SQL'}</span>
+              ?
             </button>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleSave()}
+                disabled={isSubmitting}
+                className="px-5 py-1 rounded bg-[#3574f0] hover:bg-[#3068d9] active:bg-[#2b5ec2] text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+              >
+                {isSubmitting ? 'Applying...' : 'OK'}
+              </button>
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                disabled={isSubmitting}
+                className="px-4 py-1 rounded bg-[#2b2d30] hover:bg-[#35373c] active:bg-[#3b3e44] text-[#dfe1e5] border border-[#393b40] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
-
-              <button
-                type="submit"
-                disabled={isSubmitting || !tableName.trim() || isLoadingStructure}
-                className="flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:pointer-events-none text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    <span>{isEditMode ? 'Saving Changes...' : 'Creating Table...'}</span>
-                  </>
-                ) : isEditMode ? (
-                  <>
-                    <Check className="h-3.5 w-3.5" />
-                    <span>Save Changes</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>Create Table</span>
-                  </>
-                )}
-              </button>
             </div>
           </div>
-        </form>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 };
 
-export { CreateTableModal as TableStructureModal };
+export const TableStructureModal = CreateTableModal;
