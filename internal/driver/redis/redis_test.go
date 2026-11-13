@@ -105,3 +105,63 @@ func TestGenerateDMLPreview(t *testing.T) {
 	}
 }
 
+func TestRedisTTLHandling(t *testing.T) {
+	// 1. parseRedisTTL test
+	dur, isPersist, err := parseRedisTTL("no ttl")
+	if err != nil || !isPersist {
+		t.Errorf("parseRedisTTL('no ttl') error = %v, isPersist = %v", err, isPersist)
+	}
+
+	dur, isPersist, err = parseRedisTTL("60")
+	if err != nil || isPersist || dur.Seconds() != 60 {
+		t.Errorf("parseRedisTTL('60') dur = %v, want 60s", dur)
+	}
+
+	dur, isPersist, err = parseRedisTTL("1h")
+	if err != nil || isPersist || dur.Hours() != 1 {
+		t.Errorf("parseRedisTTL('1h') dur = %v, want 1h", dur)
+	}
+
+	dur, isPersist, err = parseRedisTTL("2d")
+	if err != nil || isPersist || dur.Hours() != 48 {
+		t.Errorf("parseRedisTTL('2d') dur = %v, want 48h", dur)
+	}
+
+	// 2. GenerateDMLPreview with TTL
+	r := &RedisDriver{}
+	changes := []driver.RowChange{
+		{
+			Type: "update",
+			PrimaryKey: map[string]any{
+				"key": "user_session",
+			},
+			Changes: map[string]any{
+				"ttl": "3600",
+			},
+		},
+		{
+			Type: "update",
+			PrimaryKey: map[string]any{
+				"key": "persistent_key",
+			},
+			Changes: map[string]any{
+				"ttl": "no ttl",
+			},
+		},
+	}
+
+	stmts, err := r.GenerateDMLPreview("db0", "db0", "keys", changes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stmts) != 2 {
+		t.Fatalf("expected 2 stmts, got %d", len(stmts))
+	}
+	if stmts[0] != "EXPIRE user_session 3600" {
+		t.Errorf("expected 'EXPIRE user_session 3600', got %q", stmts[0])
+	}
+	if stmts[1] != "PERSIST persistent_key" {
+		t.Errorf("expected 'PERSIST persistent_key', got %q", stmts[1])
+	}
+}
+
