@@ -462,6 +462,22 @@ func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, r
 	}, nil
 }
 
+func extractScanPattern(rawSQL string) string {
+	if !strings.Contains(strings.ToUpper(rawSQL), "WHERE") {
+		return "*"
+	}
+	m := regexp.MustCompile(`(?i)(?:MATCH|LIKE|=)\s*['"]([^'"]+)['"]`).FindStringSubmatch(rawSQL)
+	if len(m) > 1 && m[1] != "" {
+		p := m[1]
+		p = strings.ReplaceAll(p, "%", "*")
+		if !strings.Contains(p, "*") {
+			p = "*" + p + "*"
+		}
+		return p
+	}
+	return "*"
+}
+
 func (r *RedisDriver) executeKeysListQuery(ctx context.Context, conn *redis.Conn, req driver.QueryRequest, start time.Time) (*driver.QueryResult, error) {
 	cols := []driver.ColumnMeta{
 		{Name: "key", DataType: "string", RawType: "string", IsPrimaryKey: true},
@@ -481,12 +497,13 @@ func (r *RedisDriver) executeKeysListQuery(ctx context.Context, conn *redis.Conn
 		offset = 0
 	}
 
+	scanPattern := extractScanPattern(req.SQL)
 	var allKeys []string
 	var cursor uint64
 	for {
 		var batch []string
 		var err error
-		batch, cursor, err = conn.Scan(ctx, cursor, "*", 500).Result()
+		batch, cursor, err = conn.Scan(ctx, cursor, scanPattern, 500).Result()
 		if err != nil {
 			return nil, err
 		}
@@ -658,6 +675,31 @@ func formatRedisResult(cmd string, res any, err error) ([]driver.ColumnMeta, [][
 
 	switch v := res.(type) {
 	case string:
+		if strings.EqualFold(cmd, "INFO") {
+			var rows [][]any
+			lines := strings.Split(v, "\n")
+			currentSection := "General"
+			for _, l := range lines {
+				l = strings.TrimSpace(l)
+				if l == "" {
+					continue
+				}
+				if strings.HasPrefix(l, "#") {
+					currentSection = strings.TrimSpace(strings.TrimPrefix(l, "#"))
+					continue
+				}
+				if idx := strings.Index(l, ":"); idx != -1 {
+					k := strings.TrimSpace(l[:idx])
+					val := strings.TrimSpace(l[idx+1:])
+					rows = append(rows, []any{currentSection, k, val})
+				}
+			}
+			return []driver.ColumnMeta{
+				{Name: "Section", DataType: "string"},
+				{Name: "Property", DataType: "string"},
+				{Name: "Value", DataType: "string"},
+			}, rows, int64(len(rows)), ""
+		}
 		return []driver.ColumnMeta{{Name: "Result", DataType: "string"}}, [][]any{{v}}, 1, ""
 	case int64:
 		return []driver.ColumnMeta{{Name: "Result", DataType: "int64"}}, [][]any{{v}}, v, ""
