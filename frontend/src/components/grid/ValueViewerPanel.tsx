@@ -565,6 +565,12 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
               Row {rowIndex + 1}
             </span>
           )}
+
+          {!onSave && (
+            <span className="text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-400 border border-zinc-700/60 shrink-0">
+              Read-Only
+            </span>
+          )}
         </div>
 
         {/* Action Controls & Close */}
@@ -834,8 +840,8 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
               onMount={handleEditorDidMount}
               theme="vs-dark"
               options={{
-                readOnly: false,
-                domReadOnly: false,
+                readOnly: !onSave,
+                domReadOnly: !onSave,
                 minimap: { enabled: false },
                 wordWrap: wordWrap ? 'on' : 'off',
                 scrollBeyondLastLine: false,
