@@ -791,6 +791,14 @@ func (r *RedisDriver) GenerateDMLPreview(database, schema, table string, changes
 					statements = append(statements, fmt.Sprintf("SET %s %q", targetKey, fmt.Sprintf("%v", val)))
 				}
 			}
+			if ttlVal, ok := c.Changes["ttl"]; ok {
+				dur, isPersist, err := parseRedisTTL(ttlVal)
+				if isPersist {
+					statements = append(statements, fmt.Sprintf("PERSIST %s", targetKey))
+				} else if err == nil {
+					statements = append(statements, fmt.Sprintf("EXPIRE %s %d", targetKey, int64(dur.Seconds())))
+				}
+			}
 		case "delete":
 			if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
 				statements = append(statements, fmt.Sprintf("HDEL %s %s", targetKey, field))
@@ -800,6 +808,71 @@ func (r *RedisDriver) GenerateDMLPreview(database, schema, table string, changes
 		}
 	}
 	return statements, nil
+}
+
+func parseRedisTTL(v any) (time.Duration, bool, error) {
+	if v == nil {
+		return 0, true, nil
+	}
+	s := strings.TrimSpace(strings.ToLower(fmt.Sprintf("%v", v)))
+	s = strings.TrimPrefix(s, "ttl:")
+	s = strings.TrimPrefix(s, "ttl")
+	s = strings.TrimSpace(s)
+
+	if s == "" || s == "no ttl" || s == "none" || s == "persist" || s == "-1" || s == "0" || s == "expired" || s == "-2" {
+		return 0, true, nil
+	}
+
+	// Normalizations
+	s = strings.ReplaceAll(s, "seconds", "s")
+	s = strings.ReplaceAll(s, "second", "s")
+	s = strings.ReplaceAll(s, "secs", "s")
+	s = strings.ReplaceAll(s, "sec", "s")
+	s = strings.ReplaceAll(s, "minutes", "m")
+	s = strings.ReplaceAll(s, "minute", "m")
+	s = strings.ReplaceAll(s, "mins", "m")
+	s = strings.ReplaceAll(s, "min", "m")
+	s = strings.ReplaceAll(s, "hours", "h")
+	s = strings.ReplaceAll(s, "hour", "h")
+	s = strings.ReplaceAll(s, "hr", "h")
+	s = strings.ReplaceAll(s, " ", "")
+
+	// Check if pure integer (seconds)
+	if secs, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if secs <= 0 {
+			return 0, true, nil
+		}
+		return time.Duration(secs) * time.Second, false, nil
+	}
+	// Check if float (seconds)
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		if f <= 0 {
+			return 0, true, nil
+		}
+		return time.Duration(f * float64(time.Second)), false, nil
+	}
+
+	// Check days
+	if strings.HasSuffix(s, "days") || strings.HasSuffix(s, "day") || strings.HasSuffix(s, "d") {
+		dStr := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(s, "days"), "day"), "d")
+		if days, err := strconv.ParseFloat(dStr, 64); err == nil {
+			if days <= 0 {
+				return 0, true, nil
+			}
+			return time.Duration(days * 24 * float64(time.Hour)), false, nil
+		}
+	}
+
+	// Try time.ParseDuration (supports 10s, 5m, 1h30m, 31h23m32s, etc.)
+	dur, err := time.ParseDuration(s)
+	if err == nil {
+		if dur <= 0 {
+			return 0, true, nil
+		}
+		return dur, false, nil
+	}
+
+	return 0, false, fmt.Errorf("invalid ttl format: %q", v)
 }
 
 func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
@@ -825,14 +898,50 @@ func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table 
 
 		switch c.Type {
 		case "insert", "update":
+			var rowUpdated bool
 			if val, ok := c.Changes["value"]; ok {
 				if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
-					_ = conn.HSet(ctx, targetKey, fmt.Sprintf("%v", field), fmt.Sprintf("%v", val)).Err()
-					affected++
+					if err := conn.HSet(ctx, targetKey, fmt.Sprintf("%v", field), fmt.Sprintf("%v", val)).Err(); err == nil {
+						rowUpdated = true
+					}
 				} else {
-					_ = conn.Set(ctx, targetKey, fmt.Sprintf("%v", val), 0).Err()
-					affected++
+					var exp time.Duration = redis.KeepTTL
+					if c.Type == "insert" {
+						exp = 0
+					}
+					if ttlVal, okTTL := c.Changes["ttl"]; okTTL {
+						dur, isPersist, err := parseRedisTTL(ttlVal)
+						if err == nil {
+							if isPersist {
+								exp = 0
+							} else {
+								exp = dur
+							}
+						}
+					}
+					if err := conn.Set(ctx, targetKey, fmt.Sprintf("%v", val), exp).Err(); err == nil {
+						rowUpdated = true
+					}
 				}
+			}
+
+			if ttlVal, ok := c.Changes["ttl"]; ok {
+				dur, isPersist, err := parseRedisTTL(ttlVal)
+				if err == nil {
+					if isPersist {
+						if err := conn.Persist(ctx, targetKey).Err(); err == nil {
+							rowUpdated = true
+						}
+					} else {
+						if err := conn.Expire(ctx, targetKey, dur).Err(); err == nil {
+							rowUpdated = true
+						}
+					}
+				}
+			}
+
+			if rowUpdated {
+				affected++
 			}
 		case "delete":
 			if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {

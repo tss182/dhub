@@ -537,7 +537,7 @@ interface DataGridProps {
   columns: ColumnMeta[];
   rows: any[][];
   primaryKeys?: string[];
-  onSubmitChanges: () => void;
+  onSubmitChanges: (skipConfirm?: boolean) => void;
   onPreviewChanges: () => void;
   totalCount?: number;
   hasMore?: boolean;
@@ -746,9 +746,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (isRedis) {
       const colNameLower = colName.toLowerCase();
       if (isInsert) {
-        return colNameLower === 'key' || colNameLower === 'value';
+        return colNameLower === 'key' || colNameLower === 'value' || colNameLower === 'ttl';
       }
-      return colNameLower === 'value';
+      return colNameLower === 'value' || colNameLower === 'ttl';
     }
     return true;
   };
@@ -759,6 +759,100 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (!col) return false;
     const isInsert = rowIndex < 0;
     return isColumnEditable(col.name, isInsert);
+  };
+
+  const [ttlModal, setTtlModal] = useState<{
+    rowIndex: number;
+    keyName: string;
+    currentTtl: string;
+    isInsert: boolean;
+  } | null>(null);
+  const [ttlMode, setTtlMode] = useState<'persist' | 'custom'>('custom');
+  const [ttlAmount, setTtlAmount] = useState<string>('3600');
+  const [ttlUnit, setTtlUnit] = useState<'s' | 'm' | 'h' | 'd'>('s');
+
+  const handleOpenTtlModal = (rowIndex: number, currentDisplayVal: any, isInsert: boolean) => {
+    let keyName = '';
+    const keyColIdx = columns.findIndex((c) => c.name.toLowerCase() === 'key');
+    if (isInsert) {
+      const staged = stagedChanges[rowIndex];
+      keyName = String(staged?.type === 'insert' ? staged.changes['key'] ?? '' : '');
+    } else {
+      const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+      const targetRow = rows[rowInArray] || rows[rowIndex];
+      keyName = keyColIdx !== -1 && targetRow ? String(targetRow[keyColIdx] ?? '') : '';
+    }
+
+    const cur = String(currentDisplayVal ?? 'no ttl').trim();
+    setTtlModal({
+      rowIndex,
+      keyName,
+      currentTtl: cur,
+      isInsert,
+    });
+
+    if (cur === 'no ttl' || cur === '-1' || cur === 'persist' || cur === '') {
+      setTtlMode('persist');
+      setTtlAmount('3600');
+      setTtlUnit('s');
+    } else {
+      setTtlMode('custom');
+      const lower = cur.toLowerCase();
+      if (lower.endsWith('days') || lower.endsWith('day') || lower.endsWith('d')) {
+        const num = lower.replace(/(days|day|d)/g, '').trim();
+        setTtlAmount(num || '1');
+        setTtlUnit('d');
+      } else if (lower.endsWith('hours') || lower.endsWith('hour') || lower.endsWith('h')) {
+        const num = lower.replace(/(hours|hour|h)/g, '').trim();
+        setTtlAmount(num || '1');
+        setTtlUnit('h');
+      } else if (lower.endsWith('minutes') || lower.endsWith('minute') || lower.endsWith('m')) {
+        const num = lower.replace(/(minutes|minute|m)/g, '').trim();
+        setTtlAmount(num || '1');
+        setTtlUnit('m');
+      } else if (lower.endsWith('seconds') || lower.endsWith('second') || lower.endsWith('s')) {
+        const num = lower.replace(/(seconds|second|s)/g, '').trim();
+        setTtlAmount(num || '60');
+        setTtlUnit('s');
+      } else if (!isNaN(Number(cur))) {
+        setTtlAmount(cur);
+        setTtlUnit('s');
+      } else {
+        setTtlAmount('3600');
+        setTtlUnit('s');
+      }
+    }
+  };
+
+  const handleSaveTtl = (applyImmediately: boolean = false) => {
+    if (!ttlModal) return;
+    const finalVal = ttlMode === 'persist' ? 'no ttl' : `${ttlAmount}${ttlUnit}`;
+    const targetIdx = ttlModal.rowIndex;
+
+    if (ttlModal.isInsert) {
+      stageCellUpdate(tabId, targetIdx, {}, {}, 'ttl', finalVal);
+    } else {
+      const originalRowValues: Record<string, unknown> = {};
+      const rowInArray = targetIdx >= (startOffset || 0) ? targetIdx - (startOffset || 0) : targetIdx;
+      const targetRow = rows[rowInArray] || rows[targetIdx];
+      columns.forEach((c, idx) => {
+        originalRowValues[c.name] = targetRow?.[idx];
+      });
+      const pkMap: Record<string, unknown> = {};
+      primaryKeys.forEach((pk) => {
+        const idx = columns.findIndex((c) => c.name === pk);
+        if (idx !== -1) pkMap[pk] = targetRow?.[idx];
+      });
+      stageCellUpdate(tabId, targetIdx, pkMap, originalRowValues, 'ttl', finalVal);
+    }
+
+    setTtlModal(null);
+
+    if (applyImmediately) {
+      setTimeout(() => {
+        onSubmitChanges(true);
+      }, 50);
+    }
   };
   const thRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
@@ -3600,13 +3694,13 @@ ${setClauses};`;
                         {isPK && (
                           <Key className="h-3 w-3 text-amber-400 fill-amber-400/30 shrink-0" />
                         )}
-                        {isRedis && col.name.toLowerCase() !== 'value' && (
+                        {isRedis && !isColumnEditable(col.name) && (
                           <span title="Read-only column">
                             <Lock className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
                           </span>
                         )}
                         <span className={`truncate font-semibold transition-colors ${
-                          isRedis && col.name.toLowerCase() !== 'value'
+                          isRedis && !isColumnEditable(col.name)
                             ? 'text-zinc-400 group-hover/th:text-zinc-200'
                             : 'text-zinc-200 group-hover/th:text-white'
                         }`}>
@@ -3802,6 +3896,10 @@ ${setClauses};`;
                             onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
                             onDoubleClick={() => {
                               if (isEditable) {
+                                if (isRedis && col.name.toLowerCase() === 'ttl') {
+                                  handleOpenTtlModal(globalRowIndex, displayVal, false);
+                                  return;
+                                }
                                 handleStartEdit(globalRowIndex, cIdx, displayVal);
                               }
                             }}
@@ -3840,7 +3938,9 @@ ${setClauses};`;
                             }}
                             title={
                               isEditable
-                                ? 'Click to select, type or double-click to edit'
+                                ? isRedis && col.name.toLowerCase() === 'ttl'
+                                  ? 'Double-click to update TTL (Time-To-Live)'
+                                  : 'Click to select, type or double-click to edit'
                                 : 'Read-only: this column cannot be edited in Redis'
                             }
                           >
@@ -3961,6 +4061,10 @@ ${setClauses};`;
                             onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
                             onDoubleClick={() => {
                               if (!isEditing && isInsEditable) {
+                                if (isRedis && col.name.toLowerCase() === 'ttl') {
+                                  handleOpenTtlModal(change.rowIndex, displayVal ?? '', true);
+                                  return;
+                                }
                                 handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
                               }
                             }}
@@ -4313,9 +4417,14 @@ ${setClauses};`;
                 PRIMARY KEY
               </span>
             )}
-            {isRedis && hoveredCol.col.name.toLowerCase() !== 'value' && (
+            {isRedis && !isColumnEditable(hoveredCol.col.name) && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 border border-zinc-700/60 text-zinc-400 font-mono shrink-0">
                 READ ONLY
+              </span>
+            )}
+            {isRedis && isColumnEditable(hoveredCol.col.name) && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono shrink-0">
+                EDITABLE
               </span>
             )}
           </div>
@@ -4356,12 +4465,16 @@ ${setClauses};`;
                 <span className="text-zinc-500">Editable:</span>
                 <span
                   className={`font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                    hoveredCol.col.name.toLowerCase() === 'value'
+                    isColumnEditable(hoveredCol.col.name)
                       ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40'
                       : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/50'
                   }`}
                 >
-                  {hoveredCol.col.name.toLowerCase() === 'value' ? 'YES' : 'NO (DISABLED)'}
+                  {isColumnEditable(hoveredCol.col.name)
+                    ? hoveredCol.col.name.toLowerCase() === 'ttl'
+                      ? 'YES (DOUBLE-CLICK TO UPDATE TTL)'
+                      : 'YES'
+                    : 'NO (DISABLED)'}
                 </span>
               </div>
             )}
@@ -4582,6 +4695,10 @@ ${setClauses};`;
                             const staged = stagedChanges[targetVr.globalRowIndex!];
                             displayVal = staged?.type === 'update' && staged.changes[col.name] !== undefined ? staged.changes[col.name] : targetVr.rowData?.[cIdx];
                           }
+                          if (isRedis && col.name.toLowerCase() === 'ttl') {
+                            handleOpenTtlModal(targetVr.rowId, displayVal, targetVr.isInsert);
+                            return;
+                          }
                           handleStartEdit(targetVr.rowId, cIdx, displayVal);
                         }
                       }
@@ -4589,8 +4706,17 @@ ${setClauses};`;
                     className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                   >
                     <div className="flex items-center gap-2">
-                      <Edit3 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                      <span>Edit Cell</span>
+                      {isRedis && contextMenu.cIdx !== null && columns[contextMenu.cIdx]?.name.toLowerCase() === 'ttl' ? (
+                        <>
+                          <Clock className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                          <span>Update Key TTL...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Edit3 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                          <span>Edit Cell</span>
+                        </>
+                      )}
                     </div>
                     <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Double-Click</kbd>
                   </button>
@@ -5088,6 +5214,202 @@ ${setClauses};`;
               >
                 Done
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Redis TTL Modal */}
+      {ttlModal && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setTtlModal(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+        >
+          <div className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#191a20] shadow-2xl flex flex-col overflow-hidden text-zinc-100">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#272932] px-4 py-3 bg-[#1e2029]">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+                  <Clock className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
+                    <span>Update Redis TTL (Time-To-Live)</span>
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">Set key expiration time or make it persist</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTtlModal(null)}
+                className="rounded-lg p-1 text-zinc-400 hover:bg-[#272932] hover:text-zinc-200 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 space-y-4">
+              {/* Key metadata banner */}
+              <div className="bg-[#121318] border border-[#252833] rounded-lg p-3 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">Target Key</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">Current: <span className="text-zinc-300 font-medium">{ttlModal.currentTtl}</span></span>
+                </div>
+                <div className="font-mono text-xs font-semibold text-amber-300 truncate">
+                  {ttlModal.keyName || '(Active Key)'}
+                </div>
+              </div>
+
+              {/* Mode Options */}
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Expiration Mode</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTtlMode('persist')}
+                    className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                      ttlMode === 'persist'
+                        ? 'border-emerald-500 bg-emerald-950/20 text-white shadow-xs'
+                        : 'border-[#272932] bg-[#14151b] hover:bg-[#1a1c24] text-zinc-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${ttlMode === 'persist' ? 'bg-emerald-400 ring-2 ring-emerald-400/30' : 'bg-zinc-600'}`} />
+                      <span className="text-xs font-semibold text-zinc-200">Persist</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-500 mt-1">No TTL, never expires</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTtlMode('custom')}
+                    className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                      ttlMode === 'custom'
+                        ? 'border-amber-500 bg-amber-950/20 text-white shadow-xs'
+                        : 'border-[#272932] bg-[#14151b] hover:bg-[#1a1c24] text-zinc-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${ttlMode === 'custom' ? 'bg-amber-400 ring-2 ring-amber-400/30' : 'bg-zinc-600'}`} />
+                      <span className="text-xs font-semibold text-zinc-200">Set Expiration</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-500 mt-1">Expire after duration</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom TTL Input */}
+              {ttlMode === 'custom' && (
+                <div className="space-y-2 animate-in fade-in duration-100">
+                  <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Duration</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      autoFocus
+                      value={ttlAmount}
+                      onChange={(e) => setTtlAmount(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveTtl(false);
+                      }}
+                      placeholder="e.g. 3600"
+                      className="flex-1 bg-[#101115] border border-[#2b2e3a] focus:border-amber-500 px-3 py-1.5 text-xs text-white outline-none rounded-lg font-mono"
+                    />
+                    <select
+                      value={ttlUnit}
+                      onChange={(e) => setTtlUnit(e.target.value as any)}
+                      className="bg-[#101115] border border-[#2b2e3a] focus:border-amber-500 px-2 py-1.5 text-xs text-white outline-none rounded-lg font-medium cursor-pointer"
+                    >
+                      <option value="s">Seconds (s)</option>
+                      <option value="m">Minutes (m)</option>
+                      <option value="h">Hours (h)</option>
+                      <option value="d">Days (d)</option>
+                    </select>
+                  </div>
+
+                  {/* Quick Presets */}
+                  <div className="pt-1">
+                    <span className="text-[10px] text-zinc-500 mb-1.5 block">Quick Presets:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: '10s', amount: '10', unit: 's' as const },
+                        { label: '1m', amount: '1', unit: 'm' as const },
+                        { label: '10m', amount: '10', unit: 'm' as const },
+                        { label: '1h', amount: '1', unit: 'h' as const },
+                        { label: '1d', amount: '1', unit: 'd' as const },
+                        { label: '7d', amount: '7', unit: 'd' as const },
+                        { label: '30d', amount: '30', unit: 'd' as const },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => {
+                            setTtlMode('custom');
+                            setTtlAmount(preset.amount);
+                            setTtlUnit(preset.unit);
+                          }}
+                          className={`px-2 py-1 rounded text-[11px] font-mono border transition-colors cursor-pointer ${
+                            ttlAmount === preset.amount && ttlUnit === preset.unit
+                              ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-semibold'
+                              : 'bg-[#121318] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:bg-[#1a1c24]'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Command Preview banner */}
+              <div className="bg-[#101116] border border-[#232530] rounded-lg px-3 py-2 flex items-center justify-between text-[11px] font-mono text-zinc-400">
+                <span className="text-zinc-500 text-[10px] uppercase font-sans font-semibold">Command:</span>
+                <span className="text-amber-400 font-bold truncate">
+                  {ttlMode === 'persist'
+                    ? `PERSIST "${ttlModal.keyName || 'key'}"`
+                    : `EXPIRE "${ttlModal.keyName || 'key'}" ${
+                        ttlUnit === 'd'
+                          ? Number(ttlAmount || 1) * 86400
+                          : ttlUnit === 'h'
+                          ? Number(ttlAmount || 1) * 3600
+                          : ttlUnit === 'm'
+                          ? Number(ttlAmount || 1) * 60
+                          : Number(ttlAmount || 1)
+                      }s`}
+                </span>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between border-t border-[#272932] px-4 py-3 bg-[#1e2029]">
+              <span className="text-[10px] text-zinc-500">Staged until applied</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTtlModal(null)}
+                  className="px-3 py-1.5 rounded-lg border border-[#2b2e3a] bg-[#14151b] hover:bg-[#20222a] text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveTtl(false)}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-xs"
+                >
+                  Stage Changes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveTtl(true)}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+                >
+                  Apply Now
+                </button>
+              </div>
             </div>
           </div>
         </div>
