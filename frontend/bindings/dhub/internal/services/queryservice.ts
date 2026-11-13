@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -14,7 +14,9 @@ import * as driver$0 from "../driver/models.js";
 import * as $models from "./models.js";
 
 export function BeginTransaction(tabID: string, connectionID: string, database: string): $CancellablePromise<$models.TxStatus | null> {
-    return $Call.ByID(823115241, tabID, connectionID, database);
+    return $Call.ByID(823115241, tabID, connectionID, database).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
 export function CancelQuery(executionID: string): $CancellablePromise<boolean> {
@@ -26,21 +28,34 @@ export function CommitTransaction(tabID: string): $CancellablePromise<void> {
 }
 
 export function ExecuteQuery(req: driver$0.QueryRequest): $CancellablePromise<driver$0.QueryResult | null> {
-    return $Call.ByID(1999955655, req);
+    return $Call.ByID(1999955655, req).then(($result: any) => {
+        return $$createType3($result);
+    });
 }
 
 export function GetTransactionStatus(tabID: string): $CancellablePromise<$models.TxStatus | null> {
-    return $Call.ByID(3750451220, tabID);
+    return $Call.ByID(3750451220, tabID).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
-export function PreviewChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[] | null): $CancellablePromise<string[] | null> {
-    return $Call.ByID(1080152811, connectionID, database, schema, table, changes);
+export function PreviewChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[]): $CancellablePromise<string[]> {
+    return $Call.ByID(1080152811, connectionID, database, schema, table, changes).then(($result: any) => {
+        return $$createType4($result);
+    });
 }
 
 export function RollbackTransaction(tabID: string): $CancellablePromise<void> {
     return $Call.ByID(2967145846, tabID);
 }
 
-export function SubmitChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[] | null): $CancellablePromise<number> {
+export function SubmitChanges(connectionID: string, database: string, schema: string, table: string, changes: driver$0.RowChange[]): $CancellablePromise<number> {
     return $Call.ByID(2611702279, connectionID, database, schema, table, changes);
 }
+
+// Private type creation functions
+const $$createType0 = $models.TxStatus.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = driver$0.QueryResult.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $Create.Array($Create.Any);

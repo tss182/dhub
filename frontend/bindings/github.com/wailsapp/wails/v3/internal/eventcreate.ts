@@ -6,4 +6,21 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
-Object.freeze($Create.Events);
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as app$0 from "../../../../../dhub/internal/app/models.js";
+
+function configure() {
+    Object.freeze(Object.assign($Create.Events, {
+        "connection:state": $$createType0,
+        "query:status": $$createType1,
+        "schema:sync": $$createType2,
+    }));
+}
+
+// Private type creation functions
+const $$createType0 = app$0.ConnectionStateEvent.createFrom;
+const $$createType1 = app$0.QueryStatusEvent.createFrom;
+const $$createType2 = app$0.SchemaSyncEvent.createFrom;
+
+configure();

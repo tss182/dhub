@@ -16,8 +16,11 @@ export {
     WorkspaceService
 };
 
-export type {
+export {
     ColumnMapping,
+    ConfigImportOptions,
+    ConfigImportResult,
+    ConfigImportSummary,
     ExportRequest,
     ExportResult,
     FilePreview,

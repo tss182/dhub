@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
+import { useSettingsStore } from '../../stores/useSettingsStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
 import { Dialogs } from '@wailsio/runtime';
 import { Popover } from '../common/Popover';
@@ -44,6 +45,7 @@ import {
   Clock,
   Eraser,
   Wrench,
+  ArrowDownUp,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -3149,6 +3151,14 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
+          <Popover content="Import & Export Config / Settings" side="bottom" align="center">
+            <button
+              onClick={() => useSettingsStore.getState().openSettings('backup')}
+              className="rounded p-1 text-zinc-400 hover:bg-[#22242c] hover:text-white transition-colors cursor-pointer"
+            >
+              <ArrowDownUp className="h-3.5 w-3.5" />
+            </button>
+          </Popover>
           {onCollapse && (
             <Popover
               content="Close Explorer"
@@ -4724,6 +4734,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               >
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>Refresh All Connections</span>
+              </button>
+
+              <div className="my-1 border-t border-[#2d303f]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeContextMenu();
+                  useSettingsStore.getState().openSettings('backup');
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <ArrowDownUp className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>Import & Export Config...</span>
               </button>
             </>
           )}

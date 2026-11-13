@@ -4,6 +4,7 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 export type DataViewMode = 'infinite' | 'paged';
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update' | 'sql_upsert';
+export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'about' | 'backup';
 
 interface SettingsValues {
   theme: ThemeMode;
@@ -17,11 +18,11 @@ interface SettingsValues {
 
 interface SettingsState extends SettingsValues {
   isSettingsOpen: boolean;
-  activeSettingsTab: 'appearance' | 'datagrid' | 'editor' | 'about';
-  openSettings: (tab?: 'appearance' | 'datagrid' | 'editor' | 'about') => void;
+  activeSettingsTab: SettingsTab;
+  openSettings: (tab?: SettingsTab) => void;
   closeSettings: () => void;
   toggleSettings: () => void;
-  setActiveSettingsTab: (tab: 'appearance' | 'datagrid' | 'editor' | 'about') => void;
+  setActiveSettingsTab: (tab: SettingsTab) => void;
   setTheme: (theme: ThemeMode) => void;
   setDataViewMode: (mode: DataViewMode) => void;
   setDefaultPageSize: (size: number) => void;
@@ -30,6 +31,7 @@ interface SettingsState extends SettingsValues {
   setShowMinimap: (show: boolean) => void;
   setCopyFormat: (format: CopyFormat) => void;
   resetToDefaults: () => void;
+  reloadSettings: () => Promise<void>;
 }
 
 const SETTINGS_STORAGE_KEY = 'dhub_settings_v1';
@@ -150,6 +152,42 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     }
     applyThemeToDocument(DEFAULT_SETTINGS.theme);
     set({ ...DEFAULT_SETTINGS });
+  },
+
+  reloadSettings: async () => {
+    try {
+      const settings = await WorkspaceService.GetSettings();
+      if (settings && settings[SETTINGS_STORAGE_KEY]) {
+        const raw = settings[SETTINGS_STORAGE_KEY];
+        localStorage.setItem(SETTINGS_STORAGE_KEY, raw);
+        const parsed = JSON.parse(raw);
+        const theme: ThemeMode = parsed.theme === 'light' ? 'light' : 'dark';
+        applyThemeToDocument(theme);
+        set({
+          theme,
+          dataViewMode: parsed.dataViewMode === 'infinite' ? 'infinite' : 'paged',
+          defaultPageSize:
+            typeof parsed.defaultPageSize === 'number' && parsed.defaultPageSize > 0
+              ? parsed.defaultPageSize
+              : DEFAULT_SETTINGS.defaultPageSize,
+          editorFontSize:
+            typeof parsed.editorFontSize === 'number'
+              ? parsed.editorFontSize
+              : DEFAULT_SETTINGS.editorFontSize,
+          wordWrap:
+            typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
+          showMinimap:
+            typeof parsed.showMinimap === 'boolean'
+              ? parsed.showMinimap
+              : DEFAULT_SETTINGS.showMinimap,
+          copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat)
+            ? parsed.copyFormat
+            : DEFAULT_SETTINGS.copyFormat,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to reload settings from backend:', err);
+    }
   },
 }));
 
