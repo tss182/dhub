@@ -1508,17 +1508,19 @@ export function App() {
   };
 
   const handlePreviewChanges = async () => {
-    if (!activeTab || activeTab.type !== 'table_data' || !activeConnectionId) return;
-    const staged = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
+    const currentTab = useWorkbenchStore.getState().tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId) || activeTab;
+    const connId = currentTab?.connectionId || activeConnectionId;
+    if (!currentTab || currentTab.type !== 'table_data' || !connId) return;
+    const staged = useGridEditStore.getState().stagedByTab[currentTab.id] || {};
     const changeList = Object.values(staged);
     if (changeList.length === 0) return;
 
     try {
       const sqls = await QueryService.PreviewChanges(
-        activeConnectionId,
-        activeTab.database || '',
-        activeTab.schema || '',
-        activeTab.table || '',
+        connId,
+        currentTab.database || '',
+        currentTab.schema || '',
+        currentTab.table || '',
         changeList as any
       );
       setDmlPreview(sqls ?? []);
@@ -1532,29 +1534,31 @@ export function App() {
   };
 
   const handleSubmitChanges = async (skipConfirm = false) => {
-    if (!activeTab || activeTab.type !== 'table_data' || !activeConnectionId) return;
-    const staged = useGridEditStore.getState().stagedByTab[activeTab.id] || {};
+    const currentTab = useWorkbenchStore.getState().tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId) || activeTab;
+    const connId = currentTab?.connectionId || activeConnectionId;
+    if (!currentTab || currentTab.type !== 'table_data' || !connId) return;
+    const staged = useGridEditStore.getState().stagedByTab[currentTab.id] || {};
     const changeList = Object.values(staged);
     if (changeList.length === 0) return;
 
     const executeApply = async () => {
       try {
         const affected = await QueryService.SubmitChanges(
-          activeConnectionId,
-          activeTab.database || '',
-          activeTab.schema || '',
-          activeTab.table || '',
+          connId,
+          currentTab.database || '',
+          currentTab.schema || '',
+          currentTab.table || '',
           changeList as any
         );
         useAlertStore.getState().showAlert({
           type: 'success',
           title: 'Changes Applied Successfully',
-          message: `Successfully applied ${affected} change(s) to table "${activeTab.table}".`,
+          message: `Successfully applied ${affected} change(s) to table "${currentTab.table}".`,
         });
-        useGridEditStore.getState().revertTabChanges(activeTab.id);
+        useGridEditStore.getState().revertTabChanges(currentTab.id);
         // Refresh table data
-        if (activeTab.table) {
-          loadTableData(activeTab);
+        if (currentTab.table) {
+          loadTableData(currentTab);
         }
       } catch (e: any) {
         useAlertStore.getState().showAlert({
@@ -1582,7 +1586,7 @@ export function App() {
 
     useAlertStore.getState().showConfirm({
       title: 'Apply Staged Changes?',
-      message: `Are you sure you want to apply ${changeList.length} staged change(s) to table "${activeTab.table}"?`,
+      message: `Are you sure you want to apply ${changeList.length} staged change(s) to table "${currentTab.table}"?`,
       details: summaryParts.join(' • '),
       confirmLabel: 'Apply Changes',
       cancelLabel: 'Cancel',

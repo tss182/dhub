@@ -2667,14 +2667,16 @@ ${setClauses};`;
         stageRowDelete(tabId, idx, {}, {});
         return;
       }
+      const rowInArray = idx >= (startOffset || 0) ? idx - (startOffset || 0) : idx;
+      const targetRow = rows[rowInArray] || rows[idx];
       const pkMap: Record<string, unknown> = {};
       const originalRowValues: Record<string, unknown> = {};
       columns.forEach((c, ci) => {
-        originalRowValues[c.name] = rows[idx]?.[ci];
+        originalRowValues[c.name] = targetRow?.[ci];
       });
       primaryKeys.forEach((pk) => {
         const ci = columns.findIndex((c) => c.name === pk);
-        if (ci !== -1) pkMap[pk] = rows[idx]?.[ci];
+        if (ci !== -1) pkMap[pk] = targetRow?.[ci];
       });
       stageRowDelete(tabId, idx, pkMap, originalRowValues);
     });
