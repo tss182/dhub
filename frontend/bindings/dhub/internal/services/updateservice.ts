@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -24,9 +24,7 @@ export function CancelDownload(): $CancellablePromise<void> {
 }
 
 export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo | null> {
-    return $Call.ByID(3646453635).then(($result: any) => {
-        return $$createType1($result);
-    });
+    return $Call.ByID(3646453635);
 }
 
 /**
@@ -39,7 +37,3 @@ export function DownloadAndStage(downloadURL: string, assetFileName: string): $C
 export function OpenURL(targetURL: string): $CancellablePromise<void> {
     return $Call.ByID(2300841282, targetURL);
 }
-
-// Private type creation functions
-const $$createType0 = $models.UpdateInfo.createFrom;
-const $$createType1 = $Create.Nullable($$createType0);

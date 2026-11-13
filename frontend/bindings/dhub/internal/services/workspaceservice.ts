@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -25,46 +25,32 @@ export function ExportConfig(includeConnections: boolean, includePasswords: bool
     return $Call.ByID(3831336023, includeConnections, includePasswords);
 }
 
-export function GetQueryHistory(connectionID: string, limit: number): $CancellablePromise<store$0.QueryHistoryEntry[]> {
-    return $Call.ByID(659553081, connectionID, limit).then(($result: any) => {
-        return $$createType1($result);
-    });
+export function GetQueryHistory(connectionID: string, limit: number): $CancellablePromise<store$0.QueryHistoryEntry[] | null> {
+    return $Call.ByID(659553081, connectionID, limit);
 }
 
-export function GetSettings(): $CancellablePromise<{ [_ in string]?: string }> {
-    return $Call.ByID(522312764).then(($result: any) => {
-        return $$createType2($result);
-    });
+export function GetSettings(): $CancellablePromise<{ [_ in string]?: string } | null> {
+    return $Call.ByID(522312764);
 }
 
 export function GetWorksheet(id: string): $CancellablePromise<store$0.Worksheet | null> {
-    return $Call.ByID(3848255231, id).then(($result: any) => {
-        return $$createType4($result);
-    });
+    return $Call.ByID(3848255231, id);
 }
 
 export function GetWorkspace(id: string): $CancellablePromise<store$0.WorkspaceSnapshot | null> {
-    return $Call.ByID(980400370, id).then(($result: any) => {
-        return $$createType6($result);
-    });
+    return $Call.ByID(980400370, id);
 }
 
 export function ImportConfig(jsonContent: string, opts: $models.ConfigImportOptions): $CancellablePromise<$models.ConfigImportResult | null> {
-    return $Call.ByID(3770039104, jsonContent, opts).then(($result: any) => {
-        return $$createType8($result);
-    });
+    return $Call.ByID(3770039104, jsonContent, opts);
 }
 
-export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[]> {
-    return $Call.ByID(3290411218, connectionID).then(($result: any) => {
-        return $$createType9($result);
-    });
+export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[] | null> {
+    return $Call.ByID(3290411218, connectionID);
 }
 
-export function ListWorkspaces(): $CancellablePromise<store$0.WorkspaceSnapshot[]> {
-    return $Call.ByID(1872458117).then(($result: any) => {
-        return $$createType10($result);
-    });
+export function ListWorkspaces(): $CancellablePromise<store$0.WorkspaceSnapshot[] | null> {
+    return $Call.ByID(1872458117);
 }
 
 export function ReadConfigFile(filePath: string): $CancellablePromise<string> {
@@ -96,22 +82,5 @@ export function SetActiveWorkspace(id: string): $CancellablePromise<void> {
 }
 
 export function ValidateConfigFile(jsonContent: string): $CancellablePromise<$models.ConfigImportSummary | null> {
-    return $Call.ByID(289571285, jsonContent).then(($result: any) => {
-        return $$createType12($result);
-    });
+    return $Call.ByID(289571285, jsonContent);
 }
-
-// Private type creation functions
-const $$createType0 = store$0.QueryHistoryEntry.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $Create.Map($Create.Any, $Create.Any);
-const $$createType3 = store$0.Worksheet.createFrom;
-const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = store$0.WorkspaceSnapshot.createFrom;
-const $$createType6 = $Create.Nullable($$createType5);
-const $$createType7 = $models.ConfigImportResult.createFrom;
-const $$createType8 = $Create.Nullable($$createType7);
-const $$createType9 = $Create.Array($$createType3);
-const $$createType10 = $Create.Array($$createType5);
-const $$createType11 = $models.ConfigImportSummary.createFrom;
-const $$createType12 = $Create.Nullable($$createType11);
