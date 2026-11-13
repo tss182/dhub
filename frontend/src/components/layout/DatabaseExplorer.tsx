@@ -2052,6 +2052,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                setActiveConnection(c.id, dbName, dbName);
                                 openTab({
                                   id: `table-${c.id}-${dbName}-keys`,
                                   type: 'table_data',
@@ -3514,6 +3515,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   type="button"
                   onClick={() => {
                     closeContextMenu();
+                    setActiveConnection(contextMenu.connection!.id, contextMenu.database!, contextMenu.database!);
                     openTab({
                       id: `table-${contextMenu.connection!.id}-${contextMenu.database}-keys`,
                       type: 'table_data',
