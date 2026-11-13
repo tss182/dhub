@@ -2166,34 +2166,39 @@ export function App() {
                         {tableEnv}
                       </span>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                        openEditTableModal(
-                          conn,
-                          activeTab.database || 'main',
-                          activeTab.schema || 'main',
-                          activeTab.table
-                        );
-                      }}
-                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                      title="Edit Table Structure"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyCurrentTableSchema(activeTab)}
-                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                      title="Copy Table Schema (DDL)"
-                    >
-                      {copiedSchemaTabId === activeTab.id ? (
-                        <Check className="h-3 w-3 text-emerald-400" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
+                    {activeTab.driver?.toLowerCase() !== 'redis' &&
+                      connections.find((c) => c.id === activeTab.connectionId)?.driver?.toLowerCase() !== 'redis' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                              openEditTableModal(
+                                conn,
+                                activeTab.database || 'main',
+                                activeTab.schema || 'main',
+                                activeTab.table
+                              );
+                            }}
+                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title="Edit Table Structure"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyCurrentTableSchema(activeTab)}
+                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title="Copy Table Schema (DDL)"
+                          >
+                            {copiedSchemaTabId === activeTab.id ? (
+                              <Check className="h-3 w-3 text-emerald-400" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </button>
+                        </>
                       )}
-                    </button>
                     <span className="text-zinc-600 shrink-0">/</span>
                     <span
                       className="font-mono text-[11px] text-zinc-400 truncate max-w-[200px]"

@@ -249,6 +249,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   },
 
   openEditTableModal: (conn, database, schema, tableName) => {
+    if (conn?.driver?.toLowerCase() === 'redis') return;
     set({
       tableStructureModal: {
         isOpen: true,
