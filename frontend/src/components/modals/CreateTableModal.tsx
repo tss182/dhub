@@ -29,7 +29,7 @@ import {
   Server,
   Zap,
 } from 'lucide-react';
-import { ConnectionConfig, ColumnMeta, resolveConnectionEnv } from '../../types/domain';
+import { ConnectionConfig, ColumnMeta, CheckConstraintMeta, resolveConnectionEnv } from '../../types/domain';
 import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
@@ -63,6 +63,13 @@ export interface IndexDefinition {
   method: string;
   columns: IndexColumnConfig[];
   comment?: string;
+}
+
+export interface CheckConstraintDefinition {
+  id: string;
+  name: string;
+  originalName?: string;
+  clause: string;
 }
 
 export interface CreateTableModalProps {
@@ -350,6 +357,8 @@ function generateAlterSql({
   columns,
   originalIndexes,
   indexes,
+  originalCheckConstraints = [],
+  checkConstraints = [],
   originalPrimaryKeys,
   originalTableComment,
   tableComment,
@@ -363,6 +372,8 @@ function generateAlterSql({
   columns: ColumnDefinition[];
   originalIndexes: IndexMeta[];
   indexes: IndexDefinition[];
+  originalCheckConstraints?: CheckConstraintMeta[];
+  checkConstraints?: CheckConstraintDefinition[];
   originalPrimaryKeys: string[];
   originalTableComment: string;
   tableComment: string;
@@ -603,6 +614,35 @@ function generateAlterSql({
       statements.push(`CREATE ${uniqueKw}INDEX IF NOT EXISTS "${idxName}" ON ${tableTarget}${methodKw} (${cols});`);
     });
 
+    // PostgreSQL Check Constraints
+    originalCheckConstraints.forEach((origChk) => {
+      const stillExists = checkConstraints.some((c) => c.originalName === origChk.name || c.name === origChk.name);
+      if (!stillExists) {
+        statements.push(`ALTER TABLE ${tableTarget} DROP CONSTRAINT IF EXISTS "${origChk.name}";`);
+      }
+    });
+
+    checkConstraints.forEach((chk) => {
+      if (!chk.clause.trim()) return;
+      const origMatch = originalCheckConstraints.find((o) => o.name === chk.originalName || o.name === chk.name);
+      if (!origMatch) {
+        const namePart = chk.name.trim() ? `CONSTRAINT "${chk.name.trim()}" ` : '';
+        statements.push(`ALTER TABLE ${tableTarget} ADD ${namePart}CHECK (${chk.clause.trim()});`);
+      }
+    });
+
+    // PostgreSQL Comments
+    if (tableComment.trim() !== originalTableComment.trim()) {
+      statements.push(`COMMENT ON TABLE ${tableTarget} IS '${tableComment.trim().replace(/'/g, "''")}';`);
+    }
+
+    validNewCols.forEach((col) => {
+      const orig = originalColumns.find((o) => o.name === col.originalName || o.name === col.name);
+      if (col.comment.trim() && (!orig || orig.comment !== col.comment)) {
+        statements.push(`COMMENT ON COLUMN ${tableTarget}."${col.name.trim()}" IS '${col.comment.trim().replace(/'/g, "''")}';`);
+      }
+    });
+
     if (cleanTable !== initialTableName) {
       statements.push(`ALTER TABLE ${tableTarget} RENAME TO "${cleanTable}";`);
     }
@@ -648,6 +688,8 @@ function generateCreateTableSql({
   tableName,
   columns,
   indexes,
+  checkConstraints = [],
+  isUnlogged = false,
   engine = 'InnoDB',
   charset = 'utf8mb4',
   collation = 'utf8mb4_unicode_ci',
@@ -659,6 +701,8 @@ function generateCreateTableSql({
   tableName: string;
   columns: ColumnDefinition[];
   indexes: IndexDefinition[];
+  checkConstraints?: CheckConstraintDefinition[];
+  isUnlogged?: boolean;
   engine?: string;
   charset?: string;
   collation?: string;
@@ -777,8 +821,31 @@ function generateCreateTableSql({
       lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
     }
 
+    checkConstraints.forEach((chk) => {
+      if (!chk.clause.trim()) return;
+      const namePart = chk.name.trim() ? `CONSTRAINT "${chk.name.trim()}" ` : '';
+      lines.push(`  ${namePart}CHECK (${chk.clause.trim()})`);
+    });
+
     const statements: string[] = [];
-    statements.push(`CREATE TABLE ${schemaPrefix}"${cleanTable}" (\n${lines.join(',\n')}\n);`);
+    const unloggedKeyword = isUnlogged ? 'UNLOGGED ' : '';
+    statements.push(`CREATE ${unloggedKeyword}TABLE ${schemaPrefix}"${cleanTable}" (\n${lines.join(',\n')}\n);`);
+
+    if (tableComment.trim()) {
+      statements.push(
+        `COMMENT ON TABLE ${schemaPrefix}"${cleanTable}" IS '${tableComment.trim().replace(/'/g, "''")}';`
+      );
+    }
+
+    columns.forEach((col) => {
+      if (col.name.trim() && col.comment.trim()) {
+        statements.push(
+          `COMMENT ON COLUMN ${schemaPrefix}"${cleanTable}"."${col.name.trim()}" IS '${col.comment
+            .trim()
+            .replace(/'/g, "''")}';`
+        );
+      }
+    });
 
     indexes.forEach((idx) => {
       const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
@@ -953,6 +1020,7 @@ type SelectedNodeType =
   | { type: 'index'; id: string }
   | { type: 'foreign_keys_folder' }
   | { type: 'checks_folder' }
+  | { type: 'check'; id: string }
   | { type: 'triggers_folder' }
   | { type: 'virtual_columns_folder' }
   | { type: 'virtual_foreign_keys_folder' };
@@ -974,8 +1042,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [engine, setEngine] = useState('InnoDB');
   const [charset, setCharset] = useState('utf8mb4');
   const [collation, setCollation] = useState('utf8mb4_unicode_ci');
+  const [isUnlogged, setIsUnlogged] = useState(false);
   const [columns, setColumns] = useState<ColumnDefinition[]>([]);
   const [indexes, setIndexes] = useState<IndexDefinition[]>([]);
+  const [checkConstraints, setCheckConstraints] = useState<CheckConstraintDefinition[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
   const [draggedColIndex, setDraggedColIndex] = useState<number | null>(null);
@@ -998,6 +1068,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   // States for Edit Mode tracking
   const [originalColumns, setOriginalColumns] = useState<ColumnMeta[]>([]);
   const [originalIndexes, setOriginalIndexes] = useState<IndexMeta[]>([]);
+  const [originalCheckConstraints, setOriginalCheckConstraints] = useState<CheckConstraintMeta[]>([]);
   const [originalPrimaryKeys, setOriginalPrimaryKeys] = useState<string[]>([]);
   const [originalTableComment, setOriginalTableComment] = useState('');
   const [isLoadingStructure, setIsLoadingStructure] = useState(false);
@@ -1135,6 +1206,17 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
             };
           });
           setIndexes(mappedIdxs);
+
+          const chks = structure.checkConstraints || [];
+          setOriginalCheckConstraints(chks);
+          setCheckConstraints(
+            chks.map((chk, i) => ({
+              id: 'chk-' + i + '-' + chk.name,
+              name: chk.name,
+              originalName: chk.name,
+              clause: chk.clause,
+            }))
+          );
         })
         .catch((err) => {
           console.error('Failed to load table structure:', err);
@@ -1152,9 +1234,12 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       setEngine('InnoDB');
       setCharset('utf8mb4');
       setCollation('utf8mb4_unicode_ci');
+      setIsUnlogged(false);
       setIndexes([]);
+      setCheckConstraints([]);
       setOriginalColumns([]);
       setOriginalIndexes([]);
+      setOriginalCheckConstraints([]);
       setOriginalPrimaryKeys([]);
       setOriginalTableComment('');
       setIsLoadingStructure(false);
@@ -1330,6 +1415,31 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   };
 
   // Generate DDL SQL string
+  const handleAddCheckConstraint = () => {
+    const cleanTbl = tableName.trim() || 'tbl';
+    const newId = 'chk-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+    const newChk: CheckConstraintDefinition = {
+      id: newId,
+      name: `chk_${cleanTbl}_${checkConstraints.length + 1}`,
+      clause: '',
+    };
+    setCheckConstraints((prev) => [...prev, newChk]);
+    setSelectedNode({ type: 'check', id: newId });
+    setExpandedFolders((prev) => ({ ...prev, checks: true }));
+  };
+
+  const handleUpdateCheckConstraint = (id: string, updates: Partial<CheckConstraintDefinition>) => {
+    setCheckConstraints((prev) => prev.map((chk) => (chk.id === id ? { ...chk, ...updates } : chk)));
+  };
+
+  const handleRemoveCheckConstraint = (id: string) => {
+    const remaining = checkConstraints.filter((chk) => chk.id !== id);
+    setCheckConstraints(remaining);
+    if (selectedNode.type === 'check' && selectedNode.id === id) {
+      setSelectedNode(remaining.length > 0 ? { type: 'check', id: remaining[0].id } : { type: 'checks_folder' });
+    }
+  };
+
   const generatedSql = useMemo(() => {
     if (isEditMode) {
       return generateAlterSql({
@@ -1342,6 +1452,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         columns,
         originalIndexes,
         indexes,
+        originalCheckConstraints,
+        checkConstraints,
         originalPrimaryKeys,
         originalTableComment,
         tableComment,
@@ -1355,6 +1467,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       tableName,
       columns,
       indexes,
+      checkConstraints,
+      isUnlogged,
       engine,
       charset,
       collation,
@@ -1364,6 +1478,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     tableName,
     columns,
     indexes,
+    checkConstraints,
+    isUnlogged,
     database,
     targetSchema,
     engine,
@@ -1375,6 +1491,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     initialTableName,
     originalColumns,
     originalIndexes,
+    originalCheckConstraints,
     originalPrimaryKeys,
     originalTableComment,
   ]);
@@ -1568,6 +1685,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     selectedNode.type === 'index'
       ? indexes.find((i) => i.id === selectedNode.id) || indexes[0]
       : indexes[0];
+  const activeChk =
+    selectedNode.type === 'check'
+      ? checkConstraints.find((c) => c.id === selectedNode.id) || checkConstraints[0]
+      : checkConstraints[0];
 
   return (
     <div className="fixed inset-0 z-50 bg-[#1e1f22] text-[#bcbec4] flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-100">
@@ -1617,6 +1738,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     onClick={() => {
                       if (selectedNode.type === 'index' || selectedNode.type === 'indexes_folder') {
                         handleAddIndex();
+                      } else if (selectedNode.type === 'check' || selectedNode.type === 'checks_folder') {
+                        handleAddCheckConstraint();
                       } else {
                         handleAddColumn();
                       }
@@ -1635,9 +1758,11 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         handleRemoveColumn(selectedNode.id);
                       } else if (selectedNode.type === 'index') {
                         handleRemoveIndex(selectedNode.id);
+                      } else if (selectedNode.type === 'check') {
+                        handleRemoveCheckConstraint(selectedNode.id);
                       }
                     }}
-                    disabled={selectedNode.type !== 'column' && selectedNode.type !== 'index'}
+                    disabled={selectedNode.type !== 'column' && selectedNode.type !== 'index' && selectedNode.type !== 'check'}
                     className="p-1 rounded text-[#999ca3] hover:text-rose-400 hover:bg-[#35373c] disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
                     title="Remove (Delete)"
                   >
@@ -1966,11 +2091,60 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     )}
                   </div>
 
-                  {/* 6. Static Tree Folders like DataGrip */}
-                  <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
-                    <ChevronRight className="w-3.5 h-3.5 shrink-0" />
-                    <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
-                    <span className="text-[11px]">checks</span>
+                  {/* 6. Checks Folder */}
+                  <div>
+                    <div
+                      onClick={() => {
+                        toggleFolder('checks');
+                        setSelectedNode({ type: 'checks_folder' });
+                      }}
+                      className={`flex items-center justify-between px-3 py-1 cursor-pointer transition-colors ${
+                        selectedNode.type === 'checks_folder'
+                          ? 'bg-[#2e436e] text-white font-medium'
+                          : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 text-[#999ca3] shrink-0 transition-transform ${
+                            expandedFolders.checks ? '' : '-rotate-90'
+                          }`}
+                        />
+                        {expandedFolders.checks ? (
+                          <FolderOpen className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        ) : (
+                          <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        )}
+                        <span className="text-[11px]">checks</span>
+                      </div>
+                      <span className="text-[10px] text-[#999ca3] pr-2 font-mono">
+                        {checkConstraints.length}
+                      </span>
+                    </div>
+
+                    {expandedFolders.checks && (
+                      <div className="pl-6 space-y-0.5 py-0.5">
+                        {checkConstraints.map((chk) => {
+                          const isSelected = selectedNode.type === 'check' && selectedNode.id === chk.id;
+                          return (
+                            <div
+                              key={chk.id}
+                              onClick={() => setSelectedNode({ type: 'check', id: chk.id })}
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded-sm cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-[#2e436e] text-white font-medium'
+                                  : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                              }`}
+                            >
+                              <Check className="w-3 h-3 text-cyan-400 shrink-0" />
+                              <span className="text-[11px] font-mono truncate">
+                                {chk.name}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
@@ -2279,6 +2453,26 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         </div>
                       </>
                     )}
+
+                    {driver === 'postgres' && (
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                        <div />
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={isUnlogged}
+                            onChange={(e) => setIsUnlogged(e.target.checked)}
+                            className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
+                          />
+                          <div>
+                            <span className="text-[#dfe1e5] font-medium">Unlogged Table</span>
+                            <p className="text-[10px] text-[#999ca3]">
+                              Data is not written to WAL (faster writes, but reset on crash).
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -2526,6 +2720,104 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <span className="text-[11px] text-blue-400 font-mono">{idx.type}</span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Case 7: Checks Folder */}
+              {selectedNode.type === 'checks_folder' && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-[#e5a065]" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        Check Constraints ({checkConstraints.length})
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleAddCheckConstraint}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#3574f0] hover:bg-[#3068d9] text-white text-xs font-medium cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Check Constraint</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    {checkConstraints.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-[#999ca3] border border-dashed border-[#393b40] rounded">
+                        No check constraints defined. Click &ldquo;Add Check Constraint&rdquo; to create one.
+                      </div>
+                    ) : (
+                      checkConstraints.map((chk) => (
+                        <div
+                          key={chk.id}
+                          onClick={() => setSelectedNode({ type: 'check', id: chk.id })}
+                          className="flex items-center justify-between p-2 rounded hover:bg-[#2b2d30] border border-[#393b40]/50 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2 font-mono text-xs">
+                            <Check className="w-3 h-3 text-cyan-400" />
+                            <span className="font-semibold text-[#dfe1e5]">{chk.name}</span>
+                            <span className="text-[#999ca3] truncate max-w-md">
+                              CHECK ({chk.clause || '...'})
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Case 8: Check Constraint Properties */}
+              {selectedNode.type === 'check' && activeChk && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-cyan-400" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        {activeChk.name || 'unnamed_check'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCheckConstraint(activeChk.id)}
+                      className="p-1 rounded text-[#999ca3] hover:text-rose-400 hover:bg-[#35373c] transition-colors cursor-pointer"
+                      title="Delete Check Constraint"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Constraint Name</label>
+                      <input
+                        type="text"
+                        value={activeChk.name}
+                        onChange={(e) => handleUpdateCheckConstraint(activeChk.id, { name: e.target.value })}
+                        placeholder="e.g. chk_price_positive"
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-start gap-4">
+                      <label className="text-[#999ca3] font-medium pt-1">Condition (Clause) *</label>
+                      <div className="space-y-1">
+                        <textarea
+                          rows={3}
+                          value={activeChk.clause}
+                          onChange={(e) => handleUpdateCheckConstraint(activeChk.id, { clause: e.target.value })}
+                          placeholder="e.g. price > 0 AND quantity >= 0"
+                          className="w-full p-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-xs leading-relaxed"
+                        />
+                        <p className="text-[10px] text-[#999ca3]">
+                          Enter the boolean expression evaluated on INSERT and UPDATE.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

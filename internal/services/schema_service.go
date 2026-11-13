@@ -242,6 +242,8 @@ type BackupOptions struct {
 	Mode              string   `json:"mode"`              // "full", "schema_only", "data_only"
 	TableSelection    string   `json:"tableSelection"`    // "all", "include", "exclude"
 	Tables            []string `json:"tables"`            // list of tables
+	Schema            string   `json:"schema,omitempty"`  // specific schema for postgres -n
+	Format            string   `json:"format,omitempty"`  // "plain", "custom", "tar"
 	IncludeRoutines   bool     `json:"includeRoutines"`   // mysqldump --routines
 	IncludeTriggers   bool     `json:"includeTriggers"`   // mysqldump --triggers
 	IncludeEvents     bool     `json:"includeEvents"`     // mysqldump --events
@@ -274,16 +276,6 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 	if filePath == "" {
 		filePath, _ = s.GetDefaultBackupPath(database)
 	}
-	if !strings.HasSuffix(strings.ToLower(filePath), ".sql") {
-		filePath += ".sql"
-	}
-
-	if dir := filepath.Dir(filePath); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", fmt.Errorf("failed to create backup directory: %w", err)
-		}
-	}
-
 	opts := BackupOptions{
 		Mode:              "full",
 		TableSelection:    "all",
@@ -294,6 +286,17 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 	}
 	if strings.TrimSpace(optionsJSON) != "" {
 		_ = json.Unmarshal([]byte(optionsJSON), &opts)
+	}
+
+	lowerPath := strings.ToLower(filePath)
+	if !strings.HasSuffix(lowerPath, ".sql") && !strings.HasSuffix(lowerPath, ".dump") && !strings.HasSuffix(lowerPath, ".backup") && !strings.HasSuffix(lowerPath, ".tar") {
+		if opts.Format == "custom" {
+			filePath += ".dump"
+		} else if opts.Format == "tar" {
+			filePath += ".tar"
+		} else {
+			filePath += ".sql"
+		}
 	}
 
 	// Filter empty table names
@@ -455,11 +458,24 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			"-f", filePath,
 		}
 
+		lowerPath := strings.ToLower(filePath)
+		if opts.Format == "custom" || strings.HasSuffix(lowerPath, ".dump") || strings.HasSuffix(lowerPath, ".backup") {
+			args = append(args, "-F", "c")
+		} else if opts.Format == "tar" || strings.HasSuffix(lowerPath, ".tar") {
+			args = append(args, "-F", "t")
+		} else {
+			args = append(args, "-F", "p")
+		}
+
 		switch opts.Mode {
 		case "schema_only":
 			args = append(args, "--schema-only")
 		case "data_only":
 			args = append(args, "--data-only")
+		}
+
+		if opts.Schema != "" && opts.Schema != "main" && opts.Schema != "all" {
+			args = append(args, "-n", opts.Schema)
 		}
 
 		if opts.TableSelection == "include" {
@@ -637,10 +653,20 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 		}
 
 	case "postgres":
-		binPath, err := exec.LookPath("psql")
-		if err != nil {
-			return "", fmt.Errorf("psql executable not found in PATH; please install postgresql-client")
+		isCustomFormat := strings.HasSuffix(strings.ToLower(filePath), ".dump") ||
+			strings.HasSuffix(strings.ToLower(filePath), ".backup") ||
+			strings.HasSuffix(strings.ToLower(filePath), ".tar")
+
+		if !isCustomFormat {
+			if f, err := os.Open(filePath); err == nil {
+				hdr := make([]byte, 5)
+				if n, _ := f.Read(hdr); n >= 5 && string(hdr[:5]) == "PGDMP" {
+					isCustomFormat = true
+				}
+				_ = f.Close()
+			}
 		}
+
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
 			host = "localhost"
@@ -654,27 +680,62 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 			user = "postgres"
 		}
 
-		args := []string{
-			"-h", host,
-			"-p", strconv.Itoa(port),
-			"-U", user,
-			"-d", database,
-			"-f", filePath,
-		}
-		cmd := exec.CommandContext(ctx, binPath, args...)
-		cmd.Env = os.Environ()
-		if conn.Password != "" {
-			cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
-		}
-		if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
-			cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
-		}
-		if out, err := cmd.CombinedOutput(); err != nil {
-			msg := strings.TrimSpace(string(out))
-			if msg == "" {
-				msg = err.Error()
+		if isCustomFormat {
+			binPath, err := exec.LookPath("pg_restore")
+			if err != nil {
+				return "", fmt.Errorf("pg_restore executable not found in PATH; please install postgresql-client")
 			}
-			return "", fmt.Errorf("psql restore failed: %s", msg)
+			args := []string{
+				"-h", host,
+				"-p", strconv.Itoa(port),
+				"-U", user,
+				"-d", database,
+				"--no-owner",
+				"--no-acl",
+				filePath,
+			}
+			cmd := exec.CommandContext(ctx, binPath, args...)
+			cmd.Env = os.Environ()
+			if conn.Password != "" {
+				cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
+			}
+			if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
+				cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
+			}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				msg := strings.TrimSpace(string(out))
+				if msg == "" {
+					msg = err.Error()
+				}
+				return "", fmt.Errorf("pg_restore failed: %s", msg)
+			}
+		} else {
+			binPath, err := exec.LookPath("psql")
+			if err != nil {
+				return "", fmt.Errorf("psql executable not found in PATH; please install postgresql-client")
+			}
+			args := []string{
+				"-h", host,
+				"-p", strconv.Itoa(port),
+				"-U", user,
+				"-d", database,
+				"-f", filePath,
+			}
+			cmd := exec.CommandContext(ctx, binPath, args...)
+			cmd.Env = os.Environ()
+			if conn.Password != "" {
+				cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
+			}
+			if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
+				cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
+			}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				msg := strings.TrimSpace(string(out))
+				if msg == "" {
+					msg = err.Error()
+				}
+				return "", fmt.Errorf("psql restore failed: %s", msg)
+			}
 		}
 
 	case "sqlite":

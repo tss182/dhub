@@ -39,6 +39,11 @@ import {
   ArrowRightLeft,
   Key,
   Activity,
+  Hash,
+  Sparkles,
+  Clock,
+  Eraser,
+  Wrench,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -1105,22 +1110,38 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     sourceSchema: string,
     table: ObjectSummary
   ) => {
-    let schemas = treeSchemas[`${conn.id}:${database}`] || [];
-    if (schemas.length === 0) {
-      try {
-        schemas = (await SchemaService.GetSchemas(conn.id, database)) ?? [];
-      } catch {
-        schemas = ['public'];
+    const isMySQL = conn.driver === 'mysql' || conn.driver === 'mariadb';
+    let schemas: string[] = [];
+
+    if (isMySQL) {
+      schemas = treeDatabases[conn.id] || [];
+      if (schemas.length === 0) {
+        try {
+          schemas = (await SchemaService.GetDatabases(conn.id)) ?? [];
+        } catch {
+          schemas = [database];
+        }
+      }
+    } else {
+      schemas = treeSchemas[`${conn.id}:${database}`] || [];
+      if (schemas.length === 0) {
+        try {
+          schemas = (await SchemaService.GetSchemas(conn.id, database)) ?? [];
+        } catch {
+          schemas = ['public'];
+        }
       }
     }
-    const otherSchemas = schemas.filter((s) => s !== sourceSchema);
+
+    const currentSource = isMySQL ? (database || sourceSchema) : sourceSchema;
+    const otherSchemas = schemas.filter((s) => s !== currentSource);
     const defaultTarget = otherSchemas.length > 0 ? otherSchemas[0] : '';
 
     setMoveTableModal({
       isOpen: true,
       connection: conn,
       database,
-      sourceSchema,
+      sourceSchema: currentSource,
       tableName: table.name,
       targetSchema: defaultTarget,
       objectType: table.type || 'table',
@@ -1143,10 +1164,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const targetSchema = rawTarget.trim();
 
     if (targetSchema === sourceSchema) {
-      alertWarning('Target collection/schema must be different from current schema.', 'Same Schema');
+      alertWarning('Target collection/schema/database must be different from current.', 'Same Target');
       return;
     }
 
+    const isMySQL = conn.driver === 'mysql' || conn.driver === 'mariadb';
     let keyword = 'TABLE';
     if (objectType === 'view') {
       keyword = 'VIEW';
@@ -1156,7 +1178,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       keyword = 'SEQUENCE';
     }
 
-    const sql = `ALTER ${keyword} "${sourceSchema}"."${tableName}" SET SCHEMA "${targetSchema}";`;
+    let sql = '';
+    if (isMySQL) {
+      sql = `RENAME TABLE \`${sourceSchema}\`.\`${tableName}\` TO \`${targetSchema}\`.\`${tableName}\`;`;
+    } else {
+      sql = `ALTER ${keyword} "${sourceSchema}"."${tableName}" SET SCHEMA "${targetSchema}";`;
+    }
 
     try {
       const execId = 'move-table-' + Date.now();
@@ -1170,24 +1197,30 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         offset: 0,
       } as any);
 
-      // Update tree: remove from old schema
-      const oldKey = `${conn.id}:${db}:${sourceSchema}`;
-      removeTreeObject(oldKey, tableName);
+      if (isMySQL) {
+        removeTreeObject(`${conn.id}:${sourceSchema}:${sourceSchema}`, tableName);
+        handleRefreshDatabase(conn.id, sourceSchema);
+        handleRefreshDatabase(conn.id, targetSchema);
+      } else {
+        // Update tree: remove from old schema
+        const oldKey = `${conn.id}:${db}:${sourceSchema}`;
+        removeTreeObject(oldKey, tableName);
 
-      // Refresh both source and target schema objects
-      const [oldObjs, newObjs] = await Promise.all([
-        SchemaService.GetObjects(conn.id, db, sourceSchema).catch(() => null),
-        SchemaService.GetObjects(conn.id, db, targetSchema).catch(() => null),
-      ]);
-      if (oldObjs) setTreeObjects(oldKey, oldObjs as any);
-      if (newObjs) setTreeObjects(`${conn.id}:${db}:${targetSchema}`, newObjs as any);
+        // Refresh both source and target schema objects
+        const [oldObjs, newObjs] = await Promise.all([
+          SchemaService.GetObjects(conn.id, db, sourceSchema).catch(() => null),
+          SchemaService.GetObjects(conn.id, db, targetSchema).catch(() => null),
+        ]);
+        if (oldObjs) setTreeObjects(oldKey, oldObjs as any);
+        if (newObjs) setTreeObjects(`${conn.id}:${db}:${targetSchema}`, newObjs as any);
 
-      // Ensure treeSchemas has targetSchema if it was new
-      const dbKey = `${conn.id}:${db}`;
-      const currSchemas = treeSchemas[dbKey] || [];
-      if (!currSchemas.includes(targetSchema)) {
-        const refreshedSchemas = (await SchemaService.GetSchemas(conn.id, db)) ?? [];
-        setTreeSchemas((prev) => ({ ...prev, [dbKey]: refreshedSchemas }));
+        // Ensure treeSchemas has targetSchema if it was new
+        const dbKey = `${conn.id}:${db}`;
+        const currSchemas = treeSchemas[dbKey] || [];
+        if (!currSchemas.includes(targetSchema)) {
+          const refreshedSchemas = (await SchemaService.GetSchemas(conn.id, db)) ?? [];
+          setTreeSchemas((prev) => ({ ...prev, [dbKey]: refreshedSchemas }));
+        }
       }
 
       setMoveTableModal({
@@ -1438,6 +1471,152 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       );
     } catch (err: any) {
       alertError(err?.message || String(err), isRedis ? 'Failed to Delete Key' : `Failed to Drop ${keyword}`);
+    }
+  };
+
+  const handleTruncateTable = async (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    obj: ObjectSummary
+  ) => {
+    if (obj.type === 'view' || obj.type === 'materialized_view') {
+      alertWarning('Views cannot be truncated. Use Drop View instead.', 'Cannot Truncate View');
+      return;
+    }
+
+    const ok = await confirmDialog({
+      title: 'Truncate Table',
+      message: `Are you sure you want to TRUNCATE table "${obj.name}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
+      confirmLabel: 'Truncate Table',
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    let sql = '';
+    if (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse') {
+      const dbPrefix = db && db !== 'main' ? `\`${db}\`.` : '';
+      sql = `TRUNCATE TABLE ${dbPrefix}\`${obj.name}\`;`;
+    } else if (conn.driver === 'postgres') {
+      const sch = schema || 'public';
+      sql = `TRUNCATE TABLE "${sch}"."${obj.name}" RESTART IDENTITY;`;
+    } else if (conn.driver === 'mssql') {
+      const sch = schema || 'dbo';
+      sql = `TRUNCATE TABLE [${sch}].[${obj.name}];`;
+    } else if (conn.driver === 'sqlite') {
+      sql = `DELETE FROM "${obj.name}"; DELETE FROM sqlite_sequence WHERE name = '${obj.name}';`;
+    } else if (conn.driver === 'mongodb') {
+      sql = `db.${obj.name}.deleteMany({});`;
+    } else {
+      sql = `TRUNCATE TABLE "${obj.name}";`;
+    }
+
+    try {
+      const execId = 'truncate-table-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      // Refresh table structure / metadata
+      const schemaKey = `${conn.id}:${db}:${schema}`;
+      SchemaService.GetObjects(conn.id, db, schema)
+        .then((objs) => {
+          if (objs) setTreeObjects(schemaKey, objs as any);
+        })
+        .catch(() => {});
+
+      alertSuccess(`Table "${obj.name}" was truncated successfully.`, 'Table Truncated');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Truncate Table');
+    }
+  };
+
+  const handleTableMaintenance = async (
+    conn: ConnectionConfig,
+    db: string,
+    table: string,
+    action: 'OPTIMIZE' | 'ANALYZE' | 'CHECK' | 'REPAIR'
+  ) => {
+    const dbPrefix = db && db !== 'main' ? `\`${db}\`.` : '';
+    const sql = `${action} TABLE ${dbPrefix}\`${table}\`;`;
+
+    try {
+      const execId = `maint-${action.toLowerCase()}-${Date.now()}`;
+      const res = await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema: db,
+        sql,
+        limit: 100,
+        offset: 0,
+      } as any);
+
+      if (res?.error) {
+        alertError(`Failed to ${action.toLowerCase()} table: ${res.error}`, `${action} Table Failed`);
+        return;
+      }
+
+      alertSuccess(`Table "${table}": ${action} TABLE completed successfully.`, `${action} Table Completed`);
+    } catch (err: any) {
+      alertError(err?.message || String(err), `Failed to ${action} Table`);
+    }
+  };
+
+  const handleEventClick = (
+    conn: ConnectionConfig,
+    db: string,
+    eventName: string
+  ) => {
+    const content = `-- Scheduled Event: ${eventName}\n-- Connection: ${conn.name} | Database: ${db}\n\n-- 1. View event definition:\nSHOW CREATE EVENT \`${db}\`.\`${eventName}\`;\n\n-- 2. Alter event status:\n-- ALTER EVENT \`${db}\`.\`${eventName}\` DISABLE;\n-- ALTER EVENT \`${db}\`.\`${eventName}\` ENABLE;\n`;
+
+    openTab({
+      id: `event-${conn.id}-${db}-${eventName}`,
+      type: 'worksheet',
+      title: `${eventName}.sql`,
+      connectionId: conn.id,
+      database: db,
+      schema: db,
+      content,
+    });
+  };
+
+  const handleDeleteEvent = async (
+    conn: ConnectionConfig,
+    db: string,
+    eventName: string
+  ) => {
+    const ok = await confirmDialog({
+      title: 'Drop Event',
+      message: `Are you sure you want to DROP scheduled event "${eventName}"? This action cannot be undone.`,
+      confirmLabel: 'Drop Event',
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    const sql = `DROP EVENT \`${db}\`.\`${eventName}\`;`;
+    try {
+      const execId = 'drop-event-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema: db,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      alertSuccess(`Event "${eventName}" dropped successfully.`, 'Event Dropped');
+      handleRefreshDatabase(conn.id, db);
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Drop Event');
     }
   };
 
@@ -2020,11 +2199,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   const tables =
                     c.driver === 'redis'
                       ? baseList
-                      : baseList.filter((o) => o.type === 'table' || (!o.type && o.type !== 'view'));
+                      : baseList.filter((o) => o.type === 'table' || (!o.type && !['view', 'materialized_view', 'routine', 'trigger', 'event', 'sequence', 'extension'].includes(o.type)));
                   const views = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'view');
                   const matViews = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'materialized_view');
                   const routines = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'routine');
                   const triggers = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'trigger');
+                  const events = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'event');
                   const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
 
                   return (
@@ -2147,11 +2327,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                 ? sAllObjects.filter((o) => o.name.toLowerCase().includes(filterLower))
                                 : sAllObjects;
                               const sBaseList = filterLower && !dbMatches ? sMatchingObjects : sAllObjects;
-                              const sTables = sBaseList.filter((o) => o.type === 'table' || (!o.type && o.type !== 'view'));
+                              const sTables = sBaseList.filter((o) => o.type === 'table' || (!o.type && !['view', 'materialized_view', 'routine', 'trigger', 'event', 'sequence', 'extension'].includes(o.type)));
                               const sViews = sBaseList.filter((o) => o.type === 'view');
                               const sMatViews = sBaseList.filter((o) => o.type === 'materialized_view');
                               const sRoutines = sBaseList.filter((o) => o.type === 'routine');
                               const sTriggers = sBaseList.filter((o) => o.type === 'trigger');
+                              const sEvents = sBaseList.filter((o) => o.type === 'event');
                               const isSchemaActive = activeConnectionId === c.id && activeDatabase === dbName && activeSchema === sName;
 
                               return (
@@ -2585,6 +2766,47 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                           ))}
                                         </>
                                       )}
+
+                                      {sEvents.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>scheduled events ({sEvents.length})</span>
+                                          </div>
+                                          {sEvents.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              onClick={() => {
+                                                handleItemMouseLeave();
+                                                handleEventClick(c, dbName, obj.name);
+                                              }}
+                                              onContextMenu={(e) => {
+                                                handleItemMouseLeave();
+                                                openContextMenu(e, 'table', {
+                                                  connection: c,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  table: obj,
+                                                });
+                                              }}
+                                              onMouseEnter={(e) =>
+                                                handleItemMouseEnter(e, {
+                                                  kind: 'table',
+                                                  title: obj.name,
+                                                  badge: 'EVENT',
+                                                  subtitle: `${c.name} / ${dbName}.${sName}${obj.comment ? ` • ${obj.comment}` : ''}`,
+                                                })
+                                              }
+                                              onMouseLeave={handleItemMouseLeave}
+                                              title={obj.comment ? `${obj.name} (${obj.comment})` : obj.name}
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <Clock className="h-3 w-3 shrink-0 text-cyan-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -2825,6 +3047,47 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                       className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                     >
                                       <Zap className="h-3 w-3 shrink-0 text-rose-400" />
+                                      <span className="truncate">{obj.name}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+
+                              {events.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                    <Folder className="h-2.5 w-2.5" />
+                                    <span>scheduled events ({events.length})</span>
+                                  </div>
+                                  {events.map((obj) => (
+                                    <div
+                                      key={obj.name}
+                                      onClick={() => {
+                                        handleItemMouseLeave();
+                                        handleEventClick(c, dbName, obj.name);
+                                      }}
+                                      onContextMenu={(e) => {
+                                        handleItemMouseLeave();
+                                        openContextMenu(e, 'table', {
+                                          connection: c,
+                                          database: dbName,
+                                          schema: targetSchema,
+                                          table: obj,
+                                        });
+                                      }}
+                                      onMouseEnter={(e) =>
+                                        handleItemMouseEnter(e, {
+                                          kind: 'table',
+                                          title: obj.name,
+                                          badge: 'EVENT',
+                                          subtitle: `${c.name} / ${dbName}${obj.comment ? ` • ${obj.comment}` : ''}`,
+                                        })
+                                      }
+                                      onMouseLeave={handleItemMouseLeave}
+                                      title={obj.comment ? `${obj.name} (${obj.comment})` : obj.name}
+                                      className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                    >
+                                      <Clock className="h-3 w-3 shrink-0 text-cyan-400" />
                                       <span className="truncate">{obj.name}</span>
                                     </div>
                                   ))}
@@ -3277,6 +3540,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     ? 'Routine'
                     : contextMenu.table?.type === 'trigger'
                     ? 'Trigger'
+                    : contextMenu.table?.type === 'event'
+                    ? 'Scheduled Event'
                     : contextMenu.table?.type === 'materialized_view'
                     ? 'Mat View'
                     : contextMenu.table?.type === 'view'
@@ -4012,6 +4277,51 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     <span>Drop Trigger...</span>
                   </button>
                 </>
+              ) : contextMenu.table.type === 'event' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleEventClick(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Clock className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                    <span>Open Event Definition</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(contextMenu.table!.name)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Copy Event Name</span>
+                  </button>
+
+                  <div className="my-1 border-t border-[#272932]" />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteEvent(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Drop Event...</span>
+                  </button>
+                </>
               ) : contextMenu.connection.driver === 'redis' ? (
                 <>
                   <button
@@ -4204,22 +4514,22 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     <span>Copy Table Schema (DDL)</span>
                   </button>
 
-                  {contextMenu.connection!.driver === 'postgres' && !contextMenu.connection!.isReadOnly && (
+                  {(contextMenu.connection!.driver === 'postgres' || contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && !contextMenu.connection!.isReadOnly && (
                     <button
                       type="button"
                       onClick={() => {
                         closeContextMenu();
                         handleOpenMoveTable(
                           contextMenu.connection!,
-                          contextMenu.database || 'postgres',
-                          contextMenu.schema || 'public',
+                          contextMenu.database || (contextMenu.connection!.driver === 'postgres' ? 'postgres' : 'mysql'),
+                          contextMenu.schema || (contextMenu.connection!.driver === 'postgres' ? 'public' : contextMenu.database || 'mysql'),
                           contextMenu.table!
                         );
                       }}
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                     >
                       <ArrowRightLeft className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
-                      <span>Move to Another Collection / Schema...</span>
+                      <span>Move to Another {contextMenu.connection!.driver === 'postgres' ? 'Collection / Schema' : 'Database'}...</span>
                     </button>
                   )}
 
@@ -4269,7 +4579,90 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     </button>
                   )}
 
+                  {(contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
+                    <>
+                      <div className="my-1 border-t border-[#272932]" />
+                      <div className="px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Table Maintenance
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || 'main';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          handleTableMaintenance(conn, db, tbl, 'OPTIMIZE');
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                      >
+                        <Wrench className="h-3 w-3 text-cyan-400 group-hover:text-white" />
+                        <span>Optimize Table</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || 'main';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          handleTableMaintenance(conn, db, tbl, 'ANALYZE');
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                      >
+                        <Activity className="h-3 w-3 text-indigo-400 group-hover:text-white" />
+                        <span>Analyze Table</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || 'main';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          handleTableMaintenance(conn, db, tbl, 'CHECK');
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                      >
+                        <Check className="h-3 w-3 text-emerald-400 group-hover:text-white" />
+                        <span>Check Table</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || 'main';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          handleTableMaintenance(conn, db, tbl, 'REPAIR');
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                      >
+                        <RefreshCw className="h-3 w-3 text-amber-400 group-hover:text-white" />
+                        <span>Repair Table</span>
+                      </button>
+                    </>
+                  )}
+
                   <div className="my-1 border-t border-[#272932]" />
+
+                  {contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const conn = contextMenu.connection!;
+                        const db = contextMenu.database || 'main';
+                        const sch = contextMenu.schema || 'main';
+                        const tbl = contextMenu.table!;
+                        closeContextMenu();
+                        handleTruncateTable(conn, db, sch, tbl);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                    >
+                      <Eraser className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                      <span>Truncate Table...</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -5191,7 +5584,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 </div>
                 <div>
                   <h3 className="text-base font-semibold text-zinc-100">
-                    Move {moveTableModal.objectType === 'view' ? 'View' : 'Table'} to Another Collection
+                    Move {moveTableModal.objectType === 'view' ? 'View' : 'Table'} to Another {(moveTableModal.connection?.driver === 'mysql' || moveTableModal.connection?.driver === 'mariadb') ? 'Database' : 'Collection'}
                   </h3>
                   <p className="text-[11px] text-zinc-400">
                     Database: <span className="font-mono text-zinc-200">{moveTableModal.database}</span>
@@ -5214,7 +5607,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   <span className="font-mono text-zinc-100 font-semibold">{moveTableModal.tableName}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-400">Current Collection:</span>
+                  <span className="text-zinc-400">Current {(moveTableModal.connection?.driver === 'mysql' || moveTableModal.connection?.driver === 'mariadb') ? 'Database' : 'Collection'}:</span>
                   <span className="font-mono text-cyan-300 bg-cyan-950/50 border border-cyan-800/50 px-2 py-0.5 rounded text-[11px]">
                     {moveTableModal.sourceSchema}
                   </span>
@@ -5223,7 +5616,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                  Target Collection / Schema <span className="text-rose-400">*</span>
+                  Target {(moveTableModal.connection?.driver === 'mysql' || moveTableModal.connection?.driver === 'mariadb') ? 'Database' : 'Collection / Schema'} <span className="text-rose-400">*</span>
                 </label>
                 <div className="space-y-2">
                   <select
@@ -5233,7 +5626,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     }
                     className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 focus:border-cyan-500 focus:outline-none font-mono transition-colors"
                   >
-                    <option value="" disabled>-- Select a target schema / collection --</option>
+                    <option value="" disabled>-- Select a target {(moveTableModal.connection?.driver === 'mysql' || moveTableModal.connection?.driver === 'mariadb') ? 'database' : 'schema / collection'} --</option>
                     {moveTableModal.availableSchemas.map((s) => (
                       <option key={s} value={s} disabled={s === moveTableModal.sourceSchema}>
                         {s} {s === moveTableModal.sourceSchema ? '(Current)' : ''}
@@ -5242,11 +5635,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   </select>
 
                   <div className="text-[11px] text-zinc-400">
-                    Or enter another schema name:
+                    Or enter another {(moveTableModal.connection?.driver === 'mysql' || moveTableModal.connection?.driver === 'mariadb') ? 'database' : 'schema'} name:
                   </div>
                   <input
                     type="text"
-                    placeholder="Enter schema name"
+                    placeholder={(moveTableModal.connection?.driver === 'mysql' || moveTableModal.connection?.driver === 'mariadb') ? 'Enter database name' : 'Enter schema name'}
                     value={moveTableModal.targetSchema}
                     onChange={(e) =>
                       setMoveTableModal((prev) => ({ ...prev, targetSchema: e.target.value }))
@@ -5255,7 +5648,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   />
                 </div>
                 <p className="mt-1.5 text-[11px] text-zinc-500 font-mono">
-                  ALTER TABLE "{moveTableModal.sourceSchema}"."{moveTableModal.tableName}" SET SCHEMA "{moveTableModal.targetSchema || '...'}"
+                  {(moveTableModal.connection?.driver === 'mysql' || moveTableModal.connection?.driver === 'mariadb')
+                    ? `RENAME TABLE \`${moveTableModal.sourceSchema}\`.\`${moveTableModal.tableName}\` TO \`${moveTableModal.targetSchema || '...'}\`.\`${moveTableModal.tableName}\`;`
+                    : `ALTER TABLE "${moveTableModal.sourceSchema}"."${moveTableModal.tableName}" SET SCHEMA "${moveTableModal.targetSchema || '...'}"`}
                 </p>
               </div>
 

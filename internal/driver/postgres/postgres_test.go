@@ -50,6 +50,10 @@ func TestGeneratePostgresDDLIncludesIndexesAndFKRules(t *testing.T) {
 			RefSchema: "public", RefTable: "users", RefColumn: "id",
 			OnUpdate: "NO ACTION", OnDelete: "CASCADE",
 		}},
+		CheckConstraints: []driver.CheckConstraintMeta{
+			{Name: "posts_user_id_positive", Clause: "user_id > 0"},
+		},
+		Comment: "User posts table",
 		Indexes: []driver.IndexMeta{
 			{Name: "posts_pkey", Columns: []string{"id"}, IsPrimary: true, Method: "btree"},
 			{Name: "idx_posts_user", Columns: []string{"user_id"}, IsUnique: true, Method: "btree"},
@@ -60,6 +64,8 @@ func TestGeneratePostgresDDLIncludesIndexesAndFKRules(t *testing.T) {
 
 	for _, want := range []string{
 		`ON DELETE CASCADE`,
+		`CONSTRAINT "posts_user_id_positive" CHECK (user_id > 0)`,
+		`COMMENT ON TABLE "posts" IS 'User posts table';`,
 		`CREATE UNIQUE INDEX "idx_posts_user" ON "posts" ("user_id");`,
 		`CREATE INDEX "idx_posts_gin" ON "posts" USING gin ("user_id");`,
 	} {
