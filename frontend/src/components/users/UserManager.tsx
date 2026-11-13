@@ -202,27 +202,63 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     try {
       if (isMySQLLike(connection.driver)) {
         let res: any = null;
-        try {
-          res = await QueryService.ExecuteQuery({
-            executionId: execId,
-            connectionId: connection.id,
-            database: targetDb,
-            schema: targetSchema,
-            sql: `SELECT user, host, account_locked, plugin FROM mysql.user ORDER BY user, host;`,
-            limit: 500,
-            offset: 0,
-          } as any);
-        } catch {
-          // Fallback if older MySQL without account_locked or plugin
-          res = await QueryService.ExecuteQuery({
-            executionId: `${execId}-fallback`,
-            connectionId: connection.id,
-            database: targetDb,
-            schema: targetSchema,
-            sql: `SELECT user, host FROM mysql.user ORDER BY user, host;`,
-            limit: 500,
-            offset: 0,
-          } as any);
+        if (connection.driver === 'mariadb') {
+          try {
+            res = await QueryService.ExecuteQuery({
+              executionId: execId,
+              connectionId: connection.id,
+              database: targetDb,
+              schema: targetSchema,
+              sql: `SELECT User, Host, IF(JSON_VALUE(Priv, '$.account_locked') IN ('1', 'true'), 'Y', 'N') AS account_locked, COALESCE(JSON_VALUE(Priv, '$.plugin'), '') AS plugin FROM mysql.global_priv ORDER BY User, Host;`,
+              limit: 500,
+              offset: 0,
+            } as any);
+          } catch {
+            try {
+              res = await QueryService.ExecuteQuery({
+                executionId: `${execId}-user`,
+                connectionId: connection.id,
+                database: targetDb,
+                schema: targetSchema,
+                sql: `SELECT User, Host, 'N' AS account_locked, plugin FROM mysql.user ORDER BY User, Host;`,
+                limit: 500,
+                offset: 0,
+              } as any);
+            } catch {
+              res = await QueryService.ExecuteQuery({
+                executionId: `${execId}-fallback`,
+                connectionId: connection.id,
+                database: targetDb,
+                schema: targetSchema,
+                sql: `SELECT User, Host FROM mysql.user ORDER BY User, Host;`,
+                limit: 500,
+                offset: 0,
+              } as any);
+            }
+          }
+        } else {
+          try {
+            res = await QueryService.ExecuteQuery({
+              executionId: execId,
+              connectionId: connection.id,
+              database: targetDb,
+              schema: targetSchema,
+              sql: `SELECT user, host, account_locked, plugin FROM mysql.user ORDER BY user, host;`,
+              limit: 500,
+              offset: 0,
+            } as any);
+          } catch {
+            // Fallback if older MySQL without account_locked or plugin
+            res = await QueryService.ExecuteQuery({
+              executionId: `${execId}-fallback`,
+              connectionId: connection.id,
+              database: targetDb,
+              schema: targetSchema,
+              sql: `SELECT user, host FROM mysql.user ORDER BY user, host;`,
+              limit: 500,
+              offset: 0,
+            } as any);
+          }
         }
 
         if (res && res.rows) {

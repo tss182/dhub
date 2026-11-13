@@ -1622,17 +1622,104 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
+  const handleSequenceClick = (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    seqName: string
+  ) => {
+    let content = `-- Sequence: ${seqName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
+    if (conn.driver === 'mariadb') {
+      content += `-- 1. View sequence definition:\nSHOW CREATE SEQUENCE \`${db}\`.\`${seqName}\`;\n\n-- 2. Get next value / last value:\n-- SELECT NEXT VALUE FOR \`${db}\`.\`${seqName}\`;\n-- SELECT LASTVAL(\`${db}\`.\`${seqName}\`);\n`;
+    } else if (conn.driver === 'postgres') {
+      content += `-- 1. View sequence state:\nSELECT * FROM "${schema}"."${seqName}";\n\n-- 2. Get next value:\n-- SELECT nextval('"${schema}"."${seqName}"');\n`;
+    } else if (conn.driver === 'mssql') {
+      content += `-- 1. View sequence metadata:\nSELECT * FROM sys.sequences WHERE name = '${seqName}';\n\n-- 2. Get next value:\n-- SELECT NEXT VALUE FOR [${schema}].[${seqName}];\n`;
+    } else {
+      content += `-- Sequence inspection for ${conn.driver}\nSELECT '${seqName}';\n`;
+    }
+
+    openTab({
+      id: `sequence-${conn.id}-${db}-${schema}-${seqName}`,
+      type: 'worksheet',
+      title: `${seqName}.sql`,
+      connectionId: conn.id,
+      database: db,
+      schema: schema,
+      content,
+    });
+  };
+
+  const handleDeleteSequence = async (
+    conn: ConnectionConfig,
+    db: string,
+    schema: string,
+    seqName: string
+  ) => {
+    const ok = await confirmDialog({
+      title: 'Drop Sequence',
+      message: `Are you sure you want to DROP sequence "${seqName}"? This action cannot be undone.`,
+      confirmLabel: 'Drop Sequence',
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    let sql = '';
+    if (conn.driver === 'mariadb' || conn.driver === 'mysql') {
+      sql = `DROP SEQUENCE IF EXISTS \`${db}\`.\`${seqName}\`;`;
+    } else if (conn.driver === 'postgres') {
+      sql = `DROP SEQUENCE IF EXISTS "${schema}"."${seqName}";`;
+    } else if (conn.driver === 'mssql') {
+      sql = `DROP SEQUENCE IF EXISTS [${schema}].[${seqName}];`;
+    } else {
+      return;
+    }
+
+    try {
+      const execId = 'drop-sequence-' + Date.now();
+      await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: conn.id,
+        database: db,
+        schema: schema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      const schemaKey = `${conn.id}:${db}:${schema}`;
+      removeTreeObject(schemaKey, seqName);
+      SchemaService.GetObjects(conn.id, db, schema)
+        .then((objs) => {
+          if (objs) setTreeObjects(schemaKey, objs as any);
+        })
+        .catch(() => {});
+      alertSuccess(`Sequence "${seqName}" dropped successfully.`, 'Sequence Dropped');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Drop Sequence');
+    }
+  };
+
   const handleRoutineClick = (
     conn: ConnectionConfig,
     db: string,
     schema: string,
-    routineName: string
+    routineName: string,
+    routineComment?: string
   ) => {
-    let content = `-- Routine / Function / Procedure: ${routineName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
+    const isFunction = (routineComment || '').toUpperCase().startsWith('[FUNCTION]');
+    const isProcedure = (routineComment || '').toUpperCase().startsWith('[PROCEDURE]');
+    let content = `-- Routine${isFunction ? ' (FUNCTION)' : isProcedure ? ' (PROCEDURE)' : ''}: ${routineName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
     if (conn.driver === 'postgres') {
       content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
     } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-      content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+      if (isFunction) {
+        content += `-- 1. View function definition:\nSHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call function:\n-- SELECT \`${db}\`.\`${routineName}\`();\n`;
+      } else if (isProcedure) {
+        content += `-- 1. View procedure definition:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+      } else {
+        content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+      }
     } else if (conn.driver === 'mssql') {
       content += `-- 1. View definition source:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${routineName}]'));\n\n-- 2. Execute routine:\n-- EXEC [${schema}].[${routineName}];\n`;
     } else {
@@ -1682,19 +1769,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     conn: ConnectionConfig,
     db: string,
     schema: string,
-    routineName: string
+    routineName: string,
+    routineComment?: string
   ) => {
+    const isFunction = (routineComment || '').toUpperCase().startsWith('[FUNCTION]');
+    const isProcedure = (routineComment || '').toUpperCase().startsWith('[PROCEDURE]');
     const ok = await confirmDialog({
-      title: 'Drop Routine',
-      message: `Are you sure you want to DROP routine/function "${routineName}"? This action cannot be undone.`,
-      confirmLabel: 'Drop Routine',
+      title: isFunction ? 'Drop Function' : isProcedure ? 'Drop Procedure' : 'Drop Routine',
+      message: `Are you sure you want to DROP ${isFunction ? 'function' : isProcedure ? 'procedure' : 'routine/function'} "${routineName}"? This action cannot be undone.`,
+      confirmLabel: isFunction ? 'Drop Function' : isProcedure ? 'Drop Procedure' : 'Drop Routine',
       isDanger: true,
     });
     if (!ok) return;
 
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-      sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`; DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
+      if (isFunction) {
+        sql = `DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
+      } else if (isProcedure) {
+        sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`;`;
+      } else {
+        sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`; DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
+      }
     } else if (conn.driver === 'mssql') {
       sql = `DROP PROCEDURE IF EXISTS [${schema}].[${routineName}]; DROP FUNCTION IF EXISTS [${schema}].[${routineName}];`;
     } else if (conn.driver === 'postgres') {
@@ -2207,6 +2303,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   const routines = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'routine');
                   const triggers = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'trigger');
                   const events = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'event');
+                  const sequences = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'sequence');
                   const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
 
                   return (
@@ -2335,6 +2432,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                               const sRoutines = sBaseList.filter((o) => o.type === 'routine');
                               const sTriggers = sBaseList.filter((o) => o.type === 'trigger');
                               const sEvents = sBaseList.filter((o) => o.type === 'event');
+                              const sSequences = sBaseList.filter((o) => o.type === 'sequence');
                               const isSchemaActive = activeConnectionId === c.id && activeDatabase === dbName && activeSchema === sName;
 
                               return (
@@ -2698,7 +2796,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                               key={obj.name}
                                               onClick={() => {
                                                 handleItemMouseLeave();
-                                                handleRoutineClick(c, dbName, sName, obj.name);
+                                                handleRoutineClick(c, dbName, sName, obj.name, obj.comment);
                                               }}
                                               onContextMenu={(e) => {
                                                 handleItemMouseLeave();
@@ -2713,7 +2811,48 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                                 handleItemMouseEnter(e, {
                                                   kind: 'table',
                                                   title: obj.name,
-                                                  badge: 'ROUTINE',
+                                                  badge: (obj.comment || '').toUpperCase().startsWith('[FUNCTION]') ? 'FUNCTION' : (obj.comment || '').toUpperCase().startsWith('[PROCEDURE]') ? 'PROCEDURE' : 'ROUTINE',
+                                                  subtitle: `${c.name} / ${dbName}.${sName}${obj.comment ? ` • ${obj.comment}` : ''}`,
+                                                })
+                                              }
+                                              onMouseLeave={handleItemMouseLeave}
+                                              title={obj.comment ? `${obj.name} ${obj.comment}` : obj.name}
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+
+                                      {sSequences.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>sequences ({sSequences.length})</span>
+                                          </div>
+                                          {sSequences.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              onClick={() => {
+                                                handleItemMouseLeave();
+                                                handleSequenceClick(c, dbName, sName, obj.name);
+                                              }}
+                                              onContextMenu={(e) => {
+                                                handleItemMouseLeave();
+                                                openContextMenu(e, 'table', {
+                                                  connection: c,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  table: obj,
+                                                });
+                                              }}
+                                              onMouseEnter={(e) =>
+                                                handleItemMouseEnter(e, {
+                                                  kind: 'table',
+                                                  title: obj.name,
+                                                  badge: 'SEQUENCE',
                                                   subtitle: `${c.name} / ${dbName}.${sName}`,
                                                 })
                                               }
@@ -2721,7 +2860,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                               title={obj.name}
                                               className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                             >
-                                              <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                              <Hash className="h-3 w-3 shrink-0 text-indigo-400" />
                                               <span className="truncate">{obj.name}</span>
                                             </div>
                                           ))}
@@ -2755,15 +2894,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                                   kind: 'table',
                                                   title: obj.name,
                                                   badge: 'TRIGGER',
-                                                  subtitle: `${c.name} / ${dbName}.${sName}`,
+                                                  subtitle: `${c.name} / ${dbName}.${sName}${obj.comment ? ` • ${obj.comment}` : ''}${obj.parentTable ? ` on ${obj.parentTable}` : ''}`,
                                                 })
                                               }
                                               onMouseLeave={handleItemMouseLeave}
-                                              title={obj.name}
+                                              title={obj.parentTable ? `${obj.name} (${obj.comment ? obj.comment + ' ' : ''}on ${obj.parentTable})` : obj.name}
                                               className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                             >
                                               <Zap className="h-3 w-3 shrink-0 text-rose-400" />
                                               <span className="truncate">{obj.name}</span>
+                                              {obj.parentTable && (
+                                                <span className="ml-auto text-[9px] text-zinc-500 font-mono truncate max-w-[90px]">
+                                                  {obj.parentTable}
+                                                </span>
+                                              )}
                                             </div>
                                           ))}
                                         </>
@@ -2984,7 +3128,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                       key={obj.name}
                                       onClick={() => {
                                         handleItemMouseLeave();
-                                        handleRoutineClick(c, dbName, targetSchema, obj.name);
+                                        handleRoutineClick(c, dbName, targetSchema, obj.name, obj.comment);
                                       }}
                                       onContextMenu={(e) => {
                                         handleItemMouseLeave();
@@ -2999,7 +3143,48 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                         handleItemMouseEnter(e, {
                                           kind: 'table',
                                           title: obj.name,
-                                          badge: 'ROUTINE',
+                                          badge: (obj.comment || '').toUpperCase().startsWith('[FUNCTION]') ? 'FUNCTION' : (obj.comment || '').toUpperCase().startsWith('[PROCEDURE]') ? 'PROCEDURE' : 'ROUTINE',
+                                          subtitle: `${c.name} / ${dbName}${obj.comment ? ` • ${obj.comment}` : ''}`,
+                                        })
+                                      }
+                                      onMouseLeave={handleItemMouseLeave}
+                                      title={obj.comment ? `${obj.name} ${obj.comment}` : obj.name}
+                                      className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                    >
+                                      <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                      <span className="truncate">{obj.name}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+
+                              {sequences.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                    <Folder className="h-2.5 w-2.5" />
+                                    <span>sequences ({sequences.length})</span>
+                                  </div>
+                                  {sequences.map((obj) => (
+                                    <div
+                                      key={obj.name}
+                                      onClick={() => {
+                                        handleItemMouseLeave();
+                                        handleSequenceClick(c, dbName, targetSchema, obj.name);
+                                      }}
+                                      onContextMenu={(e) => {
+                                        handleItemMouseLeave();
+                                        openContextMenu(e, 'table', {
+                                          connection: c,
+                                          database: dbName,
+                                          schema: targetSchema,
+                                          table: obj,
+                                        });
+                                      }}
+                                      onMouseEnter={(e) =>
+                                        handleItemMouseEnter(e, {
+                                          kind: 'table',
+                                          title: obj.name,
+                                          badge: 'SEQUENCE',
                                           subtitle: `${c.name} / ${dbName}`,
                                         })
                                       }
@@ -3007,7 +3192,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                       title={obj.name}
                                       className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                     >
-                                      <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
+                                      <Hash className="h-3 w-3 shrink-0 text-indigo-400" />
                                       <span className="truncate">{obj.name}</span>
                                     </div>
                                   ))}
@@ -3041,15 +3226,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                                           kind: 'table',
                                           title: obj.name,
                                           badge: 'TRIGGER',
-                                          subtitle: `${c.name} / ${dbName}`,
+                                          subtitle: `${c.name} / ${dbName}${obj.comment ? ` • ${obj.comment}` : ''}${obj.parentTable ? ` on ${obj.parentTable}` : ''}`,
                                         })
                                       }
                                       onMouseLeave={handleItemMouseLeave}
-                                      title={obj.name}
+                                      title={obj.parentTable ? `${obj.name} (${obj.comment ? obj.comment + ' ' : ''}on ${obj.parentTable})` : obj.name}
                                       className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
                                     >
                                       <Zap className="h-3 w-3 shrink-0 text-rose-400" />
                                       <span className="truncate">{obj.name}</span>
+                                      {obj.parentTable && (
+                                        <span className="ml-auto text-[9px] text-zinc-500 font-mono truncate max-w-[90px]">
+                                          {obj.parentTable}
+                                        </span>
+                                      )}
                                     </div>
                                   ))}
                                 </>
@@ -3548,6 +3738,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     ? `Key (${(contextMenu.table?.type || 'key').toUpperCase()}): ${contextMenu.table?.name}`
                     : contextMenu.table?.type === 'routine'
                     ? 'Routine'
+                    : contextMenu.table?.type === 'sequence'
+                    ? 'Sequence'
                     : contextMenu.table?.type === 'trigger'
                     ? 'Trigger'
                     : contextMenu.table?.type === 'event'
@@ -4203,7 +4395,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                         contextMenu.connection!,
                         contextMenu.database || 'main',
                         contextMenu.schema || 'main',
-                        contextMenu.table!.name
+                        contextMenu.table!.name,
+                        contextMenu.table!.comment
                       );
                     }}
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
@@ -4231,13 +4424,61 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                         contextMenu.connection!,
                         contextMenu.database || 'main',
                         contextMenu.schema || 'main',
-                        contextMenu.table!.name
+                        contextMenu.table!.name,
+                        contextMenu.table!.comment
                       );
                     }}
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
                   >
                     <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
                     <span>Drop Routine...</span>
+                  </button>
+                </>
+              ) : contextMenu.table.type === 'sequence' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleSequenceClick(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Hash className="h-3.5 w-3.5 text-indigo-400 group-hover:text-white" />
+                    <span>Open Sequence Definition</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(contextMenu.table!.name)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>Copy Sequence Name</span>
+                  </button>
+
+                  <div className="my-1 border-t border-[#272932]" />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleDeleteSequence(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Drop Sequence...</span>
                   </button>
                 </>
               ) : contextMenu.table.type === 'trigger' ? (

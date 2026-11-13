@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"dhub/internal/driver"
-	_ "github.com/go-sql-driver/mysql"
+	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
 type MySQLDriver struct {
-	db     *sql.DB
-	dsn    string
+	db        *sql.DB
+	dsn       string
+	defaultDB string
 }
 
 func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
@@ -26,12 +27,30 @@ func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(time.Hour)
-	return &MySQLDriver{db: db, dsn: dsn}, nil
+
+	var defaultDB string
+	if cfg, parseErr := mysqldriver.ParseDSN(dsn); parseErr == nil {
+		defaultDB = cfg.DBName
+	}
+
+	return &MySQLDriver{db: db, dsn: dsn, defaultDB: defaultDB}, nil
 }
 
 // quoteIdent quotes a MySQL identifier, escaping embedded backticks.
 func quoteIdent(s string) string {
 	return "`" + strings.ReplaceAll(s, "`", "``") + "`"
+}
+
+func (m *MySQLDriver) resolveDatabase(database, schema string) string {
+	s := strings.TrimSpace(schema)
+	if s != "" && s != "main" {
+		return s
+	}
+	d := strings.TrimSpace(database)
+	if d != "" && d != "main" {
+		return d
+	}
+	return m.defaultDB
 }
 
 func (m *MySQLDriver) Ping(ctx context.Context) error {
@@ -63,7 +82,8 @@ func (m *MySQLDriver) ListDatabases(ctx context.Context) ([]string, error) {
 }
 
 func (m *MySQLDriver) ListSchemas(ctx context.Context, database string) ([]string, error) {
-	return []string{database}, nil
+	targetDB := m.resolveDatabase(database, "")
+	return []string{targetDB}, nil
 }
 
 // formatBytes converts byte count into a human-readable string (e.g. 1.2 MB).
@@ -84,9 +104,11 @@ func formatBytes(b int64) string {
 }
 
 func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) ([]driver.ObjectSummary, error) {
+	targetDB := m.resolveDatabase(database, schema)
+
 	query := `SELECT table_name, table_type, COALESCE(table_rows, 0), COALESCE(data_length + index_length, 0), COALESCE(table_comment, '')
 		FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name`
-	rows, err := m.db.QueryContext(ctx, query, database)
+	rows, err := m.db.QueryContext(ctx, query, targetDB)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +124,7 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 				t = "view"
 			}
 			objects = append(objects, driver.ObjectSummary{
-				Schema:      database,
+				Schema:      targetDB,
 				Name:        name,
 				Type:        t,
 				RowEstimate: rowsEst,
@@ -113,49 +135,52 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 	}
 
 	// Routines (Procedures & Functions)
-	rRows, rErr := m.db.QueryContext(ctx, `SELECT ROUTINE_NAME, COALESCE(ROUTINE_COMMENT, '') FROM information_schema.routines WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_NAME`, database)
+	rRows, rErr := m.db.QueryContext(ctx, `SELECT ROUTINE_NAME, COALESCE(ROUTINE_TYPE, 'PROCEDURE'), COALESCE(ROUTINE_COMMENT, '') FROM information_schema.routines WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_NAME`, targetDB)
 	if rErr == nil {
 		defer rRows.Close()
 		for rRows.Next() {
-			var rName, rComment string
-			if err := rRows.Scan(&rName, &rComment); err == nil {
+			var rName, rType, rComment string
+			if err := rRows.Scan(&rName, &rType, &rComment); err == nil {
+				formattedComment := strings.TrimSpace(fmt.Sprintf("[%s] %s", strings.ToUpper(strings.TrimSpace(rType)), rComment))
 				objects = append(objects, driver.ObjectSummary{
-					Schema:      database,
+					Schema:      targetDB,
 					Name:        rName,
 					Type:        "routine",
 					RowEstimate: -1,
-					Comment:     rComment,
+					Comment:     formattedComment,
 				})
 			}
 		}
 	}
 
 	// Triggers
-	tRows, tErr := m.db.QueryContext(ctx, `SELECT TRIGGER_NAME FROM information_schema.triggers WHERE TRIGGER_SCHEMA = ? ORDER BY TRIGGER_NAME`, database)
+	tRows, tErr := m.db.QueryContext(ctx, `SELECT TRIGGER_NAME, COALESCE(EVENT_OBJECT_TABLE, ''), COALESCE(ACTION_TIMING, ''), COALESCE(EVENT_MANIPULATION, '') FROM information_schema.triggers WHERE TRIGGER_SCHEMA = ? ORDER BY TRIGGER_NAME`, targetDB)
 	if tErr == nil {
 		defer tRows.Close()
 		for tRows.Next() {
-			var tName string
-			if err := tRows.Scan(&tName); err == nil {
+			var tName, parentTbl, timing, event string
+			if err := tRows.Scan(&tName, &parentTbl, &timing, &event); err == nil {
 				objects = append(objects, driver.ObjectSummary{
-					Schema:      database,
+					Schema:      targetDB,
 					Name:        tName,
 					Type:        "trigger",
 					RowEstimate: -1,
+					ParentTable: parentTbl,
+					Comment:     strings.TrimSpace(timing + " " + event),
 				})
 			}
 		}
 	}
 
-	// Events (Scheduled Tasks - supported in MySQL 5.1+ and MariaDB)
-	eRows, eErr := m.db.QueryContext(ctx, `SELECT EVENT_NAME, COALESCE(EVENT_COMMENT, '') FROM information_schema.events WHERE EVENT_SCHEMA = ? ORDER BY EVENT_NAME`, database)
+	// Events (Scheduled Tasks - supported in MySQL 5.1+)
+	eRows, eErr := m.db.QueryContext(ctx, `SELECT EVENT_NAME, COALESCE(EVENT_COMMENT, '') FROM information_schema.events WHERE EVENT_SCHEMA = ? ORDER BY EVENT_NAME`, targetDB)
 	if eErr == nil {
 		defer eRows.Close()
 		for eRows.Next() {
 			var eName, eComment string
 			if err := eRows.Scan(&eName, &eComment); err == nil {
 				objects = append(objects, driver.ObjectSummary{
-					Schema:      database,
+					Schema:      targetDB,
 					Name:        eName,
 					Type:        "event",
 					RowEstimate: -1,
@@ -169,13 +194,16 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 }
 
 func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, table string) (*driver.TableStructure, error) {
+	targetDB := m.resolveDatabase(database, schema)
+
 	structure := &driver.TableStructure{
-		Schema:      database,
-		Name:        table,
-		Columns:     []driver.ColumnMeta{},
-		PrimaryKeys: []string{},
-		ForeignKeys: []driver.ForeignKeyMeta{},
-		Indexes:     []driver.IndexMeta{},
+		Schema:           targetDB,
+		Name:             table,
+		Columns:          []driver.ColumnMeta{},
+		PrimaryKeys:      []string{},
+		ForeignKeys:      []driver.ForeignKeyMeta{},
+		Indexes:          []driver.IndexMeta{},
+		CheckConstraints: []driver.CheckConstraintMeta{},
 	}
 
 	// 1. Fetch table options (Engine, Collation, Comment)
@@ -183,7 +211,7 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		FROM information_schema.tables
 		WHERE table_schema = ? AND table_name = ?`
 	var engine, collation, tblComment *string
-	if err := m.db.QueryRowContext(ctx, tblQuery, database, table).Scan(&engine, &collation, &tblComment); err == nil {
+	if err := m.db.QueryRowContext(ctx, tblQuery, targetDB, table).Scan(&engine, &collation, &tblComment); err == nil {
 		if engine != nil {
 			structure.Engine = *engine
 		}
@@ -200,7 +228,7 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		FROM information_schema.columns
 		WHERE table_schema = ? AND table_name = ?
 		ORDER BY ordinal_position`
-	rows, err := m.db.QueryContext(ctx, colQuery, database, table)
+	rows, err := m.db.QueryContext(ctx, colQuery, targetDB, table)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +268,7 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		FROM information_schema.statistics
 		WHERE table_schema = ? AND table_name = ?
 		ORDER BY index_name, seq_in_index`
-	idxRows, err := m.db.QueryContext(ctx, idxQuery, database, table)
+	idxRows, err := m.db.QueryContext(ctx, idxQuery, targetDB, table)
 	if err == nil {
 		defer idxRows.Close()
 		type rawIdx struct {
@@ -304,7 +332,7 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		WHERE kcu.table_schema = ? AND kcu.table_name = ?
 			AND kcu.referenced_table_name IS NOT NULL
 		ORDER BY kcu.constraint_name, kcu.ordinal_position`
-	if fkRows, fkErr := m.db.QueryContext(ctx, fkQuery, database, table); fkErr == nil {
+	if fkRows, fkErr := m.db.QueryContext(ctx, fkQuery, targetDB, table); fkErr == nil {
 		defer fkRows.Close()
 		for fkRows.Next() {
 			var cName, col, refSchema, refTable, refCol, onUpdate, onDelete string
@@ -322,14 +350,50 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
-	// 4. Fetch DDL
-	showQuery := fmt.Sprintf("SHOW CREATE TABLE %s.%s", quoteIdent(database), quoteIdent(table))
-	if database == "" {
+	// 3c. Fetch Check Constraints (MySQL 8.0.16+)
+	chkQuery := `SELECT tc.constraint_name, cc.check_clause
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.check_constraints cc
+			ON tc.constraint_schema = cc.constraint_schema
+			AND tc.constraint_name = cc.constraint_name
+		WHERE tc.table_schema = ? AND tc.table_name = ?
+			AND tc.constraint_type = 'CHECK'
+		ORDER BY tc.constraint_name`
+	if chkRows, chkErr := m.db.QueryContext(ctx, chkQuery, targetDB, table); chkErr == nil {
+		defer chkRows.Close()
+		for chkRows.Next() {
+			var cName, clause string
+			if err := chkRows.Scan(&cName, &clause); err == nil {
+				structure.CheckConstraints = append(structure.CheckConstraints, driver.CheckConstraintMeta{
+					Name:   cName,
+					Clause: clause,
+				})
+			}
+		}
+	}
+
+	// 4. Fetch DDL (handles both 2-column Tables and 4-column Views)
+	showQuery := fmt.Sprintf("SHOW CREATE TABLE %s.%s", quoteIdent(targetDB), quoteIdent(table))
+	if targetDB == "" {
 		showQuery = fmt.Sprintf("SHOW CREATE TABLE %s", quoteIdent(table))
 	}
-	var tblName, ddlStr string
-	if err := m.db.QueryRowContext(ctx, showQuery).Scan(&tblName, &ddlStr); err == nil {
-		structure.DDL = ddlStr
+	if showRows, showErr := m.db.QueryContext(ctx, showQuery); showErr == nil {
+		defer showRows.Close()
+		if cols, colErr := showRows.Columns(); colErr == nil && len(cols) >= 2 && showRows.Next() {
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if scanErr := showRows.Scan(ptrs...); scanErr == nil {
+				switch v := vals[1].(type) {
+				case string:
+					structure.DDL = v
+				case []byte:
+					structure.DDL = string(v)
+				}
+			}
+		}
 	}
 
 	return structure, nil
@@ -342,9 +406,15 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	}
 	defer conn.Close()
 
-	if req.Database != "" && req.Database != "main" {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(req.Database))); err != nil {
-			return nil, fmt.Errorf("error switching to database '%s': %w", req.Database, err)
+	targetDB := m.resolveDatabase(req.Database, req.Schema)
+	if targetDB != "" {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(targetDB))); err != nil {
+			return nil, fmt.Errorf("error switching to database '%s': %w", targetDB, err)
+		}
+		if m.defaultDB != "" && targetDB != m.defaultDB {
+			defer func() {
+				_, _ = conn.ExecContext(context.Background(), fmt.Sprintf("USE %s", quoteIdent(m.defaultDB)))
+			}()
 		}
 	}
 
@@ -356,10 +426,11 @@ func (m *MySQLDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, er
 	if err != nil {
 		return nil, err
 	}
-	if database != "" && database != "main" {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(database))); err != nil {
+	targetDB := m.resolveDatabase(database, "")
+	if targetDB != "" {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(targetDB))); err != nil {
 			_ = tx.Rollback()
-			return nil, fmt.Errorf("error switching to database '%s': %w", database, err)
+			return nil, fmt.Errorf("error switching to database '%s': %w", targetDB, err)
 		}
 	}
 	return tx, nil
@@ -376,13 +447,10 @@ func sortedKeys(m map[string]any) []string {
 
 func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
-	effectiveSchema := schema
-	if effectiveSchema == "" && database != "" && database != "main" {
-		effectiveSchema = database
-	}
-	prefix := fmt.Sprintf("`%s`.`%s`", effectiveSchema, table)
+	effectiveSchema := m.resolveDatabase(database, schema)
+	prefix := fmt.Sprintf("%s.%s", quoteIdent(effectiveSchema), quoteIdent(table))
 	if effectiveSchema == "" {
-		prefix = fmt.Sprintf("`%s`", table)
+		prefix = quoteIdent(table)
 	}
 
 	for _, c := range changes {
@@ -391,7 +459,7 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 			cols := []string{}
 			vals := []string{}
 			for _, k := range sortedKeys(c.Changes) {
-				cols = append(cols, fmt.Sprintf("`%s`", k))
+				cols = append(cols, quoteIdent(k))
 				vals = append(vals, formatSQLVal(c.Changes[k]))
 			}
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);", prefix, strings.Join(cols, ", "), strings.Join(vals, ", "))
@@ -402,17 +470,17 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 		case "update":
 			sets := []string{}
 			for _, k := range sortedKeys(c.Changes) {
-				sets = append(sets, fmt.Sprintf("`%s` = %s", k, formatSQLVal(c.Changes[k])))
+				sets = append(sets, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.Changes[k])))
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("`%s` = %s", k, formatSQLVal(c.PrimaryKey[k])))
+				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf("UPDATE %s SET %s WHERE %s;", prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("`%s` = %s", k, formatSQLVal(c.PrimaryKey[k])))
+				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
 			}
 			statements = append(statements, fmt.Sprintf("DELETE FROM %s WHERE %s;", prefix, strings.Join(where, " AND ")))
 		}
@@ -447,13 +515,15 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 	}
 	defer tx.Rollback()
 
-	effectiveSchema := schema
-	if effectiveSchema == "" && database != "" && database != "main" {
-		effectiveSchema = database
+	effectiveSchema := m.resolveDatabase(database, schema)
+	if effectiveSchema != "" {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(effectiveSchema))); err != nil {
+			return 0, fmt.Errorf("error switching to database '%s': %w", effectiveSchema, err)
+		}
 	}
-	prefix := fmt.Sprintf("`%s`.`%s`", effectiveSchema, table)
+	prefix := fmt.Sprintf("%s.%s", quoteIdent(effectiveSchema), quoteIdent(table))
 	if effectiveSchema == "" {
-		prefix = fmt.Sprintf("`%s`", table)
+		prefix = quoteIdent(table)
 	}
 
 	var totalAffected int64
@@ -464,7 +534,7 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			placeholders := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.Changes) {
-				cols = append(cols, fmt.Sprintf("`%s`", k))
+				cols = append(cols, quoteIdent(k))
 				placeholders = append(placeholders, "?")
 				vals = append(vals, normalizeMySQLValue(c.Changes[k]))
 			}
@@ -482,12 +552,12 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			sets := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.Changes) {
-				sets = append(sets, fmt.Sprintf("`%s` = ?", k))
+				sets = append(sets, fmt.Sprintf("%s = ?", quoteIdent(k)))
 				vals = append(vals, normalizeMySQLValue(c.Changes[k]))
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("`%s` = ?", k))
+				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
 				vals = append(vals, normalizeMySQLValue(c.PrimaryKey[k]))
 			}
 			stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
@@ -501,7 +571,7 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			where := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("`%s` = ?", k))
+				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
 				vals = append(vals, normalizeMySQLValue(c.PrimaryKey[k]))
 			}
 			stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", prefix, strings.Join(where, " AND "))

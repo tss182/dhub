@@ -982,8 +982,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       prefix = isAnalyze
         ? 'EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS) '
         : 'EXPLAIN (COSTS, VERBOSE) ';
-    } else if (drv === 'mysql' || drv === 'mariadb') {
+    } else if (drv === 'mysql') {
       prefix = isAnalyze ? 'EXPLAIN ANALYZE ' : 'EXPLAIN ';
+    } else if (drv === 'mariadb') {
+      prefix = isAnalyze ? 'ANALYZE ' : 'EXPLAIN ';
     } else if (drv === 'mssql') {
       prefix = 'SET SHOWPLAN_ALL ON; ';
     } else if (drv === 'sqlite') {

@@ -409,6 +409,9 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			return cmd.CombinedOutput()
 		}
 
+		binName := filepath.Base(binPath)
+		isMariaDBDump := strings.Contains(strings.ToLower(binName), "mariadb")
+
 		out, dumpErr := runDump()
 		if dumpErr != nil {
 			errText := string(out)
@@ -416,7 +419,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			if strings.Contains(errText, "COLUMN_STATISTICS") || strings.Contains(errText, "column-statistics") {
 				retryFlags = append(retryFlags, "--column-statistics=0")
 			}
-			if strings.Contains(errText, "GTID_PURGED") || strings.Contains(errText, "gtid-purged") {
+			if !isMariaDBDump && (strings.Contains(errText, "GTID_PURGED") || strings.Contains(errText, "gtid-purged")) {
 				retryFlags = append(retryFlags, "--set-gtid-purged=OFF")
 			}
 			if len(retryFlags) > 0 {
@@ -428,7 +431,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			if msg == "" {
 				msg = dumpErr.Error()
 			}
-			return "", fmt.Errorf("mysqldump failed: %s", msg)
+			return "", fmt.Errorf("%s failed: %s", binName, msg)
 		}
 
 	case "postgres":
@@ -649,7 +652,7 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 			if msg == "" {
 				msg = err.Error()
 			}
-			return "", fmt.Errorf("mysql restore failed: %s", msg)
+			return "", fmt.Errorf("%s restore failed: %s", filepath.Base(binPath), msg)
 		}
 
 	case "postgres":

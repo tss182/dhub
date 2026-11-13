@@ -12,6 +12,7 @@ import (
 
 	"dhub/internal/driver"
 	"dhub/internal/driver/clickhouse"
+	"dhub/internal/driver/mariadb"
 	"dhub/internal/driver/mongodb"
 	"dhub/internal/driver/mssql"
 	"dhub/internal/driver/mysql"
@@ -267,6 +268,9 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			}
 		}
 
+		if cfg.Driver == "mariadb" {
+			return mariadb.NewMariaDBDriver(mc.FormatDSN())
+		}
 		return mysql.NewMySQLDriver(mc.FormatDSN())
 	case "redis":
 		if port <= 0 {

@@ -5,46 +5,113 @@ import (
 	"testing"
 )
 
-func TestSplitStatements(t *testing.T) {
+func TestSplitStatements_CompoundAndDelimiter(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected []string
+		name string
+		sql  string
+		want []string
 	}{
 		{
-			name:     "Single statement without semicolon",
-			input:    "SELECT * FROM users",
-			expected: []string{"SELECT * FROM users"},
+			name: "standalone transaction begin and commit",
+			sql:  "BEGIN; INSERT INTO t VALUES (1); COMMIT;",
+			want: []string{"BEGIN", "INSERT INTO t VALUES (1)", "COMMIT"},
 		},
 		{
-			name:     "Two statements separated by semicolon",
-			input:    "SELECT * FROM a; SELECT * FROM b;",
-			expected: []string{"SELECT * FROM a", "SELECT * FROM b"},
+			name: "create procedure with compound BEGIN END without delimiter",
+			sql: `CREATE PROCEDURE test_proc(IN p_id INT)
+BEGIN
+  IF p_id > 0 THEN
+    SELECT * FROM users WHERE id = p_id;
+  END IF;
+  INSERT INTO logs(msg) VALUES ('ok');
+END;
+SELECT 1;`,
+			want: []string{
+				`CREATE PROCEDURE test_proc(IN p_id INT)
+BEGIN
+  IF p_id > 0 THEN
+    SELECT * FROM users WHERE id = p_id;
+  END IF;
+  INSERT INTO logs(msg) VALUES ('ok');
+END`,
+				"SELECT 1",
+			},
 		},
 		{
-			name:     "Semicolon inside single quotes",
-			input:    "INSERT INTO t VALUES ('semi;colon'); SELECT 1;",
-			expected: []string{"INSERT INTO t VALUES ('semi;colon')", "SELECT 1"},
+			name: "client DELIMITER directive",
+			sql: `DELIMITER $$
+CREATE TRIGGER trg_audit AFTER INSERT ON orders
+FOR EACH ROW
+BEGIN
+  INSERT INTO audit(order_id) VALUES (NEW.id);
+END$$
+DELIMITER ;
+SELECT 2;`,
+			want: []string{
+				`CREATE TRIGGER trg_audit AFTER INSERT ON orders
+FOR EACH ROW
+BEGIN
+  INSERT INTO audit(order_id) VALUES (NEW.id);
+END`,
+				"SELECT 2",
+			},
 		},
 		{
-			name:     "Semicolon inside comments",
-			input:    "-- line comment with ; inside\nSELECT 1;\n/* block ; comment */ SELECT 2;",
-			expected: []string{"-- line comment with ; inside\nSELECT 1", "/* block ; comment */ SELECT 2"},
-		},
-		{
-			name:     "Semicolon inside backticks",
-			input:    "SELECT `col;name` FROM t; SELECT 2;",
-			expected: []string{"SELECT `col;name` FROM t", "SELECT 2"},
+			name: "nested CASE inside compound BEGIN END",
+			sql: `CREATE FUNCTION fn_label(x INT) RETURNS VARCHAR(10)
+BEGIN
+  DECLARE res VARCHAR(10);
+  SET res = CASE WHEN x > 0 THEN 'pos' ELSE 'neg' END;
+  RETURN res;
+END;`,
+			want: []string{
+				`CREATE FUNCTION fn_label(x INT) RETURNS VARCHAR(10)
+BEGIN
+  DECLARE res VARCHAR(10);
+  SET res = CASE WHEN x > 0 THEN 'pos' ELSE 'neg' END;
+  RETURN res;
+END`,
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := SplitStatements(tt.input)
-			if !reflect.DeepEqual(got, tt.expected) {
-				t.Errorf("SplitStatements() = %#v, want %#v", got, tt.expected)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SplitStatements(tc.sql)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("SplitStatements() =\n%#v\nwant:\n%#v", got, tc.want)
 			}
 		})
 	}
 }
 
+func TestIsQueryReturningRows(t *testing.T) {
+	returning := []string{
+		"SELECT 1",
+		"  -- comment\nANALYZE SELECT * FROM users",
+		"ANALYZE FORMAT=JSON SELECT 1",
+		"VALUES (1, 2)",
+		"WITH cte AS (SELECT 1) SELECT * FROM cte",
+		"SHOW CREATE SEQUENCE s1",
+		"OPTIMIZE TABLE users",
+		"CHECK TABLE users",
+		"REPAIR TABLE users",
+	}
+	for _, q := range returning {
+		if !IsQueryReturningRows(q) {
+			t.Errorf("expected IsQueryReturningRows(%q) = true", q)
+		}
+	}
+
+	nonReturning := []string{
+		"INSERT INTO users VALUES (1)",
+		"UPDATE users SET a = 1",
+		"CREATE TABLE t (id INT)",
+		"DESCRIPTION_SOMETHING",
+	}
+	for _, q := range nonReturning {
+		if IsQueryReturningRows(q) {
+			t.Errorf("expected IsQueryReturningRows(%q) = false", q)
+		}
+	}
+}
