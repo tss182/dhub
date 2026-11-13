@@ -6,6 +6,9 @@ import { Dialogs } from '@wailsio/runtime';
 import { Popover } from '../common/Popover';
 import { ExportModal } from '../modals/ExportModal';
 import { ImportModal } from '../modals/ImportModal';
+import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
+import { RedisFlushModal } from '../modals/RedisFlushModal';
+import { RedisInfoModal } from '../modals/RedisInfoModal';
 import {
   Database,
   Folder,
@@ -35,6 +38,7 @@ import {
   Layers,
   ArrowRightLeft,
   Key,
+  Activity,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -132,6 +136,26 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     connection: null,
     anchorRect: null,
   });
+
+  // Redis Modals State
+  const [redisAddKeyModal, setRedisAddKeyModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+  }>({ isOpen: false, connectionId: '', database: '' });
+
+  const [redisFlushModal, setRedisFlushModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    mode: 'FLUSHDB' | 'FLUSHALL';
+  }>({ isOpen: false, connectionId: '', database: '', mode: 'FLUSHDB' });
+
+  const [redisInfoModal, setRedisInfoModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    connectionName: string;
+  }>({ isOpen: false, connectionId: '', connectionName: '' });
 
   const handleOpenDatabaseFilter = (conn: ConnectionConfig, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -3491,6 +3515,46 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <span>New Folder with this Connection...</span>
               </button>
 
+              {contextMenu.connection.driver?.toLowerCase() === 'redis' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const connId = contextMenu.connection!.id;
+                      const connName = contextMenu.connection!.name;
+                      closeContextMenu();
+                      setRedisInfoModal({
+                        isOpen: true,
+                        connectionId: connId,
+                        connectionName: connName,
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Activity className="h-3.5 w-3.5 text-red-400 group-hover:text-white" />
+                    <span>Server Info & Stats</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const connId = contextMenu.connection!.id;
+                      closeContextMenu();
+                      setRedisFlushModal({
+                        isOpen: true,
+                        connectionId: connId,
+                        database: 'db0',
+                        mode: 'FLUSHALL',
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 group-hover:text-white transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Flush All Databases (FLUSHALL)...</span>
+                  </button>
+                </>
+              )}
+
               <div className="my-1 border-t border-[#272932]" />
 
               <button
@@ -3511,27 +3575,86 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           {contextMenu.type === 'database' && contextMenu.connection && contextMenu.database && (
             <>
               {contextMenu.connection.driver?.toLowerCase() === 'redis' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeContextMenu();
-                    setActiveConnection(contextMenu.connection!.id, contextMenu.database!, contextMenu.database!);
-                    openTab({
-                      id: `table-${contextMenu.connection!.id}-${contextMenu.database}-keys`,
-                      type: 'table_data',
-                      title: `${contextMenu.database} (keys)`,
-                      connectionId: contextMenu.connection!.id,
-                      driver: contextMenu.connection!.driver,
-                      database: contextMenu.database!,
-                      schema: contextMenu.database!,
-                      table: 'keys',
-                    });
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
-                >
-                  <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                  <span>View Keys</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      setActiveConnection(contextMenu.connection!.id, contextMenu.database!, contextMenu.database!);
+                      openTab({
+                        id: `table-${contextMenu.connection!.id}-${contextMenu.database}-keys`,
+                        type: 'table_data',
+                        title: `${contextMenu.database} (keys)`,
+                        connectionId: contextMenu.connection!.id,
+                        driver: contextMenu.connection!.driver,
+                        database: contextMenu.database!,
+                        schema: contextMenu.database!,
+                        table: 'keys',
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                    <span>View Keys</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const connId = contextMenu.connection!.id;
+                      const dbName = contextMenu.database!;
+                      closeContextMenu();
+                      setActiveConnection(connId, dbName, dbName);
+                      setRedisAddKeyModal({
+                        isOpen: true,
+                        connectionId: connId,
+                        database: dbName,
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                    <span>Add New Key...</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const connId = contextMenu.connection!.id;
+                      const connName = contextMenu.connection!.name;
+                      closeContextMenu();
+                      setRedisInfoModal({
+                        isOpen: true,
+                        connectionId: connId,
+                        connectionName: connName,
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Activity className="h-3.5 w-3.5 text-red-400 group-hover:text-white" />
+                    <span>Server Info & Stats</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const connId = contextMenu.connection!.id;
+                      const dbName = contextMenu.database!;
+                      closeContextMenu();
+                      setRedisFlushModal({
+                        isOpen: true,
+                        connectionId: connId,
+                        database: dbName,
+                        mode: 'FLUSHDB',
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 group-hover:text-white transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                    <span>Flush Database...</span>
+                  </button>
+                  <div className="my-1 border-t border-[#272932]" />
+                </>
               )}
 
               {contextMenu.connection.driver?.toLowerCase() !== 'redis' && (
@@ -5186,6 +5309,39 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         database={importModal.db}
         schema={importModal.schema}
         table={importModal.table}
+      />
+
+      {/* Redis Modals */}
+      <RedisAddKeyModal
+        isOpen={redisAddKeyModal.isOpen}
+        onClose={() => setRedisAddKeyModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={redisAddKeyModal.connectionId}
+        database={redisAddKeyModal.database}
+        onSuccess={() => {
+          handleRefreshDatabase(redisAddKeyModal.connectionId, redisAddKeyModal.database);
+        }}
+      />
+
+      <RedisFlushModal
+        isOpen={redisFlushModal.isOpen}
+        onClose={() => setRedisFlushModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={redisFlushModal.connectionId}
+        database={redisFlushModal.database}
+        mode={redisFlushModal.mode}
+        onSuccess={() => {
+          if (redisFlushModal.mode === 'FLUSHALL') {
+            handleRefreshConnection(redisFlushModal.connectionId);
+          } else {
+            handleRefreshDatabase(redisFlushModal.connectionId, redisFlushModal.database);
+          }
+        }}
+      />
+
+      <RedisInfoModal
+        isOpen={redisInfoModal.isOpen}
+        onClose={() => setRedisInfoModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={redisInfoModal.connectionId}
+        connectionName={redisInfoModal.connectionName}
       />
     </div>
   );

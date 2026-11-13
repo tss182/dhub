@@ -38,6 +38,7 @@ import {
   FileText,
   Code,
   Edit3,
+  Pencil,
   Ban,
   Lock,
   CheckSquare,
@@ -50,6 +51,8 @@ import {
 } from 'lucide-react';
 import { ExportModal } from '../modals/ExportModal';
 import { ImportModal } from '../modals/ImportModal';
+import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
+import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -771,6 +774,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [ttlAmount, setTtlAmount] = useState<string>('3600');
   const [ttlUnit, setTtlUnit] = useState<'s' | 'm' | 'h' | 'd'>('s');
 
+  const [redisAddKeyOpen, setRedisAddKeyOpen] = useState(false);
+  const [redisRenameModal, setRedisRenameModal] = useState<{
+    isOpen: boolean;
+    oldKeyName: string;
+  }>({ isOpen: false, oldKeyName: '' });
+
   const handleOpenTtlModal = (rowIndex: number, currentDisplayVal: any, isInsert: boolean) => {
     let keyName = '';
     const keyColIdx = columns.findIndex((c) => c.name.toLowerCase() === 'key');
@@ -1026,7 +1035,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
       e.preventDefault();
       setShowWhereSuggestions(false);
       setForceShowSuggestions(false);
-      onApplyWhere?.(whereInput);
+      let finalVal = whereInput.trim();
+      if (isRedis && finalVal && !finalVal.toLowerCase().includes('key') && !finalVal.toLowerCase().includes('like') && !finalVal.toLowerCase().includes('=')) {
+        finalVal = `key LIKE '${finalVal}'`;
+      }
+      onApplyWhere?.(finalVal);
     }
   };
 
@@ -3271,13 +3284,25 @@ ${setClauses};`;
 
           {!isReadOnly && (
             <>
-              <button
-                onClick={handleAddRow}
-                className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-                title={`Add New Row (${modKey}+I)`}
-              >
-                <Plus className="h-4 w-4 text-emerald-400" />
-              </button>
+              {isRedis ? (
+                <button
+                  type="button"
+                  onClick={() => setRedisAddKeyOpen(true)}
+                  className="flex h-7 items-center gap-1.5 px-2.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-colors cursor-pointer"
+                  title="Add New Redis Key"
+                >
+                  <Plus className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Add Key</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleAddRow}
+                  className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
+                  title={`Add New Row (${modKey}+I)`}
+                >
+                  <Plus className="h-4 w-4 text-emerald-400" />
+                </button>
+              )}
 
               <button
                 onClick={handleDuplicateRow}
@@ -3366,16 +3391,31 @@ ${setClauses};`;
             >
               <div className="relative flex items-center">
                 <div className="absolute left-2.5 flex items-center gap-1 pointer-events-none select-none">
-                  <Filter className="h-3 w-3 text-blue-400" />
-                  <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-wider">
-                    WHERE
-                  </span>
+                  {isRedis ? (
+                    <>
+                      <Search className="h-3 w-3 text-amber-400" />
+                      <span className="text-[10px] font-mono font-bold text-amber-400 uppercase tracking-wider">
+                        MATCH
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Filter className="h-3 w-3 text-blue-400" />
+                      <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-wider">
+                        WHERE
+                      </span>
+                    </>
+                  )}
                 </div>
                 <input
                   ref={whereInputRef}
                   type="text"
                   data-where-input="true"
-                  placeholder="condition, e.g. status = 'active' AND id > 10 (Enter to filter)"
+                  placeholder={
+                    isRedis
+                      ? "Redis pattern, e.g. user:* or *session* (Enter to scan)"
+                      : "condition, e.g. status = 'active' AND id > 10 (Enter to filter)"
+                  }
                   value={whereInput}
                   onChange={(e) => {
                     setWhereInput(e.target.value);
@@ -3405,7 +3445,7 @@ ${setClauses};`;
                         onApplyWhere?.('');
                       }}
                       className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] cursor-pointer"
-                      title="Clear WHERE filter"
+                      title="Clear filter"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -3414,12 +3454,16 @@ ${setClauses};`;
                     type="button"
                     onClick={() => {
                       setShowWhereSuggestions(false);
-                      onApplyWhere?.(whereInput);
+                      let finalVal = whereInput.trim();
+                      if (isRedis && finalVal && !finalVal.toLowerCase().includes('key') && !finalVal.toLowerCase().includes('like') && !finalVal.toLowerCase().includes('=')) {
+                        finalVal = `key LIKE '${finalVal}'`;
+                      }
+                      onApplyWhere?.(finalVal);
                     }}
                     className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-medium font-sans cursor-pointer transition-colors shadow-xs"
-                    title="Apply WHERE condition (Enter)"
+                    title={isRedis ? "Scan keys matching pattern (Enter)" : "Apply WHERE condition (Enter)"}
                   >
-                    Filter
+                    {isRedis ? 'Scan' : 'Filter'}
                   </button>
                 </div>
               </div>
@@ -4722,6 +4766,37 @@ ${setClauses};`;
                   </button>
                 )}
 
+                {isRedis && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { vIdx } = contextMenu;
+                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                      if (vIdx !== null) {
+                        const targetVr = visualRows[vIdx];
+                        if (targetVr) {
+                          const keyColIdx = columns.findIndex((c) => c.name.toLowerCase() === 'key');
+                          const kName = targetVr.isInsert
+                            ? String(targetVr.insertChange?.changes['key'] ?? '')
+                            : keyColIdx !== -1 ? String(targetVr.rowData?.[keyColIdx] ?? '') : '';
+                          if (kName) {
+                            setRedisRenameModal({
+                              isOpen: true,
+                              oldKeyName: kName,
+                            });
+                          }
+                        }
+                      }
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Pencil className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                      <span>Rename Key...</span>
+                    </div>
+                  </button>
+                )}
+
                 {!isRedis && (
                   <button
                     type="button"
@@ -5414,6 +5489,24 @@ ${setClauses};`;
           </div>
         </div>
       )}
+      {/* Redis Add Key Modal */}
+      <RedisAddKeyModal
+        isOpen={redisAddKeyOpen}
+        onClose={() => setRedisAddKeyOpen(false)}
+        connectionId={connectionId || ''}
+        database={database || 'db0'}
+        onSuccess={() => onRefresh?.()}
+      />
+
+      {/* Redis Rename Key Modal */}
+      <RedisRenameKeyModal
+        isOpen={redisRenameModal.isOpen}
+        onClose={() => setRedisRenameModal({ isOpen: false, oldKeyName: '' })}
+        connectionId={connectionId || ''}
+        database={database || 'db0'}
+        oldKeyName={redisRenameModal.oldKeyName}
+        onSuccess={() => onRefresh?.()}
+      />
     </div>
   );
 };
