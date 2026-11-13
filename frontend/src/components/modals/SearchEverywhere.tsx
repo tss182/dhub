@@ -13,6 +13,7 @@ import {
   Filter,
   Check,
   ChevronUp,
+  ArrowDownUp,
 } from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
 
@@ -525,6 +526,15 @@ export const SearchEverywhere: React.FC = () => {
       'pagination'.includes(query.toLowerCase()) ||
       'lazy'.includes(query.toLowerCase()));
 
+  const isBackupMatch =
+    query.trim() &&
+    ('export'.includes(query.toLowerCase()) ||
+      'import'.includes(query.toLowerCase()) ||
+      'backup'.includes(query.toLowerCase()) ||
+      'config'.includes(query.toLowerCase()) ||
+      'setting'.includes(query.toLowerCase()) ||
+      'restore'.includes(query.toLowerCase()));
+
   return (
     <div
       onClick={() => setSearchEverywhereOpen(false)}
@@ -573,6 +583,25 @@ export const SearchEverywhere: React.FC = () => {
                 <SettingsIcon className="h-3.5 w-3.5 text-zinc-400" />
                 <span className="font-semibold text-zinc-200">Open Settings & Preferences</span>
                 <span className="text-zinc-500 text-[11px]">Configure Lazy Load, Pagination & Batch size</span>
+              </div>
+              <span className="text-[10px] uppercase tracking-wider text-zinc-300 bg-[#22242c] px-1.5 py-0.5 rounded border border-[#272932]">
+                Action
+              </span>
+            </div>
+          )}
+
+          {isBackupMatch && (
+            <div
+              onClick={() => {
+                setSearchEverywhereOpen(false);
+                useSettingsStore.getState().openSettings('backup');
+              }}
+              className="flex items-center justify-between rounded px-3 py-2 hover:bg-[#22242c] cursor-pointer text-zinc-300 hover:text-white border-b border-[#272932] mb-1"
+            >
+              <div className="flex items-center gap-2">
+                <ArrowDownUp className="h-3.5 w-3.5 text-blue-400" />
+                <span className="font-semibold text-zinc-200">Import & Export Config / Settings</span>
+                <span className="text-zinc-500 text-[11px]">Backup, export, or import preferences & database connections</span>
               </div>
               <span className="text-[10px] uppercase tracking-wider text-zinc-300 bg-[#22242c] px-1.5 py-0.5 rounded border border-[#272932]">
                 Action
