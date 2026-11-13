@@ -98,3 +98,26 @@ func TestGenerateDMLPreview(t *testing.T) {
 	}
 }
 
+func TestFormatBytes(t *testing.T) {
+	cases := []struct {
+		input    int64
+		expected string
+	}{
+		{0, ""},
+		{-10, ""},
+		{500, "500 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{1048576, "1.0 MB"},
+		{1073741824, "1.0 GB"},
+	}
+
+	for _, c := range cases {
+		got := formatBytes(c.input)
+		if got != c.expected {
+			t.Errorf("formatBytes(%d) = %q, expected %q", c.input, got, c.expected)
+		}
+	}
+}
+
+
