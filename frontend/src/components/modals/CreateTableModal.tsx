@@ -47,6 +47,8 @@ export interface ColumnDefinition {
   isNotNull: boolean;
   defaultValue: string;
   comment: string;
+  columnKind?: 'NORMAL' | 'VIRTUAL' | 'STORED';
+  onUpdate?: string;
 }
 
 export interface IndexColumnConfig {
@@ -96,7 +98,7 @@ const MYSQL_TYPE_GROUPS: TypeGroup[] = [
   },
   {
     group: 'String / Text',
-    types: ['VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'TINYTEXT', 'ENUM'],
+    types: ['VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'TINYTEXT', 'ENUM', 'SET'],
   },
   {
     group: 'Date / Time',
@@ -105,6 +107,33 @@ const MYSQL_TYPE_GROUPS: TypeGroup[] = [
   {
     group: 'Boolean / Logical',
     types: ['BOOLEAN', 'BIT'],
+  },
+  {
+    group: 'JSON / Binary',
+    types: ['JSON', 'BLOB', 'LONGBLOB', 'BINARY', 'VARBINARY'],
+  },
+];
+
+const MARIADB_TYPE_GROUPS: TypeGroup[] = [
+  {
+    group: 'Numeric',
+    types: ['INT', 'BIGINT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'DECIMAL', 'FLOAT', 'DOUBLE'],
+  },
+  {
+    group: 'String / Text',
+    types: ['VARCHAR', 'CHAR', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'TINYTEXT', 'ENUM', 'SET'],
+  },
+  {
+    group: 'Date / Time',
+    types: ['DATETIME', 'TIMESTAMP', 'DATE', 'TIME', 'YEAR'],
+  },
+  {
+    group: 'Boolean / Logical',
+    types: ['BOOLEAN', 'BIT'],
+  },
+  {
+    group: 'MariaDB Native (UUID / Network / Vector)',
+    types: ['UUID', 'INET4', 'INET6', 'VECTOR'],
   },
   {
     group: 'JSON / Binary',
@@ -416,19 +445,24 @@ function generateAlterSql({
     // B. Added & Changed columns
     validNewCols.forEach((col, idx) => {
       const colName = col.name.trim();
+      const kind = col.columnKind || 'NORMAL';
+      const isGenerated = kind === 'VIRTUAL' || kind === 'STORED';
       let colDef = `\`${colName}\` ${col.dataType.toUpperCase()}`;
       if (col.lengthOrValues.trim()) {
         colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (isGenerated && col.defaultValue.trim()) {
+        colDef += ` GENERATED ALWAYS AS (${col.defaultValue.trim()}) ${kind}`;
       }
       if (col.isNotNull || col.isPrimaryKey) {
         colDef += ' NOT NULL';
       } else {
         colDef += ' NULL';
       }
-      if (col.isAutoIncrement) {
+      if (col.isAutoIncrement && !isGenerated) {
         colDef += ' AUTO_INCREMENT';
       }
-      if (col.defaultValue.trim()) {
+      if (!isGenerated && col.defaultValue.trim()) {
         const val = col.defaultValue.trim();
         if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
           colDef += ` DEFAULT ${val}`;
@@ -437,6 +471,9 @@ function generateAlterSql({
         } else {
           colDef += ` DEFAULT '${val}'`;
         }
+      }
+      if (!isGenerated && col.onUpdate && col.onUpdate.trim()) {
+        colDef += ` ON UPDATE ${col.onUpdate.trim()}`;
       }
       if (col.comment.trim()) {
         colDef += ` COMMENT '${col.comment.trim().replace(/'/g, "\\'")}'`;
@@ -461,13 +498,14 @@ function generateAlterSql({
         const autoIncrChanged = Boolean(origMatch.isAutoIncrement) !== Boolean(col.isAutoIncrement);
         const defaultChanged = (origMatch.defaultValue || '') !== col.defaultValue.trim();
         const commentChanged = (origMatch.comment || '') !== col.comment.trim();
+        const extraChanged = isGenerated || Boolean(col.onUpdate && col.onUpdate.trim());
 
         const currentPos = currentOrder.findIndex(
           (name) => name === origMatch.name || name.toLowerCase() === origMatch.name.toLowerCase()
         );
         const positionChanged = currentPos !== idx;
 
-        if (nameChanged || typeChanged || nullChanged || autoIncrChanged || defaultChanged || commentChanged || positionChanged) {
+        if (nameChanged || typeChanged || nullChanged || autoIncrChanged || defaultChanged || commentChanged || positionChanged || extraChanged) {
           const posToAppend = positionChanged ? positionClause : '';
           statements.push(`ALTER TABLE ${tableTarget} CHANGE COLUMN \`${origMatch.name}\` ${colDef}${posToAppend};`);
           if (currentPos !== -1) {
@@ -560,8 +598,31 @@ function generateAlterSql({
       }
     });
 
+    // E. Check Constraints (MariaDB 10.2.1+ & MySQL 8.0.16+)
+    const dropChkKeyword = driver === 'mariadb' ? 'DROP CONSTRAINT' : 'DROP CHECK';
+    originalCheckConstraints.forEach((origChk) => {
+      const stillExists = checkConstraints.some((c) => c.originalName === origChk.name || c.name.trim() === origChk.name);
+      if (!stillExists && origChk.name) {
+        statements.push(`ALTER TABLE ${tableTarget} ${dropChkKeyword} \`${origChk.name}\`;`);
+      }
+    });
+
+    checkConstraints.forEach((chk) => {
+      if (!chk.clause.trim()) return;
+      const origMatch = originalCheckConstraints.find((o) => o.name === chk.originalName || o.name === chk.name.trim());
+      const namePart = chk.name.trim() ? `CONSTRAINT \`${chk.name.trim()}\` ` : '';
+      if (!origMatch) {
+        statements.push(`ALTER TABLE ${tableTarget} ADD ${namePart}CHECK (${chk.clause.trim()});`);
+      } else if (origMatch.clause.trim() !== chk.clause.trim() || origMatch.name !== chk.name.trim()) {
+        if (origMatch.name) {
+          statements.push(`ALTER TABLE ${tableTarget} ${dropChkKeyword} \`${origMatch.name}\`;`);
+        }
+        statements.push(`ALTER TABLE ${tableTarget} ADD ${namePart}CHECK (${chk.clause.trim()});`);
+      }
+    });
+
     if (tableComment.trim() !== (originalTableComment || '').trim()) {
-      statements.push(`ALTER TABLE ${tableTarget} COMMENT = '${tableComment.trim().replace(/'/g, "\\")}';`);
+      statements.push(`ALTER TABLE ${tableTarget} COMMENT = '${tableComment.trim().replace(/'/g, "\\'")}';`);
     }
 
     if (cleanTable !== initialTableName) {
@@ -723,19 +784,24 @@ function generateCreateTableSql({
       const cName = col.name.trim();
       if (!cName) return;
 
+      const kind = col.columnKind || 'NORMAL';
+      const isGenerated = kind === 'VIRTUAL' || kind === 'STORED';
       let colDef = `  \`${cName}\` ${col.dataType.toUpperCase()}`;
       if (col.lengthOrValues.trim()) {
         colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (isGenerated && col.defaultValue.trim()) {
+        colDef += ` GENERATED ALWAYS AS (${col.defaultValue.trim()}) ${kind}`;
       }
       if (col.isNotNull || col.isPrimaryKey) {
         colDef += ' NOT NULL';
       } else {
         colDef += ' NULL';
       }
-      if (col.isAutoIncrement) {
+      if (col.isAutoIncrement && !isGenerated) {
         colDef += ' AUTO_INCREMENT';
       }
-      if (col.defaultValue.trim()) {
+      if (!isGenerated && col.defaultValue.trim()) {
         const val = col.defaultValue.trim();
         if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
           colDef += ` DEFAULT ${val}`;
@@ -744,6 +810,9 @@ function generateCreateTableSql({
         } else {
           colDef += ` DEFAULT '${val}'`;
         }
+      }
+      if (!isGenerated && col.onUpdate && col.onUpdate.trim()) {
+        colDef += ` ON UPDATE ${col.onUpdate.trim()}`;
       }
       if (col.comment.trim()) {
         colDef += ` COMMENT '${col.comment.trim().replace(/'/g, "\\'")}'`;
@@ -784,6 +853,12 @@ function generateCreateTableSql({
         idxDef += ` COMMENT '${idx.comment.trim().replace(/'/g, "\\'")}'`;
       }
       lines.push(idxDef);
+    });
+
+    checkConstraints.forEach((chk) => {
+      if (!chk.clause.trim()) return;
+      const namePart = chk.name.trim() ? `CONSTRAINT \`${chk.name.trim()}\` ` : '';
+      lines.push(`  ${namePart}CHECK (${chk.clause.trim()})`);
     });
 
     let ddl = `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE=${engine} DEFAULT CHARSET=${charset} COLLATE=${collation}`;
@@ -1079,6 +1154,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const typeGroups = useMemo(() => {
     if (driver === 'postgres') return POSTGRES_TYPE_GROUPS;
     if (driver === 'sqlite') return SQLITE_TYPE_GROUPS;
+    if (driver === 'mariadb') return MARIADB_TYPE_GROUPS;
     return MYSQL_TYPE_GROUPS;
   }, [driver]);
 
@@ -2230,7 +2306,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                               if (newType === 'CHAR' && !activeCol.lengthOrValues) autoLen = '50';
                               if (newType === 'DECIMAL' && !activeCol.lengthOrValues) autoLen = '10,2';
                               if (
-                                ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DATETIME', 'TIMESTAMP', 'TEXT', 'JSON', 'BOOLEAN'].includes(newType) &&
+                                ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DATETIME', 'TIMESTAMP', 'TEXT', 'JSON', 'BOOLEAN', 'UUID', 'INET4', 'INET6'].includes(newType) &&
                                 (activeCol.lengthOrValues === '255' || activeCol.lengthOrValues === '50')
                               ) {
                                 autoLen = '';
@@ -2301,8 +2377,13 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     <div className="grid grid-cols-[140px_1fr] items-center gap-4">
                       <label className="text-[#999ca3] font-medium">Column Kind</label>
                       <select
+                        value={activeCol.columnKind || 'NORMAL'}
+                        onChange={(e) =>
+                          handleUpdateColumn(activeCol.id, {
+                            columnKind: e.target.value as 'NORMAL' | 'VIRTUAL' | 'STORED',
+                          })
+                        }
                         className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-xs"
-                        defaultValue="NORMAL"
                       >
                         <option value="NORMAL">NORMAL</option>
                         <option value="VIRTUAL">VIRTUAL</option>
@@ -2310,12 +2391,20 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       </select>
                     </div>
 
-                    {/* Default Expression */}
+                    {/* Default / Generation Expression */}
                     <div className="grid grid-cols-[140px_1fr] items-center gap-4">
-                      <label className="text-[#999ca3] font-medium">Default Expression</label>
+                      <label className="text-[#999ca3] font-medium">
+                        {activeCol.columnKind === 'VIRTUAL' || activeCol.columnKind === 'STORED'
+                          ? 'Generation Expression'
+                          : 'Default Expression'}
+                      </label>
                       <input
                         type="text"
-                        placeholder=""
+                        placeholder={
+                          activeCol.columnKind === 'VIRTUAL' || activeCol.columnKind === 'STORED'
+                            ? 'e.g. price * quantity'
+                            : ''
+                        }
                         value={activeCol.defaultValue}
                         onChange={(e) => handleUpdateColumn(activeCol.id, { defaultValue: e.target.value })}
                         className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
@@ -2334,13 +2423,15 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       </label>
                     </div>
 
-                    {/* On Update (MySQL) */}
+                    {/* On Update (MySQL / MariaDB) */}
                     {(driver === 'mysql' || driver === 'mariadb') && (
                       <div className="grid grid-cols-[140px_1fr] items-center gap-4">
                         <label className="text-[#999ca3] font-medium">On Update</label>
                         <input
                           type="text"
-                          placeholder=""
+                          placeholder="e.g. CURRENT_TIMESTAMP"
+                          value={activeCol.onUpdate || ''}
+                          onChange={(e) => handleUpdateColumn(activeCol.id, { onUpdate: e.target.value })}
                           className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
                         />
                       </div>
@@ -2356,7 +2447,14 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       >
                         <option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option>
                         <option value="utf8mb4_general_ci">utf8mb4_general_ci</option>
-                        <option value="utf8mb4_0900_ai_ci">utf8mb4_0900_ai_ci</option>
+                        {driver === 'mariadb' ? (
+                          <>
+                            <option value="utf8mb4_uca1400_ai_ci">utf8mb4_uca1400_ai_ci</option>
+                            <option value="utf8mb4_bin">utf8mb4_bin</option>
+                          </>
+                        ) : (
+                          <option value="utf8mb4_0900_ai_ci">utf8mb4_0900_ai_ci</option>
+                        )}
                         <option value="utf8_general_ci">utf8_general_ci</option>
                       </select>
                     </div>
@@ -2412,11 +2510,25 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <CustomSelect
                             value={engine}
                             onChange={setEngine}
-                            options={[
-                              { value: 'InnoDB', label: 'InnoDB' },
-                              { value: 'MyISAM', label: 'MyISAM' },
-                              { value: 'MEMORY', label: 'MEMORY' },
-                            ]}
+                            options={
+                              driver === 'mariadb'
+                                ? [
+                                    { value: 'InnoDB', label: 'InnoDB' },
+                                    { value: 'Aria', label: 'Aria' },
+                                    { value: 'MyISAM', label: 'MyISAM' },
+                                    { value: 'MEMORY', label: 'MEMORY' },
+                                    { value: 'ColumnStore', label: 'ColumnStore' },
+                                    { value: 'MyRocks', label: 'MyRocks' },
+                                    { value: 'CSV', label: 'CSV' },
+                                  ]
+                                : [
+                                    { value: 'InnoDB', label: 'InnoDB' },
+                                    { value: 'MyISAM', label: 'MyISAM' },
+                                    { value: 'MEMORY', label: 'MEMORY' },
+                                    { value: 'ARCHIVE', label: 'ARCHIVE' },
+                                    { value: 'CSV', label: 'CSV' },
+                                  ]
+                            }
                           />
                         </div>
 
@@ -2442,13 +2554,24 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <CustomSelect
                             value={collation}
                             onChange={setCollation}
-                            options={[
-                              { value: 'utf8mb4_unicode_ci', label: 'utf8mb4_unicode_ci' },
-                              { value: 'utf8mb4_general_ci', label: 'utf8mb4_general_ci' },
-                              { value: 'utf8mb4_0900_ai_ci', label: 'utf8mb4_0900_ai_ci' },
-                              { value: 'utf8_general_ci', label: 'utf8_general_ci' },
-                              { value: 'utf8_unicode_ci', label: 'utf8_unicode_ci' },
-                            ]}
+                            options={
+                              driver === 'mariadb'
+                                ? [
+                                    { value: 'utf8mb4_unicode_ci', label: 'utf8mb4_unicode_ci' },
+                                    { value: 'utf8mb4_general_ci', label: 'utf8mb4_general_ci' },
+                                    { value: 'utf8mb4_uca1400_ai_ci', label: 'utf8mb4_uca1400_ai_ci' },
+                                    { value: 'utf8mb4_bin', label: 'utf8mb4_bin' },
+                                    { value: 'utf8_general_ci', label: 'utf8_general_ci' },
+                                    { value: 'utf8_unicode_ci', label: 'utf8_unicode_ci' },
+                                  ]
+                                : [
+                                    { value: 'utf8mb4_unicode_ci', label: 'utf8mb4_unicode_ci' },
+                                    { value: 'utf8mb4_general_ci', label: 'utf8mb4_general_ci' },
+                                    { value: 'utf8mb4_0900_ai_ci', label: 'utf8mb4_0900_ai_ci' },
+                                    { value: 'utf8_general_ci', label: 'utf8_general_ci' },
+                                    { value: 'utf8_unicode_ci', label: 'utf8_unicode_ci' },
+                                  ]
+                            }
                           />
                         </div>
                       </>
