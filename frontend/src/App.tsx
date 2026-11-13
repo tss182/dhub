@@ -1227,7 +1227,11 @@ export function App() {
   // Pre-load databases for connections so console dropdowns are always populated
   useEffect(() => {
     connections.forEach((c) => {
-      if (!treeDatabases[c.id]) {
+      const isRedis = c.driver?.toLowerCase() === 'redis';
+      if (isRedis && (!treeDatabases[c.id] || treeDatabases[c.id].includes('default') || treeDatabases[c.id].includes('main'))) {
+        const redisDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
+        setTreeDatabases(c.id, redisDbs);
+      } else if (!treeDatabases[c.id]) {
         SchemaService.GetDatabases(c.id)
           .then((dbs) => {
             if (dbs && dbs.length > 0) {

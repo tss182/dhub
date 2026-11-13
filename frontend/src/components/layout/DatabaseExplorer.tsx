@@ -694,8 +694,21 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       try {
         await ConnectionService.Connect(connId);
         const conn = connections.find((c) => c.id === connId);
+        const isRedis = conn?.driver?.toLowerCase() === 'redis';
         const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
-        const safeDbs = dbs.length > 0 ? dbs : conn?.databaseName ? [conn.databaseName] : ['main'];
+        const redisDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
+        let safeDbs =
+          dbs.length > 0
+            ? dbs
+            : isRedis
+            ? redisDbs
+            : conn?.databaseName
+            ? [conn.databaseName]
+            : ['main'];
+        if (isRedis) {
+          const filtered = safeDbs.filter((d) => d !== 'default' && d !== 'main');
+          safeDbs = filtered.length > 0 ? filtered : redisDbs;
+        }
         setTreeDatabases(connId, safeDbs);
 
         const currentVisibleList = useConnectionStore.getState().visibleDatabases[connId];
@@ -797,9 +810,22 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     setLoadingConnId(connId);
     try {
       await ConnectionService.Connect(connId);
-      const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
       const conn = connections.find((c) => c.id === connId);
-      const safeDbs = dbs.length > 0 ? dbs : conn?.databaseName ? [conn.databaseName] : ['main'];
+      const isRedis = conn?.driver?.toLowerCase() === 'redis';
+      const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
+      const redisDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
+      let safeDbs =
+        dbs.length > 0
+          ? dbs
+          : isRedis
+          ? redisDbs
+          : conn?.databaseName
+          ? [conn.databaseName]
+          : ['main'];
+      if (isRedis) {
+        const filtered = safeDbs.filter((d) => d !== 'default' && d !== 'main');
+        safeDbs = filtered.length > 0 ? filtered : redisDbs;
+      }
       setTreeDatabases(connId, safeDbs);
 
       // Refresh currently selected database objects
@@ -1623,7 +1649,14 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   const renderConnectionNode = (c: ConnectionConfig, currentFolderId: string | null) => {
     const isConnExpanded = !!expandedNodes[c.id];
     const isConnLoading = loadingConnId === c.id;
-    const allKnownDbs = treeDatabases[c.id] || (c.databaseName ? [c.databaseName] : []);
+    const isRedis = c.driver?.toLowerCase() === 'redis';
+    const redisDefaultDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
+
+    let allKnownDbs = treeDatabases[c.id] || (c.databaseName ? [c.databaseName] : []);
+    if (isRedis) {
+      const filtered = allKnownDbs.filter((d) => d !== 'default' && d !== 'main');
+      allKnownDbs = filtered.length > 0 ? filtered : redisDefaultDbs;
+    }
     const totalDbsCount =
       allKnownDbs.length > 0
         ? allKnownDbs.length
@@ -1827,32 +1860,34 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             )}
 
             {/* Users Node (Yellow with User icon, placed at the top) */}
-            <div
-              onClick={() => {
-                handleItemMouseLeave();
-                handleOpenUsersTab(c);
-              }}
-              onMouseEnter={(e) =>
-                handleItemMouseEnter(e, {
-                  kind: 'database',
-                  title: 'Users & Permissions',
-                  badge: 'USERS',
-                  subtitle: `${c.name} • Manage database users, grant permissions, and roles`,
-                  colorTag: '#eab308',
-                })
-              }
-              onMouseLeave={handleItemMouseLeave}
-              title={`Users & Permissions (${c.name})`}
-              className="group/users flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-amber-300 hover:text-amber-200 transition-colors mb-0.5"
-            >
-              <User className="h-3 w-3 shrink-0 text-amber-400 group-hover/users:text-amber-300" />
-              <span className="truncate font-medium flex-1 text-amber-300 group-hover/users:text-amber-200">
-                users
-              </span>
-              <span className="text-[9px] font-mono text-amber-400/80 border border-amber-500/30 bg-amber-500/10 px-1 rounded uppercase shrink-0">
-                AUTH
-              </span>
-            </div>
+            {c.driver?.toLowerCase() !== 'redis' && (
+              <div
+                onClick={() => {
+                  handleItemMouseLeave();
+                  handleOpenUsersTab(c);
+                }}
+                onMouseEnter={(e) =>
+                  handleItemMouseEnter(e, {
+                    kind: 'database',
+                    title: 'Users & Permissions',
+                    badge: 'USERS',
+                    subtitle: `${c.name} • Manage database users, grant permissions, and roles`,
+                    colorTag: '#eab308',
+                  })
+                }
+                onMouseLeave={handleItemMouseLeave}
+                title={`Users & Permissions (${c.name})`}
+                className="group/users flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-amber-300 hover:text-amber-200 transition-colors mb-0.5"
+              >
+                <User className="h-3 w-3 shrink-0 text-amber-400 group-hover/users:text-amber-300" />
+                <span className="truncate font-medium flex-1 text-amber-300 group-hover/users:text-amber-200">
+                  users
+                </span>
+                <span className="text-[9px] font-mono text-amber-400/80 border border-amber-500/30 bg-amber-500/10 px-1 rounded uppercase shrink-0">
+                  AUTH
+                </span>
+              </div>
+            )}
 
             {/* SQLite Direct Mode */}
             {isSQLite ? (
