@@ -52,23 +52,30 @@ type IndexMeta struct {
 type ObjectSummary struct {
 	Schema      string `json:"schema"`
 	Name        string `json:"name"`
-	Type        string `json:"type"` // "table" | "view" | "materialized_view" | "routine"
+	Type        string `json:"type"` // "table" | "view" | "materialized_view" | "routine" | "trigger" | "sequence" | "extension"
 	RowEstimate int64  `json:"rowEstimate"`
 	SizePretty  string `json:"sizePretty"`
 	Comment     string `json:"comment"`
+	ParentTable string `json:"parentTable,omitempty"`
+}
+
+type CheckConstraintMeta struct {
+	Name   string `json:"name"`
+	Clause string `json:"clause"`
 }
 
 type TableStructure struct {
-	Schema      string           `json:"schema"`
-	Name        string           `json:"name"`
-	Columns     []ColumnMeta     `json:"columns"`
-	PrimaryKeys []string         `json:"primaryKeys"`
-	ForeignKeys []ForeignKeyMeta `json:"foreignKeys"`
-	Indexes     []IndexMeta      `json:"indexes"`
-	DDL         string           `json:"ddl"`
-	Engine      string           `json:"engine,omitempty"`
-	Collation   string           `json:"collation,omitempty"`
-	Comment     string           `json:"comment,omitempty"`
+	Schema           string                `json:"schema"`
+	Name             string                `json:"name"`
+	Columns          []ColumnMeta          `json:"columns"`
+	PrimaryKeys      []string              `json:"primaryKeys"`
+	ForeignKeys      []ForeignKeyMeta      `json:"foreignKeys"`
+	Indexes          []IndexMeta           `json:"indexes"`
+	CheckConstraints []CheckConstraintMeta `json:"checkConstraints,omitempty"`
+	DDL              string                `json:"ddl"`
+	Engine           string                `json:"engine,omitempty"`
+	Collation        string                `json:"collation,omitempty"`
+	Comment          string                `json:"comment,omitempty"`
 }
 
 type QueryRequest struct {

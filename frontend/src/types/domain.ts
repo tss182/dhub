@@ -111,6 +111,12 @@ export interface ObjectSummary {
   rowEstimate: number;
   sizePretty?: string;
   comment?: string;
+  parentTable?: string;
+}
+
+export interface CheckConstraintMeta {
+  name: string;
+  clause: string;
 }
 
 export interface TableStructure {
@@ -120,6 +126,7 @@ export interface TableStructure {
   primaryKeys: string[];
   foreignKeys: ForeignKeyMeta[];
   indexes: IndexMeta[];
+  checkConstraints?: CheckConstraintMeta[];
   ddl: string;
 }
 

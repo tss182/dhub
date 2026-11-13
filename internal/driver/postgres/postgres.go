@@ -161,57 +161,102 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 	if err != nil {
 		return nil, err
 	}
-	query := `
-		SELECT
-			table_name,
-			CASE table_type
-				WHEN 'BASE TABLE' THEN 'table'
-				WHEN 'VIEW' THEN 'view'
-				ELSE 'other'
-			END as obj_type
-		FROM information_schema.tables
-		WHERE table_schema = $1
-		ORDER BY table_name;`
-
-	rows, err := db.QueryContext(ctx, query, schema)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	var objects []driver.ObjectSummary
-	for rows.Next() {
-		var name, objType string
-		if err := rows.Scan(&name, &objType); err == nil {
-			objects = append(objects, driver.ObjectSummary{
-				Schema:      schema,
-				Name:        name,
-				Type:        objType,
-				RowEstimate: -1,
-			})
+
+	// 1. Tables, Views, Materialized Views, and Partitioned Tables with row estimates, size, and comments
+	classQuery := `
+		SELECT
+			c.relname,
+			CASE c.relkind
+				WHEN 'r' THEN 'table'
+				WHEN 'v' THEN 'view'
+				WHEN 'm' THEN 'materialized_view'
+				WHEN 'p' THEN 'table'
+				ELSE 'other'
+			END as obj_type,
+			GREATEST(COALESCE(c.reltuples::bigint, -1), -1) as row_estimate,
+			pg_size_pretty(pg_total_relation_size(c.oid)) as size_pretty,
+			COALESCE(d.description, '') as comment
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = 0
+		WHERE n.nspname = $1 AND c.relkind IN ('r', 'v', 'm', 'p')
+		ORDER BY c.relname;`
+
+	rows, err := db.QueryContext(ctx, classQuery, schema)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name, objType, sizePretty, comment string
+			var rowEstimate int64
+			if err := rows.Scan(&name, &objType, &rowEstimate, &sizePretty, &comment); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      schema,
+					Name:        name,
+					Type:        objType,
+					RowEstimate: rowEstimate,
+					SizePretty:  sizePretty,
+					Comment:     comment,
+				})
+			}
+		}
+	} else {
+		// Fallback for limited permissions
+		fallbackQuery := `
+			SELECT
+				table_name,
+				CASE table_type
+					WHEN 'BASE TABLE' THEN 'table'
+					WHEN 'VIEW' THEN 'view'
+					ELSE 'other'
+				END as obj_type
+			FROM information_schema.tables
+			WHERE table_schema = $1
+			ORDER BY table_name;`
+		if fbRows, fbErr := db.QueryContext(ctx, fallbackQuery, schema); fbErr == nil {
+			defer fbRows.Close()
+			for fbRows.Next() {
+				var name, objType string
+				if err := fbRows.Scan(&name, &objType); err == nil {
+					objects = append(objects, driver.ObjectSummary{
+						Schema:      schema,
+						Name:        name,
+						Type:        objType,
+						RowEstimate: -1,
+					})
+				}
+			}
 		}
 	}
 
-	// Materialized Views
-	matRows, matErr := db.QueryContext(ctx, `SELECT matviewname FROM pg_matviews WHERE schemaname = $1 ORDER BY matviewname`, schema)
-	if matErr == nil {
-		defer matRows.Close()
-		for matRows.Next() {
-			var mName string
-			if err := matRows.Scan(&mName); err == nil {
+	// 2. Sequences
+	seqQuery := `
+		SELECT c.relname, COALESCE(d.description, '')
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = 0
+		WHERE n.nspname = $1 AND c.relkind = 'S'
+		ORDER BY c.relname;`
+	if seqRows, sErr := db.QueryContext(ctx, seqQuery, schema); sErr == nil {
+		defer seqRows.Close()
+		for seqRows.Next() {
+			var sName, sComment string
+			if err := seqRows.Scan(&sName, &sComment); err == nil {
 				objects = append(objects, driver.ObjectSummary{
 					Schema:      schema,
-					Name:        mName,
-					Type:        "materialized_view",
+					Name:        sName,
+					Type:        "sequence",
 					RowEstimate: -1,
+					Comment:     sComment,
 				})
 			}
 		}
 	}
 
-	// Routines (Functions & Stored Procedures)
-	routineRows, rErr := db.QueryContext(ctx, `SELECT routine_name FROM information_schema.routines WHERE routine_schema = $1 ORDER BY routine_name`, schema)
-	if rErr == nil {
+	// 3. Routines (Functions & Stored Procedures)
+	routineQuery := `SELECT routine_name FROM information_schema.routines WHERE routine_schema = $1 ORDER BY routine_name;`
+	if routineRows, rErr := db.QueryContext(ctx, routineQuery, schema); rErr == nil {
 		defer routineRows.Close()
 		for routineRows.Next() {
 			var rName string
@@ -226,18 +271,55 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 		}
 	}
 
-	// Triggers
-	triggerRows, tErr := db.QueryContext(ctx, `SELECT DISTINCT trigger_name FROM information_schema.triggers WHERE trigger_schema = $1 ORDER BY trigger_name`, schema)
-	if tErr == nil {
+	// 4. Triggers (with parent table resolved)
+	triggerQuery := `
+		SELECT t.tgname, c.relname, COALESCE(d.description, '')
+		FROM pg_trigger t
+		JOIN pg_class c ON c.oid = t.tgrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_description d ON d.objoid = t.oid AND d.objsubid = 0
+		WHERE n.nspname = $1 AND NOT t.tgisinternal
+		ORDER BY t.tgname;`
+	if triggerRows, tErr := db.QueryContext(ctx, triggerQuery, schema); tErr == nil {
 		defer triggerRows.Close()
 		for triggerRows.Next() {
-			var tName string
-			if err := triggerRows.Scan(&tName); err == nil {
+			var tName, pTable, tComment string
+			if err := triggerRows.Scan(&tName, &pTable, &tComment); err == nil {
 				objects = append(objects, driver.ObjectSummary{
 					Schema:      schema,
 					Name:        tName,
 					Type:        "trigger",
 					RowEstimate: -1,
+					ParentTable: pTable,
+					Comment:     tComment,
+				})
+			}
+		}
+	}
+
+	// 5. Extensions (schema-specific or public)
+	extQuery := `
+		SELECT e.extname, e.extversion, COALESCE(d.description, '')
+		FROM pg_extension e
+		JOIN pg_namespace n ON n.oid = e.extnamespace
+		LEFT JOIN pg_description d ON d.objoid = e.oid
+		WHERE n.nspname = $1
+		ORDER BY e.extname;`
+	if extRows, xErr := db.QueryContext(ctx, extQuery, schema); xErr == nil {
+		defer extRows.Close()
+		for extRows.Next() {
+			var xName, xVer, xComment string
+			if err := extRows.Scan(&xName, &xVer, &xComment); err == nil {
+				desc := "v" + xVer
+				if xComment != "" {
+					desc += " - " + xComment
+				}
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      schema,
+					Name:        xName,
+					Type:        "extension",
+					RowEstimate: -1,
+					Comment:     desc,
 				})
 			}
 		}
@@ -288,7 +370,7 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 
 	// 2. Get Columns
 	colQuery := `
-		SELECT column_name, data_type, is_nullable, column_default, is_identity
+		SELECT column_name, data_type, udt_name, is_nullable, column_default, is_identity
 		FROM information_schema.columns
 		WHERE table_schema = $1 AND table_name = $2
 		ORDER BY ordinal_position;`
@@ -300,9 +382,9 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 
 	colIndex := make(map[string]int)
 	for rows.Next() {
-		var name, dataType, isNullable string
+		var name, dataType, udtName, isNullable string
 		var dflt, isIdentity *string
-		if err := rows.Scan(&name, &dataType, &isNullable, &dflt, &isIdentity); err == nil {
+		if err := rows.Scan(&name, &dataType, &udtName, &isNullable, &dflt, &isIdentity); err == nil {
 			defVal := ""
 			if dflt != nil {
 				defVal = *dflt
@@ -310,10 +392,27 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 			isAuto := strings.HasPrefix(strings.ToLower(defVal), "nextval(") ||
 				(isIdentity != nil && strings.EqualFold(*isIdentity, "YES"))
 			colIndex[name] = len(structure.Columns)
+
+			effectiveType := dataType
+			if strings.EqualFold(dataType, "USER-DEFINED") {
+				effectiveType = udtName
+				// Try to get enum labels if this is an enum
+				enumQuery := `
+					SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
+					FROM pg_enum e
+					JOIN pg_type t ON t.oid = e.enumtypid
+					JOIN pg_namespace n ON n.oid = t.typnamespace
+					WHERE t.typname = $1 AND (n.nspname = $2 OR n.nspname = 'public');`
+				var enumLabels *string
+				if err := db.QueryRowContext(ctx, enumQuery, udtName, schema).Scan(&enumLabels); err == nil && enumLabels != nil && *enumLabels != "" {
+					effectiveType = fmt.Sprintf("%s (%s)", udtName, *enumLabels)
+				}
+			}
+
 			structure.Columns = append(structure.Columns, driver.ColumnMeta{
 				Name:         name,
-				DataType:     dataType,
-				RawType:      dataType,
+				DataType:     effectiveType,
+				RawType:      udtName,
 				IsNullable:   isNullable == "YES",
 				IsPrimaryKey: pkSet[name],
 				IsAutoIncr:   isAuto,
@@ -420,6 +519,26 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		}
 	}
 
+	// 4b. Get Check Constraints
+	chkQuery := `
+		SELECT c.conname, pg_get_constraintdef(c.oid)
+		FROM pg_constraint c
+		JOIN pg_namespace n ON n.oid = c.connamespace
+		JOIN pg_class cl ON cl.oid = c.conrelid
+		WHERE n.nspname = $1 AND cl.relname = $2 AND c.contype = 'c';`
+	if chkRows, chkErr := db.QueryContext(ctx, chkQuery, schema, table); chkErr == nil {
+		defer chkRows.Close()
+		for chkRows.Next() {
+			var cName, cDef string
+			if err := chkRows.Scan(&cName, &cDef); err == nil {
+				structure.CheckConstraints = append(structure.CheckConstraints, driver.CheckConstraintMeta{
+					Name:   cName,
+					Clause: cDef,
+				})
+			}
+		}
+	}
+
 	// 5. Generate DDL
 	structure.DDL = generatePostgresDDL(schema, table, structure)
 
@@ -470,8 +589,26 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 		defs = append(defs, def)
 	}
 
+	for _, chk := range s.CheckConstraints {
+		clause := chk.Clause
+		if strings.HasPrefix(strings.ToUpper(clause), "CHECK ") {
+			defs = append(defs, fmt.Sprintf("  CONSTRAINT %s %s", quoteIdent(chk.Name), clause))
+		} else {
+			defs = append(defs, fmt.Sprintf("  CONSTRAINT %s CHECK (%s)", quoteIdent(chk.Name), clause))
+		}
+	}
+
 	sb.WriteString(strings.Join(defs, ",\n"))
 	sb.WriteString("\n);")
+
+	if s.Comment != "" {
+		sb.WriteString(fmt.Sprintf("\n\nCOMMENT ON TABLE %s IS '%s';", prefix, strings.ReplaceAll(s.Comment, "'", "''")))
+	}
+	for _, col := range s.Columns {
+		if col.Comment != "" {
+			sb.WriteString(fmt.Sprintf("\nCOMMENT ON COLUMN %s.%s IS '%s';", prefix, quoteIdent(col.Name), strings.ReplaceAll(col.Comment, "'", "''")))
+		}
+	}
 
 	for _, idx := range s.Indexes {
 		if idx.IsPrimary {

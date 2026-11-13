@@ -74,6 +74,16 @@ const MYSQL_ADMIN_PRIVILEGES = [
   'CREATE USER',
 ];
 
+const POSTGRES_OBJECT_PRIVILEGES = [
+  'SELECT',
+  'INSERT',
+  'UPDATE',
+  'DELETE',
+  'TRUNCATE',
+  'REFERENCES',
+  'TRIGGER',
+];
+
 function generateSecurePassword(length = 16): string {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=';
   let pass = '';
@@ -289,6 +299,14 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       ...prev,
       preset,
       selectedPrivileges: privs,
+      ...(connection?.driver === 'postgres'
+        ? {
+            pgSuperuser: preset === 'admin',
+            pgCreateDb: preset === 'admin',
+            pgCreateRole: preset === 'admin',
+            pgCanLogin: true,
+          }
+        : {}),
     }));
   };
 
@@ -344,14 +362,26 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         const dbClause = createModal.pgCreateDb ? ' CREATEDB' : ' NOCREATEDB';
         const roleClause = createModal.pgCreateRole ? ' CREATEROLE' : ' NOCREATEROLE';
 
-        const sql = `CREATE ROLE "${uname}" WITH${loginClause}${superClause}${dbClause}${roleClause}${passClause};`;
+        const createSql = `CREATE ROLE "${uname}" WITH${loginClause}${superClause}${dbClause}${roleClause}${passClause};`;
+        let grantSql = '';
+        if (createModal.selectedPrivileges.length > 0 && !createModal.pgSuperuser) {
+          const privsStr = createModal.selectedPrivileges.includes('ALL PRIVILEGES')
+            ? 'ALL PRIVILEGES'
+            : createModal.selectedPrivileges.join(', ');
+          grantSql = ` GRANT USAGE ON SCHEMA "${targetSchema}" TO "${uname}"; GRANT ${privsStr} ON ALL TABLES IN SCHEMA "${targetSchema}" TO "${uname}";`;
+          if (createModal.selectedPrivileges.some((p) => ['INSERT', 'UPDATE', 'ALL PRIVILEGES'].includes(p))) {
+            grantSql += ` GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "${targetSchema}" TO "${uname}";`;
+          }
+        }
+
+        const fullSql = `${createSql}${grantSql}`;
 
         await QueryService.ExecuteQuery({
           executionId: execId,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
-          sql,
+          sql: fullSql,
           limit: 10,
           offset: 0,
         } as any);
@@ -425,6 +455,32 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         }));
       } catch (err: any) {
         console.warn('Could not load raw grants:', err);
+        setPermissionModal((prev) => ({ ...prev, isLoadingGrants: false }));
+      }
+    } else if (connection.driver === 'postgres') {
+      try {
+        const targetDb = connection.databaseName || 'postgres';
+        const res = await QueryService.ExecuteQuery({
+          executionId: `grants-${Date.now()}`,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: 'public',
+          sql: `SELECT DISTINCT privilege_type FROM information_schema.role_table_grants WHERE grantee = '${u.username}';`,
+          limit: 100,
+          offset: 0,
+        } as any);
+
+        const privs = ((res?.rows || []) as any[]).filter(Boolean).map((r: any) => String(r[0] ?? '').toUpperCase());
+        const detectedPrivs = privs.filter((p) => POSTGRES_OBJECT_PRIVILEGES.includes(p));
+
+        setPermissionModal((prev) => ({
+          ...prev,
+          rawGrants: privs.map((p) => `TABLE: ${p}`),
+          selectedPrivileges: detectedPrivs,
+          isLoadingGrants: false,
+        }));
+      } catch (err: any) {
+        console.warn('Could not load PostgreSQL grants:', err);
         setPermissionModal((prev) => ({ ...prev, isLoadingGrants: false }));
       }
     } else {
@@ -501,7 +557,21 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         const roleClause = permissionModal.pgCreateRole ? ' CREATEROLE' : ' NOCREATEROLE';
         const loginClause = permissionModal.pgCanLogin ? ' LOGIN' : ' NOLOGIN';
 
-        const sql = `ALTER ROLE "${user.username}" WITH${superClause}${dbClause}${roleClause}${loginClause};`;
+        let sql = `ALTER ROLE "${user.username}" WITH${superClause}${dbClause}${roleClause}${loginClause};`;
+
+        if (!permissionModal.pgSuperuser) {
+          if (selectedPrivileges.length === 0) {
+            sql += ` REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "${targetSchema}" FROM "${user.username}";`;
+          } else {
+            const privsStr = selectedPrivileges.includes('ALL PRIVILEGES')
+              ? 'ALL PRIVILEGES'
+              : selectedPrivileges.join(', ');
+            sql += ` GRANT USAGE ON SCHEMA "${targetSchema}" TO "${user.username}"; GRANT ${privsStr} ON ALL TABLES IN SCHEMA "${targetSchema}" TO "${user.username}";`;
+            if (selectedPrivileges.some((p) => ['INSERT', 'UPDATE', 'ALL PRIVILEGES'].includes(p))) {
+              sql += ` GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "${targetSchema}" TO "${user.username}";`;
+            }
+          }
+        }
 
         await QueryService.ExecuteQuery({
           executionId: execId,
@@ -1141,8 +1211,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                 </div>
               </div>
 
-              {/* MySQL / MariaDB Privileges Presets */}
-              {isMySQLLike(connection.driver) && (
+              {/* Privileges Presets (MySQL & PostgreSQL) */}
+              {(isMySQLLike(connection.driver) || connection.driver === 'postgres') && (
                 <div>
                   <label className="block text-zinc-300 font-medium mb-1">Privilege Preset</label>
                   <div className="grid grid-cols-3 gap-2">
@@ -1188,43 +1258,87 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
               {/* Postgres Options */}
               {connection.driver === 'postgres' && (
-                <div className="space-y-2 border border-[#2c303c] p-2.5 rounded bg-[#14151a]">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={createModal.pgCanLogin}
-                      onChange={(e) => setCreateModal((prev) => ({ ...prev, pgCanLogin: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-zinc-200 font-medium">Can Login (LOGIN)</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={createModal.pgSuperuser}
-                      onChange={(e) => setCreateModal((prev) => ({ ...prev, pgSuperuser: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-zinc-200 font-medium">Superuser (SUPERUSER)</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={createModal.pgCreateDb}
-                      onChange={(e) => setCreateModal((prev) => ({ ...prev, pgCreateDb: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-zinc-200 font-medium">Create Database (CREATEDB)</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={createModal.pgCreateRole}
-                      onChange={(e) => setCreateModal((prev) => ({ ...prev, pgCreateRole: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-zinc-200 font-medium">Create Roles (CREATEROLE)</span>
-                  </label>
+                <div className="space-y-3">
+                  <div className="space-y-2 border border-[#2c303c] p-2.5 rounded bg-[#14151a]">
+                    <span className="text-[11px] font-semibold text-zinc-300 block">Role Attributes</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={createModal.pgCanLogin}
+                          onChange={(e) => setCreateModal((prev) => ({ ...prev, pgCanLogin: e.target.checked }))}
+                          className="rounded"
+                        />
+                        <span className="text-zinc-200 font-medium">Can Login (LOGIN)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={createModal.pgSuperuser}
+                          onChange={(e) => setCreateModal((prev) => ({ ...prev, pgSuperuser: e.target.checked }))}
+                          className="rounded"
+                        />
+                        <span className="text-zinc-200 font-medium">Superuser</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={createModal.pgCreateDb}
+                          onChange={(e) => setCreateModal((prev) => ({ ...prev, pgCreateDb: e.target.checked }))}
+                          className="rounded"
+                        />
+                        <span className="text-zinc-200 font-medium">Create DB</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={createModal.pgCreateRole}
+                          onChange={(e) => setCreateModal((prev) => ({ ...prev, pgCreateRole: e.target.checked }))}
+                          className="rounded"
+                        />
+                        <span className="text-zinc-200 font-medium">Create Roles</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {!createModal.pgSuperuser && (
+                    <div className="border border-[#2c303c] p-2.5 rounded bg-[#14151a]">
+                      <span className="text-[11px] font-semibold text-zinc-300 block mb-1.5">
+                        Table Privileges (public schema)
+                      </span>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                        {POSTGRES_OBJECT_PRIVILEGES.map((priv) => {
+                          const isChecked =
+                            createModal.selectedPrivileges.includes('ALL PRIVILEGES') ||
+                            createModal.selectedPrivileges.includes(priv);
+                          return (
+                            <label
+                              key={priv}
+                              className={`flex items-center gap-1.5 p-1 rounded cursor-pointer transition-colors ${
+                                isChecked ? 'text-zinc-100 bg-blue-500/10' : 'text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  setCreateModal((prev) => {
+                                    const curr = prev.selectedPrivileges;
+                                    const next = curr.includes(priv)
+                                      ? curr.filter((p) => p !== priv && p !== 'ALL PRIVILEGES')
+                                      : [...curr.filter((p) => p !== 'ALL PRIVILEGES'), priv];
+                                    return { ...prev, selectedPrivileges: next };
+                                  });
+                                }}
+                                className="rounded"
+                              />
+                              <span className="truncate text-[11px] font-mono">{priv}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1491,6 +1605,100 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                       </div>
                     </label>
                   </div>
+
+                  {!permissionModal.pgSuperuser && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-semibold text-zinc-300">Schema &amp; Table Privileges (public schema)</span>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPermissionModal((prev) => ({
+                                ...prev,
+                                selectedPrivileges: ['SELECT'],
+                              }))
+                            }
+                            className="text-blue-400 hover:underline cursor-pointer"
+                          >
+                            Read Only
+                          </button>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPermissionModal((prev) => ({
+                                ...prev,
+                                selectedPrivileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+                              }))
+                            }
+                            className="text-blue-400 hover:underline cursor-pointer"
+                          >
+                            Read &amp; Write
+                          </button>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPermissionModal((prev) => ({
+                                ...prev,
+                                selectedPrivileges: ['ALL PRIVILEGES'],
+                              }))
+                            }
+                            className="text-amber-400 hover:underline cursor-pointer"
+                          >
+                            All Privileges
+                          </button>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPermissionModal((prev) => ({
+                                ...prev,
+                                selectedPrivileges: [],
+                              }))
+                            }
+                            className="text-zinc-400 hover:underline cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 p-2.5 bg-[#14151a] rounded border border-[#282a36]">
+                        {POSTGRES_OBJECT_PRIVILEGES.map((priv) => {
+                          const isChecked =
+                            permissionModal.selectedPrivileges.includes('ALL PRIVILEGES') ||
+                            permissionModal.selectedPrivileges.includes(priv);
+                          return (
+                            <label
+                              key={priv}
+                              className={`flex items-center gap-1.5 p-1 rounded cursor-pointer transition-colors ${
+                                isChecked ? 'text-zinc-100 bg-blue-500/10' : 'text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => handleTogglePrivilege(priv)}
+                                className="rounded"
+                              />
+                              <span className="truncate text-[11px] font-mono">{priv}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Existing Grants Output */}
+                  {permissionModal.rawGrants.length > 0 && (
+                    <div>
+                      <span className="text-zinc-400 block mb-1 font-medium">Detected Table Grants:</span>
+                      <pre className="p-2 bg-[#101115] rounded border border-[#22242c] font-mono text-[10px] text-zinc-400 overflow-x-auto max-h-24">
+                        {permissionModal.rawGrants.join('\n')}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
 
