@@ -66,8 +66,26 @@ func (m *MySQLDriver) ListSchemas(ctx context.Context, database string) ([]strin
 	return []string{database}, nil
 }
 
+// formatBytes converts byte count into a human-readable string (e.g. 1.2 MB).
+func formatBytes(b int64) string {
+	if b <= 0 {
+		return ""
+	}
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) ([]driver.ObjectSummary, error) {
-	query := `SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name`
+	query := `SELECT table_name, table_type, COALESCE(table_rows, 0), COALESCE(data_length + index_length, 0), COALESCE(table_comment, '')
+		FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name`
 	rows, err := m.db.QueryContext(ctx, query, database)
 	if err != nil {
 		return nil, err
@@ -76,8 +94,9 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 
 	var objects []driver.ObjectSummary
 	for rows.Next() {
-		var name, objType string
-		if err := rows.Scan(&name, &objType); err == nil {
+		var name, objType, comment string
+		var rowsEst, sizeBytes int64
+		if err := rows.Scan(&name, &objType, &rowsEst, &sizeBytes, &comment); err == nil {
 			t := "table"
 			if strings.Contains(strings.ToUpper(objType), "VIEW") {
 				t = "view"
@@ -86,23 +105,26 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 				Schema:      database,
 				Name:        name,
 				Type:        t,
-				RowEstimate: -1,
+				RowEstimate: rowsEst,
+				SizePretty:  formatBytes(sizeBytes),
+				Comment:     comment,
 			})
 		}
 	}
 
 	// Routines (Procedures & Functions)
-	rRows, rErr := m.db.QueryContext(ctx, `SELECT ROUTINE_NAME FROM information_schema.routines WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_NAME`, database)
+	rRows, rErr := m.db.QueryContext(ctx, `SELECT ROUTINE_NAME, COALESCE(ROUTINE_COMMENT, '') FROM information_schema.routines WHERE ROUTINE_SCHEMA = ? ORDER BY ROUTINE_NAME`, database)
 	if rErr == nil {
 		defer rRows.Close()
 		for rRows.Next() {
-			var rName string
-			if err := rRows.Scan(&rName); err == nil {
+			var rName, rComment string
+			if err := rRows.Scan(&rName, &rComment); err == nil {
 				objects = append(objects, driver.ObjectSummary{
 					Schema:      database,
 					Name:        rName,
 					Type:        "routine",
 					RowEstimate: -1,
+					Comment:     rComment,
 				})
 			}
 		}
@@ -120,6 +142,24 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 					Name:        tName,
 					Type:        "trigger",
 					RowEstimate: -1,
+				})
+			}
+		}
+	}
+
+	// Events (Scheduled Tasks - supported in MySQL 5.1+ and MariaDB)
+	eRows, eErr := m.db.QueryContext(ctx, `SELECT EVENT_NAME, COALESCE(EVENT_COMMENT, '') FROM information_schema.events WHERE EVENT_SCHEMA = ? ORDER BY EVENT_NAME`, database)
+	if eErr == nil {
+		defer eRows.Close()
+		for eRows.Next() {
+			var eName, eComment string
+			if err := eRows.Scan(&eName, &eComment); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      database,
+					Name:        eName,
+					Type:        "event",
+					RowEstimate: -1,
+					Comment:     eComment,
 				})
 			}
 		}
