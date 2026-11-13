@@ -2260,6 +2260,7 @@ export function App() {
                     <DataGrid
                       tabId={activeTab.id}
                       connectionId={activeTab.connectionId}
+                      driver={tableConn?.driver || activeTab.driver}
                       database={activeTab.database}
                       schema={activeTab.schema}
                       tableName={activeTab.table}

@@ -3,6 +3,7 @@ import { ColumnMeta, ConnectionEnvType } from '../../types/domain';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
+import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useAlertStore, alertWarning, alertSuccess } from '../../stores/useAlertStore';
 import { CopyFormatSelector, COPY_FORMAT_LABELS } from './CopyFormatSelector';
 import {
@@ -38,6 +39,7 @@ import {
   Code,
   Edit3,
   Ban,
+  Lock,
   CheckSquare,
   ClipboardPaste,
   Clock,
@@ -729,6 +731,35 @@ export const DataGrid: React.FC<DataGridProps> = ({
       setFrozenColumns((prev) => Array.from(new Set([...prev, ...uniquePKs])));
     }
   }, [tabId, tableName, columns, primaryKeys]);
+
+  const isRedis = useMemo(() => {
+    if ((driver || '').toLowerCase() === 'redis') return true;
+    if (connectionId) {
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
+      if (conn?.driver?.toLowerCase() === 'redis') return true;
+    }
+    return false;
+  }, [driver, connectionId]);
+
+  const isColumnEditable = (colName: string, isInsert: boolean = false): boolean => {
+    if (isReadOnly) return false;
+    if (isRedis) {
+      const colNameLower = colName.toLowerCase();
+      if (isInsert) {
+        return colNameLower === 'key' || colNameLower === 'value';
+      }
+      return colNameLower === 'value';
+    }
+    return true;
+  };
+
+  const isCellEditable = (rowIndex: number, colIndex: number): boolean => {
+    if (isReadOnly) return false;
+    const col = columns[colIndex];
+    if (!col) return false;
+    const isInsert = rowIndex < 0;
+    return isColumnEditable(col.name, isInsert);
+  };
   const thRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const [resizingCol, setResizingCol] = useState<string | null>(null);
@@ -1390,6 +1421,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   const handleStartEdit = (rowIndex: number, colIndex: number, currentVal: any, initialVal?: string) => {
     if (isReadOnly) return;
+    if (!isCellEditable(rowIndex, colIndex)) return;
     const col = columns[colIndex];
     if (!col) return;
     const inputType = getColumnInputType(col?.dataType);
@@ -1422,9 +1454,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }, 20);
 
     // Auto-focus first editable column of the newly inserted row
-    const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
+    const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement && isColumnEditable(c.name, true));
     const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
-    if (columns.length > 0) {
+    if (columns.length > 0 && targetColIdx !== -1) {
       setTimeout(() => {
         handleStartEdit(newRowId, targetColIdx, '');
       }, 50);
@@ -1566,7 +1598,7 @@ WHERE ${whereClause};`;
     const { rowIndex: vIdx, columnIndex: cIdx } = activeFocusedCell;
     const vr = visualRows[vIdx];
     const col = columns[cIdx];
-    if (!vr || !col) return;
+    if (!vr || !col || !isCellEditable(vr.rowId, cIdx)) return;
 
     if (vr.isInsert) {
       stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, newVal);
@@ -1842,6 +1874,9 @@ WHERE ${whereClause};`;
       rawValue: activeFocusedCell.rawValue,
     };
 
+    const focusedVr = visualRows[activeFocusedCell.rowIndex];
+    const isFocusedEditable = focusedVr ? isCellEditable(focusedVr.rowId, activeFocusedCell.columnIndex) : false;
+
     useWorkbenchStore.getState().setActiveCellViewer({
       tabId,
       tableName,
@@ -1850,7 +1885,7 @@ WHERE ${whereClause};`;
       rowIndex: activeFocusedCell.rowIndex,
       columnIndex: activeFocusedCell.columnIndex,
       rawValue: activeFocusedCell.rawValue,
-      onSave: (newVal) => handleUpdateRef.current(newVal),
+      onSave: isFocusedEditable ? (newVal) => handleUpdateRef.current(newVal) : undefined,
     });
   }, [
     tabId,
@@ -2206,7 +2241,7 @@ ${setClauses};`;
       if (!vr) continue;
       for (let c = startC; c <= endC; c++) {
         const col = columns[c];
-        if (!col || col.isPrimaryKey || col.isAutoIncrement) continue;
+        if (!col || col.isPrimaryKey || col.isAutoIncrement || !isCellEditable(vr.rowId, c)) continue;
         if (vr.isInsert) {
           stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, null);
         } else {
@@ -2434,7 +2469,7 @@ ${setClauses};`;
         const vr = visualRows[targetVIdx];
         if (vr.isInsert) {
           targetColMap.forEach(({ col, val }) => {
-            if (col.isAutoIncrement) return;
+            if (col.isAutoIncrement || !isColumnEditable(col.name, true)) return;
             const finalVal = cleanPastedValue(val, col.dataType);
             stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, finalVal);
           });
@@ -2450,7 +2485,7 @@ ${setClauses};`;
           });
 
           targetColMap.forEach(({ col, val }) => {
-            if (col.isAutoIncrement) return;
+            if (col.isAutoIncrement || !isColumnEditable(col.name, false)) return;
             const finalVal = cleanPastedValue(val, col.dataType);
             stageCellUpdate(
               tabId,
@@ -2467,7 +2502,7 @@ ${setClauses};`;
         const newRowId = -(baseInsertId + (targetVIdx - visualRows.length));
         const initialValues: Record<string, unknown> = {};
         targetColMap.forEach(({ col, val }) => {
-          if (col.isAutoIncrement) return;
+          if (col.isAutoIncrement || !isColumnEditable(col.name, true)) return;
           initialValues[col.name] = cleanPastedValue(val, col.dataType);
         });
         stageRowInsert(tabId, newRowId, initialValues);
@@ -2558,7 +2593,7 @@ ${setClauses};`;
         const staged = latestStaged[targetRowIndex];
         if (staged && staged.type === 'insert') {
           columns.forEach((col) => {
-            if (!col.isAutoIncrement && staged.changes[col.name] !== undefined) {
+            if (!col.isAutoIncrement && isColumnEditable(col.name, true) && staged.changes[col.name] !== undefined) {
               const rawVal = staged.changes[col.name];
               if (rawVal !== undefined && rawVal !== null) {
                 initialValues[col.name] = cleanPastedValue(rawVal, col.dataType);
@@ -2571,7 +2606,7 @@ ${setClauses};`;
         if (sourceRow) {
           const staged = latestStaged[targetRowIndex];
           columns.forEach((col, idx) => {
-            if (!col.isAutoIncrement) {
+            if (!col.isAutoIncrement && isColumnEditable(col.name, true)) {
               const rawVal =
                 staged?.type === 'update' && staged.changes[col.name] !== undefined
                   ? staged.changes[col.name]
@@ -2607,7 +2642,7 @@ ${setClauses};`;
     }, 20);
 
     if (newIds.length === 1 && columns.length > 0) {
-      const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement);
+      const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement && isColumnEditable(c.name, true));
       const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
       setTimeout(() => {
         const val = lastValues[columns[targetColIdx].name];
@@ -2794,7 +2829,7 @@ ${setClauses};`;
       if (!isTyping && !isMod && !e.shiftKey && e.key === 'Enter') {
         if (selectionFocus && visualRows.length > 0 && columns.length > 0 && !isReadOnly) {
           const vr = visualRows[selectionFocus.r];
-          if (vr) {
+          if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
             e.preventDefault();
             const col = columns[selectionFocus.c];
             let val: any;
@@ -2836,7 +2871,7 @@ ${setClauses};`;
           !showAllFrozenModal
         ) {
           const vr = visualRows[selectionFocus.r];
-          if (vr) {
+          if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
             const col = columns[selectionFocus.c];
             if (col) {
               e.preventDefault();
@@ -2864,7 +2899,7 @@ ${setClauses};`;
         !showAllFrozenModal
       ) {
         const vr = visualRows[selectionFocus.r];
-        if (vr) {
+        if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
           const col = columns[selectionFocus.c];
           if (col) {
             e.preventDefault();
@@ -3563,7 +3598,16 @@ ${setClauses};`;
                         {isPK && (
                           <Key className="h-3 w-3 text-amber-400 fill-amber-400/30 shrink-0" />
                         )}
-                        <span className="truncate font-semibold text-zinc-200 group-hover/th:text-white transition-colors">
+                        {isRedis && col.name.toLowerCase() !== 'value' && (
+                          <span title="Read-only column">
+                            <Lock className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
+                          </span>
+                        )}
+                        <span className={`truncate font-semibold transition-colors ${
+                          isRedis && col.name.toLowerCase() !== 'value'
+                            ? 'text-zinc-400 group-hover/th:text-zinc-200'
+                            : 'text-zinc-200 group-hover/th:text-white'
+                        }`}>
                           {col.name}
                         </span>
                       </div>
@@ -3743,6 +3787,7 @@ ${setClauses};`;
                         const isLastFrozen = col.name === lastFrozenColName;
                         const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
                         const w = colWidths[col.name] || 120;
+                        const isEditable = isCellEditable(globalRowIndex, cIdx);
 
                       
   return (
@@ -3753,7 +3798,11 @@ ${setClauses};`;
                             onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
                             onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
                             onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                            onDoubleClick={() => handleStartEdit(globalRowIndex, cIdx, displayVal)}
+                            onDoubleClick={() => {
+                              if (isEditable) {
+                                handleStartEdit(globalRowIndex, cIdx, displayVal);
+                              }
+                            }}
                             className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
                               isFrozen
                                 ? `sticky z-10 ${
@@ -3763,13 +3812,19 @@ ${setClauses};`;
                                       ? 'bg-blue-900/40 text-blue-200 font-medium'
                                       : isDeleted
                                       ? 'bg-rose-950/40 text-zinc-500 line-through'
+                                      : !isEditable
+                                      ? 'bg-[#121318]/70 text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
                                       : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
                                   }`
                                 : isSelected
                                 ? 'bg-[#1b4ea3] text-white font-medium'
                                 : hasColChange
                                 ? 'bg-blue-900/30 text-blue-200 font-medium'
+                                : !isEditable
+                                ? 'bg-[#111216]/50 text-zinc-400/80 group-hover/row:bg-[#181920]'
                                 : ''
+                            } ${
+                              !isEditable ? 'cursor-default' : 'cursor-text'
                             } ${
                               isLastFrozen && isScrolledX
                                 ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
@@ -3781,7 +3836,11 @@ ${setClauses};`;
                               maxWidth: `${w}px`,
                               ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
                             }}
-                            title="Click to select, type or double-click to edit"
+                            title={
+                              isEditable
+                                ? 'Click to select, type or double-click to edit'
+                                : 'Read-only: this column cannot be edited in Redis'
+                            }
                           >
                             {isEditing ? (
                               <input
@@ -3817,8 +3876,20 @@ ${setClauses};`;
                                   if (e.key === 'Tab') {
                                     e.preventDefault();
                                     handleFinishEdit();
-                                    const nextCol = (cIdx + 1) % columns.length;
-                                    const nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
+                                    let nextCol = (cIdx + 1) % columns.length;
+                                    let nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
+                                    let attempts = 0;
+                                    while (attempts < columns.length * 2) {
+                                      const targetVr = visualRows[nextVIdx];
+                                      if (targetVr && isCellEditable(targetVr.rowId, nextCol)) {
+                                        break;
+                                      }
+                                      nextCol = (nextCol + 1) % columns.length;
+                                      if (nextCol === 0) {
+                                        nextVIdx = Math.min(visualRows.length - 1, nextVIdx + 1);
+                                      }
+                                      attempts++;
+                                    }
                                     const nextVr = visualRows[nextVIdx];
                                     setSelectionAnchor({ r: nextVIdx, c: nextCol });
                                     setSelectionFocus({ r: nextVIdx, c: nextCol });
@@ -3875,6 +3946,7 @@ ${setClauses};`;
                         const isLastFrozen = col.name === lastFrozenColName;
                         const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
                         const w = colWidths[col.name] || 120;
+                        const isInsEditable = isCellEditable(change.rowIndex, cIdx);
 
                       
   return (
@@ -3886,24 +3958,30 @@ ${setClauses};`;
                             onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
                             onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
                             onDoubleClick={() => {
-                              if (!isEditing) {
+                              if (!isEditing && isInsEditable) {
                                 handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
                               }
                             }}
-                            className={`px-3 py-1 border-r border-[#22242c] truncate cursor-text select-none transition-colors ${
+                            className={`px-3 py-1 border-r border-[#22242c] truncate select-none transition-colors ${
                               isFrozen
                                 ? `sticky z-10 ${
                                     isSelected
                                       ? 'bg-[#1b4ea3] text-white font-medium'
                                       : isSet
                                       ? 'bg-emerald-900/50 text-emerald-100 font-medium'
-                                      : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-500'
+                                      : !isInsEditable
+                                      ? 'bg-[#0a1611]/80 text-zinc-500'
+                                      : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-400'
                                   }`
                                 : isSelected
                                 ? 'bg-[#1b4ea3] text-white font-medium'
                                 : isSet
                                 ? 'bg-emerald-900/40 text-emerald-100 font-medium'
-                                : 'text-zinc-500'
+                                : !isInsEditable
+                                ? 'bg-[#08120e]/60 text-zinc-500'
+                                : 'text-zinc-400'
+                            } ${
+                              !isInsEditable ? 'cursor-default' : 'cursor-text'
                             } ${
                               isLastFrozen && isScrolledX
                                 ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
@@ -3915,7 +3993,11 @@ ${setClauses};`;
                               maxWidth: `${w}px`,
                               ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
                             }}
-                            title="Click to select, type or double-click to edit"
+                            title={
+                              isInsEditable
+                                ? 'Click to select, type or double-click to edit'
+                                : 'Read-only: generated or calculated metadata'
+                            }
                           >
                             {isEditing ? (
                               <input
@@ -3951,8 +4033,20 @@ ${setClauses};`;
                                   if (e.key === 'Tab') {
                                     e.preventDefault();
                                     handleFinishEdit();
-                                    const nextCol = (cIdx + 1) % columns.length;
-                                    const nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
+                                    let nextCol = (cIdx + 1) % columns.length;
+                                    let nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
+                                    let attempts = 0;
+                                    while (attempts < columns.length * 2) {
+                                      const targetVr = visualRows[nextVIdx];
+                                      if (targetVr && isCellEditable(targetVr.rowId, nextCol)) {
+                                        break;
+                                      }
+                                      nextCol = (nextCol + 1) % columns.length;
+                                      if (nextCol === 0) {
+                                        nextVIdx = Math.min(visualRows.length - 1, nextVIdx + 1);
+                                      }
+                                      attempts++;
+                                    }
                                     const nextVr = visualRows[nextVIdx];
                                     setSelectionAnchor({ r: nextVIdx, c: nextCol });
                                     setSelectionFocus({ r: nextVIdx, c: nextCol });
@@ -4217,6 +4311,11 @@ ${setClauses};`;
                 PRIMARY KEY
               </span>
             )}
+            {isRedis && hoveredCol.col.name.toLowerCase() !== 'value' && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 border border-zinc-700/60 text-zinc-400 font-mono shrink-0">
+                READ ONLY
+              </span>
+            )}
           </div>
 
           {/* Metadata Rows */}
@@ -4248,6 +4347,22 @@ ${setClauses};`;
                 {hoveredCol.col.isNullable ? 'YES (NULL)' : 'NO (NOT NULL)'}
               </span>
             </div>
+
+            {/* Editable Status */}
+            {isRedis && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-zinc-500">Editable:</span>
+                <span
+                  className={`font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                    hoveredCol.col.name.toLowerCase() === 'value'
+                      ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40'
+                      : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/50'
+                  }`}
+                >
+                  {hoveredCol.col.name.toLowerCase() === 'value' ? 'YES' : 'NO (DISABLED)'}
+                </span>
+              </div>
+            )}
 
             {/* Auto Increment */}
             {hoveredCol.col.isAutoIncrement && (
@@ -4441,74 +4556,84 @@ ${setClauses};`;
 
           <div className="my-1 border-t border-[#272932]" />
 
-          {contextMenu.vIdx !== null && contextMenu.cIdx !== null && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  const { vIdx, cIdx } = contextMenu;
-                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  if (vIdx !== null && cIdx !== null) {
-                    const vr = visualRows[vIdx];
-                    if (vr) {
-                      const col = columns[cIdx];
-                      let displayVal: any;
-                      if (vr.isInsert) {
-                        const staged = vr.insertChange;
-                        displayVal = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
-                      } else {
-                        const staged = stagedChanges[vr.globalRowIndex!];
-                        displayVal = staged?.type === 'update' && staged.changes[col.name] !== undefined ? staged.changes[col.name] : vr.rowData?.[cIdx];
+          {contextMenu.vIdx !== null && contextMenu.cIdx !== null && (() => {
+            const vr = visualRows[contextMenu.vIdx];
+            const isTargetEditable = vr ? isCellEditable(vr.rowId, contextMenu.cIdx) : false;
+
+            return (
+              <>
+                {isTargetEditable && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { vIdx, cIdx } = contextMenu;
+                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                      if (vIdx !== null && cIdx !== null) {
+                        const targetVr = visualRows[vIdx];
+                        if (targetVr) {
+                          const col = columns[cIdx];
+                          let displayVal: any;
+                          if (targetVr.isInsert) {
+                            const staged = targetVr.insertChange;
+                            displayVal = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
+                          } else {
+                            const staged = stagedChanges[targetVr.globalRowIndex!];
+                            displayVal = staged?.type === 'update' && staged.changes[col.name] !== undefined ? staged.changes[col.name] : targetVr.rowData?.[cIdx];
+                          }
+                          handleStartEdit(targetVr.rowId, cIdx, displayVal);
+                        }
                       }
-                      handleStartEdit(vr.rowId, cIdx, displayVal);
-                    }
-                  }
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <Edit3 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                  <span>Edit Cell</span>
-                </div>
-                <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Double-Click</kbd>
-              </button>
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Edit3 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                      <span>Edit Cell</span>
+                    </div>
+                    <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Double-Click</kbd>
+                  </button>
+                )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  const { vIdx, cIdx } = contextMenu;
-                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  if (vIdx !== null && cIdx !== null) {
-                    const vr = visualRows[vIdx];
-                    if (vr && vr.globalRowIndex !== undefined) {
-                      const col = columns[cIdx];
-                      const currentVal = vr.rowData?.[cIdx];
-                      openUpdateQueryInTab(vr.globalRowIndex, col.name, currentVal);
-                    }
-                  }
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-                  <span>Open UPDATE in Tab</span>
-                </div>
-              </button>
+                {!isRedis && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { vIdx, cIdx } = contextMenu;
+                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                      if (vIdx !== null && cIdx !== null) {
+                        const targetVr = visualRows[vIdx];
+                        if (targetVr && targetVr.globalRowIndex !== undefined) {
+                          const col = columns[cIdx];
+                          const currentVal = targetVr.rowData?.[cIdx];
+                          openUpdateQueryInTab(targetVr.globalRowIndex, col.name, currentVal);
+                        }
+                      }
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                      <span>Open UPDATE in Tab</span>
+                    </div>
+                  </button>
+                )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  const { vIdx, cIdx } = contextMenu;
-                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  handleSetSelectedToNull(vIdx, cIdx);
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <Ban className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                  <span>Set to NULL</span>
-                </div>
-              </button>
+                {isTargetEditable && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { vIdx, cIdx } = contextMenu;
+                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                      handleSetSelectedToNull(vIdx, cIdx);
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Ban className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                      <span>Set to NULL</span>
+                    </div>
+                  </button>
+                )}
 
               <button
                 type="button"
@@ -4600,7 +4725,8 @@ ${setClauses};`;
               </button>
               <div className="my-1 border-t border-[#272932]" />
             </>
-          )}
+          );
+        })()}
 
           <button
             type="button"
