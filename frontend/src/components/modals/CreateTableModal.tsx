@@ -1194,6 +1194,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    if (connection?.driver?.toLowerCase() === 'redis') {
+      onClose();
+      return;
+    }
 
     setCopiedSql(false);
     setDraggedColIndex(null);

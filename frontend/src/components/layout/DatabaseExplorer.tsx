@@ -1394,6 +1394,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   };
 
   const handleEditTableStructure = (conn: ConnectionConfig, db: string, schema: string, tableName: string) => {
+    if (conn?.driver?.toLowerCase() === 'redis') return;
     openEditTableModal(conn, db, schema, tableName);
   };
 
@@ -4573,7 +4574,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                     <span>Drop Event...</span>
                   </button>
                 </>
-              ) : contextMenu.connection.driver === 'redis' ? (
+              ) : contextMenu.connection.driver?.toLowerCase() === 'redis' ? (
                 <>
                   <button
                     type="button"
