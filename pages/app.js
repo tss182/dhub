@@ -1,10 +1,10 @@
 (() => {
   const REPO_OWNER = "tss182";
   const REPO_NAME = "dhub";
-  const RELEASES_LATEST_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+  const RELEASES_LIST_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=5`;
   const RELEASES_PAGE = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases`;
   const LATEST_RELEASE_PAGE = `${RELEASES_PAGE}/latest`;
-  const CACHE_KEY = "dhub_latest_release_cache_v1";
+  const CACHE_KEY = "dhub_releases_cache_v2";
   const CACHE_TTL_MS = 5 * 60 * 1000;
 
   const OS_ICONS = {
@@ -25,7 +25,7 @@
       "hero.loading": "Fetching latest release…",
       "hero.title1": "Modern Multi-Database",
       "hero.title2": "Desktop Client",
-      "hero.subtitle": "A lightweight, keyboard-first SQL & NoSQL IDE built with Go, Wails v3, and React. Fast native performance, environment safety tags, SSH tunneling, and inline data editing.",
+      "hero.subtitle": "A lightweight, keyboard-first SQL & NoSQL IDE built with Go, Wails v3, and React. Native WebView efficiency without Electron or JVM bloat, zero telemetry, and GPLv3 open-source.",
       "hero.recommended": "Recommended for your system",
       "hero.otherPlatforms": "All platforms & architectures ↓",
       "hero.allReleases": "Previous versions on GitHub ↗",
@@ -60,6 +60,20 @@
       "features.f5Desc": "Interactive ER canvas, visual Table Structure Designer, and cross-connection Schema Diff migration generator.",
       "features.f6Title": "Built-in Auto-Updater",
       "features.f6Desc": "Check for new GitHub Releases directly from Settings and download/install updates in-app.",
+      "trust.title": "Integrity Verification & Security Notice",
+      "trust.checksums": "SHA256 Checksums (checksums.txt) ↗",
+      "shortcuts.title": "Keyboard-First Workflow",
+      "shortcuts.s1": "Search Everywhere across connections",
+      "shortcuts.s2": "Execute query at cursor",
+      "shortcuts.s3": "Duplicate selected row(s)",
+      "shortcuts.s4": "Insert new row inline",
+      "shortcuts.s5": "Inline edit cell value",
+      "shortcuts.s6": "Open Help & User Guide",
+      "why.title": "Why DHub?",
+      "why.subtitle": "Positioned between heavy enterprise suites and paid proprietary clients.",
+      "why.dbeaver": "Comprehensive, but runs on Java/JVM with heavy memory usage and slower startup.",
+      "why.tableplus": "Fast and clean native UI, but closed-source with paid license limits on tabs and connections.",
+      "why.dhub": "Native Go + Wails v3 speed, small footprint, 100% open-source (GPLv3), zero telemetry, and no artificial limits.",
       "changelog.kicker": "Latest Release",
       "changelog.viewOnGithub": "View on GitHub ↗",
       "changelog.loading": "Fetching release notes from GitHub…"
@@ -75,7 +89,7 @@
       "hero.loading": "Mengambil versi terbaru…",
       "hero.title1": "Klien Desktop Multi-Database",
       "hero.title2": "Modern & Cepat",
-      "hero.subtitle": "IDE SQL & NoSQL ringan berbasis keyboard yang dibangun dengan Go, Wails v3, dan React. Performa native cepat, tag keamanan lingkungan, SSH tunnel, dan edit data langsung.",
+      "hero.subtitle": "IDE SQL & NoSQL ringan berbasis keyboard yang dibangun dengan Go, Wails v3, dan React. Efisiensi native WebView tanpa beban Electron atau JVM, nol telemetri, dan open-source GPLv3.",
       "hero.recommended": "Direkomendasikan untuk sistem Anda",
       "hero.otherPlatforms": "Semua platform & arsitektur ↓",
       "hero.allReleases": "Versi sebelumnya di GitHub ↗",
@@ -110,6 +124,20 @@
       "features.f5Desc": "Kanvas ER interaktif, Table Structure Designer visual, dan generator migrasi Schema Diff antar koneksi.",
       "features.f6Title": "Auto-Updater Bawaan",
       "features.f6Desc": "Cek rilis GitHub terbaru langsung dari Settings serta unduh dan pasang pembaruan di dalam aplikasi.",
+      "trust.title": "Verifikasi Integritas & Catatan Keamanan",
+      "trust.checksums": "SHA256 Checksums (checksums.txt) ↗",
+      "shortcuts.title": "Alur Kerja Berbasis Keyboard",
+      "shortcuts.s1": "Search Everywhere di semua koneksi",
+      "shortcuts.s2": "Eksekusi query di posisi kursor",
+      "shortcuts.s3": "Duplikasi baris terpilih",
+      "shortcuts.s4": "Tambah baris baru secara inline",
+      "shortcuts.s5": "Edit nilai sel secara langsung",
+      "shortcuts.s6": "Buka Bantuan & Panduan Pengguna",
+      "why.title": "Mengapa DHub?",
+      "why.subtitle": "Posisi ideal di antara suite enterprise yang berat dan klien berbayar yang tertutup.",
+      "why.dbeaver": "Lengkap, namun berjalan di atas Java/JVM dengan penggunaan memori besar dan startup lebih lambat.",
+      "why.tableplus": "UI native yang cepat dan rapi, namun closed-source dengan batasan tab dan koneksi pada versi gratis.",
+      "why.dhub": "Kecepatan native Go + Wails v3, ukuran ringan, 100% open-source (GPLv3), nol telemetri, dan tanpa batas buatan.",
       "changelog.kicker": "Rilis Terbaru",
       "changelog.viewOnGithub": "Lihat di GitHub ↗",
       "changelog.loading": "Mengambil catatan rilis dari GitHub…"
@@ -166,7 +194,7 @@
       }
     },
     {
-      file: "right menu.png",
+      file: "grid_context_menu.png",
       tab: { en: "Grid Context Menu", id: "Menu Klik Kanan Grid" },
       title: {
         en: "Rich Data Grid Context Menu & Shortcuts",
@@ -558,12 +586,23 @@
     updateHeroCTA(selectedOs, detected.arch, groups, tagName);
   }
 
-  async function fetchLatestRelease() {
+  async function fetchStaticReleases() {
+    try {
+      const res = await fetch("./releases.json", { cache: "no-cache" });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data.filter((r) => r && r.tag_name) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function fetchReleasesFromApi() {
     try {
       const cachedRaw = sessionStorage.getItem(CACHE_KEY);
       if (cachedRaw) {
         const cached = JSON.parse(cachedRaw);
-        if (Date.now() - cached.ts < CACHE_TTL_MS && cached.data) {
+        if (Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.data) && cached.data.length > 0) {
           return cached.data;
         }
       }
@@ -571,13 +610,14 @@
       // Ignore storage errors
     }
 
-    const res = await fetch(RELEASES_LATEST_API, {
+    const res = await fetch(RELEASES_LIST_API, {
       headers: { Accept: "application/vnd.github.v3+json" }
     });
     if (!res.ok) {
       throw new Error(`GitHub API ${res.status}`);
     }
-    const data = await res.json();
+    const raw = await res.json();
+    const data = Array.isArray(raw) ? raw.filter((r) => !r.draft).slice(0, 5) : [];
 
     try {
       sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
@@ -585,6 +625,36 @@
       // Ignore storage errors
     }
     return data;
+  }
+
+  function renderReleaseHistory(releases) {
+    const historyEl = document.getElementById("release-history");
+    if (!historyEl) return;
+    const previous = releases.slice(1, 5);
+    if (!previous.length) {
+      historyEl.innerHTML = "";
+      return;
+    }
+
+    historyEl.innerHTML = previous
+      .map((rel) => {
+        const tag = escapeHtml(rel.tag_name || "");
+        const title = escapeHtml(rel.name || `Release ${tag}`);
+        const date = escapeHtml(formatDate(rel.published_at));
+        const bodyHtml = renderSimpleMarkdown(rel.body);
+        return `
+          <details class="release-accordion-item">
+            <summary class="release-accordion-summary">
+              <span>${title}</span>
+              <span class="release-accordion-meta">${date ? `${date} • ` : ""}${tag}</span>
+            </summary>
+            <div class="release-accordion-body release-body">
+              ${bodyHtml}
+            </div>
+          </details>
+        `;
+      })
+      .join("");
   }
 
   function setupCopyButtons() {
@@ -633,8 +703,9 @@
       });
     }
 
-    try {
-      const release = await fetchLatestRelease();
+    const applyReleasesData = (releases) => {
+      if (!Array.isArray(releases) || releases.length === 0) return false;
+      const release = releases[0];
       activeTag = release.tag_name || "Latest";
       const published = formatDate(release.published_at);
 
@@ -649,10 +720,19 @@
           : `Latest Release ${activeTag}`;
       }
 
-      activeGroups = categorizeAssets(release.assets || []);
+      const assets = release.assets || [];
+      activeGroups = categorizeAssets(assets);
       renderAssetList("assets-windows", activeGroups.windows);
       renderAssetList("assets-macos", activeGroups.macos);
       renderAssetList("assets-linux", activeGroups.linux);
+
+      const checksumAsset = assets.find((a) => a.name === "checksums.txt");
+      const checksumLink = document.getElementById("checksums-link");
+      if (checksumLink) {
+        checksumLink.href = checksumAsset
+          ? checksumAsset.browser_download_url
+          : release.html_url || LATEST_RELEASE_PAGE;
+      }
 
       // Update Linux CLI snippet with exact .deb filename if present
       const debAsset = activeGroups.linux.find((a) => a.name.endsWith(".deb"));
@@ -672,27 +752,36 @@
       if (relMeta) relMeta.textContent = published ? `Published on ${published} • Tag ${activeTag}` : `Tag ${activeTag}`;
       if (relBody) relBody.innerHTML = renderSimpleMarkdown(release.body);
       if (relLink && release.html_url) relLink.href = release.html_url;
+
+      renderReleaseHistory(releases);
+      return true;
+    };
+
+    // 1. Load static SSG releases.json first (instant, zero rate limit)
+    const staticReleases = await fetchStaticReleases();
+    const hasStatic = applyReleasesData(staticReleases);
+
+    // 2. Refresh in background from GitHub API (or use as fallback if static is empty)
+    try {
+      const apiReleases = await fetchReleasesFromApi();
+      applyReleasesData(apiReleases);
     } catch (err) {
-      console.warn("Failed to load GitHub release:", err);
-      const warning = document.getElementById("api-warning");
-      if (warning) warning.classList.remove("hidden");
+      console.warn("Failed to load GitHub release from API:", err);
+      if (!hasStatic) {
+        const warning = document.getElementById("api-warning");
+        if (warning) warning.classList.remove("hidden");
 
-      const badgeText = document.getElementById("hero-badge-text");
-      if (badgeText) {
-        badgeText.removeAttribute("data-i18n");
-        badgeText.textContent = "GitHub Releases • Latest Version";
-      }
+        renderAssetList("assets-windows", []);
+        renderAssetList("assets-macos", []);
+        renderAssetList("assets-linux", []);
+        applySelectedOS(activeOs, detected, activeGroups, activeTag);
 
-      renderAssetList("assets-windows", []);
-      renderAssetList("assets-macos", []);
-      renderAssetList("assets-linux", []);
-      applySelectedOS(activeOs, detected, activeGroups, activeTag);
-
-      const relTitle = document.getElementById("release-title");
-      const relBody = document.getElementById("release-body");
-      if (relTitle) relTitle.textContent = "View Releases on GitHub";
-      if (relBody) {
-        relBody.innerHTML = `<p>Live release notes are temporarily unavailable. <a href="${LATEST_RELEASE_PAGE}" target="_blank" rel="noopener noreferrer">Open the latest release on GitHub ↗</a>.</p>`;
+        const relTitle = document.getElementById("release-title");
+        const relBody = document.getElementById("release-body");
+        if (relTitle) relTitle.textContent = "View Releases on GitHub";
+        if (relBody) {
+          relBody.innerHTML = `<p>Live release notes are temporarily unavailable. <a href="${LATEST_RELEASE_PAGE}" target="_blank" rel="noopener noreferrer">Open the latest release on GitHub ↗</a>.</p>`;
+        }
       }
     }
   }

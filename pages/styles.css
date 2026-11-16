@@ -1003,8 +1003,223 @@ body {
   line-height: 1.55;
 }
 
+/* Trust / Integrity Box */
+.trust-box {
+  max-width: 780px;
+  margin: 26px auto 0;
+  padding: 18px 22px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.trust-box-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 0.94rem;
+}
+
+.trust-box-header svg {
+  color: var(--emerald);
+  flex-shrink: 0;
+}
+
+.trust-checksum-link {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: #93c5fd;
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(59, 130, 246, 0.28);
+  transition: background 0.15s ease;
+}
+
+.trust-checksum-link:hover {
+  background: rgba(59, 130, 246, 0.24);
+}
+
+.trust-box-desc {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.trust-box-desc code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  background: rgba(255, 255, 255, 0.07);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #e2e8f0;
+}
+
+/* Keyboard Shortcuts Showcase */
+.shortcuts-showcase {
+  margin-top: 48px;
+  padding: 28px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.shortcuts-title {
+  margin: 0 0 18px;
+  font-size: 1.15rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.shortcut-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+}
+
+.shortcut-chip kbd {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Why DHub Comparison */
+.why-dhub {
+  margin-top: 48px;
+}
+
+.why-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.why-header h3 {
+  margin: 0 0 6px;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.why-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.94rem;
+}
+
+.why-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.why-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+}
+
+.why-card-highlight {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.08) 0%, var(--bg-card) 100%);
+}
+
+.why-label {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 0.96rem;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.why-card-highlight .why-label {
+  color: #93c5fd;
+}
+
+.why-card p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+/* Release History Accordion */
+.release-history {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.release-accordion-item {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.release-accordion-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--text-primary);
+  list-style: none;
+}
+
+.release-accordion-summary::-webkit-details-marker {
+  display: none;
+}
+
+.release-accordion-summary:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.release-accordion-meta {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.release-accordion-body {
+  padding: 4px 16px 16px;
+  border-top: 1px solid var(--border);
+}
+
 /* Responsive */
 @media (max-width: 960px) {
+  .shortcuts-grid,
+  .why-grid {
+    grid-template-columns: 1fr;
+  }
   .platform-grid,
   .features-grid {
     grid-template-columns: 1fr;

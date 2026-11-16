@@ -54,7 +54,7 @@
       <div class="container hero-content">
         <div class="hero-badge" id="hero-release-badge">
           <span class="pulse-dot"></span>
-          <span id="hero-badge-text" data-i18n="hero.loading">Fetching latest release…</span>
+          <span id="hero-badge-text">Latest Release v0.3.6</span>
         </div>
 
         <h1 class="hero-title">
@@ -64,7 +64,7 @@
 
         <p class="hero-subtitle" data-i18n="hero.subtitle">
           A lightweight, keyboard-first SQL &amp; NoSQL IDE built with Go, Wails v3, and React.
-          Fast native performance, environment safety tags, SSH tunneling, and inline data editing.
+          Native WebView efficiency without Electron or JVM bloat, zero telemetry, and GPLv3 open-source.
         </p>
 
         <!-- Primary Auto-Detected Download Box -->
@@ -137,7 +137,7 @@
                   <img src="./assets/search_everywhere.png" alt="DHub Search Everywhere" loading="lazy" />
                 </figure>
                 <figure class="carousel-slide">
-                  <img src="./assets/right%20menu.png" alt="DHub Grid Context Menu" loading="lazy" />
+                  <img src="./assets/grid_context_menu.png" alt="DHub Grid Context Menu" loading="lazy" />
                 </figure>
               </div>
             </div>
@@ -157,8 +157,8 @@
               </div>
               <div class="carousel-dots" id="carousel-dots" aria-label="Slide pagination"></div>
             </div>
-            <h3 class="carousel-caption-title" id="carousel-caption-title"></h3>
-            <p class="carousel-caption-desc" id="carousel-caption-desc"></p>
+            <h3 class="carousel-caption-title" id="carousel-caption-title">Multi-Connection Workspace &amp; Inline Data Grid</h3>
+            <p class="carousel-caption-desc" id="carousel-caption-desc">Manage organized connection folders in the Database Explorer, inspect tables with WHERE filtering, frozen primary-key columns, CSV export, lazy loading, and switch consoles/views on the right panel.</p>
           </div>
         </div>
       </div>
@@ -273,6 +273,22 @@
             </div>
           </article>
         </div>
+
+        <!-- Integrity & Code Signing Trust Box -->
+        <div class="trust-box">
+          <div class="trust-box-header">
+            <svg class="icon-18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            <strong data-i18n="trust.title">Integrity Verification &amp; Security Notice</strong>
+            <a id="checksums-link" href="https://github.com/tss182/dhub/releases/latest" target="_blank" rel="noopener noreferrer" class="trust-checksum-link" data-i18n="trust.checksums">
+              SHA256 Checksums (checksums.txt) ↗
+            </a>
+          </div>
+          <p class="trust-box-desc" data-i18n="trust.desc">
+            Binaries are built transparently via GitHub Actions and published with SHA256 checksums. macOS and Windows builds are currently unsigned (self-published open-source): on macOS run <code>xattr -cr /Applications/DHub.app</code> if Gatekeeper warns, or click <strong>More info → Run anyway</strong> on Windows SmartScreen.
+          </p>
+        </div>
       </div>
     </section>
 
@@ -373,6 +389,41 @@
             <p data-i18n="features.f6Desc">Check for new GitHub Releases directly from Settings and download/install updates in-app.</p>
           </div>
         </div>
+
+        <!-- Keyboard Shortcuts Showcase -->
+        <div class="shortcuts-showcase">
+          <h3 class="shortcuts-title" data-i18n="shortcuts.title">Keyboard-First Workflow</h3>
+          <div class="shortcuts-grid">
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + P</kbd><span data-i18n="shortcuts.s1">Search Everywhere across connections</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl + Enter</kbd><span data-i18n="shortcuts.s2">Execute query at cursor</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl + D</kbd><span data-i18n="shortcuts.s3">Duplicate selected row(s)</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl + I</kbd><span data-i18n="shortcuts.s4">Insert new row inline</span></div>
+            <div class="shortcut-chip"><kbd>Double-Click</kbd><span data-i18n="shortcuts.s5">Inline edit cell value</span></div>
+            <div class="shortcut-chip"><kbd>F1</kbd><span data-i18n="shortcuts.s6">Open Help &amp; User Guide</span></div>
+          </div>
+        </div>
+
+        <!-- Why DHub Positioning -->
+        <div class="why-dhub">
+          <div class="why-header">
+            <h3 data-i18n="why.title">Why DHub?</h3>
+            <p data-i18n="why.subtitle">Positioned between heavy enterprise suites and paid proprietary clients.</p>
+          </div>
+          <div class="why-grid">
+            <div class="why-card">
+              <span class="why-label">DBeaver</span>
+              <p data-i18n="why.dbeaver">Comprehensive, but runs on Java/JVM with heavy memory usage and slower startup.</p>
+            </div>
+            <div class="why-card">
+              <span class="why-label">TablePlus</span>
+              <p data-i18n="why.tableplus">Fast and clean native UI, but closed-source with paid license limits on tabs and connections.</p>
+            </div>
+            <div class="why-card why-card-highlight">
+              <span class="why-label">DHub</span>
+              <p data-i18n="why.dhub">Native Go + Wails v3 speed, small footprint, 100% open-source (GPLv3), zero telemetry, and no artificial limits.</p>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -383,16 +434,17 @@
           <div class="release-panel-header">
             <div>
               <span class="release-kicker" data-i18n="changelog.kicker">Latest Release</span>
-              <h2 id="release-title">Loading release notes…</h2>
-              <p class="release-meta" id="release-meta"></p>
+              <h2 id="release-title">DHub v0.3.6</h2>
+              <p class="release-meta" id="release-meta">Recent releases &amp; changelog</p>
             </div>
             <a id="release-github-link" href="https://github.com/tss182/dhub/releases/latest" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" data-i18n="changelog.viewOnGithub">
               View on GitHub ↗
             </a>
           </div>
           <div id="release-body" class="release-body">
-            <p class="muted" data-i18n="changelog.loading">Fetching release notes from GitHub…</p>
+            <p class="muted" data-i18n="changelog.loading">Release notes are bundled at deploy time and refreshed from GitHub Releases.</p>
           </div>
+          <div id="release-history" class="release-history"></div>
         </div>
       </div>
     </section>
@@ -402,10 +454,11 @@
     <div class="container footer-inner">
       <div class="footer-left">
         <img src="./favicon.svg" alt="DHub" width="20" height="20" />
-        <span>DHub — Open-source Multi-Database Desktop Client</span>
+        <span>DHub — Open-Source (GPLv3) • Zero Telemetry • 100% Local-First</span>
       </div>
       <div class="footer-links">
         <a href="https://github.com/tss182/dhub" target="_blank" rel="noopener noreferrer">Repository</a>
+        <a href="https://github.com/tss182/dhub/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">GPLv3 License</a>
         <a href="https://github.com/tss182/dhub/releases" target="_blank" rel="noopener noreferrer">Releases</a>
         <a href="https://github.com/tss182/dhub/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener noreferrer">User Guide</a>
         <a href="https://github.com/tss182/dhub/issues" target="_blank" rel="noopener noreferrer">Issues</a>
