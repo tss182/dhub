@@ -15,10 +15,13 @@
 
   const I18N = {
     en: {
+      "nav.preview": "Preview",
       "nav.downloads": "Downloads",
       "nav.databases": "Databases",
       "nav.features": "Features",
       "nav.changelog": "Release Notes",
+      "preview.title": "Inside DHub",
+      "preview.subtitle": "Explore the workspace, smart SQL console, visual table designer, and keyboard-first productivity tools.",
       "hero.loading": "Fetching latest release…",
       "hero.title1": "Modern Multi-Database",
       "hero.title2": "Desktop Client",
@@ -62,10 +65,13 @@
       "changelog.loading": "Fetching release notes from GitHub…"
     },
     id: {
+      "nav.preview": "Pratinjau",
       "nav.downloads": "Unduh",
       "nav.databases": "Database",
       "nav.features": "Fitur",
       "nav.changelog": "Catatan Rilis",
+      "preview.title": "Tampilan DHub",
+      "preview.subtitle": "Jelajahi workspace, konsol SQL pintar, desainer struktur tabel visual, dan alat produktivitas berbasis keyboard.",
       "hero.loading": "Mengambil versi terbaru…",
       "hero.title1": "Klien Desktop Multi-Database",
       "hero.title2": "Modern & Cepat",
@@ -110,6 +116,165 @@
     }
   };
 
+  const CAROUSEL_SLIDES = [
+    {
+      file: "workspace.png",
+      tab: { en: "Workspace", id: "Workspace" },
+      title: {
+        en: "Multi-Connection Workspace & Inline Data Grid",
+        id: "Workspace Multi-Koneksi & Grid Data Inline"
+      },
+      desc: {
+        en: "Manage organized connection folders in the Database Explorer, inspect tables with WHERE filtering, frozen primary-key columns, CSV export, lazy loading, and switch consoles/views on the right panel.",
+        id: "Kelola folder koneksi di Database Explorer, jelajahi tabel dengan filter WHERE, kolom primary key yang di-freeze, ekspor CSV, lazy loading, serta panel Console/Views di sisi kanan."
+      }
+    },
+    {
+      file: "console.png",
+      tab: { en: "SQL Console", id: "Konsol SQL" },
+      title: {
+        en: "Smart Monaco SQL Query Console",
+        id: "Konsol Query SQL Monaco Pintar"
+      },
+      desc: {
+        en: "Write queries faster with context-aware table and column autocomplete, one-click Run (Ctrl+Enter), Explain plan, SQL Formatter, and AUTO/MANUAL transaction control.",
+        id: "Tulis query lebih cepat dengan autocomplete tabel & kolom yang kontekstual, eksekusi instan (Ctrl+Enter), Explain plan, SQL Formatter, dan kontrol transaksi AUTO/MANUAL."
+      }
+    },
+    {
+      file: "table_editor.png",
+      tab: { en: "Table Editor", id: "Editor Tabel" },
+      title: {
+        en: "Visual Table Structure Designer",
+        id: "Desainer Struktur Tabel Visual"
+      },
+      desc: {
+        en: "Create or modify table columns, data types, primary/foreign keys, indexes, checks, and triggers visually—with a live SQL DDL preview before applying changes.",
+        id: "Buat atau ubah kolom, tipe data, primary/foreign key, index, check, dan trigger secara visual—lengkap dengan pratinjau SQL DDL secara langsung sebelum diterapkan."
+      }
+    },
+    {
+      file: "search_everywhere.png",
+      tab: { en: "Search Everywhere", id: "Search Everywhere" },
+      title: {
+        en: "Search Everywhere Across All Connections (Ctrl+P)",
+        id: "Search Everywhere di Semua Koneksi (Ctrl+P)"
+      },
+      desc: {
+        en: "Jump instantly to any table, view, or database object across multiple active MySQL, PostgreSQL, and other connections from a single keyboard shortcut.",
+        id: "Lompat langsung ke tabel, view, atau objek database mana pun di berbagai koneksi aktif (MySQL, PostgreSQL, dll.) hanya dengan satu shortcut keyboard."
+      }
+    },
+    {
+      file: "right menu.png",
+      tab: { en: "Grid Context Menu", id: "Menu Klik Kanan Grid" },
+      title: {
+        en: "Rich Data Grid Context Menu & Shortcuts",
+        id: "Menu Konteks Grid Lengkap & Shortcut"
+      },
+      desc: {
+        en: "Right-click any cell or row to Copy/Copy As (CSV, SQL, JSON), Duplicate or Add rows, Open UPDATE in Tab, Set to NULL, Freeze/Unfreeze columns, or Auto-fit column widths.",
+        id: "Klik kanan pada sel atau baris untuk Copy/Copy As (CSV, SQL, JSON), duplikasi atau tambah baris, Open UPDATE in Tab, Set to NULL, Freeze/Unfreeze kolom, hingga Auto-fit lebar kolom."
+      }
+    }
+  ];
+
+  let activeSlideIndex = 0;
+
+  function renderCarouselState() {
+    const track = document.getElementById("carousel-track");
+    const counter = document.getElementById("carousel-counter");
+    const filename = document.getElementById("carousel-filename");
+    const titleEl = document.getElementById("carousel-caption-title");
+    const descEl = document.getElementById("carousel-caption-desc");
+    const tabsWrap = document.getElementById("carousel-tabs");
+    const dotsWrap = document.getElementById("carousel-dots");
+    if (!track) return;
+
+    const total = CAROUSEL_SLIDES.length;
+    const slide = CAROUSEL_SLIDES[activeSlideIndex];
+
+    track.style.transform = `translateX(-${activeSlideIndex * 100}%)`;
+    if (counter) {
+      counter.textContent = `${String(activeSlideIndex + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`;
+    }
+    if (filename) filename.textContent = slide.file;
+    if (titleEl) titleEl.textContent = slide.title[currentLang] || slide.title.en;
+    if (descEl) descEl.textContent = slide.desc[currentLang] || slide.desc.en;
+
+    if (tabsWrap) {
+      tabsWrap.querySelectorAll(".carousel-tab").forEach((btn, idx) => {
+        const isActive = idx === activeSlideIndex;
+        btn.classList.toggle("is-active", isActive);
+        btn.setAttribute("aria-selected", isActive ? "true" : "false");
+        btn.textContent = CAROUSEL_SLIDES[idx].tab[currentLang] || CAROUSEL_SLIDES[idx].tab.en;
+      });
+    }
+
+    if (dotsWrap) {
+      dotsWrap.querySelectorAll(".carousel-dot").forEach((dot, idx) => {
+        const isActive = idx === activeSlideIndex;
+        dot.classList.toggle("is-active", isActive);
+        dot.setAttribute("aria-current", isActive ? "true" : "false");
+      });
+    }
+  }
+
+  function setupCarousel() {
+    const wrapper = document.getElementById("app-carousel");
+    const tabsWrap = document.getElementById("carousel-tabs");
+    const dotsWrap = document.getElementById("carousel-dots");
+    const prevBtn = document.getElementById("carousel-prev");
+    const nextBtn = document.getElementById("carousel-next");
+    if (!wrapper) return;
+
+    const goTo = (index) => {
+      const total = CAROUSEL_SLIDES.length;
+      activeSlideIndex = ((index % total) + total) % total;
+      renderCarouselState();
+    };
+
+    if (tabsWrap) {
+      tabsWrap.innerHTML = "";
+      CAROUSEL_SLIDES.forEach((slide, idx) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "carousel-tab";
+        btn.setAttribute("role", "tab");
+        btn.textContent = slide.tab[currentLang] || slide.tab.en;
+        btn.addEventListener("click", () => goTo(idx));
+        tabsWrap.appendChild(btn);
+      });
+    }
+
+    if (dotsWrap) {
+      dotsWrap.innerHTML = "";
+      CAROUSEL_SLIDES.forEach((slide, idx) => {
+        const dot = document.createElement("button");
+        dot.type = "button";
+        dot.className = "carousel-dot";
+        dot.setAttribute("aria-label", `Slide ${idx + 1}: ${slide.file}`);
+        dot.addEventListener("click", () => goTo(idx));
+        dotsWrap.appendChild(dot);
+      });
+    }
+
+    if (prevBtn) prevBtn.addEventListener("click", () => goTo(activeSlideIndex - 1));
+    if (nextBtn) nextBtn.addEventListener("click", () => goTo(activeSlideIndex + 1));
+
+    wrapper.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goTo(activeSlideIndex - 1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goTo(activeSlideIndex + 1);
+      }
+    });
+
+    renderCarouselState();
+  }
+
   let currentLang = (navigator.language || "").toLowerCase().startsWith("id") ? "id" : "en";
 
   function applyLanguage(lang) {
@@ -126,6 +291,7 @@
         el.textContent = dict[key];
       }
     });
+    renderCarouselState();
   }
 
   function detectPlatform() {
@@ -439,6 +605,7 @@
   }
 
   async function init() {
+    setupCarousel();
     applyLanguage(currentLang);
     setupCopyButtons();
 
