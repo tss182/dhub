@@ -352,7 +352,7 @@ export const SettingsModal: React.FC = () => {
       onClick={closeSettings}
     >
       <div
-        className="w-[90vw] max-w-[90vw] rounded-xl bg-[#181920] border border-[#2b2e3a] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+        className="w-[90vw] max-w-[90vw] h-[80vh] max-h-[80vh] rounded-xl bg-[#181920] border border-[#2b2e3a] shadow-2xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
