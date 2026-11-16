@@ -1,5 +1,8 @@
 # DHub
 
+[![Latest Release](https://img.shields.io/github/v/release/tss182/dhub)](https://github.com/tss182/dhub/releases/latest)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 A lightweight, high-performance, keyboard-first multi-database desktop client and SQL/NoSQL IDE built with **Go + Wails v3** and **React + TypeScript + Tailwind CSS v4 + Monaco Editor**.
 
 For full usage instructions, engine-specific query guides, and troubleshooting, see the [User Guide](docs/USER_GUIDE.md) or press **`F1`** inside the app to open the interactive **Help & User Guide**.
