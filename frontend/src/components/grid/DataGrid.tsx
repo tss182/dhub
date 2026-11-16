@@ -5,7 +5,7 @@ import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useAlertStore, alertWarning, alertSuccess } from '../../stores/useAlertStore';
-import { CopyFormatSelector, COPY_FORMAT_LABELS } from './CopyFormatSelector';
+import { CopyFormatSelector, COPY_FORMAT_LABELS, COPY_FORMAT_OPTIONS } from './CopyFormatSelector';
 import {
   Plus,
   Trash2,
@@ -879,6 +879,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [showAllSortsModal, setShowAllSortsModal] = useState(false);
   const [showAllFrozenModal, setShowAllFrozenModal] = useState(false);
   const [isCopyAsOpen, setIsCopyAsOpen] = useState(false);
+  const [isCopyAsSubmenuOpen, setIsCopyAsSubmenuOpen] = useState(false);
 
   const handleCopyRawSql = async () => {
     if (!rawSql) return;
@@ -4753,20 +4754,77 @@ ${setClauses};`;
             </div>
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-              setIsCopyAsOpen(true);
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          <div
+            className="relative"
+            onMouseEnter={() => setIsCopyAsSubmenuOpen(true)}
+            onMouseLeave={() => setIsCopyAsSubmenuOpen(false)}
           >
-            <div className="flex items-center gap-2">
-              <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Copy As...</span>
-            </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+Shift+C</kbd>
-          </button>
+            <button
+              type="button"
+              onClick={() => setIsCopyAsSubmenuOpen((prev) => !prev)}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md transition-colors text-left cursor-pointer group ${
+                isCopyAsSubmenuOpen
+                  ? 'bg-blue-600 text-white'
+                  : 'hover:bg-blue-600 hover:text-white text-zinc-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Copy className={`h-3.5 w-3.5 ${isCopyAsSubmenuOpen ? 'text-white' : 'text-zinc-400 group-hover:text-white'}`} />
+                <span>Copy As</span>
+              </div>
+              <ChevronRight className={`h-3.5 w-3.5 ${isCopyAsSubmenuOpen ? 'text-white' : 'text-zinc-400 group-hover:text-white'}`} />
+            </button>
+
+            {isCopyAsSubmenuOpen && (() => {
+              const flipLeft = typeof window !== 'undefined' && contextMenu.x + 450 > window.innerWidth;
+              return (
+                <div
+                  className={`absolute top-0 z-50 ${flipLeft ? 'right-full pr-1' : 'left-full pl-1'}`}
+                >
+                  <div className="min-w-[230px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCopyAsSubmenuOpen(false);
+                        setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                        setIsCopyAsOpen(true);
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <span>Copy As ...</span>
+                      <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono ml-3">
+                        {modKey}+Shift+C
+                      </kbd>
+                    </button>
+
+                    <div className="my-1 border-t border-[#272932]" />
+
+                    {COPY_FORMAT_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          const text = getFormattedCopyText(opt.id);
+                          if (text) navigator.clipboard.writeText(text);
+                          setIsCopyAsSubmenuOpen(false);
+                          setContextMenu((prev) => ({ ...prev, isOpen: false }));
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                          <span>Copy as {opt.label}</span>
+                        </div>
+                        {opt.id === copyFormat && (
+                          <Check className="h-3 w-3 text-sky-400 group-hover:text-white ml-2" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
 
           <button
             type="button"
