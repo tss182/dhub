@@ -23,6 +23,7 @@ func init() {
 	application.RegisterEvent[app.QueryStatusEvent]("query:status")
 	application.RegisterEvent[app.SchemaSyncEvent]("schema:sync")
 	application.RegisterEvent[app.ConnectionStateEvent]("connection:state")
+	application.RegisterEvent[app.UpdateProgressEvent]("update:progress")
 }
 
 func main() {

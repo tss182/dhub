@@ -1,4 +1,5 @@
 import { Call, Browser, Events } from '@wailsio/runtime';
+import { UpdateService } from '../../bindings/dhub/internal/services';
 import { APP_VERSION } from '../version';
 
 export interface UpdateProgress {
@@ -71,7 +72,17 @@ function findMatchingAsset(assets: any[], os: string): any {
 }
 
 export async function checkForUpdate(): Promise<UpdateInfo> {
-  // 1. Try Go backend service first
+  // 1. Try typed Go backend service binding first
+  try {
+    const res = await UpdateService.CheckForUpdate();
+    if (res && typeof res === 'object') {
+      return res as UpdateInfo;
+    }
+  } catch (err) {
+    console.debug('Typed UpdateService.CheckForUpdate call returned:', err);
+  }
+
+  // 2. Try Go backend service by name
   try {
     const res = await Call.ByName('dhub/internal/services.UpdateService.CheckForUpdate');
     if (res && typeof res === 'object') {
@@ -81,7 +92,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
     console.debug('Backend update check call returned:', err);
   }
 
-  // 2. Fallback: direct fetch from GitHub API (GitHub API has CORS enabled for public repositories)
+  // 3. Fallback: direct fetch from GitHub API (GitHub API has CORS enabled for public repositories)
   const resp = await fetch('https://api.github.com/repos/tss182/dhub/releases/latest', {
     headers: {
       Accept: 'application/vnd.github.v3+json',
@@ -141,6 +152,13 @@ export async function openUpdateURL(url: string): Promise<void> {
   }
 
   try {
+    await UpdateService.OpenURL(url);
+    return;
+  } catch (e) {
+    console.debug('Typed UpdateService.OpenURL fallback:', e);
+  }
+
+  try {
     await Call.ByName('dhub/internal/services.UpdateService.OpenURL', url);
   } catch (e) {
     window.open(url, '_blank');
@@ -148,15 +166,31 @@ export async function openUpdateURL(url: string): Promise<void> {
 }
 
 export async function downloadAndStageUpdate(downloadUrl: string, assetFileName: string): Promise<string> {
-  return await Call.ByName('dhub/internal/services.UpdateService.DownloadAndStage', downloadUrl, assetFileName);
+  try {
+    return await UpdateService.DownloadAndStage(downloadUrl, assetFileName);
+  } catch (err) {
+    console.debug('Typed UpdateService.DownloadAndStage fallback:', err);
+    return await Call.ByName('dhub/internal/services.UpdateService.DownloadAndStage', downloadUrl, assetFileName);
+  }
 }
 
 export async function applyDownloadedUpdate(filePath?: string): Promise<void> {
-  return await Call.ByName('dhub/internal/services.UpdateService.ApplyUpdate', filePath || '');
+  const target = filePath || '';
+  try {
+    return await UpdateService.ApplyUpdate(target);
+  } catch (err) {
+    console.debug('Typed UpdateService.ApplyUpdate fallback:', err);
+    return await Call.ByName('dhub/internal/services.UpdateService.ApplyUpdate', target);
+  }
 }
 
 export async function cancelUpdateDownload(): Promise<void> {
-  return await Call.ByName('dhub/internal/services.UpdateService.CancelDownload');
+  try {
+    return await UpdateService.CancelDownload();
+  } catch (err) {
+    console.debug('Typed UpdateService.CancelDownload fallback:', err);
+    return await Call.ByName('dhub/internal/services.UpdateService.CancelDownload');
+  }
 }
 
 export function onUpdateProgress(callback: (progress: UpdateProgress) => void): () => void {

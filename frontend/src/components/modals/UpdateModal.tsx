@@ -55,7 +55,7 @@ export const UpdateModal: React.FC = () => {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs select-none p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-xs select-none p-4 animate-in fade-in duration-150"
       onClick={isDownloading || isInstalling ? undefined : closeUpdateModal}
     >
       <div
@@ -76,7 +76,7 @@ export const UpdateModal: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400">
-                A new version of DHub is available
+                A newer version of DHub was found. Would you like to update now?
               </p>
             </div>
           </div>
@@ -189,7 +189,7 @@ export const UpdateModal: React.FC = () => {
                   {getPlatformLabel(updateInfo.platformOS)}
                 </span>
                 <p className="text-zinc-400 text-[10px] mt-0.5">
-                  Update will be downloaded directly inside DHub and applied seamlessly without requiring browser intervention.
+                  Update will be downloaded directly inside DHub and applied seamlessly without requiring browser intervention. If you choose <span className="text-zinc-200 font-medium">Update Later</span>, you can still view release details and install anytime in <span className="text-blue-400 font-medium">Settings → Software Updates</span>.
                 </p>
               </div>
             </div>
@@ -234,7 +234,7 @@ export const UpdateModal: React.FC = () => {
                 onClick={dismissUpdate}
                 className="px-3.5 py-1.5 rounded-lg border border-[#313543] text-zinc-300 hover:bg-[#20222b] text-xs font-medium transition-colors cursor-pointer"
               >
-                Later
+                Update Later
               </button>
             )}
 

@@ -13,6 +13,7 @@ import {
 interface UpdateStore {
   isChecking: boolean;
   updateInfo: UpdateInfo | null;
+  lastCheckedAt: string | null;
   isUpdateModalOpen: boolean;
   hasDismissed: boolean;
   error: string | null;
@@ -24,7 +25,7 @@ interface UpdateStore {
   downloadProgress: UpdateProgress;
   downloadedFilePath: string | null;
 
-  checkUpdate: (silent?: boolean) => Promise<UpdateInfo | null>;
+  checkUpdate: (silent?: boolean, showModalIfFound?: boolean) => Promise<UpdateInfo | null>;
   openUpdateModal: () => void;
   closeUpdateModal: () => void;
   dismissUpdate: () => void;
@@ -40,6 +41,7 @@ let progressUnsubscribe: (() => void) | null = null;
 export const useUpdateStore = create<UpdateStore>((set, get) => ({
   isChecking: false,
   updateInfo: null,
+  lastCheckedAt: null,
   isUpdateModalOpen: false,
   hasDismissed: false,
   error: null,
@@ -55,18 +57,26 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   },
   downloadedFilePath: null,
 
-  checkUpdate: async (silent = false) => {
-    set({ isChecking: true, error: null });
+  checkUpdate: async (silent = false, showModalIfFound = true) => {
+    set({
+      isChecking: true,
+      error: null,
+      ...(silent ? {} : { hasDismissed: false }),
+    });
     try {
       const info = await checkForUpdate();
-      set({ updateInfo: info, isChecking: false });
-      if (info.hasUpdate && !silent && !get().hasDismissed) {
+      set({
+        updateInfo: info,
+        isChecking: false,
+        lastCheckedAt: new Date().toLocaleTimeString(),
+      });
+      if (info.hasUpdate && showModalIfFound && (!silent || !get().hasDismissed)) {
         set({ isUpdateModalOpen: true });
       }
       return info;
     } catch (err: any) {
       const message = err?.message || 'Failed to check for updates';
-      set({ isChecking: false, error: message });
+      set({ isChecking: false, error: silent ? null : message });
       if (!silent) {
         console.error('Update check failed:', err);
       }

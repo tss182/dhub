@@ -28,6 +28,11 @@ import {
   ShieldAlert,
   Loader2,
   BookOpen,
+  ExternalLink,
+  FileCode2,
+  ShieldCheck,
+  AlertCircle,
+  Clock,
 } from 'lucide-react';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
@@ -52,6 +57,7 @@ export const SettingsModal: React.FC = () => {
     wordWrap,
     showMinimap,
     copyFormat,
+    checkUpdatesOnStartup,
     setCopyFormat,
     closeSettings,
     setActiveSettingsTab,
@@ -61,6 +67,7 @@ export const SettingsModal: React.FC = () => {
     setEditorFontSize,
     setWordWrap,
     setShowMinimap,
+    setCheckUpdatesOnStartup,
     resetToDefaults,
     reloadSettings,
   } = useSettingsStore();
@@ -71,9 +78,18 @@ export const SettingsModal: React.FC = () => {
   const {
     isChecking: isCheckingUpdate,
     updateInfo,
+    lastCheckedAt,
     error: updateError,
+    isDownloading,
+    isReadyToInstall,
+    isInstalling,
+    downloadProgress,
     checkUpdate,
     openUpdateModal,
+    startInAppUpdate,
+    applyUpdate,
+    downloadUpdate,
+    openReleasePage,
   } = useUpdateStore();
 
   const [customSizeInput, setCustomSizeInput] = useState<string>(String(defaultPageSize));
@@ -104,6 +120,7 @@ export const SettingsModal: React.FC = () => {
     errors: string[];
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const hasAutoCheckedThisOpenRef = useRef<boolean>(false);
 
   // Sync custom input with active defaultPageSize
   useEffect(() => {
@@ -121,7 +138,38 @@ export const SettingsModal: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isSettingsOpen, closeSettings]);
 
+  // Populate update status once when Settings opens if not checked yet
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      hasAutoCheckedThisOpenRef.current = false;
+      return;
+    }
+    if (!hasAutoCheckedThisOpenRef.current && !updateInfo && !isCheckingUpdate) {
+      hasAutoCheckedThisOpenRef.current = true;
+      checkUpdate(true, false);
+    }
+  }, [isSettingsOpen, updateInfo, isCheckingUpdate, checkUpdate]);
+
   if (!isSettingsOpen) return null;
+
+  const formatFileSize = (bytes: number): string => {
+    if (!bytes || bytes <= 0) return '';
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(1)} MB`;
+  };
+
+  const formatPublishedDate = (iso: string): string => {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+    } catch {
+      return iso;
+    }
+  };
 
   const handleApplyCustomSize = () => {
     const parsed = parseInt(customSizeInput, 10);
@@ -376,6 +424,41 @@ export const SettingsModal: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveSettingsTab('updates')}
+              className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
+                activeSettingsTab === 'updates'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#20222b]'
+              }`}
+              title={
+                updateInfo?.hasUpdate
+                  ? `New version ${updateInfo.latestVersion} available!`
+                  : 'Check for application updates and release notes'
+              }
+            >
+              <span className="flex items-center gap-2.5 min-w-0">
+                <Sparkles className="h-4 w-4 shrink-0" />
+                <span className="truncate">Software Updates</span>
+              </span>
+              {updateInfo?.hasUpdate && (
+                <span
+                  className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold border shrink-0 ${
+                    activeSettingsTab === 'updates'
+                      ? 'bg-white/20 border-white/35 text-white'
+                      : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                      activeSettingsTab === 'updates' ? 'bg-emerald-300' : 'bg-emerald-400'
+                    }`}
+                  />
+                  <span>New</span>
+                </span>
+              )}
+            </button>
+
+            <button
               onClick={() => setActiveSettingsTab('backup')}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
                 activeSettingsTab === 'backup'
@@ -388,20 +471,89 @@ export const SettingsModal: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setActiveSettingsTab('about')}
+              onClick={() => setActiveSettingsTab('shortcuts')}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
-                activeSettingsTab === 'about'
+                activeSettingsTab === 'shortcuts'
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#20222b]'
               }`}
             >
-              <Info className="h-4 w-4" />
-              <span>Shortcuts & About</span>
+              <Command className="h-4 w-4" />
+              <span>Shortcuts</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSettingsTab('version')}
+              className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
+                activeSettingsTab === 'version'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#20222b]'
+              }`}
+              title={
+                updateInfo?.hasUpdate
+                  ? `New version ${updateInfo.latestVersion} available!`
+                  : undefined
+              }
+            >
+              <span className="flex items-center gap-2.5">
+                <Info className="h-4 w-4 shrink-0" />
+                <span>Version</span>
+              </span>
+              {updateInfo?.hasUpdate && (
+                <span
+                  className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold border ${
+                    activeSettingsTab === 'version'
+                      ? 'bg-white/20 border-white/35 text-white'
+                      : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                      activeSettingsTab === 'version' ? 'bg-emerald-300' : 'bg-emerald-400'
+                    }`}
+                  />
+                  <span>New</span>
+                </span>
+              )}
             </button>
           </div>
 
           {/* Settings Main Panel */}
           <div className="flex-1 p-5 overflow-y-auto min-h-0 text-xs">
+            {activeSettingsTab !== 'updates' && activeSettingsTab !== 'version' && updateInfo?.hasUpdate && (
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-emerald-950/30 border border-emerald-700/40 px-3.5 py-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 shrink-0">
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-emerald-200 truncate">
+                      Update Available: {updateInfo.latestVersion}
+                    </p>
+                    <p className="text-[10px] text-zinc-400 truncate">
+                      Current version v{APP_VERSION.replace(/^v/i, '')} • New release is ready to download and install
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSettingsTab('updates')}
+                    className="px-2.5 py-1 rounded-md border border-emerald-600/40 bg-[#1a2220] hover:bg-[#212d2a] text-emerald-200 text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    View Details
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openUpdateModal}
+                    className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors cursor-pointer"
+                  >
+                    Update Now
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Appearance Tab */}
             {activeSettingsTab === 'appearance' && (
               <div className="space-y-6">
@@ -781,99 +933,341 @@ export const SettingsModal: React.FC = () => {
               </div>
             )}
 
-            {/* About & Shortcuts Tab */}
-            {activeSettingsTab === 'about' && (
+            {/* Software Updates Tab */}
+            {activeSettingsTab === 'updates' && (
               <div className="space-y-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex items-start gap-3.5">
-                    <DHubLogo variant="badge" size={44} className="mt-0.5 shrink-0" />
-                    <div>
-                      <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
-                      <p className="text-xs text-zinc-400 mt-0.5">
-                        Modern high-performance Database Client &amp; SQL/NoSQL IDE.
-                      </p>
-                      <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
-                        <span>Version {APP_VERSION}</span>
-                        <span className="text-zinc-500">•</span>
-                        <span className="text-emerald-400">Stable</span>
-                      </div>
-                    </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
+                      Software Updates &amp; Version Info
+                    </label>
+                    {lastCheckedAt && (
+                      <span className="flex items-center gap-1 text-[10px] text-zinc-400 font-mono">
+                        <Clock className="h-3 w-3 text-zinc-500" />
+                        <span>Last checked: {lastCheckedAt}</span>
+                      </span>
+                    )}
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeSettings();
-                      useWorkbenchStore.getState().openHelpModal('quickstart');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/35 text-xs font-medium transition-colors cursor-pointer"
-                  >
-                    <BookOpen className="h-3.5 w-3.5" />
-                    <span>Open Help &amp; User Guide (F1)</span>
-                  </button>
+                  <p className="text-[11px] text-zinc-400">
+                    Check for new DHub releases, inspect changelogs, and install updates directly inside the app.
+                  </p>
                 </div>
 
-                {/* Software Updates Box */}
-                <div className="p-3.5 rounded-xl bg-[#14151a] border border-[#272932] space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-2">
-                        <Sparkles className="h-3.5 w-3.5 text-blue-400" />
-                        Software Updates
-                      </h4>
-                      <p className="text-[11px] text-zinc-400 mt-0.5">
-                        GitHub Releases update channel (User Scope • No Admin/Root required)
-                      </p>
+                {/* Version Status Card */}
+                <div className="rounded-xl bg-[#14151a] border border-[#272932] p-4 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className={`p-2 rounded-xl border ${
+                          updateInfo?.hasUpdate
+                            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                            : 'bg-blue-600/15 border-blue-500/30 text-blue-400'
+                        }`}
+                      >
+                        <Sparkles className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-xs font-semibold text-zinc-100">Update Status</h3>
+                          {isCheckingUpdate ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                              Checking...
+                            </span>
+                          ) : updateInfo?.hasUpdate ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                              New Update Available
+                            </span>
+                          ) : updateInfo ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-700/40 text-emerald-300 border border-emerald-500/25">
+                              Up to Date
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#22242e] text-zinc-400 border border-[#2f3240]">
+                              Not Checked
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-zinc-400 mt-0.5">
+                          GitHub Releases channel (`tss182/dhub`) • User Scope
+                        </p>
+                      </div>
                     </div>
 
                     <button
                       type="button"
-                      disabled={isCheckingUpdate}
+                      disabled={isCheckingUpdate || isDownloading || isInstalling}
                       onClick={() => checkUpdate(false)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#20222b] hover:bg-[#282a36] text-zinc-200 border border-[#2f3240] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
                     >
-                      <RefreshCw className={`h-3 w-3 ${isCheckingUpdate ? 'animate-spin text-blue-400' : ''}`} />
+                      <RefreshCw className={`h-3.5 w-3.5 ${isCheckingUpdate ? 'animate-spin text-blue-400' : ''}`} />
                       <span>{isCheckingUpdate ? 'Checking...' : 'Check for Updates'}</span>
                     </button>
                   </div>
 
-                  {updateInfo?.hasUpdate ? (
-                    <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-950/25 border border-emerald-800/40 text-emerald-300">
-                      <div>
-                        <span className="font-semibold text-emerald-200">
-                          New version {updateInfo.latestVersion} available!
+                  {/* Current vs Latest Version Comparison */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="p-3 rounded-lg bg-[#191b22] border border-[#252834]">
+                      <span className="text-[10px] text-zinc-400 uppercase font-medium tracking-wider">
+                        Current Version
+                      </span>
+                      <p className="text-sm font-semibold text-zinc-200 font-mono mt-0.5">
+                        v{APP_VERSION.replace(/^v/i, '')}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-lg bg-[#191b22] border border-[#252834]">
+                      <span
+                        className={`text-[10px] uppercase font-medium tracking-wider ${
+                          updateInfo?.hasUpdate ? 'text-emerald-400' : 'text-zinc-400'
+                        }`}
+                      >
+                        Latest Version
+                      </span>
+                      <p
+                        className={`text-sm font-bold font-mono mt-0.5 flex items-center gap-1.5 ${
+                          updateInfo?.hasUpdate ? 'text-emerald-400' : 'text-zinc-200'
+                        }`}
+                      >
+                        <span>
+                          {updateInfo?.latestVersion
+                            ? updateInfo.latestVersion
+                            : `v${APP_VERSION.replace(/^v/i, '')}`}
                         </span>
-                        <p className="text-[10px] text-zinc-400 mt-0.5">
-                          Click to view changelog and download installer
-                        </p>
+                        {updateInfo && (
+                          <CheckCircle2
+                            className={`h-4 w-4 ${updateInfo.hasUpdate ? 'text-emerald-400' : 'text-zinc-500'}`}
+                          />
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* New Version Details & In-App Updater */}
+                {updateInfo?.hasUpdate && (
+                  <div className="rounded-xl bg-emerald-950/15 border border-emerald-800/40 p-4 space-y-3.5">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-semibold text-emerald-200 flex items-center gap-1.5">
+                          <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                          <span>{updateInfo.releaseTitle || `DHub ${updateInfo.latestVersion}`}</span>
+                        </h4>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-400 mt-1 font-mono">
+                          {updateInfo.publishedAt && (
+                            <span>Published {formatPublishedDate(updateInfo.publishedAt)}</span>
+                          )}
+                          {updateInfo.assetFileName && (
+                            <>
+                              <span>•</span>
+                              <span>{updateInfo.assetFileName}</span>
+                            </>
+                          )}
+                          {updateInfo.assetSize > 0 && (
+                            <>
+                              <span>•</span>
+                              <span>{formatFileSize(updateInfo.assetSize)}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
+                    </div>
+
+                    {/* In-App Download & Install Progress */}
+                    {(isDownloading || isReadyToInstall || isInstalling) && (
+                      <div className="p-3 rounded-lg bg-blue-950/25 border border-blue-800/40 space-y-2">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-semibold text-blue-200 flex items-center gap-1.5">
+                            {isInstalling ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
+                                <span>Launching installer &amp; restarting...</span>
+                              </>
+                            ) : isReadyToInstall ? (
+                              <>
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                                <span>Download complete! Ready to install.</span>
+                              </>
+                            ) : (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
+                                <span>Downloading update in app...</span>
+                              </>
+                            )}
+                          </span>
+                          <span className="font-mono text-zinc-300 font-semibold">
+                            {Math.round(downloadProgress.percent)}%
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-[#1b1e28] rounded-full overflow-hidden p-0.5 border border-blue-950">
+                          <div
+                            className="h-full bg-linear-to-r from-blue-500 to-emerald-400 rounded-full transition-all duration-200"
+                            style={{ width: `${Math.max(5, Math.min(100, downloadProgress.percent))}%` }}
+                          />
+                        </div>
+                        {downloadProgress.downloaded > 0 && (
+                          <div className="text-[10px] text-zinc-400 font-mono">
+                            {formatFileSize(downloadProgress.downloaded)} of{' '}
+                            {formatFileSize(downloadProgress.total || updateInfo.assetSize)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Release Notes */}
+                    {updateInfo.releaseNotes && (
+                      <div className="space-y-1.5">
+                        <span className="flex items-center gap-1.5 text-[11px] text-zinc-300 font-medium">
+                          <FileCode2 className="h-3.5 w-3.5 text-zinc-400" />
+                          <span>What&apos;s New in {updateInfo.latestVersion}</span>
+                        </span>
+                        <div className="max-h-40 overflow-y-auto rounded-lg bg-[#121318] border border-[#22242c] p-3 text-[11px] text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed select-text">
+                          {updateInfo.releaseNotes}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Error Notice */}
+                    {updateError && (
+                      <div className="flex items-start gap-2 p-2.5 rounded-lg bg-rose-950/25 border border-rose-800/40 text-rose-300 text-[11px]">
+                        <AlertCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <p>{updateError}</p>
+                          <button
+                            type="button"
+                            onClick={downloadUpdate}
+                            className="text-blue-400 hover:text-blue-300 text-[10px] underline underline-offset-2 cursor-pointer flex items-center gap-1"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            <span>Try downloading in browser instead</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={openUpdateModal}
-                        className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+                        onClick={openReleasePage}
+                        className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 text-[11px] transition-colors cursor-pointer"
                       >
-                        View & Install
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        <span>GitHub Releases</span>
                       </button>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={openUpdateModal}
+                          className="px-3 py-1.5 rounded-lg border border-[#313543] bg-[#1c1e26] hover:bg-[#242731] text-zinc-200 text-xs font-medium transition-colors cursor-pointer"
+                        >
+                          Open Update Dialog
+                        </button>
+
+                        {isReadyToInstall ? (
+                          <button
+                            type="button"
+                            onClick={applyUpdate}
+                            disabled={isInstalling}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold transition-colors cursor-pointer"
+                          >
+                            {isInstalling ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <span>Applying...</span>
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="h-3.5 w-3.5" />
+                                <span>Install &amp; Restart</span>
+                              </>
+                            )}
+                          </button>
+                        ) : isDownloading ? (
+                          <button
+                            type="button"
+                            disabled
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600/60 text-white/80 text-xs font-semibold cursor-not-allowed"
+                          >
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Downloading... ({Math.round(downloadProgress.percent)}%)</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={startInAppUpdate}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            <span>Update Now (In-App)</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  ) : updateInfo && !updateInfo.hasUpdate ? (
-                    <div className="p-2 rounded-lg bg-[#191b22] border border-[#232530] text-zinc-400 text-[11px] flex items-center gap-2">
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                      <span>You are running the latest version of DHub.</span>
+                  </div>
+                )}
+
+                {updateInfo && !updateInfo.hasUpdate && (
+                  <div className="p-3 rounded-xl bg-[#191b22] border border-[#232530] text-zinc-300 text-[11px] flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                      <span>You are running the latest version of DHub ({updateInfo.latestVersion || `v${APP_VERSION}`}).</span>
                     </div>
-                  ) : updateError ? (
-                    <div className="p-2 rounded-lg bg-red-950/20 border border-red-900/30 text-red-400 text-[11px]">
-                      {updateError}
-                    </div>
-                  ) : null}
-                </div>
+                    <button
+                      type="button"
+                      onClick={openReleasePage}
+                      className="flex items-center gap-1 text-blue-400 hover:text-blue-300 text-[11px] shrink-0 cursor-pointer"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      <span>Releases</span>
+                    </button>
+                  </div>
+                )}
+
+                {!updateInfo?.hasUpdate && updateError && (
+                  <div className="p-3 rounded-xl bg-red-950/20 border border-red-900/30 text-red-400 text-[11px] flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                    <span>{updateError}</span>
+                  </div>
+                )}
 
                 <div className="h-[1px] bg-[#272932]" />
 
+                {/* Startup Update Check Preference */}
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-[#14151a] border border-[#272932]">
+                  <div>
+                    <h4 className="text-xs font-semibold text-zinc-200">
+                      Check for updates automatically on startup
+                    </h4>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                      When enabled, DHub automatically checks for a newer version when opened and displays an update prompt modal if one is found.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCheckUpdatesOnStartup(!checkUpdatesOnStartup)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer shrink-0 ${
+                      checkUpdatesOnStartup
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {checkUpdatesOnStartup ? 'Enabled' : 'Disabled'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Shortcuts Tab */}
+            {activeSettingsTab === 'shortcuts' && (
+              <div className="space-y-5">
                 <div>
-                  <h4 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                  <h4 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider mb-1 flex items-center gap-1.5">
                     <Command className="h-3.5 w-3.5 text-blue-400" />
                     <span>Keyboard Shortcuts</span>
                   </h4>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Quick keyboard shortcuts for navigation, query execution, and data grid editing.
+                  </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Help &amp; User Guide</span>
@@ -948,6 +1342,104 @@ export const SettingsModal: React.FC = () => {
                       </kbd>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Version Tab */}
+            {activeSettingsTab === 'version' && (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3.5">
+                    <DHubLogo variant="badge" size={44} className="mt-0.5 shrink-0" />
+                    <div>
+                      <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        Modern high-performance Database Client &amp; SQL/NoSQL IDE.
+                      </p>
+                      <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
+                        <span>Version {APP_VERSION}</span>
+                        <span className="text-zinc-500">•</span>
+                        <span className="text-emerald-400">Stable</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeSettings();
+                      useWorkbenchStore.getState().openHelpModal('quickstart');
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/35 text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    <span>Open Help &amp; User Guide (F1)</span>
+                  </button>
+                </div>
+
+                {/* Software Updates Box */}
+                <div className="p-3.5 rounded-xl bg-[#14151a] border border-[#272932] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-2">
+                        <Sparkles className="h-3.5 w-3.5 text-blue-400" />
+                        Software Updates
+                      </h4>
+                      <p className="text-[11px] text-zinc-400 mt-0.5">
+                        GitHub Releases update channel (User Scope • No Admin/Root required)
+                        {lastCheckedAt ? ` • Last checked ${lastCheckedAt}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveSettingsTab('updates')}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#1c1e26] hover:bg-[#252834] text-blue-300 border border-[#2f3240] text-xs font-medium transition-colors cursor-pointer"
+                      >
+                        Update Settings
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isCheckingUpdate}
+                        onClick={() => checkUpdate(false)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#20222b] hover:bg-[#282a36] text-zinc-200 border border-[#2f3240] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${isCheckingUpdate ? 'animate-spin text-blue-400' : ''}`} />
+                        <span>{isCheckingUpdate ? 'Checking...' : 'Check for Updates'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {updateInfo?.hasUpdate ? (
+                    <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-950/25 border border-emerald-800/40 text-emerald-300">
+                      <div>
+                        <span className="font-semibold text-emerald-200">
+                          New version {updateInfo.latestVersion} available!
+                        </span>
+                        <p className="text-[10px] text-zinc-400 mt-0.5">
+                          Click to view changelog and download installer
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={openUpdateModal}
+                        className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+                      >
+                        View & Install
+                      </button>
+                    </div>
+                  ) : updateInfo && !updateInfo.hasUpdate ? (
+                    <div className="p-2 rounded-lg bg-[#191b22] border border-[#232530] text-zinc-400 text-[11px] flex items-center gap-2">
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                      <span>You are running the latest version of DHub.</span>
+                    </div>
+                  ) : updateError ? (
+                    <div className="p-2 rounded-lg bg-red-950/20 border border-red-900/30 text-red-400 text-[11px]">
+                      {updateError}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}

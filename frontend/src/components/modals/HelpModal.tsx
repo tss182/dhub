@@ -1235,7 +1235,7 @@ export const HelpModal: React.FC = () => {
               type="button"
               onClick={() => {
                 closeHelpModal();
-                openSettings('about');
+                openSettings('version');
               }}
               className="px-3 py-1.5 rounded-lg border border-[#2f3242] text-zinc-300 hover:text-white hover:bg-[#20222b] text-xs transition-colors cursor-pointer"
             >

@@ -4,7 +4,7 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 export type DataViewMode = 'infinite' | 'paged';
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update' | 'sql_upsert';
-export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'about' | 'backup';
+export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'updates' | 'backup' | 'shortcuts' | 'version';
 
 interface SettingsValues {
   theme: ThemeMode;
@@ -14,6 +14,7 @@ interface SettingsValues {
   wordWrap: boolean;
   showMinimap: boolean;
   copyFormat: CopyFormat;
+  checkUpdatesOnStartup: boolean;
 }
 
 interface SettingsState extends SettingsValues {
@@ -30,6 +31,7 @@ interface SettingsState extends SettingsValues {
   setWordWrap: (wrap: boolean) => void;
   setShowMinimap: (show: boolean) => void;
   setCopyFormat: (format: CopyFormat) => void;
+  setCheckUpdatesOnStartup: (enabled: boolean) => void;
   resetToDefaults: () => void;
   reloadSettings: () => Promise<void>;
 }
@@ -44,6 +46,7 @@ const DEFAULT_SETTINGS: SettingsValues = {
   wordWrap: false,
   showMinimap: false,
   copyFormat: 'csv',
+  checkUpdatesOnStartup: true,
 };
 
 function applyThemeToDocument(theme: ThemeMode) {
@@ -72,6 +75,7 @@ function loadStoredSettings(): SettingsValues {
         wordWrap: typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
         showMinimap: typeof parsed.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
         copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat) ? parsed.copyFormat : DEFAULT_SETTINGS.copyFormat,
+        checkUpdatesOnStartup: typeof parsed.checkUpdatesOnStartup === 'boolean' ? parsed.checkUpdatesOnStartup : DEFAULT_SETTINGS.checkUpdatesOnStartup,
       };
     }
   } catch (err) {
@@ -143,6 +147,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ copyFormat });
   },
 
+  setCheckUpdatesOnStartup: (checkUpdatesOnStartup) => {
+    persistSettings({ checkUpdatesOnStartup });
+    set({ checkUpdatesOnStartup });
+  },
+
   resetToDefaults: () => {
     try {
       localStorage.removeItem(SETTINGS_STORAGE_KEY);
@@ -183,6 +192,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat)
             ? parsed.copyFormat
             : DEFAULT_SETTINGS.copyFormat,
+          checkUpdatesOnStartup:
+            typeof parsed.checkUpdatesOnStartup === 'boolean'
+              ? parsed.checkUpdatesOnStartup
+              : DEFAULT_SETTINGS.checkUpdatesOnStartup,
         });
       }
     } catch (err) {
@@ -220,6 +233,10 @@ if (typeof window !== 'undefined') {
             copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat)
               ? parsed.copyFormat
               : DEFAULT_SETTINGS.copyFormat,
+            checkUpdatesOnStartup:
+              typeof parsed.checkUpdatesOnStartup === 'boolean'
+                ? parsed.checkUpdatesOnStartup
+                : DEFAULT_SETTINGS.checkUpdatesOnStartup,
           });
         } catch {
           // ignore

@@ -140,10 +140,12 @@ export function App() {
   const { updateInfo, checkUpdate, openUpdateModal } = useUpdateStore();
 
   useEffect(() => {
-    // Check for updates silently on startup
+    // Check for updates automatically on startup and prompt modal if a newer version is found
     const timer = setTimeout(() => {
-      checkUpdate(true);
-    }, 2500);
+      if (useSettingsStore.getState().checkUpdatesOnStartup) {
+        checkUpdate(true);
+      }
+    }, 1200);
     return () => clearTimeout(timer);
   }, [checkUpdate]);
 
@@ -1667,11 +1669,25 @@ export function App() {
           {/* Settings Trigger */}
           <button
             onClick={() => useSettingsStore.getState().openSettings()}
-            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
-            title={`Open Settings & Preferences (${isMac ? 'Cmd+,' : 'Ctrl+,'})`}
+            className={`relative flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs border cursor-pointer shadow-xs transition-colors ${
+              updateInfo?.hasUpdate
+                ? 'text-emerald-300 border-emerald-500/40 hover:border-emerald-400 hover:text-emerald-200'
+                : 'text-zinc-400 border-[#272932] hover:border-zinc-500 hover:text-zinc-200'
+            }`}
+            title={
+              updateInfo?.hasUpdate
+                ? `Open Settings & Preferences (${isMac ? 'Cmd+,' : 'Ctrl+,'}) — Update ${updateInfo.latestVersion} available`
+                : `Open Settings & Preferences (${isMac ? 'Cmd+,' : 'Ctrl+,'})`
+            }
           >
             <SettingsIcon className="h-3.5 w-3.5" />
             <span>Settings</span>
+            {updateInfo?.hasUpdate && (
+              <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.2 text-[9px] font-semibold text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {updateInfo.latestVersion}
+              </span>
+            )}
           </button>
 
           {/* Help & User Guide Trigger */}
