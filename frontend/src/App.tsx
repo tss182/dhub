@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useWorkbenchStore } from './stores/useWorkbenchStore';
 import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
@@ -141,6 +141,8 @@ export function App() {
   const [isSchemaDiffOpen, setIsSchemaDiffOpen] = useState(false);
   const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
   const [isMockDataOpen, setIsMockDataOpen] = useState(false);
+  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
 
   const { updateInfo, checkUpdate, openUpdateModal } = useUpdateStore();
 
@@ -662,9 +664,8 @@ export function App() {
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
   const searchShortcutLabel = isMac ? '⌘P' : 'Ctrl+P';
 
-  // Global Keyboard shortcuts: Ctrl+P / Cmd+P for Search Everywhere, Double Shift as secondary
+  // Global Keyboard shortcuts: Ctrl+P / Cmd+P for Search Everywhere
   useEffect(() => {
-    let lastShiftPress = 0;
     const handleKeyDown = (e: KeyboardEvent) => {
       // Primary shortcut: Ctrl+P on Linux/Windows, Cmd+P on macOS
       if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
@@ -735,21 +736,30 @@ export function App() {
         }
         return;
       }
-
-      // Secondary shortcut: Double Shift
-      if (e.key === 'Shift') {
-        const now = Date.now();
-        if (now - lastShiftPress < 350) {
-          setSearchEverywhereOpen(true);
-          lastShiftPress = 0;
-        } else {
-          lastShiftPress = now;
-        }
-      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!isSettingsMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) {
+        setIsSettingsMenuOpen(false);
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsSettingsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isSettingsMenuOpen]);
 
   // Listeners to close Tab Context Menu, Tab Overflow Dropdown & escape Rename Modal
   useEffect(() => {
@@ -1639,71 +1649,101 @@ export function App() {
           {/* Workspace Combobox Selector */}
           <WorkspaceSelector />
 
-          {/* Search Everywhere Trigger */}
-          <button
-            onClick={() => setSearchEverywhereOpen(true)}
-            className="flex items-center gap-2 rounded bg-[#1e2027] px-3 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs"
-          >
-            <Search className="h-3.5 w-3.5" />
-            <span>Search Everywhere</span>
-            <kbd className="rounded bg-[#2a2d37] px-1 text-[10px] text-zinc-400 font-mono">
-              {searchShortcutLabel}
-            </kbd>
-          </button>
+          {/* Settings & Tools Dropdown */}
+          <div className="relative" ref={settingsMenuRef}>
+            <button
+              type="button"
+              onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
+              className={`relative flex items-center justify-center rounded bg-[#1e2027] p-1.5 text-xs border cursor-pointer shadow-xs transition-colors ${
+                updateInfo?.hasUpdate
+                  ? 'text-emerald-300 border-emerald-500/40 hover:border-emerald-400 hover:text-emerald-200'
+                  : isSettingsMenuOpen
+                  ? 'text-zinc-100 border-zinc-500 bg-[#252834]'
+                  : 'text-zinc-400 border-[#272932] hover:border-zinc-500 hover:text-zinc-200'
+              }`}
+              title={
+                updateInfo?.hasUpdate
+                  ? `Settings & Tools — Update ${updateInfo.latestVersion} available`
+                  : 'Settings & Tools'
+              }
+              aria-label="Settings & Tools"
+              aria-expanded={isSettingsMenuOpen}
+            >
+              <SettingsIcon className="h-3.5 w-3.5" />
+              {updateInfo?.hasUpdate && (
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              )}
+            </button>
 
-          {/* Snippets Trigger */}
-          <button
-            onClick={() => setIsSnippetsOpen(true)}
-            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
-            title="Query Snippets & Bookmarks"
-          >
-            <Bookmark className="h-3.5 w-3.5 text-amber-400" />
-            <span>Snippets</span>
-          </button>
+            {isSettingsMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-md border border-[#373946] bg-[#1a1b22] py-1 shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsMenuOpen(false);
+                    useSettingsStore.getState().openSettings();
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <SettingsIcon className="h-3.5 w-3.5 text-zinc-400" />
+                    <span>Setting</span>
+                  </span>
+                  {updateInfo?.hasUpdate ? (
+                    <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.2 text-[9px] font-semibold text-emerald-300">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      {updateInfo.latestVersion}
+                    </span>
+                  ) : (
+                    <kbd className="text-[10px] text-zinc-500 font-mono">
+                      {isMac ? '⌘,' : 'Ctrl+,'}
+                    </kbd>
+                  )}
+                </button>
 
-          {/* Schema Diff Trigger */}
-          <button
-            onClick={() => setIsSchemaDiffOpen(true)}
-            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
-            title="Compare Schemas & Generate Migration SQL"
-          >
-            <GitCompare className="h-3.5 w-3.5 text-blue-400" />
-            <span>Schema Diff</span>
-          </button>
+                <div className="my-1 border-t border-[#292b36]" />
 
-          {/* Settings Trigger */}
-          <button
-            onClick={() => useSettingsStore.getState().openSettings()}
-            className={`relative flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs border cursor-pointer shadow-xs transition-colors ${
-              updateInfo?.hasUpdate
-                ? 'text-emerald-300 border-emerald-500/40 hover:border-emerald-400 hover:text-emerald-200'
-                : 'text-zinc-400 border-[#272932] hover:border-zinc-500 hover:text-zinc-200'
-            }`}
-            title={
-              updateInfo?.hasUpdate
-                ? `Open Settings & Preferences (${isMac ? 'Cmd+,' : 'Ctrl+,'}) — Update ${updateInfo.latestVersion} available`
-                : `Open Settings & Preferences (${isMac ? 'Cmd+,' : 'Ctrl+,'})`
-            }
-          >
-            <SettingsIcon className="h-3.5 w-3.5" />
-            <span>Settings</span>
-            {updateInfo?.hasUpdate && (
-              <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.2 text-[9px] font-semibold text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                {updateInfo.latestVersion}
-              </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsMenuOpen(false);
+                    setIsSnippetsOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
+                >
+                  <Bookmark className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Snippets</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsMenuOpen(false);
+                    setIsSchemaDiffOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
+                >
+                  <GitCompare className="h-3.5 w-3.5 text-blue-400" />
+                  <span>Schema Diff</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsMenuOpen(false);
+                    openHelpModal('quickstart');
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
+                    <span>Help</span>
+                  </span>
+                  <kbd className="text-[10px] text-zinc-500 font-mono">F1</kbd>
+                </button>
+              </div>
             )}
-          </button>
-
-          {/* Help & User Guide Trigger */}
-          <button
-            onClick={() => openHelpModal('quickstart')}
-            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
-            title="Help & User Guide (F1)"
-          >
-            <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
-            <span>Help</span>
-          </button>
+          </div>
         </div>
       </header>
 

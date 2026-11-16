@@ -74,7 +74,7 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 | Action | Windows / Linux | macOS |
 | :--- | :--- | :--- |
 | **Open Help & User Guide** | `F1` | `F1` |
-| **Search Everywhere** | `Ctrl+P` or `Double Shift` | `⌘P` or `Double Shift` |
+| **Search Everywhere** | `Ctrl+P` | `⌘P` |
 | **Execute Query at Cursor / Selection** | `Ctrl+Enter` | `⌘Enter` |
 | **Stop Running Query** | `Ctrl+F2` | `⌘F2` |
 | **Format SQL Code** | `Shift+Alt+F` | `Shift+Alt+F` |

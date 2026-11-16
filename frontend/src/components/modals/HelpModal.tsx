@@ -153,7 +153,7 @@ const KEYBOARD_SHORTCUT_GROUPS: Array<{
     title: 'Global & Navigation',
     items: [
       { action: 'Open Help & User Guide', win: 'F1', mac: 'F1' },
-      { action: 'Search Everywhere', win: 'Ctrl+P / Double Shift', mac: '⌘P / Double Shift' },
+      { action: 'Search Everywhere', win: 'Ctrl+P', mac: '⌘P' },
       { action: 'Toggle Left Sidebar (Explorer / Workspaces)', win: 'Ctrl+B', mac: '⌘B' },
       { action: 'Toggle Right Sidebar (Consoles / Views)', win: 'Ctrl+R', mac: '⌘R' },
       { action: 'Open Settings & Preferences', win: 'Ctrl+,', mac: '⌘,' },
@@ -676,7 +676,7 @@ export const HelpModal: React.FC = () => {
                         <Search className="h-4 w-4 text-emerald-400" />
                         <span className="font-semibold text-zinc-100">Search Everywhere</span>
                         <span className="text-[10px] text-zinc-400">
-                          {isMac ? '⌘P' : 'Ctrl+P'} / Double Shift
+                          {isMac ? '⌘P' : 'Ctrl+P'}
                         </span>
                       </button>
 

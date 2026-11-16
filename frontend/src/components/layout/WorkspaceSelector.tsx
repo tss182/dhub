@@ -101,7 +101,7 @@ export const WorkspaceSelector: React.FC = () => {
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-[#373946] bg-[#1a1b22] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+        <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-[#373946] bg-[#1a1b22] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
           <div className="px-3 py-1.5 border-b border-[#292b36] flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase tracking-wider bg-[#14151a]">
             <span>Workspaces</span>
             <span className="text-[10px] text-zinc-500 font-normal lowercase">
