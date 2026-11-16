@@ -134,6 +134,9 @@ export function App() {
   const [activeResultIndexByTab, setActiveResultIndexByTab] = useState<Record<string, number>>({});
   const [statusMessageByTab, setStatusMessageByTab] = useState<Record<string, string>>({});
   const [activeExecIdByTab, setActiveExecIdByTab] = useState<Record<string, string>>({});
+  // Ref so global keyboard handlers (registered once) always see the latest exec IDs
+  const activeExecIdRef = useRef<Record<string, string>>({});
+  activeExecIdRef.current = activeExecIdByTab;
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
   const [copiedResultRawSql, setCopiedResultRawSql] = useState(false);
   const [isTableExportOpen, setIsTableExportOpen] = useState(false);
@@ -249,6 +252,12 @@ export function App() {
     const tabIdSet = new Set(tabs.map((t) => t.id));
     Object.entries(txStatusByTab).forEach(([tId, st]) => {
       if (!tabIdSet.has(tId) && st.isOpen) {
+        // Remove entry first so rollback is only sent once per closed tab
+        setTxStatusByTab((prev) => {
+          const next = { ...prev };
+          delete next[tId];
+          return next;
+        });
         QueryService.RollbackTransaction(tId).catch((err) =>
           console.warn('Auto-rollback on tab close failed:', err)
         );
@@ -549,7 +558,7 @@ export function App() {
   const queryResult = queryResultByTab[currentTabId] || null;
   const activeResultIndex = activeResultIndexByTab[currentTabId] || 0;
   const statusMessage = statusMessageByTab[currentTabId] || 'Ready';
-  const defaultPageSize = useSettingsStore.getState().defaultPageSize || 100;
+  const defaultPageSize = useSettingsStore((s) => s.defaultPageSize) || 100;
   const queryPagination = queryPaginationByTab[currentTabId] || {
     page: 1,
     pageSize: defaultPageSize,
@@ -649,7 +658,7 @@ export function App() {
   };
 
   const handleCancelQuery = async (tabId: string) => {
-    const execId = activeExecIdByTab[tabId];
+    const execId = activeExecIdRef.current[tabId];
     if (execId) {
       try {
         await QueryService.CancelQuery(execId);
