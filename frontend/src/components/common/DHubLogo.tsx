@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 interface DHubLogoProps {
   size?: number;
@@ -9,9 +9,18 @@ interface DHubLogoProps {
   bgCutoutColor?: string;
 }
 
+const OUTER_D_PATH =
+  'M 188 272 A 96 96 0 0 1 284 176 L 508 176 A 336 336 0 0 1 508 848 L 284 848 A 96 96 0 0 1 188 752 Z';
+const INNER_D_PATH =
+  'M 292 332 A 52 52 0 0 1 344 280 L 508 280 A 232 232 0 0 1 508 744 L 344 744 A 52 52 0 0 1 292 692 Z';
+const CYLINDER_MIDDLE_PATH =
+  'M 378 444 A 6 6 0 0 1 390 444 A 110 32 0 0 0 610 444 A 6 6 0 0 1 622 444 L 622 504 A 122 44 0 0 1 378 504 Z';
+const CYLINDER_BOTTOM_PATH =
+  'M 378 538 A 6 6 0 0 1 390 538 A 110 32 0 0 0 610 538 A 6 6 0 0 1 622 538 L 622 598 A 122 44 0 0 1 378 598 Z';
+
 /**
- * DHubLogo - Monochrome Minimalist Database Icon
- * Bold geometric double-D contour with an embedded dual-tier database cylinder in black and white.
+ * DHubLogo - Smooth Modern Concentric Double-D & Layered Database Icon
+ * Tangent-continuous geometry with pure positive-space 3-tier database stack.
  */
 export const DHubLogo: React.FC<DHubLogoProps> = ({
   size = 24,
@@ -19,12 +28,62 @@ export const DHubLogo: React.FC<DHubLogoProps> = ({
   animated = false,
   className = '',
   showSubtitle = false,
-  bgCutoutColor = '#14151a',
+  bgCutoutColor: _bgCutoutColor = '#14151a',
 }) => {
-  const isBadge = variant === 'badge';
-  const cutout = isBadge ? '#0b0c10' : bgCutoutColor;
+  const rawId = useId();
+  const uid = `dhub-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const bgGradId = `${uid}-bg`;
+  const glowGradId = `${uid}-glow`;
+  const borderGradId = `${uid}-border`;
+  const markGradId = `${uid}-mark`;
 
-  const iconSvg = isBadge ? (
+  const showBadge = variant === 'badge' || variant === 'full' || variant === 'compact';
+
+  const renderLogoMark = (paint: string) => (
+    <g>
+      {/* Outer D */}
+      <path
+        d={OUTER_D_PATH}
+        fill="none"
+        stroke={paint}
+        strokeWidth="44"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      {/* Inner D */}
+      <path
+        d={INNER_D_PATH}
+        fill="none"
+        stroke={paint}
+        strokeOpacity="0.88"
+        strokeWidth="38"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      {/* 3-Tier Database Cylinder */}
+      <ellipse
+        cx="500"
+        cy="410"
+        rx="122"
+        ry="44"
+        fill={paint}
+      />
+      <path
+        d={CYLINDER_MIDDLE_PATH}
+        fill={paint}
+        fillOpacity="0.92"
+      />
+      <path
+        d={CYLINDER_BOTTOM_PATH}
+        fill={paint}
+        fillOpacity="0.82"
+      />
+    </g>
+  );
+
+  const iconSvg = showBadge ? (
     <svg
       width={size}
       height={size}
@@ -34,93 +93,62 @@ export const DHubLogo: React.FC<DHubLogoProps> = ({
       className={`shrink-0 transition-transform duration-200 hover:scale-105 ${animated ? 'animate-pulse' : ''}`}
     >
       <defs>
-        <linearGradient id="dhub-badge-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#14151b" />
-          <stop offset="100%" stopColor="#07080a" />
+        <linearGradient id={bgGradId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#1a1d28" />
+          <stop offset="50%" stopColor="#0f1118" />
+          <stop offset="100%" stopColor="#07080c" />
         </linearGradient>
-        <linearGradient id="dhub-badge-border" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#3f3f46" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#18181b" stopOpacity="0.4" />
+        <radialGradient id={glowGradId} cx="22%" cy="18%" r="72%">
+          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.16" />
+          <stop offset="65%" stopColor="#3b82f6" stopOpacity="0.03" />
+          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id={borderGradId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.22" />
+          <stop offset="50%" stopColor="#ffffff" stopOpacity="0.09" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0.04" />
+        </linearGradient>
+        <linearGradient
+          id={markGradId}
+          gradientUnits="userSpaceOnUse"
+          x1="188"
+          y1="176"
+          x2="844"
+          y2="848"
+        >
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="65%" stopColor="#f1f5f9" />
+          <stop offset="100%" stopColor="#cbd5e1" />
         </linearGradient>
       </defs>
 
-      {/* Squircle Base Frame */}
-      <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#dhub-badge-bg)" />
-      <rect x="32" y="32" width="960" height="960" rx="220" stroke="url(#dhub-badge-border)" strokeWidth="14" fill="none" />
+      {/* Dimensional Squircle Base Frame */}
+      <rect x="32" y="32" width="960" height="960" rx="228" fill={`url(#${bgGradId})`} />
+      <rect x="32" y="32" width="960" height="960" rx="228" fill={`url(#${glowGradId})`} />
+      <rect
+        x="38"
+        y="38"
+        width="948"
+        height="948"
+        rx="222"
+        stroke={`url(#${borderGradId})`}
+        strokeWidth="12"
+        fill="none"
+      />
 
-      {/* Centered Logo Mark */}
-      <g transform="translate(164, 164) scale(0.68)">
-        {/* Outer D */}
-        <path
-          d="M 21 21 L 512 21 A 491 491 0 0 1 512 1003 L 21 1003 Z"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="46"
-          strokeLinejoin="miter"
-        />
-
-        {/* Inner D */}
-        <path
-          d="M 245 186 L 512 186 A 326 326 0 0 1 512 838 L 245 838 Z"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="46"
-          strokeLinejoin="miter"
-        />
-
-        {/* Cylinder Bottom Disk */}
-        <path d="M 336 530 L 336 646 A 176 56 0 0 0 688 646 L 688 530 Z" fill="#ffffff" />
-
-        {/* Cylinder Top Disk Body & Ellipse */}
-        <path d="M 336 380 L 336 530 A 176 56 0 0 0 688 530 L 688 380 Z" fill="#ffffff" />
-        <ellipse cx="512" cy="380" rx="176" ry="66" fill="#ffffff" />
-
-        {/* Divider 2 (between disks) */}
-        <path d="M 334 530 A 176 56 0 0 0 690 530" fill="none" stroke={cutout} strokeWidth="26" strokeLinecap="round" />
-
-        {/* Divider 1 (top face rim) */}
-        <path d="M 334 410 A 176 56 0 0 0 690 410" fill="none" stroke={cutout} strokeWidth="24" strokeLinecap="round" />
-      </g>
+      {/* Centered Smooth Logo Mark */}
+      {renderLogoMark(`url(#${markGradId})`)}
     </svg>
   ) : (
     <svg
       width={size}
       height={size}
-      viewBox="-32 -32 1088 1088"
+      viewBox="124 120 784 784"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      className={`shrink-0 text-white transition-transform duration-200 hover:scale-105 ${animated ? 'animate-pulse' : ''}`}
+      className={`shrink-0 text-zinc-100 transition-transform duration-200 hover:scale-105 ${animated ? 'animate-pulse' : ''}`}
     >
-      {/* Outer D */}
-      <path
-        d="M 21 21 L 512 21 A 491 491 0 0 1 512 1003 L 21 1003 Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="44"
-        strokeLinejoin="miter"
-      />
-
-      {/* Inner D */}
-      <path
-        d="M 245 186 L 512 186 A 326 326 0 0 1 512 838 L 245 838 Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="44"
-        strokeLinejoin="miter"
-      />
-
-      {/* Cylinder Bottom Disk */}
-      <path d="M 336 530 L 336 646 A 176 56 0 0 0 688 646 L 688 530 Z" fill="currentColor" />
-
-      {/* Cylinder Top Disk Body & Ellipse */}
-      <path d="M 336 380 L 336 530 A 176 56 0 0 0 688 530 L 688 380 Z" fill="currentColor" />
-      <ellipse cx="512" cy="380" rx="176" ry="66" fill="currentColor" />
-
-      {/* Divider 2 (between disks) */}
-      <path d="M 334 530 A 176 56 0 0 0 690 530" fill="none" stroke={cutout} strokeWidth="24" strokeLinecap="round" />
-
-      {/* Divider 1 (top face rim) */}
-      <path d="M 334 410 A 176 56 0 0 0 690 410" fill="none" stroke={cutout} strokeWidth="22" strokeLinecap="round" />
+      {renderLogoMark('currentColor')}
     </svg>
   );
 
@@ -133,10 +161,10 @@ export const DHubLogo: React.FC<DHubLogoProps> = ({
       {iconSvg}
       <div className="flex flex-col">
         <div className="flex items-center tracking-tight leading-none">
-          <span className="font-black text-white text-base tracking-wide">
+          <span className="font-black text-zinc-100 text-base tracking-wide">
             D
           </span>
-          <span className="font-bold text-zinc-200 text-base tracking-wide">Hub</span>
+          <span className="font-bold text-zinc-300 text-base tracking-wide">Hub</span>
         </div>
         {showSubtitle && (
           <span className="text-[9px] font-semibold text-zinc-400 tracking-widest uppercase mt-0.5">

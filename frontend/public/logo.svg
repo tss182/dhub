@@ -1,22 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-32 -32 1088 1088" width="100%" height="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="124 120 784 784" width="100%" height="100%" fill="none">
+  <defs>
+    <linearGradient id="dhub-logo-grad" gradientUnits="userSpaceOnUse" x1="188" y1="176" x2="844" y2="848">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="65%" stop-color="#f1f5f9" />
+      <stop offset="100%" stop-color="#cbd5e1" />
+    </linearGradient>
+  </defs>
+
   <!-- Outer D -->
-  <path d="M 21 21 L 512 21 A 491 491 0 0 1 512 1003 L 21 1003 Z" 
-        fill="none" stroke="#ffffff" stroke-width="44" stroke-linejoin="miter" />
+  <path
+    d="M 188 272 A 96 96 0 0 1 284 176 L 508 176 A 336 336 0 0 1 508 848 L 284 848 A 96 96 0 0 1 188 752 Z"
+    fill="none"
+    stroke="url(#dhub-logo-grad)"
+    stroke-width="44"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
 
   <!-- Inner D -->
-  <path d="M 245 186 L 512 186 A 326 326 0 0 1 512 838 L 245 838 Z" 
-        fill="none" stroke="#ffffff" stroke-width="44" stroke-linejoin="miter" />
+  <path
+    d="M 292 332 A 52 52 0 0 1 344 280 L 508 280 A 232 232 0 0 1 508 744 L 344 744 A 52 52 0 0 1 292 692 Z"
+    fill="none"
+    stroke="url(#dhub-logo-grad)"
+    stroke-opacity="0.88"
+    stroke-width="38"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
 
-  <!-- Cylinder Bottom Disk -->
-  <path d="M 336 530 L 336 646 A 176 56 0 0 0 688 646 L 688 530 Z" fill="#ffffff" />
-
-  <!-- Cylinder Top Disk Body & Ellipse -->
-  <path d="M 336 380 L 336 530 A 176 56 0 0 0 688 530 L 688 380 Z" fill="#ffffff" />
-  <ellipse cx="512" cy="380" rx="176" ry="66" fill="#ffffff" />
-
-  <!-- Divider 2 (between disks) -->
-  <path d="M 334 530 A 176 56 0 0 0 690 530" fill="none" stroke="#000000" stroke-width="24" stroke-linecap="round" />
-
-  <!-- Divider 1 (top face rim) -->
-  <path d="M 334 410 A 176 56 0 0 0 690 410" fill="none" stroke="#000000" stroke-width="22" stroke-linecap="round" />
+  <!-- 3-Tier Database Cylinder -->
+  <ellipse
+    cx="500"
+    cy="410"
+    rx="122"
+    ry="44"
+    fill="url(#dhub-logo-grad)"
+  />
+  <path
+    d="M 378 444 A 6 6 0 0 1 390 444 A 110 32 0 0 0 610 444 A 6 6 0 0 1 622 444 L 622 504 A 122 44 0 0 1 378 504 Z"
+    fill="url(#dhub-logo-grad)"
+    fill-opacity="0.92"
+  />
+  <path
+    d="M 378 538 A 6 6 0 0 1 390 538 A 110 32 0 0 0 610 538 A 6 6 0 0 1 622 538 L 622 598 A 122 44 0 0 1 378 598 Z"
+    fill="url(#dhub-logo-grad)"
+    fill-opacity="0.82"
+  />
 </svg>

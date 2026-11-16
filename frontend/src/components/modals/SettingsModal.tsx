@@ -33,6 +33,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useUpdateStore } from '../../stores/useUpdateStore';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
 import { COPY_FORMAT_LABELS } from '../grid/CopyFormatSelector';
+import { DHubLogo } from '../common/DHubLogo';
 import { APP_VERSION } from '../../version';
 import { Dialogs } from '@wailsio/runtime';
 import { WorkspaceService } from '../../../bindings/dhub/internal/services';
@@ -781,15 +782,18 @@ export const SettingsModal: React.FC = () => {
             {/* About & Shortcuts Tab */}
             {activeSettingsTab === 'about' && (
               <div className="space-y-5">
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
-                  <p className="text-xs text-zinc-400 mt-0.5">
-                    Modern high-performance Database Client & SQL IDE.
-                  </p>
-                  <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
-                    <span>Version {APP_VERSION}</span>
-                    <span className="text-zinc-500">•</span>
-                    <span className="text-emerald-400">Stable</span>
+                <div className="flex items-start gap-3.5">
+                  <DHubLogo variant="badge" size={44} className="mt-0.5 shrink-0" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      Modern high-performance Database Client & SQL IDE.
+                    </p>
+                    <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
+                      <span>Version {APP_VERSION}</span>
+                      <span className="text-zinc-500">•</span>
+                      <span className="text-emerald-400">Stable</span>
+                    </div>
                   </div>
                 </div>
 
