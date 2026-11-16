@@ -137,6 +137,14 @@ export function App() {
   // Ref so global keyboard handlers (registered once) always see the latest exec IDs
   const activeExecIdRef = useRef<Record<string, string>>({});
   activeExecIdRef.current = activeExecIdByTab;
+  // Last processed refresh-trigger value per tab (reload only when it changes)
+  const lastRefreshHandledRef = useRef<Record<string, number>>({});
+  // Latest "replace" load request id per tab (used to drop out-of-order responses)
+  const tableReqIdRef = useRef<Record<string, number>>({});
+  // Latest running-state / workspace-save timer for use in global handlers & debounce
+  const isRunningRef = useRef<Record<string, boolean>>({});
+  isRunningRef.current = isRunningByTab;
+  const saveWorkspaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dmlPreview, setDmlPreview] = useState<string[] | null>(null);
   const [copiedResultRawSql, setCopiedResultRawSql] = useState(false);
   const [isTableExportOpen, setIsTableExportOpen] = useState(false);
@@ -659,6 +667,8 @@ export function App() {
 
   const handleCancelQuery = async (tabId: string) => {
     const execId = activeExecIdRef.current[tabId];
+    // Nothing running on this tab: don't cancel or show a misleading status
+    if (!execId || !isRunningRef.current[tabId]) return;
     if (execId) {
       try {
         await QueryService.CancelQuery(execId);
@@ -855,6 +865,19 @@ export function App() {
     const connId = tab.connectionId || activeConnectionId;
     if (!tab || tab.type !== 'table_data' || !connId || !tab.table) return;
 
+    // Request tracking: a 'replace' load supersedes everything in flight for this tab;
+    // append/prepend loads are dropped if a 'replace' started after them.
+    if (fetchMode === 'replace') {
+      tableReqIdRef.current[tab.id] = (tableReqIdRef.current[tab.id] || 0) + 1;
+    }
+    const reqId = tableReqIdRef.current[tab.id] || 0;
+    const isStale = () =>
+      (tableReqIdRef.current[tab.id] || 0) !== reqId ||
+      !useWorkbenchStore.getState().tabs.some((t) => t.id === tab.id);
+    // Status messages belong to the tab being loaded, not whichever tab is active now
+    const setStatusMessage = (msg: string) =>
+      setStatusMessageByTab((prev) => ({ ...prev, [tab.id]: msg }));
+
     const savedViewState = tab.tableViewState;
     const prevTabData = tableDataByTab[tab.id];
 
@@ -1033,12 +1056,14 @@ export function App() {
         }
       }
 
-      const quotedTable = isMySQL ? `\`${tab.table}\`` : `"${tab.table}"`;
+      const quoteIdent = (name: string) =>
+        isMySQL ? '`' + name.replace(/`/g, '``') + '`' : '"' + name.replace(/"/g, '""') + '"';
+      const quotedTable = quoteIdent(tab.table);
       const fullTablePath =
         isMySQL && targetDb && targetDb !== 'main'
-          ? `\`${targetDb}\`.\`${tab.table}\``
+          ? `${quoteIdent(targetDb)}.${quotedTable}`
           : (conn?.driver || tab.driver) === 'postgres' && targetSchema
-          ? `"${targetSchema}"."${tab.table}"`
+          ? `${quoteIdent(targetSchema)}.${quotedTable}`
           : quotedTable;
 
       // 2. Build SQL WHERE clause
@@ -1050,7 +1075,7 @@ export function App() {
       let orderByClause = '';
       if (sortConfigs && sortConfigs.length > 0) {
         const orderParts = sortConfigs.map((sc) => {
-          const quotedSortCol = isMySQL ? `\`${sc.column}\`` : `"${sc.column}"`;
+          const quotedSortCol = quoteIdent(sc.column);
           return `${quotedSortCol} ${sc.direction.toUpperCase()}`;
         });
         orderByClause = ` ORDER BY ${orderParts.join(', ')}`;
@@ -1068,6 +1093,7 @@ export function App() {
           offset: 0,
         } as any)
           .then((countRes) => {
+            if (isStale()) return;
             const countVal = countRes?.rows?.[0]?.[0];
             const num = typeof countVal === 'number' ? countVal : parseInt(String(countVal), 10);
             if (!isNaN(num) && num >= 0) {
@@ -1105,6 +1131,7 @@ export function App() {
             ? primaryKeys
             : (res.columns || []).filter((c: any) => (c as any).isPrimaryKey).map((c: any) => c.name);
 
+        if (isStale()) return;
         const rawRows = (res.rows as any) || [];
         let fetchedRows: any[][] = [];
         let hasMore = prevTabData?.hasMore ?? false;
@@ -1203,6 +1230,7 @@ export function App() {
       }
     } catch (e: any) {
       console.error(`Failed to load data for ${tab.table}:`, e);
+      if (isStale()) return;
       setTableDataByTab((prev) => ({
         ...prev,
         [tab.id]: {
@@ -1231,7 +1259,9 @@ export function App() {
     if (activeTab && activeTab.type === 'table_data') {
       const existing = tableDataByTab[activeTab.id];
       const refreshCount = tabRefreshTrigger[activeTab.id] || 0;
-      if (refreshCount > 0 || !existing || (!existing.isLoading && existing.rows.length === 0 && !existing.error)) {
+      const refreshed = refreshCount !== (lastRefreshHandledRef.current[activeTab.id] || 0);
+      if (refreshed) lastRefreshHandledRef.current[activeTab.id] = refreshCount;
+      if (refreshed || !existing || (!existing.isLoading && existing.rows.length === 0 && !existing.error)) {
         loadTableData(activeTab);
       }
     }
@@ -1269,7 +1299,10 @@ export function App() {
   // Auto-save active workspace when tabs change
   useEffect(() => {
     if (useWorkspaceSessionStore.getState().hasLoaded) {
-      useWorkspaceSessionStore.getState().saveCurrentWorkspace(tabs, activeTabId);
+      if (saveWorkspaceTimerRef.current) clearTimeout(saveWorkspaceTimerRef.current);
+      saveWorkspaceTimerRef.current = setTimeout(() => {
+        useWorkspaceSessionStore.getState().saveCurrentWorkspace(tabs, activeTabId);
+      }, 500);
     }
   }, [tabs, activeTabId]);
 
