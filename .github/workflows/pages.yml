@@ -1,13 +1,9 @@
-name: Deploy GitHub Pages
+# Automatic GitHub Pages deployment is unified in .github/workflows/release.yml
+# (runs after release succeeds, or when files in pages/ are pushed to main/master).
+# This file is kept for manual-only deploys if needed.
+name: Deploy GitHub Pages (Manual)
 
 on:
-  push:
-    branches:
-      - main
-      - master
-    paths:
-      - 'pages/**'
-      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:

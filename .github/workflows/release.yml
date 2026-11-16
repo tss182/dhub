@@ -4,25 +4,38 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+      - master
+    paths:
+      - 'pages/**'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag to release (e.g. v0.2.0)'
+        description: 'Version tag to release (e.g. v0.3.5)'
         required: true
-        default: 'v0.2.0'
+        default: 'v0.3.5'
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'release-and-pages-${{ github.ref }}'
+  cancel-in-progress: false
 
 jobs:
-  prepare-and-version:
-    # Trigger on tag pushes (v*) or manual dispatch
+  prepare-version:
+    # Only run release pipeline on version tags (v*) or manual workflow_dispatch
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version_step.outputs.version }}
       tag_name: ${{ steps.version_step.outputs.tag_name }}
       commit_sha: ${{ steps.version_step.outputs.commit_sha }}
+      target_branch: ${{ steps.version_step.outputs.target_branch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,23 +43,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          check-latest: true
-
-      - name: Install Wails v3 CLI
-        run: |
-          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-      - name: Extract Tag and Version
+      - name: Extract Tag, Version, and Target Branch
         id: version_step
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -55,62 +52,30 @@ jobs:
             TAG_NAME="${GITHUB_REF_NAME}"
           fi
 
-          # Strip leading 'v' if present (e.g. v0.1.0 -> 0.1.0)
+          # Strip leading 'v' if present (e.g. v0.3.5 -> 0.3.5)
           VERSION="${TAG_NAME#v}"
           echo "Processing Release for Tag: $TAG_NAME (Version: $VERSION)"
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-          # Determine target branch (prefer master, fallback to main)
-          git fetch origin master:refs/remotes/origin/master 2>/dev/null || true
+          # Determine target branch (prefer main, fallback to master)
           git fetch origin main:refs/remotes/origin/main 2>/dev/null || true
+          git fetch origin master:refs/remotes/origin/master 2>/dev/null || true
 
-          TARGET_BRANCH="master"
-          if git show-ref --verify --quiet refs/remotes/origin/master; then
-            TARGET_BRANCH="master"
-          elif git show-ref --verify --quiet refs/remotes/origin/main; then
+          TARGET_BRANCH="main"
+          if git show-ref --verify --quiet refs/remotes/origin/main; then
             TARGET_BRANCH="main"
+          elif git show-ref --verify --quiet refs/remotes/origin/master; then
+            TARGET_BRANCH="master"
           fi
           echo "Target branch: $TARGET_BRANCH"
-
-          # Switch to target branch tracking remote
-          git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
-
-          # Update version in build/config.yml under info:
-          python3 -c "
-          import re
-          with open('build/config.yml', 'r') as f:
-              content = f.read()
-          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
-          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
-          with open('build/config.yml', 'w') as f:
-              f.write(new_content)
-          "
-          echo "==> Updated build/config.yml with version: $VERSION"
-
-          # Run make update-asset
-          make update-asset
-
-          # Configure Git user for automated commit
-          git config --local user.name "github-actions[bot]"
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Check if there are changes to commit
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "==> No changes detected. Version already up-to-date."
-          else
-            git add -A
-            git commit -m "publish: version ${VERSION}"
-            git push origin "$TARGET_BRANCH"
-            git tag -f "$TAG_NAME"
-            git push origin "$TAG_NAME" --force
-          fi
+          echo "target_branch=$TARGET_BRANCH" >> $GITHUB_OUTPUT
 
           COMMIT_SHA=$(git rev-parse HEAD)
           echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
 
   build-linux-windows:
-    needs: prepare-and-version
+    needs: prepare-version
     runs-on: ubuntu-24.04
     env:
       GIT_COMMITTER_NAME: "github-actions[bot]"
@@ -120,7 +85,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-and-version.outputs.commit_sha }}
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
 
       - name: Install Linux build dependencies
         run: |
@@ -156,9 +121,23 @@ jobs:
           npm ci || npm install
           cd ..
 
+      - name: Apply Release Version Locally for Build
+        run: |
+          VERSION="${{ needs.prepare-version.outputs.version }}"
+          python3 -c "
+          import re
+          with open('build/config.yml', 'r') as f:
+              content = f.read()
+          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
+          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
+          with open('build/config.yml', 'w') as f:
+              f.write(new_content)
+          "
+          make update-asset
+
       - name: Build Linux DEB Package
         run: |
-          VERSION="${{ needs.prepare-and-version.outputs.version }}"
+          VERSION="${{ needs.prepare-version.outputs.version }}"
           make build:deb
           if [ -f bin/dhub.deb ]; then
             cp bin/dhub.deb "bin/dhub_${VERSION}_linux_amd64.deb"
@@ -166,7 +145,7 @@ jobs:
 
       - name: Build Linux RPM Package
         run: |
-          VERSION="${{ needs.prepare-and-version.outputs.version }}"
+          VERSION="${{ needs.prepare-version.outputs.version }}"
           make build:rpm
           if [ -f bin/dhub.rpm ]; then
             cp bin/dhub.rpm "bin/dhub-${VERSION}-1.x86_64.rpm"
@@ -174,7 +153,7 @@ jobs:
 
       - name: Build Windows x86 (amd64) Executable and Installer (User Scope)
         run: |
-          VERSION="${{ needs.prepare-and-version.outputs.version }}"
+          VERSION="${{ needs.prepare-version.outputs.version }}"
           wails3 task windows:build ARCH=amd64
           cp bin/dhub.exe "bin/dhub-${VERSION}-windows-amd64.exe"
           wails3 task windows:create:nsis:installer ARCH=amd64 INSTALL_SCOPE=user
@@ -187,7 +166,7 @@ jobs:
 
       - name: Build Windows ARM (arm64) Executable and Installer (User Scope)
         run: |
-          VERSION="${{ needs.prepare-and-version.outputs.version }}"
+          VERSION="${{ needs.prepare-version.outputs.version }}"
           wails3 task windows:build ARCH=arm64
           cp bin/dhub.exe "bin/dhub-${VERSION}-windows-arm64.exe"
           wails3 task windows:create:nsis:installer ARCH=arm64 INSTALL_SCOPE=user
@@ -203,22 +182,22 @@ jobs:
         with:
           name: linux-windows-artifacts
           path: |
-            bin/dhub_${{ needs.prepare-and-version.outputs.version }}_linux_amd64.deb
-            bin/dhub-${{ needs.prepare-and-version.outputs.version }}-1.x86_64.rpm
-            bin/dhub-${{ needs.prepare-and-version.outputs.version }}-windows-amd64.exe
-            bin/dhub-${{ needs.prepare-and-version.outputs.version }}-windows-amd64-installer.exe
-            bin/dhub-${{ needs.prepare-and-version.outputs.version }}-windows-arm64.exe
-            bin/dhub-${{ needs.prepare-and-version.outputs.version }}-windows-arm64-installer.exe
+            bin/dhub_${{ needs.prepare-version.outputs.version }}_linux_amd64.deb
+            bin/dhub-${{ needs.prepare-version.outputs.version }}-1.x86_64.rpm
+            bin/dhub-${{ needs.prepare-version.outputs.version }}-windows-amd64.exe
+            bin/dhub-${{ needs.prepare-version.outputs.version }}-windows-amd64-installer.exe
+            bin/dhub-${{ needs.prepare-version.outputs.version }}-windows-arm64.exe
+            bin/dhub-${{ needs.prepare-version.outputs.version }}-windows-arm64-installer.exe
           if-no-files-found: error
 
   build-macos:
-    needs: prepare-and-version
+    needs: prepare-version
     runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-and-version.outputs.commit_sha }}
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -242,9 +221,23 @@ jobs:
           npm ci || npm install
           cd ..
 
+      - name: Apply Release Version Locally for Build
+        run: |
+          VERSION="${{ needs.prepare-version.outputs.version }}"
+          python3 -c "
+          import re
+          with open('build/config.yml', 'r') as f:
+              content = f.read()
+          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
+          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
+          with open('build/config.yml', 'w') as f:
+              f.write(new_content)
+          "
+          make update-asset
+
       - name: Build macOS Application (.app bundle and DMG)
         run: |
-          VERSION="${{ needs.prepare-and-version.outputs.version }}"
+          VERSION="${{ needs.prepare-version.outputs.version }}"
           make build:mac
           if make build:mac:dmg; then
             echo "DMG build completed."
@@ -263,13 +256,13 @@ jobs:
         with:
           name: macos-artifacts
           path: |
-            bin/dhub-${{ needs.prepare-and-version.outputs.version }}-macos.app.zip
-            bin/dhub-${{ needs.prepare-and-version.outputs.version }}-macos.dmg
+            bin/dhub-${{ needs.prepare-version.outputs.version }}-macos.app.zip
+            bin/dhub-${{ needs.prepare-version.outputs.version }}-macos.dmg
           if-no-files-found: warn
 
   publish-release:
     needs:
-      - prepare-and-version
+      - prepare-version
       - build-linux-windows
       - build-macos
     runs-on: ubuntu-24.04
@@ -290,10 +283,100 @@ jobs:
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.prepare-and-version.outputs.tag_name }}
-          name: Release ${{ needs.prepare-and-version.outputs.tag_name }}
+          tag_name: ${{ needs.prepare-version.outputs.tag_name }}
+          name: Release ${{ needs.prepare-version.outputs.tag_name }}
           draft: false
           prerelease: false
           generate_release_notes: true
           files: dist-release/*
 
+  post-release-sync:
+    needs:
+      - prepare-version
+      - publish-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-version.outputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+
+      - name: Install Wails v3 CLI
+        run: |
+          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Sync Version across Config, Code, README, and Pages
+        run: |
+          VERSION="${{ needs.prepare-version.outputs.version }}"
+          TARGET_BRANCH="${{ needs.prepare-version.outputs.target_branch }}"
+
+          python3 -c "
+          import re
+          with open('build/config.yml', 'r') as f:
+              content = f.read()
+          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
+          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
+          with open('build/config.yml', 'w') as f:
+              f.write(new_content)
+          "
+          echo "==> Updated build/config.yml with version: $VERSION"
+
+          make update-asset
+
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "==> No changes detected. Version and README already up-to-date."
+          else
+            git add -A
+            git commit -m "publish: version ${VERSION}"
+            git push origin "$TARGET_BRANCH"
+          fi
+
+  deploy-pages:
+    needs:
+      - prepare-version
+      - post-release-sync
+    if: always() && (needs.post-release-sync.result == 'success' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')))
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-version.outputs.target_branch || github.ref_name }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'pages'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

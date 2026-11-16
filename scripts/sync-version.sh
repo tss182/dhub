@@ -69,5 +69,20 @@ const CurrentVersion = "$VERSION"
 EOF
 echo "  [✓] Updated internal/version/version.go -> $VERSION"
 
+# 5. Update README.md version badge and latest version text
+README_FILE="$ROOT_DIR/README.md"
+if [ -f "$README_FILE" ]; then
+  sed -i -E "s/version-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?-blue\.svg/version-v$VERSION-blue.svg/g" "$README_FILE"
+  sed -i -E "s/\(\*\*v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\*\*\)/(**v$VERSION**)/g" "$README_FILE"
+  echo "  [✓] Updated README.md -> v$VERSION"
+fi
+
+# 6. Update pages/index.html fallback version pill
+PAGES_HTML="$ROOT_DIR/pages/index.html"
+if [ -f "$PAGES_HTML" ]; then
+  sed -i -E "s/(id=\"nav-version-pill\">)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(<)/\1v$VERSION\3/g" "$PAGES_HTML"
+  echo "  [✓] Updated pages/index.html -> v$VERSION"
+fi
+
 echo "==> Version sync complete ($VERSION)."
 
