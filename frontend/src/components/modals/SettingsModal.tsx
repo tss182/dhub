@@ -27,10 +27,12 @@ import {
   KeyRound,
   ShieldAlert,
   Loader2,
+  BookOpen,
 } from 'lucide-react';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useUpdateStore } from '../../stores/useUpdateStore';
+import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
 import { COPY_FORMAT_LABELS } from '../grid/CopyFormatSelector';
 import { DHubLogo } from '../common/DHubLogo';
@@ -782,19 +784,33 @@ export const SettingsModal: React.FC = () => {
             {/* About & Shortcuts Tab */}
             {activeSettingsTab === 'about' && (
               <div className="space-y-5">
-                <div className="flex items-start gap-3.5">
-                  <DHubLogo variant="badge" size={44} className="mt-0.5 shrink-0" />
-                  <div>
-                    <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Modern high-performance Database Client & SQL IDE.
-                    </p>
-                    <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
-                      <span>Version {APP_VERSION}</span>
-                      <span className="text-zinc-500">•</span>
-                      <span className="text-emerald-400">Stable</span>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3.5">
+                    <DHubLogo variant="badge" size={44} className="mt-0.5 shrink-0" />
+                    <div>
+                      <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        Modern high-performance Database Client &amp; SQL/NoSQL IDE.
+                      </p>
+                      <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
+                        <span>Version {APP_VERSION}</span>
+                        <span className="text-zinc-500">•</span>
+                        <span className="text-emerald-400">Stable</span>
+                      </div>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeSettings();
+                      useWorkbenchStore.getState().openHelpModal('quickstart');
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/35 text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    <span>Open Help &amp; User Guide (F1)</span>
+                  </button>
                 </div>
 
                 {/* Software Updates Box */}
@@ -859,6 +875,12 @@ export const SettingsModal: React.FC = () => {
                     <span>Keyboard Shortcuts</span>
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Help &amp; User Guide</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        F1
+                      </kbd>
+                    </div>
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Search Everywhere</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">

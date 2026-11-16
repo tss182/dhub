@@ -14,6 +14,8 @@ import {
   Activity,
   RotateCcw,
   Zap,
+  HelpCircle,
+  BookOpen,
 } from 'lucide-react';
 import { format } from 'sql-formatter';
 import { ConnectionConfig, ColumnMeta, ForeignKeyMeta, resolveConnectionEnv } from '../../types/domain';
@@ -335,6 +337,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
   const [isExplainOpen, setIsExplainOpen] = useState(false);
   const explainDropdownRef = useRef<HTMLDivElement>(null);
+  const [isSyntaxHelpOpen, setIsSyntaxHelpOpen] = useState(false);
+  const syntaxHelpRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -344,9 +348,25 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       ) {
         setIsExplainOpen(false);
       }
+      if (
+        syntaxHelpRef.current &&
+        !syntaxHelpRef.current.contains(event.target as Node)
+      ) {
+        setIsSyntaxHelpOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsExplainOpen(false);
+        setIsSyntaxHelpOpen(false);
+      }
     }
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   // Filter available databases so that only visible databases are shown in the dropdown
@@ -1314,9 +1334,137 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-zinc-400">
-          <Terminal className="h-3.5 w-3.5 text-zinc-500" />
-          <span className="text-[11px] text-zinc-400">{modKey}+Enter to Execute</span>
+        <div className="flex items-center gap-2.5 text-zinc-400">
+          <div className="hidden md:flex items-center gap-1.5">
+            <Terminal className="h-3.5 w-3.5 text-zinc-500" />
+            <span className="text-[11px] text-zinc-400">{modKey}+Enter to Execute</span>
+          </div>
+
+          {/* Driver-Aware Syntax & Help Popover */}
+          <div className="relative" ref={syntaxHelpRef}>
+            <button
+              type="button"
+              onClick={() => setIsSyntaxHelpOpen((prev) => !prev)}
+              className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium transition-colors cursor-pointer ${
+                isSyntaxHelpOpen
+                  ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
+                  : 'bg-[#22242c] hover:bg-[#2b2e3b] border-[#272932] text-zinc-300 hover:text-white'
+              }`}
+              title="Driver-aware query syntax cheat-sheet & help"
+            >
+              <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
+              <span>Syntax &amp; Help</span>
+            </button>
+
+            {isSyntaxHelpOpen && (() => {
+              const drv = (connection?.driver || 'sql').toLowerCase();
+              const isMongo = drv === 'mongodb';
+              const isRedis = drv === 'redis';
+
+              const title = isMongo
+                ? 'MongoDB Query Cheat-Sheet'
+                : isRedis
+                ? 'Redis Command Cheat-Sheet'
+                : 'SQL Worksheet Tips & Syntax';
+
+              const subtitle = isMongo
+                ? 'Click an example to insert it into the console'
+                : isRedis
+                ? 'Click a Redis CLI or pseudo-SQL example to insert'
+                : 'Dynamic parameters (:param, $1, ?), FK joins & formatting';
+
+              const examples = isMongo
+                ? [
+                    { label: 'Find Documents', code: 'db.collection.find({"key": "value"});' },
+                    { label: 'Count Documents', code: 'db.collection.countDocuments({});' },
+                    { label: 'Insert Document', code: 'db.collection.insertOne({"name": "test"});' },
+                    { label: 'SQL-Like Query', code: "SELECT * FROM collection WHERE status = 'active' LIMIT 50;" },
+                    { label: 'List Collections', code: 'SHOW COLLECTIONS;' },
+                    { label: 'Raw JSON Command', code: '{"ping": 1}' },
+                  ]
+                : isRedis
+                ? [
+                    { label: 'Browse All Keys', code: 'SELECT * FROM keys;' },
+                    { label: 'Get String Key', code: 'GET mykey' },
+                    { label: 'Set Key with TTL', code: 'SET mykey "value" EX 3600' },
+                    { label: 'Read Hash Fields', code: 'HGETALL myhash' },
+                    { label: 'Read Sorted Set', code: 'ZRANGE myzset 0 -1 WITHSCORES' },
+                    { label: 'Server Info', code: 'INFO' },
+                  ]
+                : [
+                    { label: 'Named Parameter (:param)', code: 'SELECT * FROM table_name WHERE id = :id;' },
+                    { label: 'Positional Parameter ($1)', code: 'SELECT * FROM table_name WHERE id = $1;' },
+                    { label: 'Anonymous Parameter (?)', code: "SELECT * FROM table_name WHERE status = ?;" },
+                  ];
+
+              const insertSnippet = (snippet: string) => {
+                const next = sql.trim() ? `${sql.trimEnd()}\n\n${snippet}\n` : `${snippet}\n`;
+                onChange(next);
+                setIsSyntaxHelpOpen(false);
+                editorRef.current?.focus();
+              };
+
+              return (
+                <div className="absolute right-0 top-full mt-1.5 w-80 rounded-lg border border-[#3b3e4f] bg-[#181920] shadow-2xl p-2.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="pb-2 mb-2 border-b border-[#272932]">
+                    <div className="text-xs font-semibold text-zinc-100">{title}</div>
+                    <div className="text-[10px] text-zinc-400 mt-0.5">{subtitle}</div>
+                  </div>
+
+                  {!isMongo && !isRedis && (
+                    <ul className="mb-2.5 space-y-1 text-[10px] text-zinc-400 bg-[#14151a] border border-[#272932] rounded p-2">
+                      <li>• <strong className="text-zinc-200">FK Join Autocomplete:</strong> Type <code>JOIN </code> after a table to get foreign-key <code>ON</code> hints.</li>
+                      <li>• <strong className="text-zinc-200">Transactions:</strong> Click <code>Tx: AUTO</code> to toggle manual Commit/Rollback.</li>
+                      <li>• <strong className="text-zinc-200">Format SQL:</strong> Press <code>Shift+Alt+F</code> to format in active dialect.</li>
+                    </ul>
+                  )}
+
+                  <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
+                    {examples.map((ex, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => insertSnippet(ex.code)}
+                        className="w-full text-left p-2 rounded-md bg-[#14151a] hover:bg-[#22242c] border border-[#272932] hover:border-blue-500/40 transition-colors cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between text-[10px] text-zinc-400 group-hover:text-zinc-200 mb-0.5">
+                          <span>{ex.label}</span>
+                          <span className="text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                            Insert
+                          </span>
+                        </div>
+                        <div className="font-mono text-[11px] text-sky-300 truncate">
+                          {ex.code}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="pt-2 mt-2 border-t border-[#272932]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSyntaxHelpOpen(false);
+                        useWorkbenchStore
+                          .getState()
+                          .openHelpModal(isMongo || isRedis ? 'databases' : 'editor');
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-blue-300 text-[11px] font-medium transition-colors cursor-pointer"
+                    >
+                      <BookOpen className="h-3.5 w-3.5" />
+                      <span>
+                        {isMongo
+                          ? 'Open Full MongoDB Guide'
+                          : isRedis
+                          ? 'Open Full Redis Guide'
+                          : 'Open Query Console Guide'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       </div>
 

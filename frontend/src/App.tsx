@@ -12,6 +12,7 @@ import { DataGrid } from './components/grid/DataGrid';
 import { ConnectionDialog } from './components/modals/ConnectionDialog';
 import { SearchEverywhere } from './components/modals/SearchEverywhere';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { HelpModal } from './components/modals/HelpModal';
 import { AlertModal } from './components/modals/AlertModal';
 import { ToastContainer } from './components/common/ToastContainer';
 import { Popover } from './components/common/Popover';
@@ -66,6 +67,9 @@ import {
   GitCompare,
   Bookmark,
   Wand2,
+  HelpCircle,
+  BookOpen,
+  Plus,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 import { UserManager } from './components/users/UserManager';
@@ -102,6 +106,7 @@ export function App() {
     setLeftPanelOpen,
     setSearchEverywhereOpen,
     setConnectionDialogOpen,
+    openHelpModal,
     tabRefreshTrigger,
     tableStructureModal,
     openEditTableModal,
@@ -699,6 +704,13 @@ export function App() {
         if (activeId) {
           handleCancelQuery(activeId);
         }
+        return;
+      }
+
+      // Open Help & User Guide: F1
+      if (e.key === 'F1') {
+        e.preventDefault();
+        useWorkbenchStore.getState().toggleHelpModal();
         return;
       }
 
@@ -1661,6 +1673,16 @@ export function App() {
             <SettingsIcon className="h-3.5 w-3.5" />
             <span>Settings</span>
           </button>
+
+          {/* Help & User Guide Trigger */}
+          <button
+            onClick={() => openHelpModal('quickstart')}
+            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
+            title="Help & User Guide (F1)"
+          >
+            <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
+            <span>Help</span>
+          </button>
         </div>
       </header>
 
@@ -2558,12 +2580,52 @@ export function App() {
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-zinc-500 select-none">
                 <Terminal className="h-10 w-10 text-zinc-600 mb-3 stroke-[1.5]" />
                 <h3 className="text-sm font-semibold text-zinc-300">No Open Tabs</h3>
-                <p className="text-xs text-zinc-500 mt-1 max-w-sm">
-                  Select a table from Database Explorer or right-click a connection to open a Query Console.
+                <p className="text-xs text-zinc-500 mt-1 max-w-md">
+                  Select a table from Database Explorer, right-click a connection to open a Query Console, or explore the User Guide to get started.
                 </p>
-                <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-400">
-                  <span className="rounded bg-[#1e2027] border border-[#272932] px-2 py-0.5 font-mono">{searchShortcutLabel}</span>
-                  <span>Search Everywhere</span>
+
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setConnectionDialogOpen(true)}
+                    className="flex items-center gap-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors cursor-pointer shadow-xs"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>New Connection</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSearchEverywhereOpen(true)}
+                    className="flex items-center gap-2 rounded-lg bg-[#1e2027] hover:bg-[#252834] border border-[#2b2e3a] px-3 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Search className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Search Everywhere</span>
+                    <kbd className="rounded bg-[#14151a] border border-[#2d303d] px-1.5 py-0.5 text-[10px] font-mono text-zinc-400">
+                      {searchShortcutLabel}
+                    </kbd>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openHelpModal('quickstart')}
+                    className="flex items-center gap-2 rounded-lg bg-[#1e2027] hover:bg-[#252834] border border-[#2b2e3a] px-3 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <BookOpen className="h-3.5 w-3.5 text-blue-400" />
+                    <span>User Guide &amp; Help</span>
+                    <kbd className="rounded bg-[#14151a] border border-[#2d303d] px-1.5 py-0.5 text-[10px] font-mono text-zinc-400">
+                      F1
+                    </kbd>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openHelpModal('databases')}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#1e2027] hover:bg-[#252834] border border-[#2b2e3a] px-3 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Database className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Database Query Guide</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -3210,6 +3272,7 @@ export function App() {
       <ConnectionDialog />
       <SearchEverywhere />
       <SettingsModal />
+      <HelpModal />
       <UpdateModal />
       <AlertModal />
       <ToastContainer />
@@ -3262,6 +3325,15 @@ export function App() {
               <span>Update ({updateInfo.latestVersion})</span>
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => openHelpModal('quickstart')}
+            className="flex items-center gap-1 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+            title="Open Help & User Guide (F1)"
+          >
+            <HelpCircle className="h-3 w-3 text-blue-400" />
+            <span>Help (F1)</span>
+          </button>
           <span>DHub Desktop v{APP_VERSION}</span>
         </div>
       </footer>

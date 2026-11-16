@@ -121,6 +121,15 @@ export interface TableStructureModalConfig {
 
 export type RightSidebarTab = 'consoles' | 'views';
 
+export type HelpTab =
+  | 'quickstart'
+  | 'databases'
+  | 'editor'
+  | 'datagrid'
+  | 'tools'
+  | 'shortcuts'
+  | 'faq';
+
 export interface ActiveCellViewer {
   tabId: string;
   tableName?: string;
@@ -143,6 +152,8 @@ interface WorkbenchState {
   isLeftPanelOpen: boolean;
   isSearchEverywhereOpen: boolean;
   isConnectionDialogOpen: boolean;
+  isHelpModalOpen: boolean;
+  activeHelpTab: HelpTab;
   editingConnectionId: string | null;
   tabRefreshTrigger: Record<string, number>;
   consoles: ConsoleRecord[];
@@ -190,6 +201,9 @@ interface WorkbenchState {
   setLeftPanelOpen: (open: boolean) => void;
   setSearchEverywhereOpen: (open: boolean) => void;
   setConnectionDialogOpen: (open: boolean, editingId?: string | null) => void;
+  openHelpModal: (tab?: HelpTab) => void;
+  closeHelpModal: () => void;
+  toggleHelpModal: (tab?: HelpTab) => void;
   openCreateTableModal: (conn: any, database: string, schema?: string) => void;
   openEditTableModal: (conn: any, database: string, schema?: string, tableName?: string) => void;
   closeTableStructureModal: () => void;
@@ -222,6 +236,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   })(),
   isSearchEverywhereOpen: false,
   isConnectionDialogOpen: false,
+  isHelpModalOpen: false,
+  activeHelpTab: 'quickstart',
   editingConnectionId: null,
   tabRefreshTrigger: {},
   consoles: [],
@@ -636,6 +652,18 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
 
   setConnectionDialogOpen: (isConnectionDialogOpen, editingConnectionId = null) =>
     set({ isConnectionDialogOpen, editingConnectionId }),
+
+  openHelpModal: (tab = 'quickstart') =>
+    set({ isHelpModalOpen: true, activeHelpTab: tab }),
+
+  closeHelpModal: () =>
+    set({ isHelpModalOpen: false }),
+
+  toggleHelpModal: (tab) =>
+    set((state) => ({
+      isHelpModalOpen: !state.isHelpModalOpen,
+      activeHelpTab: tab || state.activeHelpTab,
+    })),
 }));
 
 // Automatically persist open tabs and active tab to SQLite & localStorage on any state changes

@@ -14,6 +14,7 @@ import {
   Check,
   ChevronUp,
   ArrowDownUp,
+  BookOpen,
 } from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
 
@@ -535,6 +536,22 @@ export const SearchEverywhere: React.FC = () => {
       'setting'.includes(query.toLowerCase()) ||
       'restore'.includes(query.toLowerCase()));
 
+  const qLowerMatch = query.trim().toLowerCase();
+  const isHelpMatch =
+    Boolean(qLowerMatch) &&
+    ['help', 'guide', 'docs', 'documentation', 'manual', 'shortcut', 'shortcuts', 'faq', 'tutorial', 'mongo', 'mongodb', 'redis'].some(
+      (kw) => kw.includes(qLowerMatch) || qLowerMatch.includes(kw)
+    );
+
+  const matchedHelpTab =
+    qLowerMatch.includes('mongo') || qLowerMatch.includes('redis')
+      ? 'databases'
+      : qLowerMatch.includes('shortcut')
+      ? 'shortcuts'
+      : qLowerMatch.includes('faq')
+      ? 'faq'
+      : 'quickstart';
+
   return (
     <div
       onClick={() => setSearchEverywhereOpen(false)}
@@ -602,6 +619,27 @@ export const SearchEverywhere: React.FC = () => {
                 <ArrowDownUp className="h-3.5 w-3.5 text-blue-400" />
                 <span className="font-semibold text-zinc-200">Import & Export Config / Settings</span>
                 <span className="text-zinc-500 text-[11px]">Backup, export, or import preferences & database connections</span>
+              </div>
+              <span className="text-[10px] uppercase tracking-wider text-zinc-300 bg-[#22242c] px-1.5 py-0.5 rounded border border-[#272932]">
+                Action
+              </span>
+            </div>
+          )}
+
+          {isHelpMatch && (
+            <div
+              onClick={() => {
+                setSearchEverywhereOpen(false);
+                useWorkbenchStore.getState().openHelpModal(matchedHelpTab);
+              }}
+              className="flex items-center justify-between rounded px-3 py-2 hover:bg-[#22242c] cursor-pointer text-zinc-300 hover:text-white border-b border-[#272932] mb-1"
+            >
+              <div className="flex items-center gap-2">
+                <BookOpen className="h-3.5 w-3.5 text-blue-400" />
+                <span className="font-semibold text-zinc-200">Open Help &amp; User Guide (F1)</span>
+                <span className="text-zinc-500 text-[11px]">
+                  Documentation, MongoDB &amp; Redis syntax, shortcuts &amp; FAQ
+                </span>
               </div>
               <span className="text-[10px] uppercase tracking-wider text-zinc-300 bg-[#22242c] px-1.5 py-0.5 rounded border border-[#272932]">
                 Action
