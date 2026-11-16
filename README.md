@@ -138,3 +138,11 @@ docker compose up -d
 - `internal/tunnel/` — SSH tunnel manager with Trust-On-First-Use (TOFU) `known_hosts` verification
 - `frontend/` — React + TypeScript + Tailwind CSS v4 + Monaco Editor UI
 - `docs/USER_GUIDE.md` — Comprehensive English user manual
+
+---
+
+## License
+
+Copyright (C) 2026 **Triyana Suryapraja Sukmana** (<triyana.ss.136@gmail.com>)
+
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)** — see the [LICENSE](LICENSE) file for details.
