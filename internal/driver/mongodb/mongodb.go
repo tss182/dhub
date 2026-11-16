@@ -741,7 +741,7 @@ func parseWhereClause(where string) bson.M {
 }
 
 func (m *MongoDBDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
-	return nil, nil
+	return nil, fmt.Errorf("manual transactions are not supported for MongoDB")
 }
 
 func (m *MongoDBDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {

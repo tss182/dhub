@@ -1,18 +1,21 @@
 package tunnel
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"dhub/internal/config"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -20,7 +23,7 @@ type SSHTunnelConfig struct {
 	Host       string
 	Port       int
 	User       string
-	AuthType   string // "password" | "key"
+	AuthType   string // "password" | "key" | "agent"
 	Password   string
 	KeyPath    string
 	RemoteHost string
@@ -98,10 +101,90 @@ func trustOnFirstUseCallback() ssh.HostKeyCallback {
 	}
 }
 
+// RemoveKnownHost removes any stored host key entries matching host[:port] from DHub's known_hosts file.
+func RemoveKnownHost(host string, port int) error {
+	knownHostsMu.Lock()
+	defer knownHostsMu.Unlock()
+
+	path, err := knownHostsPath()
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+
+	if port <= 0 {
+		port = 22
+	}
+	targetHost := knownhosts.Normalize(fmt.Sprintf("%s:%d", strings.TrimSpace(host), port))
+	plainHost := strings.TrimSpace(host)
+
+	var kept []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			kept = append(kept, line)
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) > 0 {
+			hostsField := fields[0]
+			matched := false
+			for _, h := range strings.Split(hostsField, ",") {
+				if h == targetHost || h == plainHost {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	content := ""
+	if len(kept) > 0 {
+		content = strings.Join(kept, "\n") + "\n"
+	}
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
 func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 	var authMethods []ssh.AuthMethod
 
-	if cfg.AuthType == "password" && cfg.Password != "" {
+	if cfg.AuthType == "agent" {
+		sock := os.Getenv("SSH_AUTH_SOCK")
+		if sock == "" {
+			return nil, fmt.Errorf("SSH_AUTH_SOCK environment variable is not set; cannot connect to SSH agent")
+		}
+		agentConn, err := net.Dial("unix", sock)
+		if err != nil {
+			return nil, fmt.Errorf("failed to dial SSH agent (%s): %w", sock, err)
+		}
+		defer agentConn.Close()
+		agentClient := agent.NewClient(agentConn)
+		signers, err := agentClient.Signers()
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve keys from SSH agent: %w", err)
+		}
+		if len(signers) == 0 {
+			return nil, fmt.Errorf("SSH agent has no loaded identities (run ssh-add first)")
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(signers...))
+	} else if cfg.AuthType == "password" && cfg.Password != "" {
 		authMethods = append(authMethods, ssh.Password(cfg.Password))
 	} else if cfg.KeyPath != "" {
 		keyBytes, err := os.ReadFile(cfg.KeyPath)

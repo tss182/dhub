@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -12,6 +12,10 @@ import * as store$0 from "../store/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
+
+export function DeleteSnippet(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2204935769, id);
+}
 
 export function DeleteWorksheet(id: string): $CancellablePromise<void> {
     return $Call.ByID(825634916, id);
@@ -25,32 +29,52 @@ export function ExportConfig(includeConnections: boolean, includePasswords: bool
     return $Call.ByID(3831336023, includeConnections, includePasswords);
 }
 
-export function GetQueryHistory(connectionID: string, limit: number): $CancellablePromise<store$0.QueryHistoryEntry[] | null> {
-    return $Call.ByID(659553081, connectionID, limit);
+export function GetQueryHistory(connectionID: string, limit: number): $CancellablePromise<store$0.QueryHistoryEntry[]> {
+    return $Call.ByID(659553081, connectionID, limit).then(($result: any) => {
+        return $$createType1($result);
+    });
 }
 
-export function GetSettings(): $CancellablePromise<{ [_ in string]?: string } | null> {
-    return $Call.ByID(522312764);
+export function GetSettings(): $CancellablePromise<{ [_ in string]?: string }> {
+    return $Call.ByID(522312764).then(($result: any) => {
+        return $$createType2($result);
+    });
 }
 
 export function GetWorksheet(id: string): $CancellablePromise<store$0.Worksheet | null> {
-    return $Call.ByID(3848255231, id);
+    return $Call.ByID(3848255231, id).then(($result: any) => {
+        return $$createType4($result);
+    });
 }
 
 export function GetWorkspace(id: string): $CancellablePromise<store$0.WorkspaceSnapshot | null> {
-    return $Call.ByID(980400370, id);
+    return $Call.ByID(980400370, id).then(($result: any) => {
+        return $$createType6($result);
+    });
 }
 
 export function ImportConfig(jsonContent: string, opts: $models.ConfigImportOptions): $CancellablePromise<$models.ConfigImportResult | null> {
-    return $Call.ByID(3770039104, jsonContent, opts);
+    return $Call.ByID(3770039104, jsonContent, opts).then(($result: any) => {
+        return $$createType8($result);
+    });
 }
 
-export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[] | null> {
-    return $Call.ByID(3290411218, connectionID);
+export function ListSnippets(): $CancellablePromise<store$0.QuerySnippet[]> {
+    return $Call.ByID(4088825397).then(($result: any) => {
+        return $$createType10($result);
+    });
 }
 
-export function ListWorkspaces(): $CancellablePromise<store$0.WorkspaceSnapshot[] | null> {
-    return $Call.ByID(1872458117);
+export function ListWorksheets(connectionID: string): $CancellablePromise<store$0.Worksheet[]> {
+    return $Call.ByID(3290411218, connectionID).then(($result: any) => {
+        return $$createType11($result);
+    });
+}
+
+export function ListWorkspaces(): $CancellablePromise<store$0.WorkspaceSnapshot[]> {
+    return $Call.ByID(1872458117).then(($result: any) => {
+        return $$createType12($result);
+    });
 }
 
 export function ReadConfigFile(filePath: string): $CancellablePromise<string> {
@@ -69,6 +93,10 @@ export function SaveSetting(key: string, value: string): $CancellablePromise<voi
     return $Call.ByID(3044459230, key, value);
 }
 
+export function SaveSnippet(sn: store$0.QuerySnippet): $CancellablePromise<string> {
+    return $Call.ByID(1526561531, sn);
+}
+
 export function SaveWorksheet(ws: store$0.Worksheet): $CancellablePromise<string> {
     return $Call.ByID(3347542458, ws);
 }
@@ -82,5 +110,24 @@ export function SetActiveWorkspace(id: string): $CancellablePromise<void> {
 }
 
 export function ValidateConfigFile(jsonContent: string): $CancellablePromise<$models.ConfigImportSummary | null> {
-    return $Call.ByID(289571285, jsonContent);
+    return $Call.ByID(289571285, jsonContent).then(($result: any) => {
+        return $$createType14($result);
+    });
 }
+
+// Private type creation functions
+const $$createType0 = store$0.QueryHistoryEntry.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $Create.Map($Create.Any, $Create.Any);
+const $$createType3 = store$0.Worksheet.createFrom;
+const $$createType4 = $Create.Nullable($$createType3);
+const $$createType5 = store$0.WorkspaceSnapshot.createFrom;
+const $$createType6 = $Create.Nullable($$createType5);
+const $$createType7 = $models.ConfigImportResult.createFrom;
+const $$createType8 = $Create.Nullable($$createType7);
+const $$createType9 = store$0.QuerySnippet.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = $Create.Array($$createType3);
+const $$createType12 = $Create.Array($$createType5);
+const $$createType13 = $models.ConfigImportSummary.createFrom;
+const $$createType14 = $Create.Nullable($$createType13);

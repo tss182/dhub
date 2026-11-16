@@ -16,7 +16,8 @@ export {
     WorkspaceService
 };
 
-export type {
+export {
+    ColumnDiff,
     ColumnMapping,
     ConfigImportOptions,
     ConfigImportResult,
@@ -26,6 +27,8 @@ export type {
     FilePreview,
     ImportRequest,
     ImportResult,
+    SchemaDiffResult,
+    TableDiff,
     TxStatus,
     UpdateInfo
 } from "./models.js";

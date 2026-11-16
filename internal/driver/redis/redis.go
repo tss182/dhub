@@ -808,7 +808,7 @@ func ParseRedisCommandArgs(cmdStr string) []any {
 }
 
 func (r *RedisDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
-	return nil, nil
+	return nil, fmt.Errorf("manual transactions are not supported for Redis")
 }
 
 func (r *RedisDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {

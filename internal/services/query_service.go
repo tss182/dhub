@@ -187,6 +187,9 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
+	if tx == nil {
+		return nil, fmt.Errorf("manual transactions are not supported by this driver")
+	}
 
 	session := &TxSession{
 		TabID:        tabID,

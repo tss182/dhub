@@ -550,6 +550,138 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			_ = dst.Close()
 		}
 
+	case "mongodb":
+		binPath, err := exec.LookPath("mongodump")
+		if err != nil {
+			return "", fmt.Errorf("mongodump executable not found in PATH; please install MongoDB Database Tools")
+		}
+		host := strings.TrimSpace(conn.Host)
+		if host == "" {
+			host = "localhost"
+		}
+		port := conn.Port
+		if port <= 0 {
+			port = 27017
+		}
+		args := []string{
+			"--host", host,
+			"--port", strconv.Itoa(port),
+			"--db", database,
+			"--archive=" + filePath,
+		}
+		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
+			args = append(args, "--gzip")
+		}
+		if strings.TrimSpace(conn.Username) != "" {
+			args = append(args, "--username", conn.Username)
+			if conn.Password != "" {
+				args = append(args, "--password", conn.Password)
+			}
+			args = append(args, "--authenticationDatabase", "admin")
+		}
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("mongodump failed: %s", msg)
+		}
+
+	case "redis":
+		binPath, err := exec.LookPath("redis-cli")
+		if err != nil {
+			return "", fmt.Errorf("redis-cli executable not found in PATH; please install redis-tools")
+		}
+		host := strings.TrimSpace(conn.Host)
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		port := conn.Port
+		if port <= 0 {
+			port = 6379
+		}
+		args := []string{"-h", host, "-p", strconv.Itoa(port), "--rdb", filePath}
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd.Env = os.Environ()
+		if conn.Password != "" {
+			cmd.Env = append(cmd.Env, "REDISCLI_AUTH="+conn.Password)
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("redis-cli --rdb failed: %s", msg)
+		}
+
+	case "mssql":
+		binPath, err := exec.LookPath("sqlcmd")
+		if err != nil {
+			return "", fmt.Errorf("sqlcmd executable not found in PATH; please install Microsoft SQL Server Command Line Utilities")
+		}
+		host := strings.TrimSpace(conn.Host)
+		if host == "" {
+			host = "localhost"
+		}
+		port := conn.Port
+		if port <= 0 {
+			port = 1433
+		}
+		server := fmt.Sprintf("%s,%d", host, port)
+		safeFile := strings.ReplaceAll(filePath, "'", "''")
+		safeDB := strings.ReplaceAll(database, "]", "]]")
+		tsql := fmt.Sprintf("BACKUP DATABASE [%s] TO DISK = N'%s' WITH INIT, FORMAT", safeDB, safeFile)
+		args := []string{"-S", server, "-Q", tsql, "-C"}
+		if strings.TrimSpace(conn.Username) != "" {
+			args = append(args, "-U", conn.Username)
+			if conn.Password != "" {
+				args = append(args, "-P", conn.Password)
+			}
+		} else {
+			args = append(args, "-E")
+		}
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("sqlcmd backup failed: %s", msg)
+		}
+
+	case "clickhouse":
+		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+		if err != nil {
+			return "", err
+		}
+		objs, err := drv.ListObjects(ctx, database, database)
+		if err != nil {
+			return "", fmt.Errorf("failed to list clickhouse objects: %w", err)
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("-- ClickHouse SQL Backup for database `%s`\n\n", strings.ReplaceAll(database, "`", "``")))
+		for _, obj := range objs {
+			if opts.TableSelection == "include" && len(opts.Tables) > 0 {
+				matched := false
+				for _, t := range opts.Tables {
+					if t == obj.Name {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			if tStruct, sErr := drv.GetTableStructure(ctx, database, database, obj.Name); sErr == nil && tStruct.DDL != "" {
+				sb.WriteString(strings.TrimSpace(tStruct.DDL) + ";\n\n")
+			}
+		}
+		if err := os.WriteFile(filePath, []byte(sb.String()), 0o644); err != nil {
+			return "", fmt.Errorf("failed to write clickhouse backup: %w", err)
+		}
+
 	default:
 		return "", fmt.Errorf("unsupported driver for backup: %s", conn.Driver)
 	}
@@ -760,10 +892,303 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 			return "", fmt.Errorf("sqlite restore failed: %w", err)
 		}
 
+	case "mongodb":
+		binPath, err := exec.LookPath("mongorestore")
+		if err != nil {
+			return "", fmt.Errorf("mongorestore executable not found in PATH; please install MongoDB Database Tools")
+		}
+		host := strings.TrimSpace(conn.Host)
+		if host == "" {
+			host = "localhost"
+		}
+		port := conn.Port
+		if port <= 0 {
+			port = 27017
+		}
+		args := []string{
+			"--host", host,
+			"--port", strconv.Itoa(port),
+			"--archive=" + filePath,
+			"--nsInclude=" + database + ".*",
+		}
+		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
+			args = append(args, "--gzip")
+		}
+		if strings.TrimSpace(conn.Username) != "" {
+			args = append(args, "--username", conn.Username)
+			if conn.Password != "" {
+				args = append(args, "--password", conn.Password)
+			}
+			args = append(args, "--authenticationDatabase", "admin")
+		}
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("mongorestore failed: %s", msg)
+		}
+
+	case "mssql":
+		binPath, err := exec.LookPath("sqlcmd")
+		if err != nil {
+			return "", fmt.Errorf("sqlcmd executable not found in PATH; please install Microsoft SQL Server Command Line Utilities")
+		}
+		host := strings.TrimSpace(conn.Host)
+		if host == "" {
+			host = "localhost"
+		}
+		port := conn.Port
+		if port <= 0 {
+			port = 1433
+		}
+		server := fmt.Sprintf("%s,%d", host, port)
+		var args []string
+		if strings.HasSuffix(strings.ToLower(filePath), ".bak") {
+			safeFile := strings.ReplaceAll(filePath, "'", "''")
+			safeDB := strings.ReplaceAll(database, "]", "]]")
+			tsql := fmt.Sprintf("RESTORE DATABASE [%s] FROM DISK = N'%s' WITH REPLACE", safeDB, safeFile)
+			args = []string{"-S", server, "-Q", tsql, "-C"}
+		} else {
+			args = []string{"-S", server, "-d", database, "-i", filePath, "-C"}
+		}
+		if strings.TrimSpace(conn.Username) != "" {
+			args = append(args, "-U", conn.Username)
+			if conn.Password != "" {
+				args = append(args, "-P", conn.Password)
+			}
+		} else {
+			args = append(args, "-E")
+		}
+		cmd := exec.CommandContext(ctx, binPath, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("sqlcmd restore failed: %s", msg)
+		}
+
+	case "clickhouse":
+		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+		if err != nil {
+			return "", err
+		}
+		sqlBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read SQL file: %w", err)
+		}
+		_, err = drv.Execute(ctx, driver.QueryRequest{
+			ConnectionID: connectionID,
+			Database:     database,
+			Schema:       database,
+			SQL:          string(sqlBytes),
+		})
+		if err != nil {
+			return "", fmt.Errorf("clickhouse restore failed: %w", err)
+		}
+
 	default:
 		return "", fmt.Errorf("unsupported driver for restore: %s", conn.Driver)
 	}
 
 	return fmt.Sprintf("Database '%s' restored successfully from %s", database, filepath.Base(filePath)), nil
+}
+
+type ColumnDiff struct {
+	ColumnName string `json:"columnName"`
+	Status     string `json:"status"` // "added" | "removed" | "modified"
+	SourceType string `json:"sourceType"`
+	TargetType string `json:"targetType"`
+	Detail     string `json:"detail"`
+}
+
+type TableDiff struct {
+	TableName   string       `json:"tableName"`
+	Status      string       `json:"status"` // "missing_in_target" | "extra_in_target" | "modified" | "identical"
+	ColumnDiffs []ColumnDiff `json:"columnDiffs,omitempty"`
+	Migration   string       `json:"migration,omitempty"`
+}
+
+type SchemaDiffResult struct {
+	SourceLabel   string      `json:"sourceLabel"`
+	TargetLabel   string      `json:"targetLabel"`
+	Identical     int         `json:"identical"`
+	Modified      int         `json:"modified"`
+	MissingTarget int         `json:"missingTarget"`
+	ExtraTarget   int         `json:"extraTarget"`
+	TableDiffs    []TableDiff `json:"tableDiffs"`
+	MigrationSQL  string      `json:"migrationSql"`
+}
+
+func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, dstDB, dstSchema string) (*SchemaDiffResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	srcDrv, err := s.sessions.GetOrConnect(ctx, srcConnID)
+	if err != nil {
+		return nil, fmt.Errorf("source connection failed: %w", err)
+	}
+	dstDrv, err := s.sessions.GetOrConnect(ctx, dstConnID)
+	if err != nil {
+		return nil, fmt.Errorf("target connection failed: %w", err)
+	}
+
+	srcObjs, err := srcDrv.ListObjects(ctx, srcDB, srcSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list source objects: %w", err)
+	}
+	dstObjs, err := dstDrv.ListObjects(ctx, dstDB, dstSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list target objects: %w", err)
+	}
+
+	srcTables := make(map[string]driver.ObjectSummary)
+	for _, o := range srcObjs {
+		if o.Type == "table" {
+			srcTables[o.Name] = o
+		}
+	}
+	dstTables := make(map[string]driver.ObjectSummary)
+	for _, o := range dstObjs {
+		if o.Type == "table" {
+			dstTables[o.Name] = o
+		}
+	}
+
+	allNamesMap := make(map[string]struct{})
+	for name := range srcTables {
+		allNamesMap[name] = struct{}{}
+	}
+	for name := range dstTables {
+		allNamesMap[name] = struct{}{}
+	}
+	var allNames []string
+	for name := range allNamesMap {
+		allNames = append(allNames, name)
+	}
+	// Simple sort
+	for i := 0; i < len(allNames); i++ {
+		for j := i + 1; j < len(allNames); j++ {
+			if allNames[i] > allNames[j] {
+				allNames[i], allNames[j] = allNames[j], allNames[i]
+			}
+		}
+	}
+
+	res := &SchemaDiffResult{
+		SourceLabel: fmt.Sprintf("%s.%s", srcDB, srcSchema),
+		TargetLabel: fmt.Sprintf("%s.%s", dstDB, dstSchema),
+		TableDiffs:  make([]TableDiff, 0),
+	}
+	var migrationParts []string
+
+	for _, name := range allNames {
+		_, inSrc := srcTables[name]
+		_, inDst := dstTables[name]
+
+		if inSrc && !inDst {
+			res.MissingTarget++
+			mig := fmt.Sprintf("-- Create missing table %s in target", name)
+			if st, sErr := srcDrv.GetTableStructure(ctx, srcDB, srcSchema, name); sErr == nil && st.DDL != "" {
+				mig = strings.TrimSpace(st.DDL)
+				if !strings.HasSuffix(mig, ";") {
+					mig += ";"
+				}
+			}
+			res.TableDiffs = append(res.TableDiffs, TableDiff{
+				TableName: name,
+				Status:    "missing_in_target",
+				Migration: mig,
+			})
+			migrationParts = append(migrationParts, mig)
+			continue
+		}
+
+		if !inSrc && inDst {
+			res.ExtraTarget++
+			mig := fmt.Sprintf("-- Table %s exists only in target (review before dropping):\n-- DROP TABLE %s;", name, name)
+			res.TableDiffs = append(res.TableDiffs, TableDiff{
+				TableName: name,
+				Status:    "extra_in_target",
+				Migration: mig,
+			})
+			continue
+		}
+
+		srcStruct, sErr := srcDrv.GetTableStructure(ctx, srcDB, srcSchema, name)
+		dstStruct, dErr := dstDrv.GetTableStructure(ctx, dstDB, dstSchema, name)
+		if sErr != nil || dErr != nil {
+			continue
+		}
+
+		srcCols := make(map[string]driver.ColumnMeta)
+		for _, c := range srcStruct.Columns {
+			srcCols[c.Name] = c
+		}
+		dstCols := make(map[string]driver.ColumnMeta)
+		for _, c := range dstStruct.Columns {
+			dstCols[c.Name] = c
+		}
+
+		var colDiffs []ColumnDiff
+		var alterStmts []string
+
+		for _, sc := range srcStruct.Columns {
+			dc, exists := dstCols[sc.Name]
+			if !exists {
+				colDiffs = append(colDiffs, ColumnDiff{
+					ColumnName: sc.Name,
+					Status:     "added",
+					SourceType: sc.DataType,
+					Detail:     fmt.Sprintf("Missing in target (%s)", sc.DataType),
+				})
+				nullStr := "NULL"
+				if !sc.IsNullable {
+					nullStr = "NOT NULL"
+				}
+				alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s;", name, sc.Name, sc.DataType, nullStr))
+			} else if !strings.EqualFold(sc.DataType, dc.DataType) || sc.IsNullable != dc.IsNullable {
+				colDiffs = append(colDiffs, ColumnDiff{
+					ColumnName: sc.Name,
+					Status:     "modified",
+					SourceType: sc.DataType,
+					TargetType: dc.DataType,
+					Detail:     fmt.Sprintf("Type: %s -> %s, Nullable: %v -> %v", dc.DataType, sc.DataType, dc.IsNullable, sc.IsNullable),
+				})
+				alterStmts = append(alterStmts, fmt.Sprintf("-- Column %s.%s differs: target=%s (nullable=%v), source=%s (nullable=%v)", name, sc.Name, dc.DataType, dc.IsNullable, sc.DataType, sc.IsNullable))
+			}
+		}
+
+		for _, dc := range dstStruct.Columns {
+			if _, exists := srcCols[dc.Name]; !exists {
+				colDiffs = append(colDiffs, ColumnDiff{
+					ColumnName: dc.Name,
+					Status:     "removed",
+					TargetType: dc.DataType,
+					Detail:     fmt.Sprintf("Extra in target (%s)", dc.DataType),
+				})
+				alterStmts = append(alterStmts, fmt.Sprintf("-- Extra column in target: ALTER TABLE %s DROP COLUMN %s;", name, dc.Name))
+			}
+		}
+
+		if len(colDiffs) == 0 {
+			res.Identical++
+		} else {
+			res.Modified++
+			mig := strings.Join(alterStmts, "\n")
+			res.TableDiffs = append(res.TableDiffs, TableDiff{
+				TableName:   name,
+				Status:      "modified",
+				ColumnDiffs: colDiffs,
+				Migration:   mig,
+			})
+			migrationParts = append(migrationParts, mig)
+		}
+	}
+
+	res.MigrationSQL = strings.Join(migrationParts, "\n\n")
+	return res, nil
 }
 

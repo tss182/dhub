@@ -186,7 +186,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
   const loadUsers = async () => {
     if (!connection) return;
-    if (connection.driver === 'sqlite' || connection.driver === 'redis' || connection.driver === 'mssql' || connection.driver === 'mongodb' || connection.driver === 'clickhouse') {
+    if (connection.driver === 'sqlite' || connection.driver === 'mongodb') {
       setUsers([]);
       setIsLoading(false);
       return;
@@ -196,8 +196,19 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     setErrorMessage(null);
 
     const execId = `list-users-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : 'mysql');
-    const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
+    const targetDb =
+      connection.databaseName ||
+      (connection.driver === 'postgres'
+        ? 'postgres'
+        : connection.driver === 'mssql'
+        ? 'master'
+        : connection.driver === 'clickhouse'
+        ? 'default'
+        : connection.driver === 'redis'
+        ? 'db0'
+        : 'mysql');
+    const targetSchema =
+      connection.driver === 'postgres' ? 'public' : connection.driver === 'mssql' ? 'dbo' : 'main';
 
     try {
       if (isMySQLLike(connection.driver)) {
@@ -290,6 +301,75 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
             canLogin: !!r[5],
             connLimit: typeof r[6] === 'number' ? r[6] : undefined,
           }));
+          setUsers(parsed);
+        }
+      } else if (connection.driver === 'mssql') {
+        const res = await QueryService.ExecuteQuery({
+          executionId: execId,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: targetSchema,
+          sql: `SELECT name, type_desc, is_disabled FROM sys.server_principals WHERE type IN ('S','U','G') AND name NOT LIKE '##%' ORDER BY name;`,
+          limit: 500,
+          offset: 0,
+        } as any);
+
+        if (res && res.rows) {
+          const parsed: DatabaseUser[] = (res.rows as any[]).filter(Boolean).map((r: any) => ({
+            username: String(r[0] ?? ''),
+            plugin: r[1] ? String(r[1]) : 'SQL_LOGIN',
+            isLocked: Boolean(r[2]),
+            canLogin: !Boolean(r[2]),
+          }));
+          setUsers(parsed);
+        }
+      } else if (connection.driver === 'clickhouse') {
+        const res = await QueryService.ExecuteQuery({
+          executionId: execId,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: targetSchema,
+          sql: `SELECT name, auth_type FROM system.users ORDER BY name;`,
+          limit: 500,
+          offset: 0,
+        } as any);
+
+        if (res && res.rows) {
+          const parsed: DatabaseUser[] = (res.rows as any[]).filter(Boolean).map((r: any) => ({
+            username: String(r[0] ?? ''),
+            plugin: r[1] ? String(r[1]) : undefined,
+            canLogin: true,
+          }));
+          setUsers(parsed);
+        }
+      } else if (connection.driver === 'redis') {
+        const res = await QueryService.ExecuteQuery({
+          executionId: execId,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: targetSchema,
+          sql: `ACL LIST`,
+          limit: 500,
+          offset: 0,
+        } as any);
+
+        if (res && res.rows) {
+          const parsed: DatabaseUser[] = (res.rows as any[])
+            .filter(Boolean)
+            .map((r: any) => {
+              const line = String(r[0] ?? '');
+              const parts = line.split(/\s+/);
+              const uname = parts[1] || line;
+              const isOff = parts.includes('off');
+              const isAll = parts.includes('+@all') || parts.includes('allcommands');
+              return {
+                username: uname,
+                isLocked: isOff,
+                canLogin: !isOff,
+                isSuperuser: isAll,
+                plugin: parts.slice(2, 5).join(' '),
+              };
+            });
           setUsers(parsed);
         }
       }
@@ -423,6 +503,68 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         } as any);
 
         alertSuccess(`Role/User "${uname}" created successfully.`, 'User Created');
+      } else if (connection.driver === 'mssql') {
+        const safeUser = uname.replace(/\]/g, ']]');
+        const safePass = createModal.password.replace(/'/g, "''");
+        let fullSql = `CREATE LOGIN [${safeUser}] WITH PASSWORD = '${safePass}'; CREATE USER [${safeUser}] FOR LOGIN [${safeUser}];`;
+        if (createModal.preset === 'admin') {
+          fullSql += ` ALTER SERVER ROLE [sysadmin] ADD MEMBER [${safeUser}];`;
+        } else if (createModal.preset === 'readonly') {
+          fullSql += ` ALTER ROLE [db_datareader] ADD MEMBER [${safeUser}];`;
+        } else {
+          fullSql += ` ALTER ROLE [db_datareader] ADD MEMBER [${safeUser}]; ALTER ROLE [db_datawriter] ADD MEMBER [${safeUser}];`;
+        }
+        await QueryService.ExecuteQuery({
+          executionId: execId,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: 'dbo',
+          sql: fullSql,
+          limit: 10,
+          offset: 0,
+        } as any);
+        alertSuccess(`SQL Server login/user [${uname}] created successfully.`, 'User Created');
+      } else if (connection.driver === 'clickhouse') {
+        const safeUser = uname.replace(/`/g, '``');
+        const safePass = createModal.password.replace(/'/g, "\\'");
+        const passClause = safePass ? ` IDENTIFIED BY '${safePass}'` : '';
+        let fullSql = `CREATE USER IF NOT EXISTS \`${safeUser}\`${passClause};`;
+        if (createModal.preset === 'admin') {
+          fullSql += ` GRANT ALL ON *.* TO \`${safeUser}\` WITH GRANT OPTION;`;
+        } else if (createModal.preset === 'readonly') {
+          fullSql += ` GRANT SELECT ON *.* TO \`${safeUser}\`;`;
+        } else {
+          fullSql += ` GRANT SELECT, INSERT, ALTER ON *.* TO \`${safeUser}\`;`;
+        }
+        await QueryService.ExecuteQuery({
+          executionId: execId,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: 'default',
+          sql: fullSql,
+          limit: 10,
+          offset: 0,
+        } as any);
+        alertSuccess(`ClickHouse user "${uname}" created successfully.`, 'User Created');
+      } else if (connection.driver === 'redis') {
+        const safePass = createModal.password ? `>${createModal.password}` : 'nopass';
+        const perm =
+          createModal.preset === 'admin'
+            ? '+@all'
+            : createModal.preset === 'readonly'
+            ? '+@read -@write'
+            : '+@read +@write';
+        const fullSql = `ACL SETUSER ${uname} on ${safePass} ~* ${perm}`;
+        await QueryService.ExecuteQuery({
+          executionId: execId,
+          connectionId: connection.id,
+          database: 'db0',
+          schema: 'db0',
+          sql: fullSql,
+          limit: 10,
+          offset: 0,
+        } as any);
+        alertSuccess(`Redis ACL user "${uname}" created successfully.`, 'User Created');
       }
 
       setCreateModal((prev) => ({ ...prev, isOpen: false, isExecuting: false }));
@@ -697,6 +839,14 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         sql = `ALTER USER \`${user.username}\`@\`${host}\` IDENTIFIED BY '${password.replace(/'/g, "\\'")}'; FLUSH PRIVILEGES;`;
       } else if (connection.driver === 'postgres') {
         sql = `ALTER ROLE "${user.username}" WITH PASSWORD '${password.replace(/'/g, "''")}';`;
+      } else if (connection.driver === 'mssql') {
+        const safeUser = user.username.replace(/\]/g, ']]');
+        sql = `ALTER LOGIN [${safeUser}] WITH PASSWORD = '${password.replace(/'/g, "''")}';`;
+      } else if (connection.driver === 'clickhouse') {
+        const safeUser = user.username.replace(/`/g, '``');
+        sql = `ALTER USER \`${safeUser}\` IDENTIFIED BY '${password.replace(/'/g, "\\'")}';`;
+      } else if (connection.driver === 'redis') {
+        sql = `ACL SETUSER ${user.username} >${password}`;
       }
 
       await QueryService.ExecuteQuery({
@@ -742,6 +892,12 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       const sql =
         isMySQLLike(connection.driver)
           ? `DROP USER \`${u.username}\`@\`${u.host || '%'}\`;`
+          : connection.driver === 'mssql'
+          ? `DROP USER IF EXISTS [${u.username.replace(/\]/g, ']]')}]; DROP LOGIN [${u.username.replace(/\]/g, ']]')}];`
+          : connection.driver === 'clickhouse'
+          ? `DROP USER IF EXISTS \`${u.username.replace(/`/g, '``')}\`;`
+          : connection.driver === 'redis'
+          ? `ACL DELUSER ${u.username}`
           : `DROP ROLE "${u.username}";`;
 
       await QueryService.ExecuteQuery({
@@ -781,40 +937,6 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     );
   }
 
-  // Redis Message
-  if (connection.driver === 'redis') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#191a20] p-6 text-center select-none">
-        <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-4 shadow-lg">
-          <AlertCircle className="h-7 w-7" />
-        </div>
-        <h3 className="text-base font-semibold text-zinc-100 mb-1">
-          Redis User Management
-        </h3>
-        <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
-          Redis uses Access Control Lists (Redis 6+ ACL) or legacy AUTH passwords. You can manage users and credentials directly in the Query Console using commands such as <code className="font-mono text-zinc-200">ACL LIST</code>, <code className="font-mono text-zinc-200">ACL SETUSER</code>, or <code className="font-mono text-zinc-200">AUTH</code>.
-        </p>
-      </div>
-    );
-  }
-
-  // SQL Server Message
-  if (connection.driver === 'mssql') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#191a20] p-6 text-center select-none">
-        <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-4 shadow-lg">
-          <AlertCircle className="h-7 w-7" />
-        </div>
-        <h3 className="text-base font-semibold text-zinc-100 mb-1">
-          SQL Server User Management
-        </h3>
-        <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
-          SQL Server uses server logins and database users. You can manage logins, users, and roles directly in the Query Console using T-SQL commands such as <code className="font-mono text-zinc-200">CREATE LOGIN</code>, <code className="font-mono text-zinc-200">CREATE USER</code>, or <code className="font-mono text-zinc-200">ALTER ROLE</code>.
-        </p>
-      </div>
-    );
-  }
-
   // MongoDB Message
   if (connection.driver === 'mongodb') {
     return (
@@ -827,23 +949,6 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         </h3>
         <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
           MongoDB uses role-based access control (RBAC). You can manage users, roles, and authentication directly in the Query Console using commands such as <code className="font-mono text-zinc-200">db.createUser(...)</code>, <code className="font-mono text-zinc-200">db.updateUser(...)</code>, or <code className="font-mono text-zinc-200">db.dropUser(...)</code>.
-        </p>
-      </div>
-    );
-  }
-
-  // ClickHouse Message
-  if (connection.driver === 'clickhouse') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#191a20] p-6 text-center select-none">
-        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-4 shadow-lg">
-          <AlertCircle className="h-7 w-7" />
-        </div>
-        <h3 className="text-base font-semibold text-zinc-100 mb-1">
-          ClickHouse User Management
-        </h3>
-        <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
-          ClickHouse supports SQL-driven user and role management. You can manage users, roles, and quotas directly in the Query Console using commands such as <code className="font-mono text-zinc-200">CREATE USER</code>, <code className="font-mono text-zinc-200">CREATE ROLE</code>, and <code className="font-mono text-zinc-200">GRANT</code>.
         </p>
       </div>
     );

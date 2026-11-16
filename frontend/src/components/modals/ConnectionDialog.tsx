@@ -61,7 +61,7 @@ export const ConnectionDialog: React.FC = () => {
   const [sshHost, setSshHost] = useState('');
   const [sshPort, setSshPort] = useState(22);
   const [sshUser, setSshUser] = useState('');
-  const [sshAuthType, setSshAuthType] = useState<'key' | 'password'>('key');
+  const [sshAuthType, setSshAuthType] = useState<'key' | 'password' | 'agent'>('key');
   const [sshKeyPath, setSshKeyPath] = useState('');
   const [sshPassword, setSshPassword] = useState('');
 
@@ -792,6 +792,7 @@ export const ConnectionDialog: React.FC = () => {
                       >
                         <option value="key">Private Key (Recommended)</option>
                         <option value="password">Password</option>
+                        <option value="agent">SSH Agent (SSH_AUTH_SOCK)</option>
                       </select>
                     </div>
                   </div>
@@ -816,6 +817,10 @@ export const ConnectionDialog: React.FC = () => {
                           <span>Browse...</span>
                         </button>
                       </div>
+                    </div>
+                  ) : sshAuthType === 'agent' ? (
+                    <div className="p-2.5 rounded bg-[#121317] border border-[#272932] text-[11px] text-zinc-400">
+                      Uses keys loaded in your local SSH agent via <code className="text-zinc-300 font-mono">SSH_AUTH_SOCK</code>.
                     </div>
                   ) : (
                     <div>
@@ -998,18 +1003,44 @@ export const ConnectionDialog: React.FC = () => {
           {/* Test Status Banner */}
           {testResult && (
             <div
-              className={`flex items-center gap-2 p-2.5 rounded border text-[11px] ${
+              className={`flex items-center justify-between gap-2 p-2.5 rounded border text-[11px] ${
                 testResult.success
                   ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
                   : 'bg-rose-950/30 border-rose-500/40 text-rose-300'
               }`}
             >
-              {testResult.success ? (
-                <CheckCircle className="h-4 w-4 shrink-0 text-emerald-400" />
-              ) : (
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+              <div className="flex items-center gap-2 min-w-0">
+                {testResult.success ? (
+                  <CheckCircle className="h-4 w-4 shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                )}
+                <span className="truncate">{testResult.message}</span>
+              </div>
+              {!testResult.success && testResult.message.includes('has CHANGED') && sshEnabled && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const confirmed = await confirmDialog({
+                      title: 'SSH Host Key Changed',
+                      message: `Reset stored SSH host key for ${sshHost}:${sshPort || 22}? Only do this if you trust the new server key.`,
+                      confirmLabel: 'Reset & Trust',
+                      isDanger: true,
+                    });
+                    if (!confirmed) return;
+                    try {
+                      await (ConnectionService as any).ResetSSHHostKey(sshHost, sshPort || 22);
+                      setTestResult(null);
+                      handleTest();
+                    } catch (err: any) {
+                      alertError(err?.message || 'Failed to reset SSH host key');
+                    }
+                  }}
+                  className="shrink-0 px-2 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 font-medium cursor-pointer"
+                >
+                  Reset & Trust Key
+                </button>
               )}
-              <span className="truncate">{testResult.message}</span>
             </div>
           )}
         </div>

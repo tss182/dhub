@@ -22,6 +22,11 @@ import { ERDiagramView } from './components/diagram/ERDiagramView';
 import { ExportModal } from './components/modals/ExportModal';
 import { ImportModal } from './components/modals/ImportModal';
 import { UpdateModal } from './components/modals/UpdateModal';
+import { DmlPreviewModal } from './components/modals/DmlPreviewModal';
+import { RenameTabModal } from './components/modals/RenameTabModal';
+import { SchemaDiffModal } from './components/modals/SchemaDiffModal';
+import { SnippetsModal } from './components/modals/SnippetsModal';
+import { MockDataModal } from './components/modals/MockDataModal';
 import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
@@ -58,6 +63,9 @@ import {
   PanelRight,
   PanelRightOpen,
   Users,
+  GitCompare,
+  Bookmark,
+  Wand2,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 import { UserManager } from './components/users/UserManager';
@@ -120,6 +128,9 @@ export function App() {
   const [copiedResultRawSql, setCopiedResultRawSql] = useState(false);
   const [isTableExportOpen, setIsTableExportOpen] = useState(false);
   const [isTableImportOpen, setIsTableImportOpen] = useState(false);
+  const [isSchemaDiffOpen, setIsSchemaDiffOpen] = useState(false);
+  const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
+  const [isMockDataOpen, setIsMockDataOpen] = useState(false);
 
   const { updateInfo, checkUpdate, openUpdateModal } = useUpdateStore();
 
@@ -1621,6 +1632,26 @@ export function App() {
             </kbd>
           </button>
 
+          {/* Snippets Trigger */}
+          <button
+            onClick={() => setIsSnippetsOpen(true)}
+            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
+            title="Query Snippets & Bookmarks"
+          >
+            <Bookmark className="h-3.5 w-3.5 text-amber-400" />
+            <span>Snippets</span>
+          </button>
+
+          {/* Schema Diff Trigger */}
+          <button
+            onClick={() => setIsSchemaDiffOpen(true)}
+            className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-400 border border-[#272932] hover:border-zinc-500 hover:text-zinc-200 cursor-pointer shadow-xs transition-colors"
+            title="Compare Schemas & Generate Migration SQL"
+          >
+            <GitCompare className="h-3.5 w-3.5 text-blue-400" />
+            <span>Schema Diff</span>
+          </button>
+
           {/* Settings Trigger */}
           <button
             onClick={() => useSettingsStore.getState().openSettings()}
@@ -2238,14 +2269,24 @@ export function App() {
                     </button>
 
                     {activeTab.table && !tableConn?.isReadOnly && (
-                      <button
-                        type="button"
-                        onClick={() => setIsTableImportOpen(true)}
-                        className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
-                        title="Import Data Wizard (CSV)"
-                      >
-                        <Upload className="h-3.5 w-3.5 text-emerald-400" />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setIsTableImportOpen(true)}
+                          className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                          title="Import Data Wizard (CSV)"
+                        >
+                          <Upload className="h-3.5 w-3.5 text-emerald-400" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsMockDataOpen(true)}
+                          className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                          title="Generate Mock Data"
+                        >
+                          <Wand2 className="h-3.5 w-3.5 text-purple-400" />
+                        </button>
+                      </>
                     )}
 
                     <button
@@ -2466,6 +2507,18 @@ export function App() {
                       schema={activeTab.schema || ''}
                       table={activeTab.table}
                       onImportComplete={() => loadTableData(activeTab)}
+                    />
+                  )}
+
+                  {isMockDataOpen && activeTab.table && (
+                    <MockDataModal
+                      isOpen={isMockDataOpen}
+                      onClose={() => setIsMockDataOpen(false)}
+                      connectionId={activeTab.connectionId}
+                      database={activeTab.database || ''}
+                      schema={activeTab.schema || ''}
+                      tableName={activeTab.table}
+                      onSuccess={() => loadTableData(activeTab)}
                     />
                   )}
                 </div>
@@ -3078,113 +3131,72 @@ export function App() {
       )}
 
       {/* Rename Modal Dialog */}
-      {renameModal.isOpen && (() => {
-        const targetTab = tabs.find((t) => t.id === renameModal.id);
-        const renameConn = connections.find(
-          (c) => c.id === (targetTab?.connectionId || activeTab?.connectionId || activeConnectionId)
-        );
-        const renameEnv = resolveConnectionEnv(renameConn);
-        const renameHeaderClass =
-          renameEnv === 'prod'
-            ? 'bg-rose-950/75 border-rose-800/70'
-            : renameEnv === 'dev'
-            ? 'bg-emerald-950/75 border-emerald-800/70'
-            : 'bg-[#14151a] border-[#272932]';
-
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
-            <div className="w-80 rounded-lg bg-[#191a20] border border-[#272932] overflow-hidden text-xs text-zinc-300 shadow-2xl animate-in fade-in zoom-in-95 duration-100">
-              <div className={`flex items-center justify-between px-4 py-2.5 border-b ${renameHeaderClass}`}>
-                <span className="font-semibold text-sm text-zinc-100 flex items-center gap-1.5">
-                  <Pencil className="h-4 w-4 text-blue-400" />
-                  Rename Tab / Console
-                </span>
-                <button
-                  onClick={() => setRenameModal({ isOpen: false, id: '', title: '' })}
-                  className="text-zinc-400 hover:text-white"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <form onSubmit={handleRenameSubmit} className="p-4">
-                <label className="block text-[11px] text-zinc-400 mb-1.5 font-medium">
-                  New Name:
-                </label>
-                <input
-                  type="text"
-                  value={renameModal.title}
-                  onChange={(e) => setRenameModal((prev) => ({ ...prev, title: e.target.value }))}
-                  className="w-full rounded bg-[#121317] px-2.5 py-1.5 text-xs text-zinc-100 border border-[#272932] focus:border-blue-500 focus:outline-none"
-                  autoFocus
-                  onFocus={(e) => e.target.select()}
-                />
-                <div className="flex justify-end gap-2 mt-4">
-                  <button
-                    type="button"
-                    onClick={() => setRenameModal({ isOpen: false, id: '', title: '' })}
-                    className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c] text-zinc-300 cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-sm cursor-pointer"
-                  >
-                    Save
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        );
-      })()}
+      <RenameTabModal
+        isOpen={renameModal.isOpen}
+        title={renameModal.title}
+        connection={connections.find(
+          (c) =>
+            c.id ===
+            (tabs.find((t) => t.id === renameModal.id)?.connectionId ||
+              activeTab?.connectionId ||
+              activeConnectionId)
+        )}
+        onChangeTitle={(title) => setRenameModal((prev) => ({ ...prev, title }))}
+        onClose={() => setRenameModal({ isOpen: false, id: '', title: '' })}
+        onSubmit={handleRenameSubmit}
+      />
 
       {/* DML Preview Modal */}
-      {dmlPreview && (() => {
-        const dmlConn = connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId));
-        const dmlEnv = resolveConnectionEnv(dmlConn);
-        const dmlHeaderClass =
-          dmlEnv === 'prod'
-            ? 'bg-rose-950/75 border-rose-800/70'
-            : dmlEnv === 'dev'
-            ? 'bg-emerald-950/75 border-emerald-800/70'
-            : 'bg-[#14151a] border-[#272932]';
+      <DmlPreviewModal
+        statements={dmlPreview}
+        connection={connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))}
+        onClose={() => setDmlPreview(null)}
+        onApply={handleSubmitChanges}
+      />
 
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs">
-            <div className="w-[600px] rounded-lg bg-[#191a20] border border-[#272932] overflow-hidden text-xs text-zinc-300 shadow-2xl">
-              <div className={`flex items-center justify-between border-b px-4 py-3 ${dmlHeaderClass}`}>
-                <span className="font-semibold text-sm text-zinc-100">Pending DML Statements</span>
-                <button onClick={() => setDmlPreview(null)} className="text-zinc-400 hover:text-white">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="p-4">
-                <pre className="p-3 bg-[#121317] rounded border border-[#272932] font-mono text-xs text-emerald-400 max-h-60 overflow-auto">
-                  {dmlPreview.join('\n\n')}
-                </pre>
-                <div className="flex justify-end gap-2 mt-4">
-                  <button
-                    onClick={() => setDmlPreview(null)}
-                    className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c]"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={() => {
-                      setDmlPreview(null);
-                      handleSubmitChanges();
-                    }}
-                    className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm"
-                  >
-                    Apply Changes
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Schema Diff Modal */}
+      <SchemaDiffModal
+        isOpen={isSchemaDiffOpen}
+        onClose={() => setIsSchemaDiffOpen(false)}
+        onOpenInConsole={(sql, connId, db, sch) => {
+          const conn = connections.find((c) => c.id === connId);
+          openTab({
+            id: `console-diff-${Date.now()}`,
+            type: 'worksheet',
+            title: 'Schema Migration',
+            connectionId: connId,
+            driver: conn?.driver,
+            database: db,
+            schema: sch,
+            content: sql,
+          });
+        }}
+      />
+
+      {/* Snippets Modal */}
+      <SnippetsModal
+        isOpen={isSnippetsOpen}
+        onClose={() => setIsSnippetsOpen(false)}
+        onInsertSql={(sql) => {
+          if (activeTab?.type === 'worksheet') {
+            const current = activeTab.content || '';
+            const next = current ? `${current.trimEnd()}\n\n${sql}` : sql;
+            updateTabContent(activeTab.id, next);
+          } else if (activeConnectionId) {
+            const conn = connections.find((c) => c.id === activeConnectionId);
+            openTab({
+              id: `console-snippet-${Date.now()}`,
+              type: 'worksheet',
+              title: 'Snippet Console',
+              connectionId: activeConnectionId,
+              driver: conn?.driver,
+              database: activeDatabase || conn?.databaseName || '',
+              schema: activeSchema || '',
+              content: sql,
+            });
+          }
+        }}
+      />
 
       {/* Resizing Backdrop Overlays */}
       {isDraggingBottomResizer && (

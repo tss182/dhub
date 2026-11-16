@@ -17,7 +17,7 @@ type QueryExecer interface {
 // database applies the offset. It fetches limit+1 rows so the caller can detect "has more".
 // Returns ok=false for anything that is not a simple SELECT (CTEs, SHOW, EXPLAIN, statements
 // that already contain LIMIT/OFFSET/FETCH, or when no offset is needed).
-func wrapSelectForPaging(stmt string, limit, offset int) (string, bool) {
+func wrapSelectForPaging(stmt string, limit, offset int, dialect string) (string, bool) {
 	if offset <= 0 || limit <= 0 {
 		return "", false
 	}
@@ -31,6 +31,12 @@ func wrapSelectForPaging(stmt string, limit, offset int) (string, bool) {
 			return "", false
 		}
 	}
+	if dialect == "mssql" {
+		if strings.Contains(upper, " TOP ") || strings.Contains(upper, " ORDER BY ") {
+			return "", false
+		}
+		return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page ORDER BY (SELECT NULL) OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", trimmed, offset, limit+1), true
+	}
 	return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page LIMIT %d OFFSET %d", trimmed, limit+1, offset), true
 }
 
@@ -38,6 +44,11 @@ func wrapSelectForPaging(stmt string, limit, offset int) (string, bool) {
 // It returns a QueryResult containing all individual statement results in Results, with the main
 // view defaulting to the last SELECT statement (or the last executed statement).
 func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest) (*QueryResult, error) {
+	return ExecuteStatementsWithDialect(ctx, execer, req, "")
+}
+
+// ExecuteStatementsWithDialect executes statements with dialect-specific pagination support.
+func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req QueryRequest, dialect string) (*QueryResult, error) {
 	start := time.Now()
 	statements := SplitStatements(req.SQL)
 	if len(statements) == 0 {
@@ -71,7 +82,7 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 			// and discard every preceding row. Falls back to client-side skipping.
 			stmtOffset := offset
 			queryText := stmt
-			if wrapped, ok := wrapSelectForPaging(stmt, limit, offset); ok {
+			if wrapped, ok := wrapSelectForPaging(stmt, limit, offset, dialect); ok {
 				queryText = wrapped
 				stmtOffset = 0
 			}

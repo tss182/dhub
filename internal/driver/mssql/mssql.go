@@ -513,7 +513,7 @@ func (m *MSSQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	}
 	defer conn.Close()
 
-	return driver.ExecuteStatements(ctx, conn, req)
+	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "mssql")
 }
 
 func (m *MSSQLDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {

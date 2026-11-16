@@ -24,7 +24,7 @@ func TestWrapSelectForPaging(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := wrapSelectForPaging(tc.sql, tc.limit, tc.offset)
+			got, ok := wrapSelectForPaging(tc.sql, tc.limit, tc.offset, "")
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}

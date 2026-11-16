@@ -6,6 +6,7 @@ import (
 	"dhub/internal/app"
 	"dhub/internal/manager"
 	"dhub/internal/store"
+	"dhub/internal/tunnel"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -78,6 +79,10 @@ func (s *ConnectionService) TestConnection(cfg store.ConnectionConfig) (string, 
 		return "", err
 	}
 	return "Connection successful!", nil
+}
+
+func (s *ConnectionService) ResetSSHHostKey(host string, port int) error {
+	return tunnel.RemoveKnownHost(host, port)
 }
 
 func (s *ConnectionService) Connect(id string) (string, error) {

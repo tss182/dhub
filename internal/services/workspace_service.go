@@ -97,6 +97,18 @@ func (w *WorkspaceService) SaveSetting(key string, value string) error {
 	return w.store.SaveSetting(key, value)
 }
 
+func (w *WorkspaceService) ListSnippets() ([]store.QuerySnippet, error) {
+	return w.store.ListSnippets(context.Background())
+}
+
+func (w *WorkspaceService) SaveSnippet(sn store.QuerySnippet) (string, error) {
+	return w.store.SaveSnippet(context.Background(), sn)
+}
+
+func (w *WorkspaceService) DeleteSnippet(id string) error {
+	return w.store.DeleteSnippet(context.Background(), id)
+}
+
 func (w *WorkspaceService) ExportConfig(includeConnections bool, includePasswords bool) (string, error) {
 	ctx := context.Background()
 
