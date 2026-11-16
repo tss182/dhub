@@ -28,6 +28,13 @@ export function GetCachedSchema(connectionID: string, database: string, schema: 
     return $Call.ByID(2457967532, connectionID, database, schema);
 }
 
+/**
+ * GetDatabaseDDL returns the combined DDL statements (schema only, no data) for a database or specific schema.
+ */
+export function GetDatabaseDDL(connectionID: string, database: string, schema: string): $CancellablePromise<string> {
+    return $Call.ByID(2785162860, connectionID, database, schema);
+}
+
 export function GetDatabases(connectionID: string): $CancellablePromise<string[] | null> {
     return $Call.ByID(3186786585, connectionID);
 }
@@ -57,6 +64,13 @@ export function RefreshSchema(connectionID: string, database: string, schema: st
 
 export function RestoreDatabase(connectionID: string, database: string, filePath: string): $CancellablePromise<string> {
     return $Call.ByID(3541253238, connectionID, database, filePath);
+}
+
+/**
+ * SaveDDLFile writes generated DDL text to the specified file path on disk.
+ */
+export function SaveDDLFile(filePath: string, content: string): $CancellablePromise<void> {
+    return $Call.ByID(1652501120, filePath, content);
 }
 
 export function SearchEverywhere(connectionID: string, query: string): $CancellablePromise<store$0.CachedObject[] | null> {

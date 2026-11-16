@@ -119,6 +119,15 @@ export interface TableStructureModalConfig {
   tableName?: string;
 }
 
+export interface DdlModalConfig {
+  isOpen: boolean;
+  scope: 'table' | 'database' | 'schema';
+  conn: any;
+  database: string;
+  schema?: string;
+  tableName?: string;
+}
+
 export type RightSidebarTab = 'consoles' | 'views';
 
 export type HelpTab =
@@ -159,6 +168,7 @@ interface WorkbenchState {
   consoles: ConsoleRecord[];
   hasLoadedConsoles: boolean;
   tableStructureModal: TableStructureModalConfig;
+  ddlModal: DdlModalConfig;
 
   loadConsoles: () => Promise<void>;
   openTab: (tab: WorkbenchTab) => void;
@@ -207,6 +217,8 @@ interface WorkbenchState {
   openCreateTableModal: (conn: any, database: string, schema?: string) => void;
   openEditTableModal: (conn: any, database: string, schema?: string, tableName?: string) => void;
   closeTableStructureModal: () => void;
+  openDdlModal: (config: Omit<DdlModalConfig, 'isOpen'>) => void;
+  closeDdlModal: () => void;
 }
 
 const initialTabState = getSavedTabs();
@@ -245,6 +257,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   tableStructureModal: {
     isOpen: false,
     mode: 'create',
+    conn: null,
+    database: '',
+    schema: '',
+    tableName: '',
+  },
+  ddlModal: {
+    isOpen: false,
+    scope: 'table',
     conn: null,
     database: '',
     schema: '',
@@ -663,6 +683,22 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set((state) => ({
       isHelpModalOpen: !state.isHelpModalOpen,
       activeHelpTab: tab || state.activeHelpTab,
+    })),
+
+  openDdlModal: (config) =>
+    set({
+      ddlModal: {
+        ...config,
+        isOpen: true,
+      },
+    }),
+
+  closeDdlModal: () =>
+    set((state) => ({
+      ddlModal: {
+        ...state.ddlModal,
+        isOpen: false,
+      },
     })),
 }));
 

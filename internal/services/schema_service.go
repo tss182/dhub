@@ -1192,3 +1192,116 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 	return res, nil
 }
 
+// GetDatabaseDDL returns the combined DDL statements (schema only, no data) for a database or specific schema.
+func (s *SchemaService) GetDatabaseDDL(connectionID, database, schema string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+	if err != nil {
+		return "", err
+	}
+
+	conn, _ := s.store.GetConnection(ctx, connectionID)
+	driverName := ""
+	if conn != nil {
+		driverName = strings.ToLower(strings.TrimSpace(conn.Driver))
+	}
+
+	database = strings.TrimSpace(database)
+	schema = strings.TrimSpace(schema)
+
+	var schemas []string
+	if schema != "" {
+		schemas = []string{schema}
+	} else if driverName == "postgres" || driverName == "mssql" {
+		listed, listErr := drv.ListSchemas(ctx, database)
+		if listErr == nil && len(listed) > 0 {
+			schemas = listed
+		} else if driverName == "postgres" {
+			schemas = []string{"public"}
+		} else {
+			schemas = []string{"dbo"}
+		}
+	} else {
+		schemas = []string{database}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("-- ============================================================\n")
+	sb.WriteString("-- DHub DDL Export (Structure Only, No Data)\n")
+	if database != "" {
+		sb.WriteString(fmt.Sprintf("-- Database: %s\n", database))
+	}
+	if schema != "" {
+		sb.WriteString(fmt.Sprintf("-- Schema:   %s\n", schema))
+	}
+	sb.WriteString(fmt.Sprintf("-- Date:     %s\n", time.Now().Format("2006-01-02 15:04:05")))
+	sb.WriteString("-- ============================================================\n\n")
+
+	objectCount := 0
+	for _, sch := range schemas {
+		objs, listErr := drv.ListObjects(ctx, database, sch)
+		if listErr != nil {
+			if len(schemas) == 1 {
+				return "", listErr
+			}
+			continue
+		}
+
+		var ordered []driver.ObjectSummary
+		for _, o := range objs {
+			if o.Type == "table" {
+				ordered = append(ordered, o)
+			}
+		}
+		for _, o := range objs {
+			if o.Type == "view" || o.Type == "materialized_view" {
+				ordered = append(ordered, o)
+			}
+		}
+
+		if len(schemas) > 1 && len(ordered) > 0 {
+			sb.WriteString(fmt.Sprintf("-- Schema: %s\n\n", sch))
+		}
+
+		for _, obj := range ordered {
+			tStruct, structErr := drv.GetTableStructure(ctx, database, sch, obj.Name)
+			if structErr != nil || tStruct == nil {
+				continue
+			}
+			ddl := strings.TrimSpace(tStruct.DDL)
+			if ddl == "" {
+				continue
+			}
+			if !strings.HasSuffix(ddl, ";") {
+				ddl += ";"
+			}
+			label := strings.ToUpper(obj.Type)
+			if sch != "" && sch != database {
+				sb.WriteString(fmt.Sprintf("-- %s: %s.%s\n", label, sch, obj.Name))
+			} else {
+				sb.WriteString(fmt.Sprintf("-- %s: %s\n", label, obj.Name))
+			}
+			sb.WriteString(ddl)
+			sb.WriteString("\n\n")
+			objectCount++
+		}
+	}
+
+	if objectCount == 0 {
+		sb.WriteString("-- No tables or views found.\n")
+	}
+
+	return strings.TrimRight(sb.String(), "\n") + "\n", nil
+}
+
+// SaveDDLFile writes generated DDL text to the specified file path on disk.
+func (s *SchemaService) SaveDDLFile(filePath, content string) error {
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return fmt.Errorf("file path is required")
+	}
+	return os.WriteFile(filePath, []byte(content), 0644)
+}
+

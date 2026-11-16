@@ -127,6 +127,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     setConnectionDialogOpen,
     openCreateTableModal,
     openEditTableModal,
+    openDdlModal,
   } = useWorkbenchStore();
 
   const [filterText, setFilterText] = useState('');
@@ -4222,6 +4223,26 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                 <span>Copy Database Name</span>
               </button>
 
+              {contextMenu.connection.driver?.toLowerCase() !== 'redis' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const conn = contextMenu.connection!;
+                    const db = contextMenu.database!;
+                    closeContextMenu();
+                    openDdlModal({
+                      scope: 'database',
+                      conn,
+                      database: db,
+                    });
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>View Database DDL (Schema Only)</span>
+                </button>
+              )}
+
               {contextMenu.connection.driver !== 'redis' && (
                 <>
                   <div className="my-1 border-t border-[#272932]" />
@@ -4358,6 +4379,26 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               >
                 <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>Copy Schema Name</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const conn = contextMenu.connection!;
+                  const db = contextMenu.database!;
+                  const sch = contextMenu.schema!;
+                  closeContextMenu();
+                  openDdlModal({
+                    scope: 'schema',
+                    conn,
+                    database: db,
+                    schema: sch,
+                  });
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                <span>View Schema DDL (No Data)</span>
               </button>
 
               {contextMenu.schema !== 'public' && !contextMenu.connection!.isReadOnly && (
@@ -4748,6 +4789,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
                   >
                     <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                     <span>Copy Table Name</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const conn = contextMenu.connection!;
+                      const db = contextMenu.database || 'main';
+                      const sch = contextMenu.schema || 'main';
+                      const tbl = contextMenu.table!.name;
+                      closeContextMenu();
+                      openDdlModal({
+                        scope: 'table',
+                        conn,
+                        database: db,
+                        schema: sch,
+                        tableName: tbl,
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                    <span>View {contextMenu.table!.type === 'view' ? 'View' : 'Table'} DDL</span>
                   </button>
 
                   <button

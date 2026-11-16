@@ -17,6 +17,7 @@ import { AlertModal } from './components/modals/AlertModal';
 import { ToastContainer } from './components/common/ToastContainer';
 import { Popover } from './components/common/Popover';
 import { TableStructureModal } from './components/modals/CreateTableModal';
+import { ViewDdlModal } from './components/modals/ViewDdlModal';
 import { QueryHistoryPanel } from './components/history/QueryHistoryPanel';
 import { ExplainPlanPanel } from './components/explain/ExplainPlanPanel';
 import { ERDiagramView } from './components/diagram/ERDiagramView';
@@ -56,6 +57,7 @@ import {
   RefreshCw,
   Pencil,
   Copy,
+  Eye,
   Check,
   Download,
   Upload,
@@ -111,6 +113,9 @@ export function App() {
     tableStructureModal,
     openEditTableModal,
     closeTableStructureModal,
+    ddlModal,
+    openDdlModal,
+    closeDdlModal,
   } = useWorkbenchStore();
 
   const {
@@ -2266,6 +2271,23 @@ export function App() {
                               <Copy className="h-3 w-3" />
                             )}
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                              openDdlModal({
+                                scope: 'table',
+                                conn,
+                                database: activeTab.database || 'main',
+                                schema: activeTab.schema || 'main',
+                                tableName: activeTab.table,
+                              });
+                            }}
+                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title="View Table DDL"
+                          >
+                            <Eye className="h-3 w-3" />
+                          </button>
                         </>
                       )}
                     <span className="text-zinc-600 shrink-0">/</span>
@@ -3300,6 +3322,15 @@ export function App() {
         database={tableStructureModal.database}
         schema={tableStructureModal.schema}
         onClose={closeTableStructureModal}
+      />
+      <ViewDdlModal
+        isOpen={ddlModal.isOpen}
+        scope={ddlModal.scope}
+        connection={ddlModal.conn}
+        database={ddlModal.database}
+        schema={ddlModal.schema}
+        tableName={ddlModal.tableName}
+        onClose={closeDdlModal}
       />
 
       {/* Status Bar */}
