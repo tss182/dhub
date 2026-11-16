@@ -22,6 +22,21 @@ fi
 
 echo "==> Found version in build/config.yml: $VERSION"
 
+# Portable in-place sed using ERE (-E) for both GNU sed (Linux) and BSD sed (macOS)
+sed_inplace() {
+  local expr="$1"
+  local file="$2"
+  local tmp
+  tmp="$(mktemp)"
+  if sed -E "$expr" "$file" > "$tmp"; then
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # 1. Update frontend/src/version.ts
 VERSION_TS="$ROOT_DIR/frontend/src/version.ts"
 mkdir -p "$(dirname "$VERSION_TS")"
@@ -34,7 +49,7 @@ if command -v npm >/dev/null 2>&1; then
   echo "  [✓] Updated frontend/package.json & package-lock.json -> $VERSION"
 else
   # Fallback to sed if npm is not installed
-  sed -i -E "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$ROOT_DIR/frontend/package.json"
+  sed_inplace "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$ROOT_DIR/frontend/package.json"
   echo "  [✓] Updated frontend/package.json (via sed) -> $VERSION"
 fi
 
@@ -49,12 +64,12 @@ MSIX_APP_MANIFEST="$ROOT_DIR/build/windows/msix/app_manifest.xml"
 MSIX_TEMPLATE="$ROOT_DIR/build/windows/msix/template.xml"
 
 if [ -f "$MSIX_APP_MANIFEST" ]; then
-  sed -i -E "s/\\bVersion=\"[0-9]+(\\.[0-9]+){1,3}\"/Version=\"$MSIX_VERSION\"/g" "$MSIX_APP_MANIFEST"
+  sed_inplace "s/([[:space:]])Version=\"[0-9]+(\.[0-9]+){1,3}\"/\1Version=\"$MSIX_VERSION\"/g" "$MSIX_APP_MANIFEST"
   echo "  [✓] Updated build/windows/msix/app_manifest.xml -> $MSIX_VERSION"
 fi
 
 if [ -f "$MSIX_TEMPLATE" ]; then
-  sed -i -E "s/\\bVersion=\"[0-9]+(\\.[0-9]+){1,3}\"/Version=\"$MSIX_VERSION\"/g" "$MSIX_TEMPLATE"
+  sed_inplace "s/([[:space:]])Version=\"[0-9]+(\.[0-9]+){1,3}\"/\1Version=\"$MSIX_VERSION\"/g" "$MSIX_TEMPLATE"
   echo "  [✓] Updated build/windows/msix/template.xml -> $MSIX_VERSION"
 fi
 
@@ -72,15 +87,15 @@ echo "  [✓] Updated internal/version/version.go -> $VERSION"
 # 5. Update README.md version badge and latest version text
 README_FILE="$ROOT_DIR/README.md"
 if [ -f "$README_FILE" ]; then
-  sed -i -E "s/version-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?-blue\.svg/version-v$VERSION-blue.svg/g" "$README_FILE"
-  sed -i -E "s/\(\*\*v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\*\*\)/(**v$VERSION**)/g" "$README_FILE"
+  sed_inplace "s/version-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?-blue\.svg/version-v$VERSION-blue.svg/g" "$README_FILE"
+  sed_inplace "s/\(\*\*v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\*\*\)/(**v$VERSION**)/g" "$README_FILE"
   echo "  [✓] Updated README.md -> v$VERSION"
 fi
 
 # 6. Update pages/index.html fallback version pill
 PAGES_HTML="$ROOT_DIR/pages/index.html"
 if [ -f "$PAGES_HTML" ]; then
-  sed -i -E "s/(id=\"nav-version-pill\">)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(<)/\1v$VERSION\3/g" "$PAGES_HTML"
+  sed_inplace "s/(id=\"nav-version-pill\">)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(<)/\1v$VERSION\3/g" "$PAGES_HTML"
   echo "  [✓] Updated pages/index.html -> v$VERSION"
 fi
 
