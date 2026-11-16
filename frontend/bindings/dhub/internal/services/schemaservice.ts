@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Create } from "@wailsio/runtime";
+import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -21,21 +21,15 @@ export function BackupDatabase(connectionID: string, database: string, filePath:
 }
 
 export function CompareSchemas(srcConnID: string, srcDB: string, srcSchema: string, dstConnID: string, dstDB: string, dstSchema: string): $CancellablePromise<$models.SchemaDiffResult | null> {
-    return $Call.ByID(372679082, srcConnID, srcDB, srcSchema, dstConnID, dstDB, dstSchema).then(($result: any) => {
-        return $$createType1($result);
-    });
+    return $Call.ByID(372679082, srcConnID, srcDB, srcSchema, dstConnID, dstDB, dstSchema);
 }
 
-export function GetCachedSchema(connectionID: string, database: string, schema: string): $CancellablePromise<store$0.CachedObject[]> {
-    return $Call.ByID(2457967532, connectionID, database, schema).then(($result: any) => {
-        return $$createType3($result);
-    });
+export function GetCachedSchema(connectionID: string, database: string, schema: string): $CancellablePromise<store$0.CachedObject[] | null> {
+    return $Call.ByID(2457967532, connectionID, database, schema);
 }
 
-export function GetDatabases(connectionID: string): $CancellablePromise<string[]> {
-    return $Call.ByID(3186786585, connectionID).then(($result: any) => {
-        return $$createType4($result);
-    });
+export function GetDatabases(connectionID: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(3186786585, connectionID);
 }
 
 /**
@@ -45,22 +39,16 @@ export function GetDefaultBackupPath(database: string): $CancellablePromise<stri
     return $Call.ByID(2922436839, database);
 }
 
-export function GetObjects(connectionID: string, database: string, schema: string): $CancellablePromise<driver$0.ObjectSummary[]> {
-    return $Call.ByID(3990918739, connectionID, database, schema).then(($result: any) => {
-        return $$createType6($result);
-    });
+export function GetObjects(connectionID: string, database: string, schema: string): $CancellablePromise<driver$0.ObjectSummary[] | null> {
+    return $Call.ByID(3990918739, connectionID, database, schema);
 }
 
-export function GetSchemas(connectionID: string, database: string): $CancellablePromise<string[]> {
-    return $Call.ByID(2492156487, connectionID, database).then(($result: any) => {
-        return $$createType4($result);
-    });
+export function GetSchemas(connectionID: string, database: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(2492156487, connectionID, database);
 }
 
 export function GetTableStructure(connectionID: string, database: string, schema: string, table: string): $CancellablePromise<driver$0.TableStructure | null> {
-    return $Call.ByID(3168461436, connectionID, database, schema, table).then(($result: any) => {
-        return $$createType8($result);
-    });
+    return $Call.ByID(3168461436, connectionID, database, schema, table);
 }
 
 export function RefreshSchema(connectionID: string, database: string, schema: string): $CancellablePromise<string> {
@@ -71,19 +59,6 @@ export function RestoreDatabase(connectionID: string, database: string, filePath
     return $Call.ByID(3541253238, connectionID, database, filePath);
 }
 
-export function SearchEverywhere(connectionID: string, query: string): $CancellablePromise<store$0.CachedObject[]> {
-    return $Call.ByID(636384997, connectionID, query).then(($result: any) => {
-        return $$createType3($result);
-    });
+export function SearchEverywhere(connectionID: string, query: string): $CancellablePromise<store$0.CachedObject[] | null> {
+    return $Call.ByID(636384997, connectionID, query);
 }
-
-// Private type creation functions
-const $$createType0 = $models.SchemaDiffResult.createFrom;
-const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = store$0.CachedObject.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = $Create.Array($Create.Any);
-const $$createType5 = driver$0.ObjectSummary.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = driver$0.TableStructure.createFrom;
-const $$createType8 = $Create.Nullable($$createType7);

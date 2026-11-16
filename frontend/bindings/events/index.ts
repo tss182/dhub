@@ -23,3 +23,8 @@ export const QueryStatus = "query:status";
  */
 export const SchemaSync = "schema:sync";
 
+/**
+ * Name of the custom event "update:progress".
+ */
+export const UpdateProgress = "update:progress";
+

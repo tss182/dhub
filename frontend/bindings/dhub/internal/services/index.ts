@@ -16,7 +16,7 @@ export {
     WorkspaceService
 };
 
-export {
+export type {
     ColumnDiff,
     ColumnMapping,
     ConfigImportOptions,

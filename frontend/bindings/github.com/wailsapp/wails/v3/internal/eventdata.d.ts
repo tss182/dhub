@@ -15,6 +15,7 @@ declare module "@wailsio/runtime" {
             "connection:state": app$0.ConnectionStateEvent;
             "query:status": app$0.QueryStatusEvent;
             "schema:sync": app$0.SchemaSyncEvent;
+            "update:progress": app$0.UpdateProgressEvent;
         }
     }
 }
