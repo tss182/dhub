@@ -121,6 +121,9 @@ Section "Install"
     
     # Register uninstaller in Add/Remove Programs
     !insertmacro wails.writeUninstaller
+
+    # Refresh Windows Shell icon cache so updated app/shortcut icons appear immediately
+    System::Call 'shell32.dll::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
 SectionEnd
 
 Section "Uninstall"

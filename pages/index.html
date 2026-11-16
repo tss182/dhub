@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DHub — Download Latest Version</title>
+  <meta name="description" content="Download DHub, a lightweight, keyboard-first multi-database desktop client and SQL/NoSQL IDE for Windows, macOS, and Linux." />
+  <meta property="og:title" content="DHub — Multi-Database Desktop Client" />
+  <meta property="og:description" content="Download the latest version of DHub for Windows, macOS, and Linux. Supports PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, ClickHouse, MongoDB, and Redis." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <!-- Top Navigation -->
+  <header class="navbar">
+    <div class="container nav-inner">
+      <a href="#top" class="brand">
+        <img src="./favicon.svg" alt="DHub Logo" class="brand-logo" width="32" height="32" />
+        <span class="brand-name">DHub</span>
+        <span class="version-pill" id="nav-version-pill">v0.3.4</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Primary Navigation">
+        <a href="#downloads" data-i18n="nav.downloads">Downloads</a>
+        <a href="#databases" data-i18n="nav.databases">Databases</a>
+        <a href="#features" data-i18n="nav.features">Features</a>
+        <a href="#release-notes" data-i18n="nav.changelog">Release Notes</a>
+      </nav>
+
+      <div class="nav-actions">
+        <button id="lang-toggle" class="btn btn-ghost btn-sm" type="button" title="Switch Language / Ganti Bahasa">
+          <span id="lang-label">ID</span>
+        </button>
+        <a href="https://github.com/tss182/dhub" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm">
+          <svg class="icon-16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="container hero-content">
+        <div class="hero-badge" id="hero-release-badge">
+          <span class="pulse-dot"></span>
+          <span id="hero-badge-text" data-i18n="hero.loading">Fetching latest release…</span>
+        </div>
+
+        <h1 class="hero-title">
+          <span data-i18n="hero.title1">Modern Multi-Database</span>
+          <span class="text-gradient" data-i18n="hero.title2">Desktop Client</span>
+        </h1>
+
+        <p class="hero-subtitle" data-i18n="hero.subtitle">
+          A lightweight, keyboard-first SQL &amp; NoSQL IDE built with Go, Wails v3, and React.
+          Fast native performance, environment safety tags, SSH tunneling, and inline data editing.
+        </p>
+
+        <!-- Primary Auto-Detected Download Box -->
+        <div class="hero-download-card" id="hero-download-card">
+          <div class="detected-os-row">
+            <span class="detected-label" id="detected-os-label" data-i18n="hero.recommended">Recommended for your system</span>
+            <span class="meta-chip" id="hero-version-tag">Latest</span>
+          </div>
+
+          <div class="hero-cta-group">
+            <a id="primary-download-btn" href="https://github.com/tss182/dhub/releases/latest" class="btn btn-primary btn-lg">
+              <span id="primary-os-icon" class="btn-os-icon" aria-hidden="true"></span>
+              <span class="btn-text-stack">
+                <span class="btn-main-text" id="primary-download-title">Download DHub</span>
+                <span class="btn-sub-text" id="primary-download-meta">Loading installer info…</span>
+              </span>
+              <svg class="icon-20 arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </a>
+
+            <a id="secondary-download-btn" href="#downloads" class="btn btn-outline btn-lg hidden">
+              <span id="secondary-download-text">Portable</span>
+            </a>
+          </div>
+
+          <div class="hero-links-row">
+            <a href="#downloads" class="text-link" data-i18n="hero.otherPlatforms">All platforms &amp; architectures ↓</a>
+            <span class="dot-sep">•</span>
+            <a href="https://github.com/tss182/dhub/releases" target="_blank" rel="noopener noreferrer" class="text-link" data-i18n="hero.allReleases">Previous versions on GitHub ↗</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- All Platforms Download Section -->
+    <section id="downloads" class="section">
+      <div class="container">
+        <div class="section-header">
+          <h2 class="section-title" data-i18n="downloads.title">Download for Every Platform</h2>
+          <p class="section-desc" id="downloads-subtitle" data-i18n="downloads.subtitle">
+            Choose the installer or portable package that matches your operating system.
+          </p>
+
+          <div class="os-selector-wrap">
+            <label for="os-selector" class="os-selector-label" data-i18n="downloads.selectOs">Operating System:</label>
+            <select id="os-selector" class="os-select" aria-label="Select Operating System">
+              <option value="windows">Windows (x64 / ARM64)</option>
+              <option value="macos">macOS (Apple Silicon / Intel)</option>
+              <option value="linux">Linux (.deb / .rpm)</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="api-warning" class="alert-banner hidden" role="status">
+          <svg class="icon-18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span id="api-warning-text">Could not fetch live release metadata from GitHub API. Links below point directly to GitHub Releases.</span>
+        </div>
+
+        <div class="platform-grid">
+          <!-- Windows Card -->
+          <article class="platform-card" id="card-windows" data-os="windows">
+            <div class="platform-card-header">
+              <div class="platform-icon windows-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+                </svg>
+              </div>
+              <div>
+                <h3>Windows</h3>
+                <p class="platform-req">Windows 10 / 11 (x64 &amp; ARM64)</p>
+              </div>
+              <span class="detected-tag hidden" data-i18n="downloads.yourOs">Your OS</span>
+            </div>
+
+            <div class="asset-list" id="assets-windows">
+              <div class="asset-skeleton"></div>
+              <div class="asset-skeleton"></div>
+            </div>
+
+            <div class="platform-tip">
+              <strong data-i18n="downloads.tipLabel">Tip:</strong>
+              <span data-i18n="downloads.winTip">User-scope installer requires no Administrator privileges.</span>
+            </div>
+          </article>
+
+          <!-- macOS Card -->
+          <article class="platform-card" id="card-macos" data-os="macos">
+            <div class="platform-card-header">
+              <div class="platform-icon macos-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.96 6.33c.64-.78 1.08-1.86.96-2.94-.93.04-2.06.62-2.72 1.4-.58.68-1.1 1.79-.96 2.84 1.04.08 2.08-.52 2.72-1.3"/>
+                </svg>
+              </div>
+              <div>
+                <h3>macOS</h3>
+                <p class="platform-req">macOS 12+ (Apple Silicon &amp; Intel)</p>
+              </div>
+              <span class="detected-tag hidden" data-i18n="downloads.yourOs">Your OS</span>
+            </div>
+
+            <div class="asset-list" id="assets-macos">
+              <div class="asset-skeleton"></div>
+              <div class="asset-skeleton"></div>
+            </div>
+
+            <div class="platform-tip">
+              <strong data-i18n="downloads.tipLabel">Tip:</strong>
+              <span data-i18n="downloads.macTip">Open the .dmg and drag DHub.app into your Applications folder.</span>
+            </div>
+          </article>
+
+          <!-- Linux Card -->
+          <article class="platform-card" id="card-linux" data-os="linux">
+            <div class="platform-card-header">
+              <div class="platform-icon linux-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.84-.41 1.684-.287 2.489.119.779.458 1.503 1.01 2.092.238.255.512.482.815.676-.135.424-.175.875-.049 1.326.25.894 1.158 1.484 2.138 1.484.426 0 .842-.111 1.201-.312.569.299 1.236.47 1.953.47.721 0 1.391-.173 1.963-.475.361.204.78.317 1.208.317.98 0 1.888-.59 2.138-1.484.126-.451.086-.902-.049-1.326.303-.194.577-.421.815-.676.552-.589.891-1.313 1.01-2.092.123-.805-.009-1.649-.287-2.489-.589-1.771-1.831-3.47-2.716-4.521-.75-1.067-.974-1.928-1.05-3.02-.065-1.491 1.056-5.965-3.17-6.298A5.43 5.43 0 0012.504 0zm-1.762 4.894c.385 0 .697.392.697.875s-.312.875-.697.875-.697-.392-.697-.875.312-.875.697-.875zm3.516 0c.385 0 .697.392.697.875s-.312.875-.697.875-.697-.392-.697-.875.312-.875.697-.875zm-1.758 1.88c.976 0 1.874.382 1.874.828 0 .259-.355.524-.759.736-.343.18-.74.307-1.115.307-.375 0-.772-.127-1.115-.307-.404-.212-.759-.477-.759-.736 0-.446.898-.828 1.874-.828z"/>
+                </svg>
+              </div>
+              <div>
+                <h3>Linux</h3>
+                <p class="platform-req">Ubuntu/Debian (.deb) &amp; Fedora/RHEL (.rpm)</p>
+              </div>
+              <span class="detected-tag hidden" data-i18n="downloads.yourOs">Your OS</span>
+            </div>
+
+            <div class="asset-list" id="assets-linux">
+              <div class="asset-skeleton"></div>
+              <div class="asset-skeleton"></div>
+            </div>
+
+            <div class="cli-install-box">
+              <code id="linux-cli-cmd">sudo apt install ./dhub_*_linux_amd64.deb</code>
+              <button class="copy-btn" type="button" data-copy-target="linux-cli-cmd" title="Copy command">
+                <svg class="icon-14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Supported Databases Section -->
+    <section id="databases" class="section section-alt">
+      <div class="container">
+        <div class="section-header">
+          <h2 class="section-title" data-i18n="db.title">8 Database Engines Out of the Box</h2>
+          <p class="section-desc" data-i18n="db.subtitle">
+            Connect to relational SQL warehouses and NoSQL stores from a single lightweight workspace.
+          </p>
+        </div>
+
+        <div class="db-grid">
+          <div class="db-card">
+            <div class="db-badge sql">SQL</div>
+            <h4>PostgreSQL</h4>
+            <p data-i18n="db.pg">Multi-DB &amp; schema navigation, EXPLAIN ANALYZE, routines, triggers &amp; role privileges.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge sql">SQL</div>
+            <h4>MySQL</h4>
+            <p data-i18n="db.mysql">Multi-database browsing, routines, indexes, EXPLAIN &amp; privilege management.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge sql">SQL</div>
+            <h4>MariaDB</h4>
+            <p data-i18n="db.maria">Full MariaDB dialect formatting, ANALYZE plans &amp; user management.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge sql">SQL</div>
+            <h4>SQLite</h4>
+            <p data-i18n="db.sqlite">Zero-config local file databases, schema designer, DDL viewer &amp; inline editing.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge sql">SQL</div>
+            <h4>SQL Server</h4>
+            <p data-i18n="db.mssql">Multi-database &amp; schema browsing, stored procedures &amp; T-SQL execution.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge olap">OLAP</div>
+            <h4>ClickHouse</h4>
+            <p data-i18n="db.ch">High-speed analytical query execution, system catalog &amp; EXPLAIN PIPELINE.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge nosql">NoSQL</div>
+            <h4>MongoDB</h4>
+            <p data-i18n="db.mongo">BSON schema inference, Mongo Shell methods, SQL-like SELECT &amp; inline editing.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge kv">KV</div>
+            <h4>Redis</h4>
+            <p data-i18n="db.redis">Logical DB switcher (db0–db15), key scanner with TTL badges &amp; Redis CLI.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Key Features Section -->
+    <section id="features" class="section">
+      <div class="container">
+        <div class="section-header">
+          <h2 class="section-title" data-i18n="features.title">Built for Speed &amp; Safety</h2>
+          <p class="section-desc" data-i18n="features.subtitle">
+            Designed for engineers who live in the keyboard and need confidence when touching production.
+          </p>
+        </div>
+
+        <div class="features-grid">
+          <div class="feature-item">
+            <div class="feature-icon">🛡️</div>
+            <h3 data-i18n="features.f1Title">PROD / DEV Safety Tags</h3>
+            <p data-i18n="features.f1Desc">Visual tab tinting, Read-Only locks, and Dangerous Query Guards intercepting UPDATE/DELETE without WHERE.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">🔐</div>
+            <h3 data-i18n="features.f2Title">SSH Tunnel &amp; OS Keyring</h3>
+            <p data-i18n="features.f2Desc">Connect through bastion hosts with TOFU known_hosts verification and native OS Keyring secret storage.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">⚡</div>
+            <h3 data-i18n="features.f3Title">Smart Monaco Query Console</h3>
+            <p data-i18n="features.f3Desc">Context-aware SQL autocomplete, parameter binding, transaction control (AUTO/MANUAL), and dialect formatting.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">📊</div>
+            <h3 data-i18n="features.f4Title">Inline Grid &amp; DML Preview</h3>
+            <p data-i18n="features.f4Desc">Edit cells inline, duplicate rows, copy as SQL INSERT/UPSERT/JSON, and preview exact DML before applying.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">🗺️</div>
+            <h3 data-i18n="features.f5Title">ER Diagrams &amp; Schema Diff</h3>
+            <p data-i18n="features.f5Desc">Interactive ER canvas, visual Table Structure Designer, and cross-connection Schema Diff migration generator.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">🔄</div>
+            <h3 data-i18n="features.f6Title">Built-in Auto-Updater</h3>
+            <p data-i18n="features.f6Desc">Check for new GitHub Releases directly from Settings and download/install updates in-app.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Release Notes Section -->
+    <section id="release-notes" class="section section-alt">
+      <div class="container">
+        <div class="release-panel">
+          <div class="release-panel-header">
+            <div>
+              <span class="release-kicker" data-i18n="changelog.kicker">Latest Release</span>
+              <h2 id="release-title">Loading release notes…</h2>
+              <p class="release-meta" id="release-meta"></p>
+            </div>
+            <a id="release-github-link" href="https://github.com/tss182/dhub/releases/latest" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" data-i18n="changelog.viewOnGithub">
+              View on GitHub ↗
+            </a>
+          </div>
+          <div id="release-body" class="release-body">
+            <p class="muted" data-i18n="changelog.loading">Fetching release notes from GitHub…</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-left">
+        <img src="./favicon.svg" alt="DHub" width="20" height="20" />
+        <span>DHub — Open-source Multi-Database Desktop Client</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/tss182/dhub" target="_blank" rel="noopener noreferrer">Repository</a>
+        <a href="https://github.com/tss182/dhub/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+        <a href="https://github.com/tss182/dhub/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener noreferrer">User Guide</a>
+        <a href="https://github.com/tss182/dhub/issues" target="_blank" rel="noopener noreferrer">Issues</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
