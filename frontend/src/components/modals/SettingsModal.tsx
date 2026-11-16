@@ -34,12 +34,12 @@ import {
   AlertCircle,
   Clock,
 } from 'lucide-react';
-import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
+import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useUpdateStore } from '../../stores/useUpdateStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
-import { COPY_FORMAT_LABELS } from '../grid/CopyFormatSelector';
+import { COPY_FORMAT_LABELS, COPY_FORMAT_OPTIONS } from '../grid/CopyFormatSelector';
 import { DHubLogo } from '../common/DHubLogo';
 import { APP_VERSION } from '../../version';
 import { Dialogs } from '@wailsio/runtime';
@@ -830,20 +830,20 @@ export const SettingsModal: React.FC = () => {
                   </p>
 
                   <div className="flex flex-wrap gap-2">
-                    {(['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'] as CopyFormat[]).map((fmt) => {
-                      const isSelected = fmt === copyFormat;
+                    {COPY_FORMAT_OPTIONS.map((opt) => {
+                      const isSelected = opt.id === copyFormat;
                       return (
                         <button
-                          key={fmt}
+                          key={opt.id}
                           type="button"
-                          onClick={() => setCopyFormat(fmt)}
+                          onClick={() => setCopyFormat(opt.id)}
                           className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors cursor-pointer ${
                             isSelected
                               ? 'bg-blue-600 border-blue-500 text-white shadow-xs'
                               : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-300 hover:border-zinc-500 hover:text-white'
                           }`}
                         >
-                          {COPY_FORMAT_LABELS[fmt]}
+                          {opt.label}
                         </button>
                       );
                     })}

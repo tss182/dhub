@@ -53,6 +53,7 @@ import { ExportModal } from '../modals/ExportModal';
 import { ImportModal } from '../modals/ImportModal';
 import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
+import { CopyAsModal } from '../modals/CopyAsModal';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -877,6 +878,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [showAllSortsModal, setShowAllSortsModal] = useState(false);
   const [showAllFrozenModal, setShowAllFrozenModal] = useState(false);
+  const [isCopyAsOpen, setIsCopyAsOpen] = useState(false);
 
   const handleCopyRawSql = async () => {
     if (!rawSql) return;
@@ -1246,9 +1248,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   };
 
+  const ROW_NUM_COL_WIDTH = 52;
+
   const frozenOffsets = useMemo(() => {
     const offsets: Record<string, number> = {};
-    let currentLeft = 0;
+    let currentLeft = ROW_NUM_COL_WIDTH;
     for (const col of columns) {
       if (frozenColumns.includes(col.name)) {
         offsets[col.name] = currentLeft;
@@ -1383,7 +1387,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       const targetCol = columns[cIdx];
       const isTargetFrozen = targetCol && frozenColumns.includes(targetCol.name);
 
-      let frozenLeftOffset = 0;
+      let frozenLeftOffset = ROW_NUM_COL_WIDTH;
       if (!isTargetFrozen && frozenColumns.length > 0) {
         for (const col of columns) {
           if (frozenColumns.includes(col.name)) {
@@ -2656,8 +2660,11 @@ ${setClauses};`;
     if (e.button !== 0) return;
     if (editingCell) handleFinishEdit();
 
+    containerRef.current?.focus({ preventScroll: true });
+
     if (e.shiftKey && selectionAnchor) {
       window.getSelection()?.removeAllRanges();
+      setSelectionAnchor({ r: selectionAnchor.r, c: 0 });
       setSelectionFocus({ r: vIdx, c: columns.length - 1 });
     } else {
       isDraggingRef.current = true;
@@ -2977,7 +2984,8 @@ ${setClauses};`;
           !isExportOpen &&
           !isImportOpen &&
           !showAllSortsModal &&
-          !showAllFrozenModal
+          !showAllFrozenModal &&
+          !isCopyAsOpen
         ) {
           const vr = visualRows[selectionFocus.r];
           if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
@@ -3005,7 +3013,8 @@ ${setClauses};`;
         !isExportOpen &&
         !isImportOpen &&
         !showAllSortsModal &&
-        !showAllFrozenModal
+        !showAllFrozenModal &&
+        !isCopyAsOpen
       ) {
         const vr = visualRows[selectionFocus.r];
         if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
@@ -3035,13 +3044,17 @@ ${setClauses};`;
         }
       }
 
-      // Copy selected cells based on active copyFormat
+      // Copy As modal (Ctrl+Shift+C / Cmd+Shift+C) or regular Copy based on active copyFormat
       if (e.key === 'c' || e.key === 'C') {
         if (!isTyping && selectionRange && columns.length > 0) {
           e.preventDefault();
-          const text = getFormattedCopyText();
-          if (text) {
-            navigator.clipboard.writeText(text);
+          if (e.shiftKey) {
+            setIsCopyAsOpen(true);
+          } else {
+            const text = getFormattedCopyText();
+            if (text) {
+              navigator.clipboard.writeText(text);
+            }
           }
           return;
         }
@@ -3111,6 +3124,7 @@ ${setClauses};`;
     isImportOpen,
     showAllSortsModal,
     showAllFrozenModal,
+    isCopyAsOpen,
   ]);
 
   // Global clipboard copy event to ensure Ctrl+C always outputs the selected format
@@ -3678,6 +3692,7 @@ ${setClauses};`;
           style={{ tableLayout: 'fixed', width: 'max-content' }}
         >
           <colgroup>
+            <col style={{ width: `${ROW_NUM_COL_WIDTH}px`, minWidth: `${ROW_NUM_COL_WIDTH}px` }} />
             {columns.map((col) => {
               const w = colWidths[col.name] || 120;
               return <col key={col.name} style={{ width: `${w}px`, minWidth: `${w}px` }} />;
@@ -3686,6 +3701,28 @@ ${setClauses};`;
           </colgroup>
           <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-30`}>
             <tr className={`border-b ${gridCellBorder}`}>
+              <th
+                onClick={() => {
+                  if (visualRows.length > 0 && columns.length > 0) {
+                    setSelectionAnchor({ r: 0, c: 0 });
+                    setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
+                    containerRef.current?.focus({ preventScroll: true });
+                  }
+                }}
+                className={`sticky left-0 z-40 px-2 py-1.5 text-center font-semibold border-r ${gridCellBorder} ${gridTheadBg} text-zinc-500 hover:text-zinc-300 select-none cursor-pointer transition-colors ${
+                  frozenColumns.length === 0 && isScrolledX
+                    ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
+                    : ''
+                }`}
+                style={{
+                  width: `${ROW_NUM_COL_WIDTH}px`,
+                  minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                  maxWidth: `${ROW_NUM_COL_WIDTH}px`,
+                }}
+                title="Click to select all visible rows"
+              >
+                #
+              </th>
               {columns.map((col, cIdx) => {
                 const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
                 const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
@@ -3831,7 +3868,7 @@ ${setClauses};`;
           <tbody>
             {displayedRows.length === 0 && insertedChanges.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + 1} className="py-12 text-center text-zinc-500 font-sans">
+                <td colSpan={columns.length + 2} className="py-12 text-center text-zinc-500 font-sans">
                   {errorMessage ? (
                     <div className="max-w-lg mx-auto flex flex-col items-center gap-2.5 text-rose-400/90 font-mono text-xs select-text">
                       <div className="flex items-center gap-2 font-semibold text-rose-300">
@@ -3864,7 +3901,7 @@ ${setClauses};`;
                 {hasPrevious && (
                   <tr className="bg-[#121318] border-b border-[#22242c] hover:bg-[#181a22] transition-colors">
                     <td
-                      colSpan={columns.length + 1}
+                      colSpan={columns.length + 2}
                       className="py-1 px-3 text-center"
                       style={{ position: 'sticky', left: 0 }}
                     >
@@ -3911,12 +3948,47 @@ ${setClauses};`;
                   let rowClass = gridRowClass;
                   if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
 
-                
-  return (
+                  const isRowInSelection = Boolean(
+                    selectionRange && vIdx >= selectionRange.startR && vIdx <= selectionRange.endR
+                  );
+                  const isFullRowSelected = Boolean(
+                    isRowInSelection &&
+                      columns.length > 0 &&
+                      selectionRange!.startC === 0 &&
+                      selectionRange!.endC === columns.length - 1
+                  );
+
+                  return (
                     <tr
                       key={globalRowIndex}
                       className={`${rowClass} group/row`}
                     >
+                      <td
+                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                        className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r ${gridCellBorder} select-none cursor-pointer transition-colors ${
+                          isFullRowSelected
+                            ? 'bg-[#1b4ea3] text-white font-semibold'
+                            : isRowInSelection
+                            ? 'bg-[#1e293b] text-blue-300 font-medium'
+                            : isDeleted
+                            ? 'bg-rose-950/40 text-rose-400/70 line-through'
+                            : 'bg-[#14151a] text-zinc-500 group-hover/row:bg-[#20222a] group-hover/row:text-zinc-300'
+                        } ${
+                          frozenColumns.length === 0 && isScrolledX
+                            ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
+                            : ''
+                        }`}
+                        style={{
+                          width: `${ROW_NUM_COL_WIDTH}px`,
+                          minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                          maxWidth: `${ROW_NUM_COL_WIDTH}px`,
+                        }}
+                        title={`Row ${globalRowIndex + 1} (Click to select entire row)`}
+                      >
+                        {globalRowIndex + 1}
+                      </td>
                       {columns.map((col, cIdx) => {
                         const isSelected = isCellSelected(vIdx, cIdx);
                         const isEditing = editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
@@ -4075,12 +4147,45 @@ ${setClauses};`;
                   const vIdx = displayedRows.length + insIdx;
                   const rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
 
-                
-  return (
+                  const isRowInSelection = Boolean(
+                    selectionRange && vIdx >= selectionRange.startR && vIdx <= selectionRange.endR
+                  );
+                  const isFullRowSelected = Boolean(
+                    isRowInSelection &&
+                      columns.length > 0 &&
+                      selectionRange!.startC === 0 &&
+                      selectionRange!.endC === columns.length - 1
+                  );
+
+                  return (
                     <tr
                       key={change.rowIndex}
                       className={rowClass}
                     >
+                      <td
+                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                        className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-[#22242c] select-none cursor-pointer transition-colors ${
+                          isFullRowSelected
+                            ? 'bg-[#1b4ea3] text-white'
+                            : isRowInSelection
+                            ? 'bg-[#1e293b] text-blue-300'
+                            : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-emerald-400'
+                        } ${
+                          frozenColumns.length === 0 && isScrolledX
+                            ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
+                            : ''
+                        }`}
+                        style={{
+                          width: `${ROW_NUM_COL_WIDTH}px`,
+                          minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                          maxWidth: `${ROW_NUM_COL_WIDTH}px`,
+                        }}
+                        title="New row (Click to select entire row)"
+                      >
+                        +
+                      </td>
                       {columns.map((col, cIdx) => {
                         const isSelected = isCellSelected(vIdx, cIdx);
                         const isEditing = editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
@@ -4646,6 +4751,21 @@ ${setClauses};`;
               <span className="text-sky-400 font-semibold uppercase">{COPY_FORMAT_LABELS[copyFormat] || 'CSV'}</span>
               <kbd className="text-zinc-500 group-hover:text-white/80">{modKey}+C</kbd>
             </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setContextMenu((prev) => ({ ...prev, isOpen: false }));
+              setIsCopyAsOpen(true);
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Copy As...</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+Shift+C</kbd>
           </button>
 
           <button
@@ -5506,6 +5626,25 @@ ${setClauses};`;
         database={database || 'db0'}
         oldKeyName={redisRenameModal.oldKeyName}
         onSuccess={() => onRefresh?.()}
+      />
+
+      {/* Copy As Modal */}
+      <CopyAsModal
+        isOpen={isCopyAsOpen}
+        defaultFormat={copyFormat}
+        selectionSummary={
+          selectionRange
+            ? `${selectionRange.endR - selectionRange.startR + 1}r × ${selectionRange.endC - selectionRange.startC + 1}c`
+            : undefined
+        }
+        onClose={() => setIsCopyAsOpen(false)}
+        onCopy={(fmt) => {
+          const text = getFormattedCopyText(fmt);
+          if (text) {
+            navigator.clipboard.writeText(text);
+          }
+          setIsCopyAsOpen(false);
+        }}
       />
     </div>
   );

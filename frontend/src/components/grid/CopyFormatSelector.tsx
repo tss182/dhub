@@ -2,13 +2,47 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 
-export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = {
-  csv: 'CSV',
-  json: 'JSON',
-  sql_insert: 'SQL INSERT',
-  sql_update: 'SQL UPDATE',
-  sql_upsert: 'SQL UPSERT',
-};
+export interface CopyFormatOption {
+  id: CopyFormat;
+  label: string;
+  description: string;
+}
+
+export const COPY_FORMAT_OPTIONS: CopyFormatOption[] = [
+  {
+    id: 'csv',
+    label: 'CSV',
+    description: 'Comma-separated values (RFC 4180). Ideal for pasting into Excel, Google Sheets, or text editors.',
+  },
+  {
+    id: 'json',
+    label: 'JSON',
+    description: 'Array of JSON objects with column names as keys. Ideal for API payloads, scripts, or NoSQL tools.',
+  },
+  {
+    id: 'sql_insert',
+    label: 'SQL INSERT',
+    description: 'Generates INSERT INTO ... VALUES (...) statements to insert selected rows into a SQL table.',
+  },
+  {
+    id: 'sql_update',
+    label: 'SQL UPDATE',
+    description: 'Generates UPDATE ... SET ... WHERE ... statements based on primary keys or column values.',
+  },
+  {
+    id: 'sql_upsert',
+    label: 'SQL UPSERT',
+    description: 'Generates INSERT statements with ON CONFLICT / ON DUPLICATE KEY UPDATE for insert-or-update.',
+  },
+];
+
+export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = COPY_FORMAT_OPTIONS.reduce(
+  (acc, opt) => {
+    acc[opt.id] = opt.label;
+    return acc;
+  },
+  {} as Record<CopyFormat, string>
+);
 
 export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className = '' }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -50,22 +84,22 @@ export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className
           <div className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1">
             Copy Format
           </div>
-          {(['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'] as CopyFormat[]).map((fmt) => (
+          {COPY_FORMAT_OPTIONS.map((opt) => (
             <button
-              key={fmt}
+              key={opt.id}
               type="button"
               onClick={() => {
-                setCopyFormat(fmt);
+                setCopyFormat(opt.id);
                 setIsOpen(false);
               }}
               className={`w-full flex items-center justify-between px-2 py-1.5 rounded-md text-left transition-colors cursor-pointer ${
-                copyFormat === fmt
+                copyFormat === opt.id
                   ? 'bg-blue-600 text-white font-medium'
                   : 'hover:bg-zinc-800 text-zinc-300'
               }`}
             >
-              <span>{COPY_FORMAT_LABELS[fmt]}</span>
-              {copyFormat === fmt && <Check className="h-3 w-3 text-white ml-2" />}
+              <span>{opt.label}</span>
+              {copyFormat === opt.id && <Check className="h-3 w-3 text-white ml-2" />}
             </button>
           ))}
         </div>
