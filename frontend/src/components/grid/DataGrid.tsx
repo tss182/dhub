@@ -2850,8 +2850,8 @@ ${setClauses};`;
         (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) ||
         (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA'));
 
-      // Shortcut: F7 to Toggle Result Panels (Value Panel)
-      if (e.key === 'F7') {
+      // Shortcut: Ctrl+T / Cmd+T to Toggle Result Panels (Value Panel)
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 't' || e.key === 'T')) {
         e.preventDefault();
         handleToggleValuePanel();
         return;
@@ -5121,7 +5121,7 @@ ${setClauses};`;
               <PanelRight className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
               <span>View As</span>
             </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">F7</kbd>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+T</kbd>
           </button>
 
           <div className="my-1 border-t border-[#272932]" />

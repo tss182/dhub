@@ -636,7 +636,7 @@ export const SearchEverywhere: React.FC = () => {
             >
               <div className="flex items-center gap-2">
                 <BookOpen className="h-3.5 w-3.5 text-blue-400" />
-                <span className="font-semibold text-zinc-200">Open Help &amp; User Guide (F1)</span>
+                <span className="font-semibold text-zinc-200">Open Help &amp; User Guide (Ctrl+H / ⌘H)</span>
                 <span className="text-zinc-500 text-[11px]">
                   Documentation, MongoDB &amp; Redis syntax, shortcuts &amp; FAQ
                 </span>

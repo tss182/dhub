@@ -688,8 +688,8 @@ export function App() {
         return;
       }
 
-      // Settings shortcut: Ctrl+, / Cmd+,
-      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+      // Settings shortcut: Ctrl+I / Cmd+I
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault();
         useSettingsStore.getState().toggleSettings();
         return;
@@ -705,8 +705,8 @@ export function App() {
         return;
       }
 
-      // Stop Query Execution: Ctrl+F2 / Cmd+F2
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'F2' || e.code === 'F2')) {
+      // Stop Query Execution: Ctrl+Shift+D / Cmd+Shift+D
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault();
         const activeId = useWorkbenchStore.getState().activeTabId;
         if (activeId) {
@@ -715,15 +715,15 @@ export function App() {
         return;
       }
 
-      // Open Help & User Guide: F1
-      if (e.key === 'F1') {
+      // Open Help & User Guide: Ctrl+H / Cmd+H
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'h' || e.key === 'H')) {
         e.preventDefault();
         useWorkbenchStore.getState().toggleHelpModal();
         return;
       }
 
-      // Views / Value Viewer: F7
-      if (e.key === 'F7') {
+      // Views / Value Viewer: Ctrl+T / Cmd+T
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 't' || e.key === 'T')) {
         e.preventDefault();
         const store = useWorkbenchStore.getState();
         if (!store.isRightPanelOpen) {
@@ -1696,7 +1696,7 @@ export function App() {
                     </span>
                   ) : (
                     <kbd className="text-[10px] text-zinc-500 font-mono">
-                      {isMac ? '⌘,' : 'Ctrl+,'}
+                      {isMac ? '⌘I' : 'Ctrl+I'}
                     </kbd>
                   )}
                 </button>
@@ -1739,7 +1739,9 @@ export function App() {
                     <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
                     <span>Help</span>
                   </span>
-                  <kbd className="text-[10px] text-zinc-500 font-mono">F1</kbd>
+                  <kbd className="text-[10px] text-zinc-500 font-mono">
+                    {isMac ? '⌘H' : 'Ctrl+H'}
+                  </kbd>
                 </button>
               </div>
             )}
@@ -2692,7 +2694,7 @@ export function App() {
                     <BookOpen className="h-3.5 w-3.5 text-blue-400" />
                     <span>User Guide &amp; Help</span>
                     <kbd className="rounded bg-[#14151a] border border-[#2d303d] px-1.5 py-0.5 text-[10px] font-mono text-zinc-400">
-                      F1
+                      {isMac ? '⌘H' : 'Ctrl+H'}
                     </kbd>
                   </button>
 
@@ -3416,10 +3418,10 @@ export function App() {
             type="button"
             onClick={() => openHelpModal('quickstart')}
             className="flex items-center gap-1 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-            title="Open Help & User Guide (F1)"
+            title={`Open Help & User Guide (${isMac ? '⌘H' : 'Ctrl+H'})`}
           >
             <HelpCircle className="h-3 w-3 text-blue-400" />
-            <span>Help (F1)</span>
+            <span>Help ({isMac ? '⌘H' : 'Ctrl+H'})</span>
           </button>
           <span>DHub Desktop v{APP_VERSION}</span>
         </div>

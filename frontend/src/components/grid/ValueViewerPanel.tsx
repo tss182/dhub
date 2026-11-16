@@ -619,7 +619,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
                 type="button"
                 onClick={onClose}
                 className="p-1 rounded text-zinc-400 hover:text-white hover:bg-rose-950/40 hover:text-rose-300 transition-colors cursor-pointer"
-                title="Close View (F7)"
+                title="Close View (Ctrl+T / ⌘T)"
               >
                 <X className="h-3.5 w-3.5" />
               </button>

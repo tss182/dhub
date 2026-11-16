@@ -8,7 +8,7 @@ A lightweight, high-performance, keyboard-first multi-database desktop client an
 
 Download the latest version (**v0.3.6**) for Windows, macOS, and Linux from the [DHub Download Page](https://tss182.github.io/dhub/) or [GitHub Releases](https://github.com/tss182/dhub/releases/latest).
 
-For full usage instructions, engine-specific query guides, and troubleshooting, see the [User Guide](docs/USER_GUIDE.md) or press **`F1`** inside the app to open the interactive **Help & User Guide**.
+For full usage instructions, engine-specific query guides, and troubleshooting, see the [User Guide](docs/USER_GUIDE.md) or press **`Ctrl+H`** (`⌘H`) inside the app to open the interactive **Help & User Guide**.
 
 ---
 
@@ -58,14 +58,14 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 - **Pagination & Infinite Lazy-Load**: Switch between numbered pages and continuous scroll loading with customizable batch sizes (`10`–`5000` rows).
 - **Inline Editing & DML Preview**: Edit cells, duplicate rows (`Ctrl+D`), or mark rows for deletion (`Delete`). Preview exact generated SQL/Mongo statements before applying (`Ctrl+S`) or reverting (`Esc`).
 - **Filtering, Sorting & Freezing**: Apply custom `WHERE` filters, multi-column sorting, and freeze key columns while scrolling horizontally.
-- **Value Viewer (`F7`)**: Inspect and edit long text, JSON, or multi-line values in a dedicated side panel.
+- **Value Viewer (`Ctrl+T` / `⌘T`)**: Inspect and edit long text, JSON, or multi-line values in a dedicated side panel.
 - **Smart Copy Formats**: Copy selected cells or rows as **CSV**, **JSON**, **SQL INSERT**, **SQL UPDATE**, or **SQL UPSERT**.
 - **Export, Import & Mock Data**: Export data to CSV/JSON/SQL, import CSV files with column mapping, or generate realistic mock rows for testing.
 
 ### Workspaces & Portable Backup
 - **Workspaces**: Save and switch between distinct tab/console workspace sessions.
 - **Import & Export Configuration**: Back up application settings, folders, and connections (optionally including credentials) to a portable JSON file.
-- **In-App Help & Auto-Updates**: Press `F1` anytime for the interactive User Guide, and check for GitHub Releases updates from Settings.
+- **In-App Help & Auto-Updates**: Press `Ctrl+H` (`⌘H`) anytime for the interactive User Guide, and check for GitHub Releases updates from Settings.
 
 ---
 
@@ -73,19 +73,19 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 
 | Action | Windows / Linux | macOS |
 | :--- | :--- | :--- |
-| **Open Help & User Guide** | `F1` | `F1` |
+| **Open Help & User Guide** | `Ctrl+H` | `⌘H` |
 | **Search Everywhere** | `Ctrl+P` | `⌘P` |
 | **Execute Query at Cursor / Selection** | `Ctrl+Enter` | `⌘Enter` |
-| **Stop Running Query** | `Ctrl+F2` | `⌘F2` |
+| **Stop Running Query** | `Ctrl+Shift+D` | `⌘Shift+D` |
 | **Format SQL Code** | `Shift+Alt+F` | `Shift+Alt+F` |
 | **Apply Staged Grid Changes** | `Ctrl+S` | `⌘S` |
 | **Duplicate Active Grid Row** | `Ctrl+D` | `⌘D` |
 | **Delete Active Grid Row** | `Delete` | `⌘⌫` |
 | **Revert / Cancel Edits or Close Modal** | `Esc` | `Esc` |
-| **Toggle Value Viewer (`Views`)** | `F7` | `F7` |
+| **Toggle Value Viewer (`Views`)** | `Ctrl+T` | `⌘T` |
 | **Toggle Left Sidebar (Explorer / Workspaces)** | `Ctrl+B` | `⌘B` |
 | **Toggle Right Sidebar (Consoles / Views)** | `Ctrl+R` | `⌘R` |
-| **Open Settings & Preferences** | `Ctrl+,` | `⌘,` |
+| **Open Settings & Preferences** | `Ctrl+I` | `⌘I` |
 | **Close Active Tab** | `Ctrl+W` | `⌘W` |
 
 ---

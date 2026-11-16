@@ -1091,8 +1091,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     // Intercept Ctrl+S / Cmd+S in editor to prevent browser save dialog
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {});
 
-    // Shortcut Ctrl+F2 / Cmd+F2 to cancel running query
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F2, () => {
+    // Shortcut Ctrl+Shift+D / Cmd+Shift+D to cancel running query
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD, () => {
       onCancel();
     });
 
@@ -1131,7 +1131,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             <button
               onClick={onCancel}
               className="flex items-center gap-1.5 rounded bg-rose-600/90 px-2.5 py-1 font-medium text-white hover:bg-rose-500 transition-colors shadow-sm cursor-pointer"
-              title={`Stop Execution (${modKey}+F2)`}
+              title={`Stop Execution (${modKey}+Shift+D)`}
             >
               <Square className="h-3.5 w-3.5 fill-current" />
               <span>Stop</span>

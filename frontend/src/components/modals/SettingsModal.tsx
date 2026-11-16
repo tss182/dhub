@@ -1272,7 +1272,7 @@ export const SettingsModal: React.FC = () => {
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Help &amp; User Guide</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        F1
+                        Ctrl+H / ⌘H
                       </kbd>
                     </div>
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
@@ -1314,7 +1314,7 @@ export const SettingsModal: React.FC = () => {
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Settings & Preferences</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+, / ⌘,
+                        Ctrl+I / ⌘I
                       </kbd>
                     </div>
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
@@ -1332,13 +1332,13 @@ export const SettingsModal: React.FC = () => {
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">Stop Query Execution</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+F2 / ⌘F2
+                        Ctrl+Shift+D / ⌘Shift+D
                       </kbd>
                     </div>
                     <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
                       <span className="text-zinc-400">View As / Value Panel</span>
                       <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        F7
+                        Ctrl+T / ⌘T
                       </kbd>
                     </div>
                   </div>
@@ -1374,7 +1374,7 @@ export const SettingsModal: React.FC = () => {
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/35 text-xs font-medium transition-colors cursor-pointer"
                   >
                     <BookOpen className="h-3.5 w-3.5" />
-                    <span>Open Help &amp; User Guide (F1)</span>
+                    <span>Open Help &amp; User Guide (Ctrl+H / ⌘H)</span>
                   </button>
                 </div>
 

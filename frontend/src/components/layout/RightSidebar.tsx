@@ -112,7 +112,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
                 ? 'bg-[#22242c] text-white font-medium border border-[#2e313d]'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1a1b22]'
             }`}
-            title="View As / Cell Value Viewer (F7)"
+            title="View As / Cell Value Viewer (Ctrl+T / ⌘T)"
           >
             <PanelRight className="h-3.5 w-3.5 text-blue-400" />
             <span>Views</span>

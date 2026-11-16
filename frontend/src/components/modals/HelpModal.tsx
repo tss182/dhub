@@ -152,11 +152,11 @@ const KEYBOARD_SHORTCUT_GROUPS: Array<{
   {
     title: 'Global & Navigation',
     items: [
-      { action: 'Open Help & User Guide', win: 'F1', mac: 'F1' },
+      { action: 'Open Help & User Guide', win: 'Ctrl+H', mac: '⌘H' },
       { action: 'Search Everywhere', win: 'Ctrl+P', mac: '⌘P' },
       { action: 'Toggle Left Sidebar (Explorer / Workspaces)', win: 'Ctrl+B', mac: '⌘B' },
       { action: 'Toggle Right Sidebar (Consoles / Views)', win: 'Ctrl+R', mac: '⌘R' },
-      { action: 'Open Settings & Preferences', win: 'Ctrl+,', mac: '⌘,' },
+      { action: 'Open Settings & Preferences', win: 'Ctrl+I', mac: '⌘I' },
       { action: 'Close Active Tab', win: 'Ctrl+W', mac: '⌘W' },
     ],
   },
@@ -164,7 +164,7 @@ const KEYBOARD_SHORTCUT_GROUPS: Array<{
     title: 'Query Console & SQL Editor',
     items: [
       { action: 'Execute Query at Cursor / Selection', win: 'Ctrl+Enter', mac: '⌘Enter' },
-      { action: 'Stop Running Query', win: 'Ctrl+F2', mac: '⌘F2' },
+      { action: 'Stop Running Query', win: 'Ctrl+Shift+D', mac: '⌘Shift+D' },
       { action: 'Format SQL Code', win: 'Shift+Alt+F', mac: 'Shift+Alt+F' },
       { action: 'Revert / Close Popovers & Modals', win: 'Esc', mac: 'Esc' },
     ],
@@ -175,7 +175,7 @@ const KEYBOARD_SHORTCUT_GROUPS: Array<{
       { action: 'Apply Staged Grid Changes', win: 'Ctrl+S', mac: '⌘S' },
       { action: 'Duplicate Active Row', win: 'Ctrl+D', mac: '⌘D' },
       { action: 'Delete Active Row', win: 'Delete', mac: '⌘⌫' },
-      { action: 'Toggle Cell Value Viewer (Views)', win: 'F7', mac: 'F7' },
+      { action: 'Toggle Cell Value Viewer (Views)', win: 'Ctrl+T', mac: '⌘T' },
       { action: 'Revert Unsaved Cell / Grid Edits', win: 'Esc', mac: 'Esc' },
     ],
   },
@@ -295,7 +295,7 @@ const SEARCHABLE_TOPICS: SearchableTopic[] = [
     bullets: [
       'Double-click a cell to edit, Ctrl+D to duplicate a row, Delete to stage deletion.',
       'Click Preview SQL to inspect generated statements before pressing Ctrl+S / ⌘S to apply.',
-      'Press F7 on any cell to view/edit long text or JSON in the Value Viewer panel.',
+      'Press Ctrl+T / ⌘T on any cell to view/edit long text or JSON in the Value Viewer panel.',
       'Choose Copy Format (CSV, JSON, SQL INSERT, SQL UPDATE, SQL UPSERT) from the toolbar.',
     ],
   },
@@ -495,7 +495,7 @@ export const HelpModal: React.FC = () => {
 
             <div className="flex items-center gap-2">
               <kbd className="hidden sm:inline-block rounded bg-[#22242c] px-1.5 py-0.5 text-[10px] text-zinc-400 font-mono border border-[#2d303d]">
-                F1
+                {isMac ? '⌘H' : 'Ctrl+H'}
               </kbd>
               <kbd className="hidden sm:inline-block rounded bg-[#22242c] px-1.5 py-0.5 text-[10px] text-zinc-400 font-mono border border-[#2d303d]">
                 ESC
@@ -796,7 +796,7 @@ export const HelpModal: React.FC = () => {
                         </div>
                         <p className="text-[11px] text-zinc-400 leading-relaxed">
                           Switch between <strong>Console</strong> (saved worksheets) and{' '}
-                          <strong>Views</strong> (<code>F7</code> full-cell text/JSON editor).
+                          <strong>Views</strong> (<code>{isMac ? '⌘T' : 'Ctrl+T'}</code> full-cell text/JSON editor).
                         </p>
                       </div>
                     </div>
@@ -954,7 +954,7 @@ export const HelpModal: React.FC = () => {
                           <li>Runs highlighted SQL selection, or the statement at your cursor (<code>{isMac ? '⌘Enter' : 'Ctrl+Enter'}</code>).</li>
                           <li>Supports multi-statement execution with separate Result tabs in the bottom panel.</li>
                           <li>Use <code>:name</code>, <code>$1</code>, or <code>?</code> to trigger an interactive parameter input dialog.</li>
-                          <li>Cancel long-running queries anytime with <code>{isMac ? '⌘F2' : 'Ctrl+F2'}</code> or the Stop button.</li>
+                          <li>Cancel long-running queries anytime with <code>{isMac ? '⌘Shift+D' : 'Ctrl+Shift+D'}</code> or the Stop button.</li>
                         </ul>
                       </div>
 
@@ -1043,10 +1043,10 @@ export const HelpModal: React.FC = () => {
                       <div className="rounded-xl border border-[#272932] bg-[#1e2027] p-4 space-y-1.5">
                         <div className="font-semibold text-zinc-100 flex items-center gap-2">
                           <Eye className="h-4 w-4 text-purple-400" />
-                          <span>Value Viewer (F7) &amp; Copy Formats</span>
+                          <span>Value Viewer ({isMac ? '⌘T' : 'Ctrl+T'}) &amp; Copy Formats</span>
                         </div>
                         <p className="text-[11px] text-zinc-400 leading-relaxed">
-                          Press <code>F7</code> on any cell to inspect or edit formatted JSON and
+                          Press <code>{isMac ? '⌘T' : 'Ctrl+T'}</code> on any cell to inspect or edit formatted JSON and
                           long text in the side panel. Choose your preferred copy format (
                           <strong>CSV</strong>, <strong>JSON</strong>, <strong>SQL INSERT</strong>,{' '}
                           <strong>SQL UPDATE</strong>, or <strong>SQL UPSERT</strong>) in the table

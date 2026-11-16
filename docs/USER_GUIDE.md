@@ -2,7 +2,7 @@
 
 Welcome to **DHub**, a fast, keyboard-first multi-database desktop IDE for SQL and NoSQL workflows. This guide explains every feature, shortcut, and database-specific query convention available in DHub.
 
-> **Tip inside the app:** Press **`F1`** at any time to open the interactive **Help & User Guide** modal, or click **Syntax & Help** inside any Query Console toolbar for driver-specific query examples.
+> **Tip inside the app:** Press **`Ctrl+H` / `⌘H`** at any time to open the interactive **Help & User Guide** modal, or click **Syntax & Help** inside any Query Console toolbar for driver-specific query examples.
 
 ---
 
@@ -64,7 +64,7 @@ DHub uses a clean four-zone layout:
   - Drag tabs to reorder them.
   - Right-click any tab to **Rename**, **Duplicate Console**, **Copy SQL**, **Reload Data**, or close tabs.
   - When many tabs are open, click **`>> N`** on the right edge of the tab bar to filter and jump to overflow tabs.
-- **Header Bar:** Quick access to **Workspace Selector**, **Search Everywhere (`Ctrl+P` / `⌘P`)**, **Snippets**, **Schema Diff**, **Settings (`Ctrl+,` / `⌘,`)**, and **Help (`F1`)**.
+- **Header Bar:** Quick access to **Workspace Selector** and the **Settings & Tools** gear menu (**Settings (`Ctrl+I` / `⌘I`)**, **Snippets**, **Schema Diff**, and **Help (`Ctrl+H` / `⌘H`)**).
 
 ### Bottom Services Panel (Query Console Tabs)
 - **Query Result:** Displays tabular results (and multiple result tabs when executing multi-statement scripts). Includes a 1-click **Copy SQL** pill.
@@ -74,7 +74,7 @@ DHub uses a clean four-zone layout:
 
 ### Right Sidebar (`Ctrl+R` / `⌘R`)
 - **Console Tab:** Manage saved SQL/Query worksheets grouped across connections.
-- **Views Tab (`F7`):** Inspect and edit the currently selected Data Grid cell value in full text, formatted JSON, or multi-line view.
+- **Views Tab (`Ctrl+T` / `⌘T`):** Inspect and edit the currently selected Data Grid cell value in full text, formatted JSON, or multi-line view.
 
 ---
 
@@ -82,7 +82,7 @@ DHub uses a clean four-zone layout:
 
 ### Executing Queries
 - Place your cursor inside a SQL statement (delimited by `;`) or highlight a block of text and press **`Ctrl+Enter` / `⌘Enter`** (or click **Run**).
-- Press **`Ctrl+F2` / `⌘F2`** (or click **Stop**) to cancel an active query.
+- Press **`Ctrl+Shift+D` / `⌘Shift+D`** (or click **Stop**) to cancel an active query.
 
 ### Context-Aware Autocomplete
 As you type in a SQL Console, DHub automatically suggests:
@@ -198,8 +198,8 @@ When viewing a table with a Primary Key on a non-read-only connection:
    - **Apply (`Ctrl+S` / `⌘S`):** Commit all staged edits to the database.
    - **Revert (`Esc`):** Discard pending grid edits.
 
-### Value Viewer (`F7`) & Smart Copy Formats
-- Select any cell and press **`F7`** (or open the **Views** tab in the Right Sidebar) to read or edit long strings and pretty-printed JSON.
+### Value Viewer (`Ctrl+T` / `⌘T`) & Smart Copy Formats
+- Select any cell and press **`Ctrl+T` / `⌘T`** (or open the **Views** tab in the Right Sidebar) to read or edit long strings and pretty-printed JSON.
 - Use the **Copy Format Selector** in the table toolbar or Settings to choose how `Ctrl+C` / `⌘C` copies data:
   - `CSV`
   - `JSON`
@@ -226,7 +226,7 @@ When viewing a table with a Primary Key on a non-read-only connection:
 ## 7. Workspaces, Settings & Backup
 
 - **Workspaces:** Switch between named workspaces via the top header dropdown or the **Workspaces** tab in the Left Sidebar. Each workspace preserves its own set of open tabs.
-- **Appearance & Editor Preferences (`Ctrl+,` / `⌘,`):**
+- **Appearance & Editor Preferences (`Ctrl+I` / `⌘I`):**
   - Switch between **Dark Mode** and **Light Mode**.
   - Adjust SQL editor font size (`12px`–`16px`), word wrap, and code minimap.
   - Set default Data View Mode, Batch/Page Size, and Copy Format.
@@ -238,19 +238,19 @@ When viewing a table with a Primary Key on a non-read-only connection:
 
 | Category | Action | Windows / Linux | macOS |
 | :--- | :--- | :--- | :--- |
-| **Navigation** | Open Help & User Guide | `F1` | `F1` |
-| **Navigation** | Search Everywhere | `Ctrl+P` / `Double Shift` | `⌘P` / `Double Shift` |
+| **Navigation** | Open Help & User Guide | `Ctrl+H` | `⌘H` |
+| **Navigation** | Search Everywhere | `Ctrl+P` | `⌘P` |
 | **Navigation** | Toggle Left Sidebar (Explorer / Workspaces) | `Ctrl+B` | `⌘B` |
 | **Navigation** | Toggle Right Sidebar (Consoles / Views) | `Ctrl+R` | `⌘R` |
-| **Navigation** | Open Settings & Preferences | `Ctrl+,` | `⌘,` |
+| **Navigation** | Open Settings & Preferences | `Ctrl+I` | `⌘I` |
 | **Navigation** | Close Active Tab | `Ctrl+W` | `⌘W` |
 | **Query Console** | Execute Statement at Cursor / Selection | `Ctrl+Enter` | `⌘Enter` |
-| **Query Console** | Stop Running Query | `Ctrl+F2` | `⌘F2` |
+| **Query Console** | Stop Running Query | `Ctrl+Shift+D` | `⌘Shift+D` |
 | **Query Console** | Format SQL Code | `Shift+Alt+F` | `Shift+Alt+F` |
 | **Data Grid** | Apply Staged Changes | `Ctrl+S` | `⌘S` |
 | **Data Grid** | Duplicate Active Row | `Ctrl+D` | `⌘D` |
 | **Data Grid** | Delete Active Row | `Delete` | `⌘⌫` |
-| **Data Grid** | Toggle Cell Value Viewer | `F7` | `F7` |
+| **Data Grid** | Toggle Cell Value Viewer | `Ctrl+T` | `⌘T` |
 | **General** | Revert Pending Edits / Close Modal | `Esc` | `Esc` |
 
 ---
