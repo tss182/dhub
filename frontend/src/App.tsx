@@ -599,13 +599,13 @@ export function App() {
   // Editable source table detection for console query results
   const [resultSourceByKey, setResultSourceByKey] = useState<Record<string, ResultSource | null>>({});
   const activeResultRes: any =
-    queryResult?.results && queryResult.results[activeResultIndex]
-      ? queryResult.results[activeResultIndex]
+    queryResult?.results && queryResult.results.length > 0
+      ? queryResult.results[queryResult.results.length - 1]
       : queryResult;
   const activeResultSql: string =
     activeResultRes?.sql || queryResult?.sql || queryPagination.lastSql || '';
-  const resultGridKey = `${currentTabId}|${activeResultIndex}|${queryResult?.executionId || ''}|${activeResultSql}`;
-  const resultGridTabId = `bottom-result-${currentTabId}-${activeResultIndex}`;
+  const resultGridKey = `${currentTabId}|${queryResult?.executionId || ''}|${activeResultSql}`;
+  const resultGridTabId = `bottom-result-${currentTabId}`;
 
   useEffect(() => {
     if (!activeTab || activeTab.type !== 'worksheet') return;
@@ -1488,7 +1488,8 @@ export function App() {
         ...res,
         sql: (res as any)?.sql || sql,
       } as any);
-      setActiveResultIndex(0);
+      const lastResultIdx = Math.max(0, ((res as any)?.results?.length || 1) - 1);
+      setActiveResultIndex(lastResultIdx);
       setQueryPagination({
         page: 1,
         pageSize: defaultLimit,
@@ -1527,18 +1528,21 @@ export function App() {
     }
   };
 
-  // For multi-statement runs, page/reload only the statement behind the active result tab
-  const getPagingSql = () =>
-    (queryResult?.results &&
-      queryResult.results.length > 1 &&
-      (queryResult.results[activeResultIndex] as any)?.sql) ||
-    queryPagination.lastSql;
+  // For multi-statement runs, page/reload only the last statement
+  const getPagingSql = () => {
+    const results = queryResult?.results;
+    if (results && results.length > 0) {
+      const last = results[results.length - 1] as any;
+      if (last?.sql) return last.sql;
+    }
+    return queryPagination.lastSql;
+  };
 
   const handleQueryLoadMore = async () => {
     if (queryPagination.isLoadingMore || !queryResult || !queryPagination.lastSql) return;
     const currentRes =
-      queryResult.results && queryResult.results[activeResultIndex]
-        ? queryResult.results[activeResultIndex]
+      queryResult.results && queryResult.results.length > 0
+        ? queryResult.results[queryResult.results.length - 1]
         : queryResult;
     const currentRows = currentRes?.rows || [];
     const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || 100;
@@ -2919,8 +2923,8 @@ export function App() {
                 {/* Services Bar */}
                 {(() => {
                   const currentActiveRes =
-                    queryResult?.results && queryResult.results[activeResultIndex]
-                      ? queryResult.results[activeResultIndex]
+                    queryResult?.results && queryResult.results.length > 0
+                      ? queryResult.results[queryResult.results.length - 1]
                       : queryResult;
                   const currentRawSql =
                     (currentActiveRes as any)?.sql ||
@@ -2931,42 +2935,16 @@ export function App() {
                   return (
                     <div className="flex h-8 items-center justify-between border-b border-[#272932] px-3 bg-[#14151a] shrink-0 select-none gap-2">
                       <div className="flex items-center gap-2 overflow-x-auto min-w-0">
-                        {queryResult?.results && queryResult.results.length > 1 ? (
-                          queryResult.results.map((res: any, idx: number) => {
-                            const isSelected = activeBottomTab === 'result' && activeResultIndex === idx;
-                            const hasCols = res.columns && res.columns.length > 0;
-                            const label = hasCols
-                              ? `Result ${idx + 1} (${res.rows?.length || 0})`
-                              : `Result ${idx + 1} (${res.rowsAffected || 0} aff)`;
-                            return (
-                              <button
-                                key={idx}
-                                onClick={() => {
-                                  setActiveBottomTab('result');
-                                  setActiveResultIndex(idx);
-                                }}
-                                className={`text-xs pb-1 border-b-2 font-medium cursor-pointer transition-colors whitespace-nowrap ${
-                                  isSelected
-                                    ? 'border-zinc-400 text-white font-semibold'
-                                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                                }`}
-                              >
-                                {label}
-                              </button>
-                            );
-                          })
-                        ) : (
-                          <button
-                            onClick={() => setActiveBottomTab('result')}
-                            className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
-                              activeBottomTab === 'result'
-                                ? 'border-zinc-400 text-white font-semibold'
-                                : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                            }`}
-                          >
-                            Query Result
-                          </button>
-                        )}
+                        <button
+                          onClick={() => setActiveBottomTab('result')}
+                          className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
+                            activeBottomTab === 'result'
+                              ? 'border-zinc-400 text-white font-semibold'
+                              : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                          }`}
+                        >
+                          Query Result
+                        </button>
                         <button
                           onClick={() => setActiveBottomTab('output')}
                           className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
@@ -3059,8 +3037,8 @@ export function App() {
                       </div>
                     ) : (() => {
                       const currentRes =
-                        queryResult?.results && queryResult.results[activeResultIndex]
-                          ? queryResult.results[activeResultIndex]
+                        queryResult?.results && queryResult.results.length > 0
+                          ? queryResult.results[queryResult.results.length - 1]
                           : queryResult;
                       const hasCols = currentRes?.columns && currentRes.columns.length > 0;
 
@@ -3090,7 +3068,7 @@ export function App() {
                       return (
                         <div className="flex-1 min-h-0">
                           <DataGrid
-                            key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
+                            key={`result-grid-${queryResult?.executionId || ''}`}
                             tabId={resultGridTabId}
                             connectionId={activeTab?.connectionId || activeConnectionId || undefined}
                             database={resultSource?.database ?? activeTab?.database}
