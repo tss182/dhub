@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"dhub/internal/driver"
 	"dhub/internal/driver/clickhouse"
@@ -210,6 +211,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 		q := u.Query()
 		q.Set("sslmode", sslMode)
+		q.Set("connect_timeout", "10")
 		if cfg.SSLCAPath != "" {
 			q.Set("sslrootcert", cfg.SSLCAPath)
 		}
@@ -230,6 +232,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		mc.DBName = cfg.DatabaseName
 		mc.ParseTime = true
 		mc.MultiStatements = true
+		mc.Timeout = 10 * time.Second
 
 		// Handle SSL/TLS configuration
 		if cfg.SSLCAPath != "" || (cfg.SSLCertPath != "" && cfg.SSLKeyPath != "") {
@@ -280,10 +283,11 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			host = "127.0.0.1"
 		}
 		redisOpts := &goredis.Options{
-			Addr:     fmt.Sprintf("%s:%d", host, port),
-			Username: cfg.Username,
-			Password: cfg.Password,
-			DB:       redisdriver.ParseDB(cfg.DatabaseName),
+			Addr:        fmt.Sprintf("%s:%d", host, port),
+			Username:    cfg.Username,
+			Password:    cfg.Password,
+			DB:          redisdriver.ParseDB(cfg.DatabaseName),
+			DialTimeout: 10 * time.Second,
 		}
 
 		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {

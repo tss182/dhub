@@ -319,13 +319,21 @@ export const ConnectionDialog: React.FC = () => {
   const handleTest = async () => {
     setIsLoading(true);
     setTestResult(null);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const payload = buildConnectionPayload();
-      const res = await ConnectionService.TestConnection(payload as any);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Connection test timed out after 12s')), 12000);
+      });
+      const res = await Promise.race([
+        ConnectionService.TestConnection(payload as any),
+        timeoutPromise,
+      ]);
       setTestResult({ success: true, message: res });
     } catch (e: any) {
       setTestResult({ success: false, message: e?.message || String(e) });
     } finally {
+      if (timer) clearTimeout(timer);
       setIsLoading(false);
     }
   };

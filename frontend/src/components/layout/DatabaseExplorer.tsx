@@ -82,6 +82,18 @@ const FOLDER_COLORS = [
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 
+function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection timed out'): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(msg)), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 interface DatabaseExplorerProps {
   onCollapse?: () => void;
 }
@@ -132,6 +144,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
   const [filterText, setFilterText] = useState('');
   const [loadingConnId, setLoadingConnId] = useState<string | null>(null);
+  const [failedConnErrors, setFailedConnErrors] = useState<Record<string, string>>({});
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   // Schema Filter Modal / Popover state (e.g. "3 of 10")
@@ -724,7 +737,17 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     if (!expandedNodes[connId]) {
       setLoadingConnId(connId);
       try {
-        await ConnectionService.Connect(connId);
+        await withConnTimeout(
+          ConnectionService.Connect(connId),
+          12000,
+          'Connection timed out after 12s'
+        );
+        setFailedConnErrors((prev) => {
+          if (!prev[connId]) return prev;
+          const next = { ...prev };
+          delete next[connId];
+          return next;
+        });
         const conn = connections.find((c) => c.id === connId);
         const isRedis = conn?.driver?.toLowerCase() === 'redis';
         const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
@@ -786,8 +809,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               .catch(() => {});
           }
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error('Failed to load databases for connection:', e);
+        setFailedConnErrors((prev) => ({
+          ...prev,
+          [connId]: e?.message || String(e),
+        }));
+        if (!treeDatabases[connId] || treeDatabases[connId].length === 0) {
+          setNodeExpanded(connId, false);
+        }
       } finally {
         setLoadingConnId(null);
       }
@@ -841,7 +871,17 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     e?.stopPropagation();
     setLoadingConnId(connId);
     try {
-      await ConnectionService.Connect(connId);
+      await withConnTimeout(
+        ConnectionService.Connect(connId),
+        12000,
+        'Connection refresh timed out after 12s'
+      );
+      setFailedConnErrors((prev) => {
+        if (!prev[connId]) return prev;
+        const next = { ...prev };
+        delete next[connId];
+        return next;
+      });
       const conn = connections.find((c) => c.id === connId);
       const isRedis = conn?.driver?.toLowerCase() === 'redis';
       const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
@@ -865,8 +905,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       const targetSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : currentDb;
       const objects = (await SchemaService.GetObjects(connId, currentDb, targetSchema)) ?? [];
       setTreeObjects(`${connId}:${currentDb}:${targetSchema}`, objects as any);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to refresh connection:', e);
+      setFailedConnErrors((prev) => ({
+        ...prev,
+        [connId]: e?.message || String(e),
+      }));
     } finally {
       setLoadingConnId(null);
     }
@@ -1893,6 +1937,18 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const count = tabs.filter((t) => t.type === 'worksheet').length + 1;
 
     const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
+
+function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection timed out'): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(msg)), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
     let content = `-- Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n`;
     if (conn?.driver === 'redis') {
       content = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
@@ -1952,6 +2008,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   const renderConnectionNode = (c: ConnectionConfig, currentFolderId: string | null) => {
     const isConnExpanded = !!expandedNodes[c.id];
     const isConnLoading = loadingConnId === c.id;
+    const connError = failedConnErrors[c.id];
+    const isConnFailed = Boolean(connError);
     const isRedis = c.driver?.toLowerCase() === 'redis';
     const redisDefaultDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
 
@@ -2063,7 +2121,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
               badge: envInfo.label
                 ? `${(c.driver || 'DB').toUpperCase()} • ${envInfo.label}`
                 : (c.driver || 'DB').toUpperCase(),
-              subtitle: connSubtitle,
+              subtitle: isConnFailed ? `${connSubtitle} • Error: ${connError}` : connSubtitle,
               colorTag: envInfo.color || undefined,
             });
           }}
@@ -2095,8 +2153,18 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             ) : (
               <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
             )}
-            <DbDriverIcon driver={c.driver} className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{c.name}</span>
+            <div className="relative shrink-0 flex items-center justify-center">
+              <DbDriverIcon driver={c.driver} className="h-3.5 w-3.5" />
+              {isConnFailed && (
+                <span
+                  className="absolute -bottom-1 -right-1 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-[#14151a] ring-1 ring-red-500/80"
+                  title={`Connection failed: ${connError}`}
+                >
+                  <X className="h-2 w-2 text-red-500 stroke-[3]" />
+                </span>
+              )}
+            </div>
+            <span className={`truncate ${isConnFailed ? 'text-red-400 font-medium' : ''}`}>{c.name}</span>
             {!isSQLite && (
               <button
                 type="button"

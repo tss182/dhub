@@ -2,6 +2,9 @@ package services
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 
 	"dhub/internal/app"
 	"dhub/internal/manager"
@@ -10,6 +13,8 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+const connectionOpTimeout = 10 * time.Second
 
 type ConnectionService struct {
 	store     *store.LocalStore
@@ -74,8 +79,14 @@ func (s *ConnectionService) DeleteConnection(id string) error {
 }
 
 func (s *ConnectionService) TestConnection(cfg store.ConnectionConfig) (string, error) {
-	err := s.sessions.TestConnection(context.Background(), cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), connectionOpTimeout)
+	defer cancel()
+
+	err := s.sessions.TestConnection(ctx, cfg)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("connection timed out after %s: %w", connectionOpTimeout, err)
+		}
 		return "", err
 	}
 	return "Connection successful!", nil
@@ -86,8 +97,14 @@ func (s *ConnectionService) ResetSSHHostKey(host string, port int) error {
 }
 
 func (s *ConnectionService) Connect(id string) (string, error) {
-	_, err := s.sessions.GetOrConnect(context.Background(), id)
+	ctx, cancel := context.WithTimeout(context.Background(), connectionOpTimeout)
+	defer cancel()
+
+	_, err := s.sessions.GetOrConnect(ctx, id)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("connection timed out after %s: %w", connectionOpTimeout, err)
+		}
 		s.emitState(id, "error", err.Error())
 		return "", err
 	}
