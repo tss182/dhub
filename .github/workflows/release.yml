@@ -77,6 +77,8 @@ jobs:
   build-linux-windows:
     needs: prepare-version
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/tss182/wails3-linux-windows:latest
     env:
       GIT_COMMITTER_NAME: "github-actions[bot]"
       GIT_COMMITTER_EMAIL: "github-actions[bot]@users.noreply.github.com"
@@ -89,6 +91,7 @@ jobs:
       - name: Build Linux & Windows
         uses: tss182/action-wails3-linux-windows@v1
         with:
+          skip-setup: "true"
           app-name: dhub
           version: ${{ needs.prepare-version.outputs.version }}
           pre-build-command: make update-asset
