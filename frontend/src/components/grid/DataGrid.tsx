@@ -1131,7 +1131,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [connectionId, database, tableName, tabId, columns]);
 
   // Initialize and load column widths from localStorage or calculate initial widths
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!columns || columns.length === 0) return;
 
     const saved = loadColWidths(storageKey) || {};
@@ -1155,7 +1155,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [columns, storageKey, primaryKeys]);
 
   // When rows arrive asynchronously and user hasn't resized manually, recalculate initial widths
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (rows.length > 0 && !hasSampledRowsRef.current && !userHasResizedRef.current) {
       hasSampledRowsRef.current = true;
       const saved = loadColWidths(storageKey) || {};
@@ -3867,36 +3867,7 @@ ${setClauses};`;
             </tr>
           </thead>
           <tbody>
-            {displayedRows.length === 0 && insertedChanges.length === 0 ? (
-              <tr>
-                <td colSpan={columns.length + 2} className="py-12 text-center text-zinc-500 font-sans">
-                  {errorMessage ? (
-                    <div className="max-w-lg mx-auto flex flex-col items-center gap-2.5 text-rose-400/90 font-mono text-xs select-text">
-                      <div className="flex items-center gap-2 font-semibold text-rose-300">
-                        <AlertCircle className="h-4 w-4 text-rose-400" />
-                        <span>Query Execution Error</span>
-                      </div>
-                      <p className="text-[11px] text-zinc-400 leading-relaxed max-w-md">
-                        {errorMessage}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setWhereInput('');
-                          onApplyWhere?.('');
-                        }}
-                        className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-sans font-medium transition-colors cursor-pointer shadow-sm"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        <span>Reset WHERE Filter</span>
-                      </button>
-                    </div>
-                  ) : (
-                    'No data to display'
-                  )}
-                </td>
-              </tr>
-            ) : (
+            {displayedRows.length === 0 && insertedChanges.length === 0 ? null : (
               <>
                 {/* 0. Top Load Previous Rows Banner */}
                 {hasPrevious && (
@@ -4346,6 +4317,34 @@ ${setClauses};`;
               </>
             )}          </tbody>
         </table>
+        {displayedRows.length === 0 && insertedChanges.length === 0 && (
+          <div className="sticky left-0 w-full py-12 px-4 text-center text-zinc-500 font-sans">
+            {errorMessage ? (
+              <div className="max-w-lg mx-auto flex flex-col items-center gap-2.5 text-rose-400/90 font-mono text-xs select-text">
+                <div className="flex items-center gap-2 font-semibold text-rose-300">
+                  <AlertCircle className="h-4 w-4 text-rose-400" />
+                  <span>Query Execution Error</span>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed max-w-md">
+                  {errorMessage}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWhereInput('');
+                    onApplyWhere?.('');
+                  }}
+                  className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-sans font-medium transition-colors cursor-pointer shadow-sm"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>Reset WHERE Filter</span>
+                </button>
+              </div>
+            ) : (
+              'No data to display'
+            )}
+          </div>
+        )}
       </div>
     </div>
 

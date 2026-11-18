@@ -1020,7 +1020,7 @@ export function App() {
       fetchLimit = effectivePageSize + 1;
     } else {
       // 'replace'
-      if (offset === 0 && savedViewState) {
+      if (offset === 0 && savedViewState && newWhereClause === undefined && newSortConfigs === undefined) {
         let targetTopRow: number | undefined = undefined;
 
         if (savedViewState.topRowIndex !== undefined && savedViewState.topRowIndex >= 0) {
