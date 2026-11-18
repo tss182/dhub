@@ -80,102 +80,18 @@ jobs:
     env:
       GIT_COMMITTER_NAME: "github-actions[bot]"
       GIT_COMMITTER_EMAIL: "github-actions[bot]@users.noreply.github.com"
-      GOARCH: "amd64"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-version.outputs.commit_sha }}
 
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            gcc \
-            libc6-dev \
-            libgtk-4-dev \
-            libwebkitgtk-6.0-dev \
-            nsis \
-            rpm
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Build Linux & Windows
+        uses: tss182/action-wails3-linux-windows@v1
         with:
-          node-version: 20
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          check-latest: true
-
-      - name: Install Wails v3 CLI
-        run: |
-          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-      - name: Install Frontend Dependencies
-        run: |
-          cd frontend
-          npm ci || npm install
-          cd ..
-
-      - name: Apply Release Version Locally for Build
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          python3 -c "
-          import re
-          with open('build/config.yml', 'r') as f:
-              content = f.read()
-          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
-          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
-          with open('build/config.yml', 'w') as f:
-              f.write(new_content)
-          "
-          make update-asset
-
-      - name: Build Linux DEB Package
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          make build:deb
-          if [ -f bin/dhub.deb ]; then
-            cp bin/dhub.deb "bin/dhub_${VERSION}_linux_amd64.deb"
-          fi
-
-      - name: Build Linux RPM Package
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          make build:rpm
-          if [ -f bin/dhub.rpm ]; then
-            cp bin/dhub.rpm "bin/dhub-${VERSION}-1.x86_64.rpm"
-          fi
-
-      - name: Build Windows x86 (amd64) Executable and Installer (User Scope)
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          wails3 task windows:build ARCH=amd64
-          cp bin/dhub.exe "bin/dhub-${VERSION}-windows-amd64.exe"
-          wails3 task windows:create:nsis:installer ARCH=amd64 INSTALL_SCOPE=user
-          if [ -f bin/dhub-amd64-installer.exe ]; then
-            cp bin/dhub-amd64-installer.exe "bin/dhub-${VERSION}-windows-amd64-installer.exe"
-          else
-            echo "Error: bin/dhub-amd64-installer.exe not generated!" >&2
-            exit 1
-          fi
-
-      - name: Build Windows ARM (arm64) Executable and Installer (User Scope)
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          wails3 task windows:build ARCH=arm64
-          cp bin/dhub.exe "bin/dhub-${VERSION}-windows-arm64.exe"
-          wails3 task windows:create:nsis:installer ARCH=arm64 INSTALL_SCOPE=user
-          if [ -f bin/dhub-arm64-installer.exe ]; then
-            cp bin/dhub-arm64-installer.exe "bin/dhub-${VERSION}-windows-arm64-installer.exe"
-          else
-            echo "Error: bin/dhub-arm64-installer.exe not generated!" >&2
-            exit 1
-          fi
+          app-name: dhub
+          version: ${{ needs.prepare-version.outputs.version }}
+          pre-build-command: make update-asset
 
       - name: Upload Linux & Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -199,57 +115,12 @@ jobs:
         with:
           ref: ${{ needs.prepare-version.outputs.commit_sha }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Build macOS
+        uses: tss182/action-wails3-macos@v1
         with:
-          node-version: 20
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          check-latest: true
-
-      - name: Install Wails v3 CLI
-        run: |
-          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-      - name: Install Frontend Dependencies
-        run: |
-          cd frontend
-          npm ci || npm install
-          cd ..
-
-      - name: Apply Release Version Locally for Build
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          python3 -c "
-          import re
-          with open('build/config.yml', 'r') as f:
-              content = f.read()
-          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
-          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
-          with open('build/config.yml', 'w') as f:
-              f.write(new_content)
-          "
-          make update-asset
-
-      - name: Build macOS Application (.app bundle and DMG)
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          make build:mac
-          if make build:mac:dmg; then
-            echo "DMG build completed."
-          else
-            echo "DMG build skipped/failed, falling back to zipped app bundle."
-          fi
-
-          cd bin
-          zip -r "dhub-${VERSION}-macos.app.zip" dhub.app
-          if [ -f dhub.dmg ]; then
-            cp dhub.dmg "dhub-${VERSION}-macos.dmg"
-          fi
+          app-name: dhub
+          version: ${{ needs.prepare-version.outputs.version }}
+          pre-build-command: make update-asset
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
