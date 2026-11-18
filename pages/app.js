@@ -597,12 +597,15 @@
     }
   }
 
-  async function fetchReleasesFromApi() {
+  async function fetchReleasesFromApi(expectedLatestTag) {
     try {
       const cachedRaw = sessionStorage.getItem(CACHE_KEY);
       if (cachedRaw) {
         const cached = JSON.parse(cachedRaw);
-        if (Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.data) && cached.data.length > 0) {
+        const cachedTag = cached?.data?.[0]?.tag_name;
+        const isFresh = Date.now() - cached.ts < CACHE_TTL_MS;
+        const matchesStatic = !expectedLatestTag || cachedTag === expectedLatestTag;
+        if (isFresh && Array.isArray(cached.data) && cached.data.length > 0 && matchesStatic) {
           return cached.data;
         }
       }
@@ -760,11 +763,15 @@
     // 1. Load static SSG releases.json first (instant, zero rate limit)
     const staticReleases = await fetchStaticReleases();
     const hasStatic = applyReleasesData(staticReleases);
+    const staticTag = staticReleases[0]?.tag_name || "";
 
     // 2. Refresh in background from GitHub API (or use as fallback if static is empty)
     try {
-      const apiReleases = await fetchReleasesFromApi();
-      applyReleasesData(apiReleases);
+      const apiReleases = await fetchReleasesFromApi(staticTag);
+      const apiTag = apiReleases[0]?.tag_name || "";
+      if (!hasStatic || (apiTag && apiTag !== staticTag)) {
+        applyReleasesData(apiReleases);
+      }
     } catch (err) {
       console.warn("Failed to load GitHub release from API:", err);
       if (!hasStatic) {
