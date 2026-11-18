@@ -503,10 +503,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       // Update ref immediately
       metadataRef.current.tableMap = new Map(currentMap);
 
-      // 4. Background fetch column structure for tables without columns (up to 40 tables)
+      // 4. Background fetch column structure for tables without columns (up to 20 tables)
       const tablesNeedingCols = Array.from(currentMap.values())
         .filter((t) => t.columns.length === 0)
-        .slice(0, 40);
+        .slice(0, 20);
 
       const concurrency = 4;
       for (let i = 0; i < tablesNeedingCols.length; i += concurrency) {

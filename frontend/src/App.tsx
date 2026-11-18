@@ -1276,15 +1276,26 @@ export function App() {
           let newHasPrevious = false;
           let newHasMore = hasMore;
 
+          const MAX_CACHED_ROWS_PER_TAB = 1000;
+
           if (fetchMode === 'append') {
             combinedRows = [...(currentTabState?.rows || []), ...fetchedRows];
             newStartOffset = currentTabState?.startOffset || 0;
+            if (combinedRows.length > MAX_CACHED_ROWS_PER_TAB) {
+              const excess = combinedRows.length - MAX_CACHED_ROWS_PER_TAB;
+              combinedRows = combinedRows.slice(excess);
+              newStartOffset += excess;
+            }
             newHasPrevious = newStartOffset > 0;
           } else if (fetchMode === 'prepend') {
             combinedRows = [...fetchedRows, ...(currentTabState?.rows || [])];
             newStartOffset = effectiveOffset;
             newHasPrevious = newStartOffset > 0;
             newHasMore = currentTabState?.hasMore ?? false;
+            if (combinedRows.length > MAX_CACHED_ROWS_PER_TAB) {
+              combinedRows = combinedRows.slice(0, MAX_CACHED_ROWS_PER_TAB);
+              newHasMore = true;
+            }
           } else {
             // replace
             combinedRows = fetchedRows;
@@ -1388,6 +1399,18 @@ export function App() {
     setIsRunningByTab(cleanStale);
     setStatusMessageByTab(cleanStale);
     setActiveExecIdByTab(cleanStale);
+    setResultSourceByKey((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        const tabId = k.split('|')[0];
+        if (tabId && !openIds.has(tabId)) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
   }, [tabs]);
 
   // Load saved consoles from SQLite on startup

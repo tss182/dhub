@@ -283,11 +283,14 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			host = "127.0.0.1"
 		}
 		redisOpts := &goredis.Options{
-			Addr:        fmt.Sprintf("%s:%d", host, port),
-			Username:    cfg.Username,
-			Password:    cfg.Password,
-			DB:          redisdriver.ParseDB(cfg.DatabaseName),
-			DialTimeout: 10 * time.Second,
+			Addr:            fmt.Sprintf("%s:%d", host, port),
+			Username:        cfg.Username,
+			Password:        cfg.Password,
+			DB:              redisdriver.ParseDB(cfg.DatabaseName),
+			DialTimeout:     10 * time.Second,
+			PoolSize:        4,
+			MinIdleConns:    0,
+			ConnMaxIdleTime: 2 * time.Minute,
 		}
 
 		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {

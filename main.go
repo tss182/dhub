@@ -3,6 +3,9 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
+	"runtime/debug"
+	"time"
 
 	"dhub/internal/app"
 	"dhub/internal/manager"
@@ -27,6 +30,29 @@ func init() {
 }
 
 func main() {
+	// Tune Go runtime for low-memory desktop environments unless overridden by env vars.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(40)
+	}
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(128 << 20) // 128 MiB soft limit
+	}
+
+	stopMemTicker := make(chan struct{})
+	defer close(stopMemTicker)
+	go func() {
+		ticker := time.NewTicker(3 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				debug.FreeOSMemory()
+			case <-stopMemTicker:
+				return
+			}
+		}
+	}()
+
 	localStore, err := store.NewLocalStore()
 	if err != nil {
 		log.Fatalf("failed to initialize internal sqlite store: %v", err)

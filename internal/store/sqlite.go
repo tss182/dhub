@@ -74,7 +74,7 @@ func (s *LocalStore) migrate() error {
 		`PRAGMA synchronous=NORMAL;`,
 		`PRAGMA foreign_keys=ON;`,
 		`PRAGMA busy_timeout=10000;`, // wait up to 10s if table is locked
-		`PRAGMA cache_size=-4000;`, // cap page cache at ~4MB
+		`PRAGMA cache_size=-2000;`, // cap page cache at ~2MB
 		`PRAGMA temp_store=FILE;`,
 
 		`CREATE TABLE IF NOT EXISTS connection_folders (

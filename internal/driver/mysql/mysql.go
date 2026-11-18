@@ -24,9 +24,10 @@ func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(time.Hour)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 
 	var defaultDB string
 	if cfg, parseErr := mysqldriver.ParseDSN(dsn); parseErr == nil {

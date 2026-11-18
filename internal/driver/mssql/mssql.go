@@ -14,13 +14,16 @@ import (
 	_ "github.com/microsoft/go-mssqldb"
 )
 
+const maxExtraPools = 4
+
 type MSSQLDriver struct {
 	db        *sql.DB
 	connStr   string
 	defaultDB string
 
-	mu    sync.Mutex
-	pools map[string]*sql.DB
+	mu        sync.Mutex
+	pools     map[string]*sql.DB
+	poolOrder []string
 }
 
 func openPool(connStr string) (*sql.DB, error) {
@@ -28,9 +31,10 @@ func openPool(connStr string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(time.Hour)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	return db, nil
 }
 
@@ -66,6 +70,13 @@ func (m *MSSQLDriver) dbFor(database string) (*sql.DB, error) {
 	defer m.mu.Unlock()
 
 	if pool, ok := m.pools[database]; ok {
+		for i, name := range m.poolOrder {
+			if name == database {
+				m.poolOrder = append(m.poolOrder[:i], m.poolOrder[i+1:]...)
+				break
+			}
+		}
+		m.poolOrder = append(m.poolOrder, database)
 		return pool, nil
 	}
 
@@ -81,7 +92,16 @@ func (m *MSSQLDriver) dbFor(database string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	for len(m.poolOrder) >= maxExtraPools {
+		evict := m.poolOrder[0]
+		m.poolOrder = m.poolOrder[1:]
+		if oldPool, exists := m.pools[evict]; exists {
+			_ = oldPool.Close()
+			delete(m.pools, evict)
+		}
+	}
 	m.pools[database] = pool
+	m.poolOrder = append(m.poolOrder, database)
 	return pool, nil
 }
 

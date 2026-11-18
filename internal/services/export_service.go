@@ -1,12 +1,14 @@
 package services
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -263,31 +265,50 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 	defer f.Close()
 
+	bw := bufio.NewWriterSize(f, 32*1024)
 	var exportedRows int64
 
 	switch strings.ToLower(req.Format) {
 	case "json":
-		encoder := json.NewEncoder(f)
-		encoder.SetIndent("", "  ")
-
 		colNames := make([]string, len(res.Columns))
 		for i, col := range res.Columns {
 			colNames[i] = col.Name
 		}
 
-		var objList []map[string]any
-		for _, row := range res.Rows {
-			obj := make(map[string]any, len(colNames))
+		// Stream JSON array element-by-element to avoid doubling memory with []map[string]any.
+		if _, err := bw.WriteString("[\n"); err != nil {
+			return nil, fmt.Errorf("failed to write JSON export: %w", err)
+		}
+		obj := make(map[string]any, len(colNames))
+		for idx, row := range res.Rows {
+			clear(obj)
 			for i, val := range row {
 				if i < len(colNames) {
 					obj[colNames[i]] = val
 				}
 			}
-			objList = append(objList, obj)
+			raw, err := json.MarshalIndent(obj, "  ", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode JSON export: %w", err)
+			}
+			if idx > 0 {
+				if _, err := bw.WriteString(",\n"); err != nil {
+					return nil, err
+				}
+			}
+			if _, err := bw.WriteString("  "); err != nil {
+				return nil, err
+			}
+			if _, err := bw.Write(raw); err != nil {
+				return nil, err
+			}
 			exportedRows++
 		}
-		if err := encoder.Encode(objList); err != nil {
-			return nil, fmt.Errorf("failed to encode JSON export: %w", err)
+		if _, err := bw.WriteString("\n]\n"); err != nil {
+			return nil, err
+		}
+		if err := bw.Flush(); err != nil {
+			return nil, err
 		}
 
 	case "sql_insert", "sql":
@@ -314,10 +335,13 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				}
 			}
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);\n", targetTable, colsJoined, strings.Join(valStrs, ", "))
-			if _, err := f.WriteString(stmt); err != nil {
+			if _, err := bw.WriteString(stmt); err != nil {
 				return nil, err
 			}
 			exportedRows++
+		}
+		if err := bw.Flush(); err != nil {
+			return nil, err
 		}
 
 	default: // CSV
@@ -328,7 +352,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			delimRune = '\t'
 		}
 
-		writer := csv.NewWriter(f)
+		writer := csv.NewWriter(bw)
 		writer.Comma = delimRune
 
 		if req.IncludeHeader {
@@ -359,6 +383,15 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		if err := writer.Error(); err != nil {
 			return nil, err
 		}
+		if err := bw.Flush(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Release large result buffers promptly on low-memory systems.
+	res = nil
+	if exportedRows > 1000 {
+		debug.FreeOSMemory()
 	}
 
 	fi, _ := f.Stat()

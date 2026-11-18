@@ -38,7 +38,11 @@ func NewMongoDBDriver(uri string) (*MongoDBDriver, error) {
 		defaultDB = "admin"
 	}
 
-	clientOpts := options.Client().ApplyURI(uri)
+	clientOpts := options.Client().
+		ApplyURI(uri).
+		SetMaxPoolSize(4).
+		SetMinPoolSize(0).
+		SetMaxConnIdleTime(2 * time.Minute)
 	client, err := mongo.Connect(context.Background(), clientOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to mongodb: %w", err)

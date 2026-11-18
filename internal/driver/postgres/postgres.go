@@ -18,13 +18,16 @@ import (
 // switch databases within a single connection, so every database the user
 // browses or queries gets its own lazily-created pool derived from the same
 // connection string (and therefore the same SSH tunnel / credentials).
+const maxExtraPools = 4
+
 type PostgresDriver struct {
 	db        *sql.DB // pool for the default database
 	connStr   string
 	defaultDB string
 
-	mu    sync.Mutex
-	pools map[string]*sql.DB // extra pools keyed by database name
+	mu        sync.Mutex
+	pools     map[string]*sql.DB // extra pools keyed by database name
+	poolOrder []string           // LRU order of extra pool keys
 }
 
 func openPool(connStr string) (*sql.DB, error) {
@@ -32,9 +35,10 @@ func openPool(connStr string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(time.Hour)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	return db, nil
 }
 
@@ -67,6 +71,14 @@ func (p *PostgresDriver) dbFor(database string) (*sql.DB, error) {
 	defer p.mu.Unlock()
 
 	if pool, ok := p.pools[database]; ok {
+		// Move to most-recently-used position
+		for i, name := range p.poolOrder {
+			if name == database {
+				p.poolOrder = append(p.poolOrder[:i], p.poolOrder[i+1:]...)
+				break
+			}
+		}
+		p.poolOrder = append(p.poolOrder, database)
 		return pool, nil
 	}
 
@@ -81,7 +93,16 @@ func (p *PostgresDriver) dbFor(database string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	for len(p.poolOrder) >= maxExtraPools {
+		evict := p.poolOrder[0]
+		p.poolOrder = p.poolOrder[1:]
+		if oldPool, exists := p.pools[evict]; exists {
+			_ = oldPool.Close()
+			delete(p.pools, evict)
+		}
+	}
 	p.pools[database] = pool
+	p.poolOrder = append(p.poolOrder, database)
 	return pool, nil
 }
 

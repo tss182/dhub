@@ -14,13 +14,16 @@ import (
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 )
 
+const maxExtraPools = 4
+
 type ClickHouseDriver struct {
 	db        *sql.DB
 	connStr   string
 	defaultDB string
 
-	mu    sync.Mutex
-	pools map[string]*sql.DB
+	mu        sync.Mutex
+	pools     map[string]*sql.DB
+	poolOrder []string
 }
 
 func openPool(connStr string) (*sql.DB, error) {
@@ -28,9 +31,10 @@ func openPool(connStr string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(time.Hour)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	return db, nil
 }
 
@@ -66,6 +70,13 @@ func (c *ClickHouseDriver) dbFor(database string) (*sql.DB, error) {
 	defer c.mu.Unlock()
 
 	if pool, ok := c.pools[database]; ok {
+		for i, name := range c.poolOrder {
+			if name == database {
+				c.poolOrder = append(c.poolOrder[:i], c.poolOrder[i+1:]...)
+				break
+			}
+		}
+		c.poolOrder = append(c.poolOrder, database)
 		return pool, nil
 	}
 
@@ -79,7 +90,16 @@ func (c *ClickHouseDriver) dbFor(database string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	for len(c.poolOrder) >= maxExtraPools {
+		evict := c.poolOrder[0]
+		c.poolOrder = c.poolOrder[1:]
+		if oldPool, exists := c.pools[evict]; exists {
+			_ = oldPool.Close()
+			delete(c.pools, evict)
+		}
+	}
 	c.pools[database] = pool
+	c.poolOrder = append(c.poolOrder, database)
 	return pool, nil
 }
 
