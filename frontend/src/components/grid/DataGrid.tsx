@@ -439,6 +439,8 @@ export interface SortConfig {
 }
 
 const EMPTY_STAGED: Record<number, any> = {};
+const EMPTY_PRIMARY_KEYS: string[] = [];
+const EMPTY_SORT_CONFIGS: SortConfig[] = [];
 
 export interface WhereSuggestionItem {
   id: string;
@@ -669,7 +671,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   isReadOnly = false,
   columns,
   rows,
-  primaryKeys = [],
+  primaryKeys = EMPTY_PRIMARY_KEYS,
   onSubmitChanges,
   onPreviewChanges,
   totalCount,
@@ -689,7 +691,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   errorMessage,
   onApplyWhere,
   isTableTab = false,
-  sortConfigs = [],
+  sortConfigs = EMPTY_SORT_CONFIGS,
   onSortChange,
   envType = 'local',
   rawSql,
@@ -717,6 +719,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   );
   const prevTabTableKeyRef = useRef<string>(`${tabId || ''}::${tableName || ''}`);
   const hasInitializedPKsRef = useRef<boolean>(false);
+  const primaryKeysKey = primaryKeys.join(',');
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
@@ -734,7 +737,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       hasInitializedPKsRef.current = true;
       setFrozenColumns((prev) => Array.from(new Set([...prev, ...uniquePKs])));
     }
-  }, [tabId, tableName, columns, primaryKeys]);
+  }, [tabId, tableName, columns, primaryKeysKey]);
 
   const isRedis = useMemo(() => {
     if ((driver || '').toLowerCase() === 'redis') return true;
@@ -1143,16 +1146,25 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
       if (saved[col.name] && typeof saved[col.name] === 'number') {
         newWidths[col.name] = Math.max(saved[col.name], minRequired);
-      } else if (colWidths[col.name]) {
-        newWidths[col.name] = Math.max(colWidths[col.name], minRequired);
+      } else if (currentWidthsRef.current[col.name]) {
+        newWidths[col.name] = Math.max(currentWidthsRef.current[col.name], minRequired);
       } else {
         newWidths[col.name] = getInitialColumnWidth(col, rows, idx, isPK);
       }
     });
 
-    setColWidths(newWidths);
-    currentWidthsRef.current = newWidths;
-  }, [columns, storageKey, primaryKeys]);
+    const prevWidths = currentWidthsRef.current;
+    const prevKeys = Object.keys(prevWidths);
+    const nextKeys = Object.keys(newWidths);
+    const changed =
+      prevKeys.length !== nextKeys.length ||
+      nextKeys.some((k) => prevWidths[k] !== newWidths[k]);
+
+    if (changed) {
+      currentWidthsRef.current = newWidths;
+      setColWidths(newWidths);
+    }
+  }, [columns, storageKey, primaryKeysKey]);
 
   // When rows arrive asynchronously and user hasn't resized manually, recalculate initial widths
   useLayoutEffect(() => {
@@ -1179,7 +1191,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         return prev;
       });
     }
-  }, [rows.length, columns, storageKey, primaryKeys]);
+  }, [rows.length, columns, storageKey, primaryKeysKey]);
 
   const handleResizeStart = (e: React.MouseEvent, colName: string) => {
     e.stopPropagation();
