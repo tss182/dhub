@@ -682,6 +682,41 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			return "", fmt.Errorf("failed to write clickhouse backup: %w", err)
 		}
 
+	case "oracle":
+		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+		if err != nil {
+			return "", err
+		}
+		targetSchema := strings.TrimSpace(opts.Schema)
+		objs, err := drv.ListObjects(ctx, database, targetSchema)
+		if err != nil {
+			return "", fmt.Errorf("failed to list oracle objects: %w", err)
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("-- Oracle SQL Backup for database %s\n\n", database))
+		for _, obj := range objs {
+			if opts.TableSelection == "include" && len(opts.Tables) > 0 {
+				found := false
+				for _, t := range opts.Tables {
+					if t == obj.Name || t == obj.Schema+"."+obj.Name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+			if obj.Type == "table" {
+				if tStruct, sErr := drv.GetTableStructure(ctx, database, obj.Schema, obj.Name); sErr == nil && tStruct.DDL != "" {
+					sb.WriteString(strings.TrimSpace(tStruct.DDL) + "\n\n")
+				}
+			}
+		}
+		if err := os.WriteFile(filePath, []byte(sb.String()), 0o644); err != nil {
+			return "", fmt.Errorf("failed to write oracle backup: %w", err)
+		}
+
 	default:
 		return "", fmt.Errorf("unsupported driver for backup: %s", conn.Driver)
 	}
@@ -989,6 +1024,24 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 			return "", fmt.Errorf("clickhouse restore failed: %w", err)
 		}
 
+	case "oracle":
+		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+		if err != nil {
+			return "", err
+		}
+		sqlBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read restore file: %w", err)
+		}
+		_, err = drv.Execute(ctx, driver.QueryRequest{
+			ConnectionID: connectionID,
+			Database:     database,
+			SQL:          string(sqlBytes),
+		})
+		if err != nil {
+			return "", fmt.Errorf("oracle restore failed: %w", err)
+		}
+
 	default:
 		return "", fmt.Errorf("unsupported driver for restore: %s", conn.Driver)
 	}
@@ -1214,14 +1267,16 @@ func (s *SchemaService) GetDatabaseDDL(connectionID, database, schema string) (s
 	var schemas []string
 	if schema != "" {
 		schemas = []string{schema}
-	} else if driverName == "postgres" || driverName == "mssql" {
+	} else if driverName == "postgres" || driverName == "mssql" || driverName == "oracle" {
 		listed, listErr := drv.ListSchemas(ctx, database)
 		if listErr == nil && len(listed) > 0 {
 			schemas = listed
 		} else if driverName == "postgres" {
 			schemas = []string{"public"}
-		} else {
+		} else if driverName == "mssql" {
 			schemas = []string{"dbo"}
+		} else {
+			schemas = []string{""}
 		}
 	} else {
 		schemas = []string{database}

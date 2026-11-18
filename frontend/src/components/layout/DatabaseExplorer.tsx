@@ -196,8 +196,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       title: `${conn.name} - Users`,
       connectionId: conn.id,
       driver: conn.driver,
-      database: conn.databaseName || (conn.driver === 'postgres' ? 'postgres' : conn.driver === 'mssql' ? 'master' : 'mysql'),
-      schema: conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : 'main',
+      database: conn.databaseName || (conn.driver === 'postgres' ? 'postgres' : conn.driver === 'mssql' ? 'master' : conn.driver === 'oracle' ? 'ORCL' : 'mysql'),
+      schema: conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : conn.driver === 'oracle' ? (conn.username || 'SYSTEM').toUpperCase() : 'main',
     });
   };
 
@@ -496,7 +496,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     });
 
     try {
-      const targetSchema = conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : database;
+      const targetSchema = conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : conn.driver === 'oracle' ? '' : database;
       const objs = await SchemaService.GetObjects(conn.id, database, targetSchema);
       const tables = (objs || [])
         .filter((o) => o.type === 'table')
@@ -776,15 +776,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           conn?.databaseName && prefetchedDbs.includes(conn.databaseName)
             ? conn.databaseName
             : prefetchedDbs[0] || conn?.databaseName || 'main';
-        const currentSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : currentDb;
+        const currentSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || '').toUpperCase() : currentDb;
         setActiveConnection(connId, currentDb, currentSchema);
 
         // Pre-fetch objects for visible databases in background
         for (const dbName of prefetchedDbs) {
-          if (conn?.driver === 'postgres' || conn?.driver === 'mssql') {
+          if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
             SchemaService.GetSchemas(connId, dbName)
               .then((schemas) => {
-                const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : 'public';
+                const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
                 const safeSchemas = schemas && schemas.length > 0 ? schemas : [defaultSchema];
                 setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
                 for (const s of safeSchemas) {
@@ -829,10 +829,10 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     toggleNode(nodeKey);
     const conn = connections.find((c) => c.id === connId);
 
-    if (conn?.driver === 'postgres' || conn?.driver === 'mssql') {
+    if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
       try {
         let schemas = treeSchemas[nodeKey];
-        const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : 'public';
+        const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
         if (!schemas || schemas.length === 0) {
           schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
           if (schemas.length === 0) schemas = [defaultSchema];
@@ -1293,9 +1293,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   // Database handlers
   const handleRefreshDatabase = async (connId: string, dbName: string) => {
     const conn = connections.find((c) => c.id === connId);
-    if (conn?.driver === 'postgres' || conn?.driver === 'mssql') {
+    if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
       try {
-        const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : 'public';
+        const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
         const schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
         const safeSchemas = schemas.length > 0 ? schemas : [defaultSchema];
         setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
@@ -1956,9 +1956,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
       content = `-- MongoDB Query Console for ${targetDb}\n-- Run Mongo shell syntax or SQL:\n-- e.g. db.${tableName || 'collection'}.find() or SELECT * FROM ${tableName || 'collection'}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `db.${tableName}.find()` : `show collections`};\n`;
     } else if (tableName) {
       const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb' || conn?.driver === 'clickhouse') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
-      content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
+      content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : conn?.driver === 'oracle' ? `SELECT * FROM ${quoted} FETCH FIRST 100 ROWS ONLY;\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
     } else {
-      content += `SELECT 1;\n`;
+      content += conn?.driver === 'oracle' ? `SELECT 1 FROM DUAL;\n` : `SELECT 1;\n`;
     }
 
     openTab({
@@ -2486,8 +2486,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       {/* Tables & Views under this database */}
                       {isDbExpanded && (
                         <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
-                          {c.driver === 'postgres' || c.driver === 'mssql' ? (
-                            (treeSchemas[`${c.id}:${dbName}`] || (c.driver === 'mssql' ? ['dbo'] : ['public'])).map((sName) => {
+                          {c.driver === 'postgres' || c.driver === 'mssql' || c.driver === 'oracle' ? (
+                            (treeSchemas[`${c.id}:${dbName}`] || (c.driver === 'mssql' ? ['dbo'] : c.driver === 'oracle' ? [(c.username || 'SYSTEM').toUpperCase()] : ['public'])).map((sName) => {
                               const sNodeKey = `${c.id}:${dbName}:schema:${sName}`;
                               const isSExpanded = expandedNodes[sNodeKey] !== false; // default open
                               const sKey = `${c.id}:${dbName}:${sName}`;

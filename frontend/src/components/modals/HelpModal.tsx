@@ -824,6 +824,7 @@ export const HelpModal: React.FC = () => {
                         { id: 'mariadb', name: 'MariaDB', port: '3306', tag: 'SQL' },
                         { id: 'sqlite', name: 'SQLite', port: 'File', tag: 'SQL' },
                         { id: 'mssql', name: 'SQL Server', port: '1433', tag: 'SQL' },
+                        { id: 'oracle', name: 'Oracle', port: '1521', tag: 'SQL' },
                         { id: 'clickhouse', name: 'ClickHouse', port: '9000', tag: 'OLAP' },
                         { id: 'mongodb', name: 'MongoDB', port: '27017', tag: 'NoSQL' },
                         { id: 'redis', name: 'Redis', port: '6379', tag: 'Key-Value' },

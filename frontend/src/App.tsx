@@ -351,7 +351,7 @@ export function App() {
     try {
       const tabConn = connections.find((c) => c.id === tab.connectionId);
       const targetDb = tab.database || tabConn?.databaseName || 'main';
-      const targetSchema = tab.schema || (tabConn?.driver === 'postgres' ? 'public' : tabConn?.driver === 'mssql' ? 'dbo' : targetDb);
+      const targetSchema = tab.schema || (tabConn?.driver === 'postgres' ? 'public' : tabConn?.driver === 'mssql' ? 'dbo' : tabConn?.driver === 'oracle' ? '' : targetDb);
       const struct = await SchemaService.GetTableStructure(
         tab.connectionId,
         targetDb,
@@ -631,7 +631,7 @@ export function App() {
         let schema =
           queryPagination.schema ||
           activeTab.schema ||
-          (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : baseDb);
+          (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : driver === 'oracle' ? '' : baseDb);
         if (parsed.qualifier) {
           if (isMy) {
             db = parsed.qualifier;
@@ -1132,7 +1132,7 @@ export function App() {
       const isMySQL = (conn?.driver || tab.driver) === 'mysql' || (conn?.driver || tab.driver) === 'mariadb';
       const isMSSQL = (conn?.driver || tab.driver) === 'mssql';
       const targetDb = tab.database || conn?.databaseName || 'main';
-      const targetSchema = tab.schema || ((conn?.driver || tab.driver) === 'postgres' ? 'public' : isMSSQL ? 'dbo' : targetDb);
+      const targetSchema = tab.schema || ((conn?.driver || tab.driver) === 'postgres' ? 'public' : isMSSQL ? 'dbo' : (conn?.driver || tab.driver) === 'oracle' ? '' : targetDb);
 
       // 1. Fetch table structure for primary keys & detailed column definitions (size, nullability, comment, etc.)
       if (primaryKeys.length === 0 || structureColumns.length === 0 || !structureColumns[0]?.dataType?.includes('(')) {

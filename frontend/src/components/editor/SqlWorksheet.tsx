@@ -269,6 +269,170 @@ function isDangerousQuery(sqlText: string): boolean {
   return false;
 }
 
+const TOP_LEVEL_STMT_START_RE =
+  /^(?:SELECT|WITH|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|EXPLAIN|SHOW|DESCRIBE|DESC|PRAGMA|USE|CALL|EXEC|MERGE|REPLACE|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|SET)\b/i;
+
+function stripLeadingSqlComments(sqlText: string): string {
+  let i = 0;
+  const len = sqlText.length;
+  while (i < len) {
+    if (/\s/.test(sqlText[i])) {
+      i++;
+    } else if (sqlText[i] === '-' && sqlText[i + 1] === '-') {
+      const nl = sqlText.indexOf('\n', i + 2);
+      i = nl === -1 ? len : nl + 1;
+    } else if (sqlText[i] === '/' && sqlText[i + 1] === '*') {
+      const end = sqlText.indexOf('*/', i + 2);
+      i = end === -1 ? len : end + 2;
+    } else {
+      break;
+    }
+  }
+  return sqlText.slice(i);
+}
+
+function splitSemicolonSegments(fullText: string): Array<{ start: number; end: number; hasSemi: boolean }> {
+  const segments: Array<{ start: number; end: number; hasSemi: boolean }> = [];
+  let segStart = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let inBacktick = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < fullText.length; i++) {
+    const ch = fullText[i];
+    const next = fullText[i + 1];
+
+    if (inLineComment) {
+      if (ch === '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'" && next === "'") {
+        i++;
+      } else if (ch === '\\' && next) {
+        i++;
+      } else if (ch === "'") {
+        inSingle = false;
+      }
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"' && next === '"') {
+        i++;
+      } else if (ch === '"') {
+        inDouble = false;
+      }
+      continue;
+    }
+    if (inBacktick) {
+      if (ch === '`' && next === '`') {
+        i++;
+      } else if (ch === '`') {
+        inBacktick = false;
+      }
+      continue;
+    }
+
+    if (ch === '-' && next === '-') {
+      inLineComment = true;
+      i++;
+    } else if (ch === '/' && next === '*') {
+      inBlockComment = true;
+      i++;
+    } else if (ch === "'") {
+      inSingle = true;
+    } else if (ch === '"') {
+      inDouble = true;
+    } else if (ch === '`') {
+      inBacktick = true;
+    } else if (ch === ';') {
+      segments.push({ start: segStart, end: i, hasSemi: true });
+      segStart = i + 1;
+    }
+  }
+
+  if (segStart <= fullText.length) {
+    segments.push({ start: segStart, end: fullText.length, hasSemi: false });
+  }
+  return segments;
+}
+
+function findActiveSqlStatement(fullText: string, offset: number): string {
+  const segments = splitSemicolonSegments(fullText);
+  const blocks: Array<{ start: number; end: number; lineStart: number; lineEnd: number; text: string }> = [];
+
+  for (const seg of segments) {
+    const segText = fullText.slice(seg.start, seg.end);
+    if (!segText.trim()) continue;
+
+    // Further split semicolon-free segments on blank lines when the next block starts a new SQL statement
+    const subRanges: Array<{ start: number; end: number }> = [];
+    const blankLineRe = /\r?\n[ \t]*\r?\n+/g;
+    let subStart = seg.start;
+    let match: RegExpExecArray | null;
+
+    while ((match = blankLineRe.exec(segText)) !== null) {
+      const splitAt = seg.start + match.index;
+      const afterStart = splitAt + match[0].length;
+      const beforeChunk = fullText.slice(subStart, splitAt).trim();
+      const afterChunk = stripLeadingSqlComments(fullText.slice(afterStart, seg.end));
+      const prevEndsWithClause = /\b(?:AS|UNION|ALL|INTERSECT|EXCEPT)\s*$|[,(]\s*$/i.test(beforeChunk);
+
+      if (beforeChunk && !prevEndsWithClause && TOP_LEVEL_STMT_START_RE.test(afterChunk)) {
+        subRanges.push({ start: subStart, end: splitAt });
+        subStart = afterStart;
+      }
+    }
+    subRanges.push({ start: subStart, end: seg.end });
+
+    for (let idx = 0; idx < subRanges.length; idx++) {
+      const r = subRanges[idx];
+      const raw = fullText.slice(r.start, r.end);
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+
+      const leadingWs = raw.length - raw.trimStart().length;
+      const trailingWs = raw.length - raw.trimEnd().length;
+      const stmtStart = r.start + leadingWs;
+      const stmtEnd = r.end - trailingWs;
+      const isLastSub = idx === subRanges.length - 1;
+      const endWithSemi = isLastSub && seg.hasSemi ? seg.end + 1 : stmtEnd;
+
+      // Expand to line boundaries (without crossing into previous/next lines' statements)
+      const prevNl = fullText.lastIndexOf('\n', Math.max(0, stmtStart - 1));
+      const lineStart = prevNl === -1 ? 0 : prevNl + 1;
+      const nextNl = fullText.indexOf('\n', endWithSemi);
+      const lineEnd = nextNl === -1 ? fullText.length : nextNl;
+
+      blocks.push({
+        start: stmtStart,
+        end: endWithSemi,
+        lineStart,
+        lineEnd,
+        text: trimmed,
+      });
+    }
+  }
+
+  // Exact match on statement span (including trailing semicolon or line indentation/end)
+  for (const b of blocks) {
+    if (offset >= b.lineStart && offset <= b.lineEnd) {
+      return b.text;
+    }
+  }
+
+  return '';
+}
+
 interface SqlWorksheetProps {
   tabId?: string;
   sql: string;
@@ -536,11 +700,17 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     };
   }, [connection?.id, database, schema, schemaMetadata]);
 
-  // Register SQL completion item provider with Monaco
+  // Register SQL completion item provider with Monaco (singleton to prevent duplicate suggestions)
   useEffect(() => {
+    const GLOBAL_PROVIDER_KEY = '__dhub_sql_completion_provider__';
+    const prevProvider = (window as unknown as Record<string, monaco.IDisposable | undefined>)[GLOBAL_PROVIDER_KEY];
+    if (prevProvider) {
+      prevProvider.dispose();
+    }
+
     const provider = monaco.languages.registerCompletionItemProvider('sql', {
-      triggerCharacters: ['.', ' ', '(', ',', '\n'],
-      provideCompletionItems: async (model, position) => {
+      triggerCharacters: ['.', ' ', '(', ','],
+      provideCompletionItems: async (model, position, context) => {
         const lineContent = model.getLineContent(position.lineNumber);
         const textUntilPosition = lineContent.slice(0, position.column - 1);
 
@@ -549,6 +719,14 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           return { suggestions: [] };
         }
         if (textUntilPosition.includes('--')) {
+          return { suggestions: [] };
+        }
+
+        // Do not auto-pop suggestions on empty/whitespace-only lines (e.g. pressing Enter repeatedly)
+        if (
+          context.triggerKind !== monaco.languages.CompletionTriggerKind.Invoke &&
+          textUntilPosition.trim() === ''
+        ) {
           return { suggestions: [] };
         }
 
@@ -562,9 +740,25 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
         const { connectionId, database, schema, driver, tableMap, availableDatabases } = metadataRef.current;
         const suggestions: monaco.languages.CompletionItem[] = [];
+        const dedupeSuggestions = (items: monaco.languages.CompletionItem[]): monaco.languages.CompletionItem[] => {
+          const seen = new Set<string>();
+          return items.filter((item) => {
+            const labelStr = typeof item.label === 'string' ? item.label : item.label.label;
+            const key = `${item.kind ?? ''}:${labelStr.toLowerCase()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        };
 
         // Check if typing after a dot: e.g. "users." or "u." or "mydb."
         const textBeforeWord = lineContent.slice(0, word.startColumn - 1);
+        const recentTextBeforeWord = model.getValueInRange({
+          startLineNumber: Math.max(1, position.lineNumber - 3),
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: word.startColumn,
+        });
         const dotMatch = /([a-zA-Z0-9_`"\[\]]+)\.\s*$/.exec(textBeforeWord);
 
         const fullSql = model.getValue();
@@ -617,7 +811,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               range,
             });
 
-            return { suggestions };
+            return { suggestions: dedupeSuggestions(suggestions) };
           }
 
           // Check if qualifier is a database / schema name
@@ -635,7 +829,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               });
             });
 
-            return { suggestions };
+            return { suggestions: dedupeSuggestions(suggestions) };
           }
 
           return { suggestions: [] };
@@ -715,11 +909,11 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             });
           });
 
-          return { suggestions };
+          return { suggestions: dedupeSuggestions(suggestions) };
         }
 
         // 2. Check for JOIN context: e.g. "JOIN ", "INNER JOIN ", "LEFT JOIN "
-        const joinMatch = /\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|CROSS\s+)?JOIN\s+([a-zA-Z0-9_`"\[\]]*)$/i.exec(textBeforeWord);
+        const joinMatch = /\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|CROSS\s+)?JOIN\s+([a-zA-Z0-9_`"\[\]]*)$/i.exec(recentTextBeforeWord);
         if (joinMatch) {
           const suggestedJoins = new Set<string>();
 
@@ -782,11 +976,11 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             });
           });
 
-          return { suggestions };
+          return { suggestions: dedupeSuggestions(suggestions) };
         }
 
         // Check if cursor is immediately after a table-expecting keyword: FROM, JOIN, UPDATE, INTO, TABLE
-        const isTableContext = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([a-zA-Z0-9_`"\[\]]*)$/i.test(textBeforeWord);
+        const isTableContext = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([a-zA-Z0-9_`"\[\]]*)$/i.test(recentTextBeforeWord);
 
         // 1. Tables and Views
         tableMap.forEach((tbl) => {
@@ -831,6 +1025,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               label: fn.label,
               kind: monaco.languages.CompletionItemKind.Function,
               detail: fn.detail,
+              filterText: `${fn.label.toLowerCase()} ${fn.label}`,
               insertText: fn.snippet || fn.label,
               insertTextRules: fn.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
               sortText: `3_${fn.label}`,
@@ -844,6 +1039,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               label: kw.label,
               kind: kw.snippet && kw.snippet.includes('${') ? monaco.languages.CompletionItemKind.Snippet : monaco.languages.CompletionItemKind.Keyword,
               detail: kw.detail,
+              filterText: `${kw.label.toLowerCase()} ${kw.label}`,
               insertText: kw.snippet || kw.label,
               insertTextRules: kw.snippet && kw.snippet.includes('${') ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
               sortText: `4_${kw.label}`,
@@ -852,12 +1048,18 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           });
         }
 
-        return { suggestions };
+        return { suggestions: dedupeSuggestions(suggestions) };
       },
     });
 
+    (window as unknown as Record<string, monaco.IDisposable | undefined>)[GLOBAL_PROVIDER_KEY] = provider;
+
     return () => {
       provider.dispose();
+      const store = window as unknown as Record<string, monaco.IDisposable | undefined>;
+      if (store[GLOBAL_PROVIDER_KEY] === provider) {
+        delete store[GLOBAL_PROVIDER_KEY];
+      }
     };
   }, []);
 
@@ -896,14 +1098,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     const fullText = model.getValue();
     const offset = model.getOffsetAt(pos);
 
-    const before = fullText.lastIndexOf(';', Math.max(0, offset - 1));
-    const after = fullText.indexOf(';', offset);
-
-    const startIdx = before === -1 ? 0 : before + 1;
-    const endIdx = after === -1 ? fullText.length : after;
-
-    const candidate = fullText.slice(startIdx, endIdx).trim();
-    return candidate || fullText.trim();
+    return findActiveSqlStatement(fullText, offset);
   }, []);
 
   const extractAllStatements = useCallback((): string => {
@@ -981,6 +1176,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       else if (drv === 'mssql') lang = 'transactsql';
       else if (drv === 'sqlite') lang = 'sqlite';
       else if (drv === 'clickhouse') lang = 'sql';
+      else if (drv === 'oracle') lang = 'plsql';
 
       const formatted = format(sql, {
         language: lang,
@@ -1017,6 +1213,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       prefix = 'EXPLAIN QUERY PLAN ';
     } else if (drv === 'clickhouse') {
       prefix = isAnalyze ? 'EXPLAIN PIPELINE ' : 'EXPLAIN ';
+    } else if (drv === 'oracle') {
+      prefix = 'EXPLAIN PLAN FOR ';
     }
 
     const explainSql = prefix + stmt;

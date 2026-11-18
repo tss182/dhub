@@ -1149,7 +1149,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [isLoadingStructure, setIsLoadingStructure] = useState(false);
 
   const driver = connection?.driver || 'mysql';
-  const targetSchema = schema || (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : database);
+  const targetSchema = schema || (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : driver === 'oracle' ? '' : database);
 
   const typeGroups = useMemo(() => {
     if (driver === 'postgres') return POSTGRES_TYPE_GROUPS;
@@ -2345,7 +2345,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                           <span className="text-[#dfe1e5]">Not Null</span>
                         </label>
 
-                        {(driver === 'mysql' || driver === 'mariadb' || driver === 'sqlite' || driver === 'mssql') && (
+                        {(driver === 'mysql' || driver === 'mariadb' || driver === 'sqlite' || driver === 'mssql' || driver === 'oracle') && (
                           <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
                               type="checkbox"
@@ -2353,7 +2353,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                               onChange={(e) => handleUpdateColumn(activeCol.id, { isAutoIncrement: e.target.checked })}
                               className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
                             />
-                            <span className="text-[#dfe1e5]">{driver === 'mssql' ? 'Identity' : 'Auto Increment'}</span>
+                            <span className="text-[#dfe1e5]">{driver === 'mssql' || driver === 'oracle' ? 'Identity' : 'Auto Increment'}</span>
                           </label>
                         )}
 

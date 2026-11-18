@@ -331,14 +331,14 @@ export const SearchEverywhere: React.FC = () => {
 
           const conn = connections.find((c) => c.id === item.connectionId);
           const driver = conn?.driver;
-          const isMultiSchema = driver === 'postgres' || driver === 'mssql';
+          const isMultiSchema = driver === 'postgres' || driver === 'mssql' || driver === 'oracle';
 
           let effectiveSchema = item.schemaName || '';
           if (!isMultiSchema) {
             effectiveSchema = driver === 'sqlite' ? 'main' : (item.databaseName || '');
           } else {
             if (!effectiveSchema || effectiveSchema === 'main' || effectiveSchema === item.databaseName) {
-              effectiveSchema = driver === 'mssql' ? 'dbo' : 'public';
+              effectiveSchema = driver === 'mssql' ? 'dbo' : driver === 'oracle' ? '' : 'public';
             }
           }
 

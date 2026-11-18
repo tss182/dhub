@@ -102,7 +102,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : 5432));
+          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : conn.driver === 'oracle' ? 1521 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -140,7 +140,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : 5432));
+          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : existing.driver === 'oracle' ? 1521 : 5432));
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -187,7 +187,7 @@ export const ConnectionDialog: React.FC = () => {
 
   if (!isConnectionDialogOpen) return null;
 
-  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse') => {
+  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle') => {
     setDriver(d);
     if (d === 'mysql' || d === 'mariadb') {
       setPort(3306);
@@ -222,6 +222,11 @@ export const ConnectionDialog: React.FC = () => {
       setPort(9000);
       if (username === 'postgres' || username === 'root' || username === 'sa') setUsername('default');
       if (!databaseName || databaseName === 'postgres' || databaseName === 'master' || databaseName === '0' || databaseName === 'admin') setDatabaseName('default');
+      setSslMode('disable');
+    } else if (d === 'oracle') {
+      setPort(1521);
+      if (username === 'postgres' || username === 'root' || username === 'sa' || username === 'default') setUsername('system');
+      if (!databaseName || databaseName === 'postgres' || databaseName === 'master' || databaseName === '0' || databaseName === 'admin' || databaseName === 'default') setDatabaseName('ORCL');
       setSslMode('disable');
     }
   };
@@ -705,7 +710,7 @@ export const ConnectionDialog: React.FC = () => {
 
                   <div>
                     <label className="block text-[11px] text-zinc-400 mb-1">
-                      {driver === 'redis' ? 'Database Index' : 'Database Name'}{' '}
+                      {driver === 'redis' ? 'Database Index' : driver === 'oracle' ? 'Service Name' : 'Database Name'}{' '}
                       {(driver === 'mysql' || driver === 'mariadb') && (
                         <span className="text-zinc-500 text-[10px] lowercase">(leave empty to show all databases)</span>
                       )}
@@ -726,6 +731,8 @@ export const ConnectionDialog: React.FC = () => {
                           ? 'admin'
                           : driver === 'clickhouse'
                           ? 'default'
+                          : driver === 'oracle'
+                          ? 'e.g. ORCL or FREEPDB1'
                           : 'e.g. postgres'
                       }
                       value={databaseName}

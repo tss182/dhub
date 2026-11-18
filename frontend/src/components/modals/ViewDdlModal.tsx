@@ -45,6 +45,8 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
           ? 'public'
           : connection.driver === 'mssql'
           ? 'dbo'
+          : connection.driver === 'oracle'
+          ? ''
           : targetDb);
 
       if (scope === 'table') {

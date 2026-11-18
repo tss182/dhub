@@ -204,11 +204,13 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         ? 'master'
         : connection.driver === 'clickhouse'
         ? 'default'
+        : connection.driver === 'oracle'
+        ? 'ORCL'
         : connection.driver === 'redis'
         ? 'db0'
         : 'mysql');
     const targetSchema =
-      connection.driver === 'postgres' ? 'public' : connection.driver === 'mssql' ? 'dbo' : 'main';
+      connection.driver === 'postgres' ? 'public' : connection.driver === 'mssql' ? 'dbo' : connection.driver === 'oracle' ? '' : 'main';
 
     try {
       if (isMySQLLike(connection.driver)) {
@@ -340,6 +342,43 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
             plugin: r[1] ? String(r[1]) : undefined,
             canLogin: true,
           }));
+          setUsers(parsed);
+        }
+      } else if (connection.driver === 'oracle') {
+        let res: any = null;
+        try {
+          res = await QueryService.ExecuteQuery({
+            executionId: execId,
+            connectionId: connection.id,
+            database: targetDb,
+            schema: targetSchema,
+            sql: `SELECT USERNAME, ACCOUNT_STATUS FROM DBA_USERS ORDER BY USERNAME`,
+            limit: 500,
+            offset: 0,
+          } as any);
+        } catch {
+          res = await QueryService.ExecuteQuery({
+            executionId: `${execId}-all`,
+            connectionId: connection.id,
+            database: targetDb,
+            schema: targetSchema,
+            sql: `SELECT USERNAME, 'OPEN' FROM ALL_USERS ORDER BY USERNAME`,
+            limit: 500,
+            offset: 0,
+          } as any);
+        }
+
+        if (res && res.rows) {
+          const parsed: DatabaseUser[] = (res.rows as any[]).filter(Boolean).map((r: any) => {
+            const status = String(r[1] ?? 'OPEN');
+            const locked = status.toUpperCase().includes('LOCKED');
+            return {
+              username: String(r[0] ?? ''),
+              plugin: status,
+              isLocked: locked,
+              canLogin: !locked,
+            };
+          });
           setUsers(parsed);
         }
       } else if (connection.driver === 'redis') {
@@ -845,6 +884,9 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       } else if (connection.driver === 'clickhouse') {
         const safeUser = user.username.replace(/`/g, '``');
         sql = `ALTER USER \`${safeUser}\` IDENTIFIED BY '${password.replace(/'/g, "\\'")}';`;
+      } else if (connection.driver === 'oracle') {
+        const safeUser = user.username.replace(/"/g, '""');
+        sql = `ALTER USER "${safeUser}" IDENTIFIED BY "${password.replace(/"/g, '""')}"`;
       } else if (connection.driver === 'redis') {
         sql = `ACL SETUSER ${user.username} >${password}`;
       }
@@ -896,6 +938,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
           ? `DROP USER IF EXISTS [${u.username.replace(/\]/g, ']]')}]; DROP LOGIN [${u.username.replace(/\]/g, ']]')}];`
           : connection.driver === 'clickhouse'
           ? `DROP USER IF EXISTS \`${u.username.replace(/`/g, '``')}\`;`
+          : connection.driver === 'oracle'
+          ? `DROP USER "${u.username.replace(/"/g, '""')}" CASCADE`
           : connection.driver === 'redis'
           ? `ACL DELUSER ${u.username}`
           : `DROP ROLE "${u.username}";`;

@@ -17,6 +17,7 @@ import (
 	"dhub/internal/driver/mongodb"
 	"dhub/internal/driver/mssql"
 	"dhub/internal/driver/mysql"
+	"dhub/internal/driver/oracle"
 	"dhub/internal/driver/postgres"
 	redisdriver "dhub/internal/driver/redis"
 	"dhub/internal/driver/sqlite"
@@ -25,6 +26,7 @@ import (
 
 	mysqldriver "github.com/go-sql-driver/mysql"
 	goredis "github.com/redis/go-redis/v9"
+	go_ora "github.com/sijms/go-ora/v2"
 )
 
 type Session struct {
@@ -446,6 +448,34 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 
 		u.RawQuery = q.Encode()
 		return clickhouse.NewClickHouseDriver(u.String())
+	case "oracle":
+		connStr := strings.TrimSpace(cfg.Host)
+		dbName := strings.TrimSpace(cfg.DatabaseName)
+		if dbName == "" {
+			dbName = "ORCL"
+		}
+		if strings.HasPrefix(connStr, "oracle://") {
+			return oracle.NewOracleDriver(connStr, dbName)
+		}
+		if port <= 0 {
+			port = 1521
+		}
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		urlOptions := map[string]string{
+			"CONNECTION TIMEOUT": "10",
+		}
+		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+			urlOptions["SSL"] = "true"
+			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+				urlOptions["SSL Verify"] = "false"
+			} else {
+				urlOptions["SSL Verify"] = "true"
+			}
+		}
+		dsn := go_ora.BuildUrl(host, port, dbName, cfg.Username, cfg.Password, urlOptions)
+		return oracle.NewOracleDriver(dsn, dbName)
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}

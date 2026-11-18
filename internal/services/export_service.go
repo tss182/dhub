@@ -203,7 +203,7 @@ func quoteIdentifier(driverType, name string) string {
 	switch strings.ToLower(driverType) {
 	case "mysql", "mariadb", "clickhouse":
 		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-	case "postgres", "sqlite":
+	case "postgres", "sqlite", "oracle":
 		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 	case "mssql", "sqlserver":
 		return "[" + strings.ReplaceAll(name, "]", "]]") + "]"

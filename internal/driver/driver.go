@@ -16,6 +16,7 @@ const (
 	DriverMSSQL      DriverType = "mssql"
 	DriverMongoDB    DriverType = "mongodb"
 	DriverClickHouse DriverType = "clickhouse"
+	DriverOracle     DriverType = "oracle"
 )
 
 type ColumnMeta struct {

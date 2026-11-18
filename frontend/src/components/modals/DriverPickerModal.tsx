@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Search, Check, Database } from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
 
-export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse';
+export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle';
 
 export interface DriverOption {
   id: DriverType;
@@ -68,6 +68,13 @@ export const DRIVER_OPTIONS: DriverOption[] = [
     category: 'Column-Oriented',
     tag: 'SQL',
     description: 'Blazing-fast column-oriented analytical database',
+  },
+  {
+    id: 'oracle',
+    name: 'Oracle',
+    category: 'Relational',
+    tag: 'SQL',
+    description: 'Enterprise multi-model relational database',
   },
 ];
 

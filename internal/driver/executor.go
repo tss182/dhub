@@ -37,6 +37,12 @@ func wrapSelectForPaging(stmt string, limit, offset int, dialect string) (string
 		}
 		return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page ORDER BY (SELECT NULL) OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", trimmed, offset, limit+1), true
 	}
+	if dialect == "oracle" {
+		if strings.Contains(upper, "ROWNUM") {
+			return "", false
+		}
+		return fmt.Sprintf("SELECT * FROM (%s) dhub_page OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", trimmed, offset, limit+1), true
+	}
 	return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page LIMIT %d OFFSET %d", trimmed, limit+1, offset), true
 }
 
