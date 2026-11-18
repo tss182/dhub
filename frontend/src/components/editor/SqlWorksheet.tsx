@@ -906,6 +906,11 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     return candidate || fullText.trim();
   }, []);
 
+  const extractAllStatements = useCallback((): string => {
+    const model = editorRef.current?.getModel();
+    return model ? model.getValue().trim() : '';
+  }, []);
+
   const proceedExecution = useCallback(
     async (statementText: string, targetDb?: string) => {
       const effectiveDb = targetDb || databaseRef.current;
@@ -1080,6 +1085,12 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       if (stmt) executeWithChecks(stmt, databaseRef.current);
     });
 
+    // Shortcut Ctrl+Shift+Enter / Cmd+Shift+Enter to execute ALL statements in the editor
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
+      const all = extractAllStatements();
+      if (all) executeWithChecks(all, databaseRef.current);
+    });
+
     // Shortcut Shift+Alt+F to format SQL
     editor.addCommand(
       monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
@@ -1135,6 +1146,17 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             >
               <Square className="h-3.5 w-3.5 fill-current" />
               <span>Stop</span>
+            </button>
+          )}
+
+          {!isRunning && (
+            <button
+              onClick={() => executeWithChecks(extractAllStatements(), database)}
+              className="flex items-center gap-1.5 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] px-2 py-1 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+              title={`Run All Statements in Editor, one result tab each (${modKey}+Shift+Enter)`}
+            >
+              <Play className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Run All</span>
             </button>
           )}
 

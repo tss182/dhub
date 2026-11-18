@@ -75,6 +75,24 @@ import {
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 import { UserManager } from './components/users/UserManager';
+import { parseSingleTableSelect } from './utils/querySource';
+
+interface ChangeTarget {
+  stagedKey: string;
+  connectionId: string;
+  database: string;
+  schema: string;
+  table: string;
+  onApplied: () => void;
+}
+
+interface ResultSource {
+  table: string;
+  database: string;
+  schema: string;
+  primaryKeys: string[];
+  columns: ColumnMeta[];
+}
 
 export function App() {
   const {
@@ -577,6 +595,88 @@ export function App() {
     database: '',
     schema: '',
   };
+
+  // Editable source table detection for console query results
+  const [resultSourceByKey, setResultSourceByKey] = useState<Record<string, ResultSource | null>>({});
+  const activeResultRes: any =
+    queryResult?.results && queryResult.results[activeResultIndex]
+      ? queryResult.results[activeResultIndex]
+      : queryResult;
+  const activeResultSql: string =
+    activeResultRes?.sql || queryResult?.sql || queryPagination.lastSql || '';
+  const resultGridKey = `${currentTabId}|${activeResultIndex}|${queryResult?.executionId || ''}|${activeResultSql}`;
+  const resultGridTabId = `bottom-result-${currentTabId}-${activeResultIndex}`;
+
+  useEffect(() => {
+    if (!activeTab || activeTab.type !== 'worksheet') return;
+    if (!queryResult || queryResult.error || !(activeResultRes?.columns?.length > 0)) return;
+    if (resultSourceByKey[resultGridKey] !== undefined) return;
+
+    const parsed = parseSingleTableSelect(activeResultSql);
+    if (!parsed) {
+      setResultSourceByKey((prev) => ({ ...prev, [resultGridKey]: null }));
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      let resolved: ResultSource | null = null;
+      try {
+        const connId = activeTab.connectionId || useConnectionStore.getState().activeConnectionId || '';
+        const conn = useConnectionStore.getState().connections.find((c) => c.id === connId);
+        const driver = conn?.driver;
+        const isMy = driver === 'mysql' || driver === 'mariadb';
+        const baseDb = queryPagination.database || activeTab.database || conn?.databaseName || 'main';
+        let db = baseDb;
+        let schema =
+          queryPagination.schema ||
+          activeTab.schema ||
+          (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : baseDb);
+        if (parsed.qualifier) {
+          if (isMy) {
+            db = parsed.qualifier;
+            schema = parsed.qualifier;
+          } else {
+            schema = parsed.qualifier;
+          }
+        }
+        const struct: any = await SchemaService.GetTableStructure(connId, db, schema, parsed.table);
+        const structCols: ColumnMeta[] = struct?.columns || [];
+        const pks: string[] = struct?.primaryKeys || [];
+        const resCols: ColumnMeta[] = activeResultRes.columns || [];
+        const lower = (s: string) => s.toLowerCase();
+        const allMapped = resCols.every((c) => structCols.some((sc) => lower(sc.name) === lower(c.name)));
+        const pksPresent = pks.every((pk) => resCols.some((c) => lower(c.name) === lower(pk)));
+        if (structCols.length > 0 && pks.length > 0 && allMapped && pksPresent) {
+          resolved = {
+            table: parsed.table,
+            database: db,
+            schema,
+            primaryKeys: pks,
+            columns: resCols.map((c) => {
+              const found = structCols.find((sc) => lower(sc.name) === lower(c.name))!;
+              return {
+                ...c,
+                ...found,
+                name: c.name,
+                isPrimaryKey: pks.some((pk) => lower(pk) === lower(c.name)),
+              };
+            }),
+          };
+        }
+      } catch (err) {
+        console.warn('Could not resolve editable source for query result:', err);
+      }
+      if (!cancelled) {
+        setResultSourceByKey((prev) => ({ ...prev, [resultGridKey]: resolved }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [resultGridKey, activeTab?.type, queryResult]);
+
+  const resultSource: ResultSource | null = resultSourceByKey[resultGridKey] ?? null;
 
   const setQueryResult = (
     res: QueryResult | null | ((prev: QueryResult | null) => QueryResult | null)
@@ -1427,6 +1527,13 @@ export function App() {
     }
   };
 
+  // For multi-statement runs, page/reload only the statement behind the active result tab
+  const getPagingSql = () =>
+    (queryResult?.results &&
+      queryResult.results.length > 1 &&
+      (queryResult.results[activeResultIndex] as any)?.sql) ||
+    queryPagination.lastSql;
+
   const handleQueryLoadMore = async () => {
     if (queryPagination.isLoadingMore || !queryResult || !queryPagination.lastSql) return;
     const currentRes =
@@ -1445,7 +1552,7 @@ export function App() {
         tabId: queryPagination.tabId || currentTabId || '',
         database: queryPagination.database,
         schema: queryPagination.schema,
-        sql: queryPagination.lastSql,
+        sql: getPagingSql(),
         limit,
         offset,
       } as any);
@@ -1499,7 +1606,7 @@ export function App() {
         tabId: queryPagination.tabId || currentTabId || '',
         database: queryPagination.database,
         schema: queryPagination.schema,
-        sql: queryPagination.lastSql,
+        sql: getPagingSql(),
         limit,
         offset,
       } as any);
@@ -1549,7 +1656,7 @@ export function App() {
         tabId: queryPagination.tabId || currentTabId || '',
         database: queryPagination.database,
         schema: queryPagination.schema,
-        sql: queryPagination.lastSql,
+        sql: getPagingSql(),
         limit: newSize,
         offset: 0,
       } as any);
@@ -1589,20 +1696,37 @@ export function App() {
     }
   };
 
-  const handlePreviewChanges = async () => {
-    const currentTab = useWorkbenchStore.getState().tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId) || activeTab;
+  const resolveTableTabTarget = (): ChangeTarget | null => {
+    const currentTab =
+      useWorkbenchStore.getState().tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId) ||
+      activeTab;
     const connId = currentTab?.connectionId || activeConnectionId;
-    if (!currentTab || currentTab.type !== 'table_data' || !connId) return;
-    const staged = useGridEditStore.getState().stagedByTab[currentTab.id] || {};
+    if (!currentTab || currentTab.type !== 'table_data' || !connId) return null;
+    return {
+      stagedKey: currentTab.id,
+      connectionId: connId,
+      database: currentTab.database || '',
+      schema: currentTab.schema || '',
+      table: currentTab.table || '',
+      onApplied: () => {
+        if (currentTab.table) loadTableData(currentTab);
+      },
+    };
+  };
+
+  const handlePreviewChanges = async (explicitTarget?: ChangeTarget) => {
+    const target = explicitTarget || resolveTableTabTarget();
+    if (!target) return;
+    const staged = useGridEditStore.getState().stagedByTab[target.stagedKey] || {};
     const changeList = Object.values(staged);
     if (changeList.length === 0) return;
 
     try {
       const sqls = await QueryService.PreviewChanges(
-        connId,
-        currentTab.database || '',
-        currentTab.schema || '',
-        currentTab.table || '',
+        target.connectionId,
+        target.database,
+        target.schema,
+        target.table,
         changeList as any
       );
       setDmlPreview(sqls ?? []);
@@ -1615,33 +1739,29 @@ export function App() {
     }
   };
 
-  const handleSubmitChanges = async (skipConfirm = false) => {
-    const currentTab = useWorkbenchStore.getState().tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId) || activeTab;
-    const connId = currentTab?.connectionId || activeConnectionId;
-    if (!currentTab || currentTab.type !== 'table_data' || !connId) return;
-    const staged = useGridEditStore.getState().stagedByTab[currentTab.id] || {};
+  const handleSubmitChanges = async (skipConfirm = false, explicitTarget?: ChangeTarget) => {
+    const target = explicitTarget || resolveTableTabTarget();
+    if (!target) return;
+    const staged = useGridEditStore.getState().stagedByTab[target.stagedKey] || {};
     const changeList = Object.values(staged);
     if (changeList.length === 0) return;
 
     const executeApply = async () => {
       try {
         const affected = await QueryService.SubmitChanges(
-          connId,
-          currentTab.database || '',
-          currentTab.schema || '',
-          currentTab.table || '',
+          target.connectionId,
+          target.database,
+          target.schema,
+          target.table,
           changeList as any
         );
         useAlertStore.getState().showAlert({
           type: 'success',
           title: 'Changes Applied Successfully',
-          message: `Successfully applied ${affected} change(s) to table "${currentTab.table}".`,
+          message: `Successfully applied ${affected} change(s) to table "${target.table}".`,
         });
-        useGridEditStore.getState().revertTabChanges(currentTab.id);
-        // Refresh table data
-        if (currentTab.table) {
-          loadTableData(currentTab);
-        }
+        useGridEditStore.getState().revertTabChanges(target.stagedKey);
+        target.onApplied();
       } catch (e: any) {
         useAlertStore.getState().showAlert({
           type: 'error',
@@ -1668,7 +1788,7 @@ export function App() {
 
     useAlertStore.getState().showConfirm({
       title: 'Apply Staged Changes?',
-      message: `Are you sure you want to apply ${changeList.length} staged change(s) to table "${currentTab.table}"?`,
+      message: `Are you sure you want to apply ${changeList.length} staged change(s) to table "${target.table}"?`,
       details: summaryParts.join(' • '),
       confirmLabel: 'Apply Changes',
       cancelLabel: 'Cancel',
@@ -1677,6 +1797,22 @@ export function App() {
         executeApply();
       },
     });
+  };
+
+  const buildResultTarget = (): ChangeTarget | null => {
+    if (!resultSource) return null;
+    const connId = activeTab?.connectionId || activeConnectionId;
+    if (!connId) return null;
+    return {
+      stagedKey: resultGridTabId,
+      connectionId: connId,
+      database: resultSource.database,
+      schema: resultSource.schema,
+      table: resultSource.table,
+      onApplied: () => {
+        handleQueryPageChange(queryPagination.page);
+      },
+    };
   };
 
   return (
@@ -2553,8 +2689,8 @@ export function App() {
                         const currentStart = tableDataByTab[activeTab.id]?.startOffset || 0;
                         loadTableData(activeTab, currentStart, currentSize, 'replace');
                       }}
-                      onSubmitChanges={handleSubmitChanges}
-                      onPreviewChanges={handlePreviewChanges}
+                      onSubmitChanges={(skip) => handleSubmitChanges(skip === true)}
+                      onPreviewChanges={() => handlePreviewChanges()}
                       isReadOnly={Boolean(tableConn?.isReadOnly)}
                       initialFrozenColumns={activeTab.tableViewState?.frozenColumns}
                       onFrozenColumnsChange={(frozenCols) => {
@@ -2955,14 +3091,16 @@ export function App() {
                         <div className="flex-1 min-h-0">
                           <DataGrid
                             key={`result-grid-${activeResultIndex}-${queryResult?.executionId || ''}`}
-                            tabId={`bottom-result-${activeResultIndex}`}
+                            tabId={resultGridTabId}
                             connectionId={activeTab?.connectionId || activeConnectionId || undefined}
-                            database={activeTab?.database}
-                            schema={activeTab?.schema}
+                            database={resultSource?.database ?? activeTab?.database}
+                            schema={resultSource?.schema ?? activeTab?.schema}
+                            tableName={resultSource?.table}
+                            primaryKeys={resultSource?.primaryKeys}
                             envType={resolveConnectionEnv(
                               connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))
                             )}
-                            columns={currentRes.columns || []}
+                            columns={resultSource?.columns || currentRes.columns || []}
                             rows={currentRes.rows || []}
                             hasMore={currentRes.hasMore}
                             isLoadingMore={queryPagination.isLoadingMore}
@@ -2972,12 +3110,14 @@ export function App() {
                             onPageSizeChange={handleQueryPageSizeChange}
                             onLoadMore={handleQueryLoadMore}
                             onRefresh={() => handleQueryPageChange(queryPagination.page)}
-                            onSubmitChanges={handleSubmitChanges}
-                            onPreviewChanges={handlePreviewChanges}
+                            onSubmitChanges={(skip) => handleSubmitChanges(skip === true, buildResultTarget() || undefined)}
+                            onPreviewChanges={() => handlePreviewChanges(buildResultTarget() || undefined)}
                             rawSql={currentResSql}
-                            isReadOnly={Boolean(
-                              connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.isReadOnly
-                            )}
+                            isReadOnly={
+                              Boolean(
+                                connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.isReadOnly
+                              ) || !resultSource
+                            }
                           />
                         </div>
                       );
@@ -3335,7 +3475,12 @@ export function App() {
         statements={dmlPreview}
         connection={connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))}
         onClose={() => setDmlPreview(null)}
-        onApply={handleSubmitChanges}
+        onApply={() =>
+          handleSubmitChanges(
+            true,
+            activeTab?.type === 'worksheet' ? buildResultTarget() || undefined : undefined
+          )
+        }
       />
 
       {/* Schema Diff Modal */}
