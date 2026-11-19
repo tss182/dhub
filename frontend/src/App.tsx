@@ -652,22 +652,12 @@ export function App() {
     }
   };
 
-  const updateOverflowTabs = React.useCallback(() => {
-    const bar = tabBarContainerRef.current;
-    if (tabs.length === 0) {
-      setVisibleCount(0);
-      return;
-    }
-    if (!bar) {
-      setVisibleCount(tabs.length);
-      return;
-    }
+  const computeVisibleTabCount = (bar: HTMLElement | null, tabCount: number): number => {
+    if (tabCount === 0) return 0;
+    if (!bar) return tabCount;
 
     const totalBarWidth = bar.clientWidth;
-    if (totalBarWidth <= 0) {
-      setVisibleCount(tabs.length);
-      return;
-    }
+    if (totalBarWidth <= 0) return tabCount;
 
     const paddingX = 12; // px-1.5 (6px left + 6px right)
     const gap = 4; // gap-1 (4px)
@@ -679,17 +669,19 @@ export function App() {
       Math.floor((totalBarWidth - paddingX + gap) / (tabSlotWidth + gap))
     );
 
-    if (tabs.length <= maxWithoutTrigger) {
-      setVisibleCount(tabs.length);
-      return;
+    if (tabCount <= maxWithoutTrigger) {
+      return tabCount;
     }
 
     const maxAvail = Math.max(tabSlotWidth, totalBarWidth - triggerButtonReserve - paddingX);
-    const countWithTrigger = Math.min(
-      tabs.length - 1,
+    return Math.min(
+      tabCount - 1,
       Math.max(1, Math.floor((maxAvail + gap) / (tabSlotWidth + gap)))
     );
-    setVisibleCount(countWithTrigger);
+  };
+
+  const updateOverflowTabs = React.useCallback(() => {
+    setVisibleCount(computeVisibleTabCount(tabBarContainerRef.current, tabs.length));
   }, [tabs.length]);
 
   useEffect(() => {
@@ -716,10 +708,11 @@ export function App() {
 
   // If the active tab is in the overflow list (e.g. newly opened tab), swap it with the last visible tab
   useEffect(() => {
-    if (!activeTabId || visibleCount <= 0 || tabs.length <= visibleCount) return;
+    const currentVisibleCount = computeVisibleTabCount(tabBarContainerRef.current, tabs.length);
+    if (!activeTabId || currentVisibleCount <= 0 || tabs.length <= currentVisibleCount) return;
     const activeIdx = tabs.findIndex((t) => t.id === activeTabId);
-    if (activeIdx >= visibleCount) {
-      const lastVisibleTab = tabs[visibleCount - 1];
+    if (activeIdx >= currentVisibleCount) {
+      const lastVisibleTab = tabs[currentVisibleCount - 1];
       if (lastVisibleTab && lastVisibleTab.id !== activeTabId) {
         swapTabs(lastVisibleTab.id, activeTabId);
       }
