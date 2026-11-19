@@ -10,8 +10,9 @@ import {
   Square,
   Copy,
   X,
+  Maximize2,
 } from 'lucide-react';
-import { Window } from '@wailsio/runtime';
+import { Window, System } from '@wailsio/runtime';
 import { DHubLogo } from '../common/DHubLogo';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { HelpTab, useWorkbenchStore } from '../../stores/useWorkbenchStore';
@@ -34,6 +35,19 @@ export interface WorkbenchHeaderProps {
 const dragStyle = { '--wails-draggable': 'drag' } as React.CSSProperties;
 const noDragStyle = { '--wails-draggable': 'no-drag' } as React.CSSProperties;
 
+function detectControlsOnLeft(isMacProp: boolean): boolean {
+  try {
+    if (System.IsMac() || System.IsLinux()) return true;
+    if (System.IsWindows()) return false;
+  } catch {}
+  if (isMacProp) return true;
+  if (typeof navigator !== 'undefined') {
+    const ua = `${navigator.userAgent || ''} ${navigator.platform || ''}`;
+    if (/Mac|Linux|X11/i.test(ua) && !/Win/i.test(ua)) return true;
+  }
+  return false;
+}
+
 export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
   isMac,
   updateInfo,
@@ -48,6 +62,11 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
   onOpenHelp,
 }) => {
   const [isMaximised, setIsMaximised] = useState(false);
+  const [controlsOnLeft, setControlsOnLeft] = useState(() => detectControlsOnLeft(isMac));
+
+  useEffect(() => {
+    setControlsOnLeft(detectControlsOnLeft(isMac));
+  }, [isMac]);
 
   useEffect(() => {
     let mounted = true;
@@ -95,10 +114,47 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
           handleToggleMaximize();
         }
       }}
-      className="flex h-10 items-center justify-between border-b border-[#272932] pl-3 pr-0 bg-[#14151a] select-none"
+      className={`flex h-10 items-center justify-between border-b border-[#272932] bg-[#14151a] select-none ${
+        controlsOnLeft ? 'px-3' : 'pl-3 pr-0'
+      }`}
     >
-      {/* Left: App Logo + Workspace Selector */}
+      {/* Left: (macOS/Linux Traffic Lights) + App Logo + Workspace Selector */}
       <div className="flex items-center gap-3" style={noDragStyle}>
+        {controlsOnLeft && (
+          <>
+            <div className="group/traffic flex items-center gap-2 pr-0.5">
+              <button
+                type="button"
+                onClick={handleCloseWindow}
+                className="flex h-3 w-3 items-center justify-center rounded-full bg-[#ff5f57] hover:bg-[#ff5f57]/90 text-black/80 transition-opacity cursor-pointer"
+                title="Close"
+                aria-label="Close window"
+              >
+                <X className="h-2 w-2 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
+              </button>
+              <button
+                type="button"
+                onClick={handleMinimize}
+                className="flex h-3 w-3 items-center justify-center rounded-full bg-[#febc2e] hover:bg-[#febc2e]/90 text-black/80 transition-opacity cursor-pointer"
+                title="Minimize"
+                aria-label="Minimize window"
+              >
+                <Minus className="h-2 w-2 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleMaximize}
+                className="flex h-3 w-3 items-center justify-center rounded-full bg-[#28c840] hover:bg-[#28c840]/90 text-black/80 transition-opacity cursor-pointer"
+                title={isMaximised ? 'Restore' : 'Zoom / Maximize'}
+                aria-label={isMaximised ? 'Restore window' : 'Maximize window'}
+              >
+                <Maximize2 className="h-1.5 w-1.5 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
+              </button>
+            </div>
+            <div className="h-4 w-px bg-[#272932]" />
+          </>
+        )}
+
         <DHubLogo variant="full" size={24} />
         <div className="h-4 w-px bg-[#272932]" />
         <WorkspaceSelector />
@@ -111,9 +167,9 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
         className="flex-1 h-full"
       />
 
-      {/* Right: Search, Settings, Update Pill, and Window Controls */}
+      {/* Right: Search, Settings, Update Pill, and (Windows) Window Controls */}
       <div className="flex items-center h-full" style={noDragStyle}>
-        <div className="flex items-center gap-1.5 pr-2">
+        <div className={`flex items-center gap-1.5 ${controlsOnLeft ? '' : 'pr-2'}`}>
           {/* Search Everywhere Icon Button */}
           <button
             type="button"
@@ -236,42 +292,44 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
           )}
         </div>
 
-        {/* Integrated Window Controls (Minimize, Maximize/Restore, Close) */}
-        <div className="flex items-center h-full border-l border-[#22242e]">
-          <button
-            type="button"
-            onClick={handleMinimize}
-            className="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-white/[0.07] hover:text-zinc-100 transition-colors cursor-pointer"
-            title="Minimize"
-            aria-label="Minimize window"
-          >
-            <Minus className="h-3.5 w-3.5" />
-          </button>
+        {/* Windows Window Controls (Minimize, Maximize/Restore, Close) */}
+        {!controlsOnLeft && (
+          <div className="flex items-center h-full border-l border-[#22242e]">
+            <button
+              type="button"
+              onClick={handleMinimize}
+              className="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-white/[0.07] hover:text-zinc-100 transition-colors cursor-pointer"
+              title="Minimize"
+              aria-label="Minimize window"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
 
-          <button
-            type="button"
-            onClick={handleToggleMaximize}
-            className="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-white/[0.07] hover:text-zinc-100 transition-colors cursor-pointer"
-            title={isMaximised ? 'Restore' : 'Maximize'}
-            aria-label={isMaximised ? 'Restore window' : 'Maximize window'}
-          >
-            {isMaximised ? (
-              <Copy className="h-3 w-3 rotate-90" />
-            ) : (
-              <Square className="h-3 w-3" />
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={handleToggleMaximize}
+              className="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-white/[0.07] hover:text-zinc-100 transition-colors cursor-pointer"
+              title={isMaximised ? 'Restore' : 'Maximize'}
+              aria-label={isMaximised ? 'Restore window' : 'Maximize window'}
+            >
+              {isMaximised ? (
+                <Copy className="h-3 w-3 rotate-90" />
+              ) : (
+                <Square className="h-3 w-3" />
+              )}
+            </button>
 
-          <button
-            type="button"
-            onClick={handleCloseWindow}
-            className="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
-            title="Close"
-            aria-label="Close window"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={handleCloseWindow}
+              className="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
+              title="Close"
+              aria-label="Close window"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );
