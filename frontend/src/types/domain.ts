@@ -8,6 +8,13 @@ export interface ConnectionFolder {
   sortOrder?: number;
 }
 
+export interface TableGroup {
+  id: string;
+  name: string;
+  color?: string;
+  sortOrder?: number;
+}
+
 export interface ConnectionConfig {
   id: string;
   folderId?: string | null;

@@ -51,6 +51,7 @@ import {
   ConnectionConfig,
   ConnectionFolder,
   ObjectSummary,
+  TableGroup,
   resolveConnectionEnv,
   getConnectionEnvInfo,
 } from '../../types/domain';
@@ -62,12 +63,13 @@ interface ContextMenuState {
   isOpen: boolean;
   x: number;
   y: number;
-  type: 'connection' | 'folder' | 'database' | 'schema' | 'table' | 'empty';
+  type: 'connection' | 'folder' | 'database' | 'schema' | 'table' | 'table-group' | 'empty';
   connection?: ConnectionConfig;
   folder?: ConnectionFolder;
   database?: string;
   schema?: string;
   table?: ObjectSummary;
+  tableGroup?: TableGroup;
 }
 
 const FOLDER_COLORS = [
@@ -128,6 +130,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     moveConnectionToFolder,
     reorderConnection,
     reorderFolder,
+    tableGroups,
+    tableGroupAssignments,
+    createTableGroup,
+    renameTableGroup,
+    deleteTableGroup,
+    assignTableToGroup,
+    reorderTableGroup,
   } = useConnectionStore();
 
   const {
@@ -255,21 +264,24 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   // PostgreSQL discovered schemas per database: key = `${connId}:${dbName}`
   const [treeSchemas, setTreeSchemas] = useState<Record<string, string[]>>({});
 
-  // Drag & Drop state for sorting and grouping connections/folders or moving tables between schemas
+  // Drag & Drop state for sorting and grouping connections/folders or moving tables between schemas/groups
   const [draggedItem, setDraggedItem] = useState<{
-    type: 'connection' | 'folder' | 'table';
+    type: 'connection' | 'folder' | 'table' | 'table-group';
     id: string;
     connId?: string;
     database?: string;
     schema?: string;
     table?: ObjectSummary;
+    tableGroup?: TableGroup;
   } | null>(null);
 
   const [dropTarget, setDropTarget] = useState<{
-    type: 'connection' | 'folder-into' | 'folder-sort' | 'root-ungrouped';
+    type: 'connection' | 'folder-into' | 'folder-sort' | 'root-ungrouped' | 'table-group-into' | 'table-group-sort' | 'table-ungrouped';
     id: string;
     position?: 'before' | 'after';
     folderId?: string | null;
+    connId?: string;
+    database?: string;
   } | null>(null);
 
   // Create / Rename Folder Modal state
@@ -354,6 +366,97 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   const handleNewConnectionInFolder = (folderId: string | null) => {
     setPendingFolderIdForNewConn(folderId);
     setConnectionDialogOpen(true, null);
+  };
+
+  // Create / Rename Table Group Modal state (MySQL / MariaDB)
+  const [tableGroupModal, setTableGroupModal] = useState<{
+    isOpen: boolean;
+    mode: 'create' | 'rename';
+    connId: string;
+    database: string;
+    groupId: string | null;
+    name: string;
+    color: string;
+    assignTableNameAfterCreate?: string | null;
+  }>({
+    isOpen: false,
+    mode: 'create',
+    connId: '',
+    database: '',
+    groupId: null,
+    name: '',
+    color: '#3b82f6',
+    assignTableNameAfterCreate: null,
+  });
+
+  const handleOpenCreateTableGroup = (connId: string, database: string, assignTableName?: string | null) => {
+    setTableGroupModal({
+      isOpen: true,
+      mode: 'create',
+      connId,
+      database,
+      groupId: null,
+      name: '',
+      color: '#3b82f6',
+      assignTableNameAfterCreate: assignTableName || null,
+    });
+  };
+
+  const handleOpenRenameTableGroup = (connId: string, database: string, group: TableGroup, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setTableGroupModal({
+      isOpen: true,
+      mode: 'rename',
+      connId,
+      database,
+      groupId: group.id,
+      name: group.name,
+      color: group.color || '#3b82f6',
+      assignTableNameAfterCreate: null,
+    });
+  };
+
+  const handleTableGroupModalSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = tableGroupModal.name.trim();
+    if (!clean || !tableGroupModal.connId || !tableGroupModal.database) return;
+    if (tableGroupModal.mode === 'create') {
+      const newGroupId = createTableGroup(tableGroupModal.connId, tableGroupModal.database, clean, tableGroupModal.color);
+      if (tableGroupModal.assignTableNameAfterCreate) {
+        assignTableToGroup(tableGroupModal.connId, tableGroupModal.database, tableGroupModal.assignTableNameAfterCreate, newGroupId);
+      }
+    } else if (tableGroupModal.mode === 'rename' && tableGroupModal.groupId) {
+      renameTableGroup(tableGroupModal.connId, tableGroupModal.database, tableGroupModal.groupId, clean, tableGroupModal.color);
+    }
+    setTableGroupModal({
+      isOpen: false,
+      mode: 'create',
+      connId: '',
+      database: '',
+      groupId: null,
+      name: '',
+      color: '#3b82f6',
+      assignTableNameAfterCreate: null,
+    });
+  };
+
+  const handleDeleteTableGroup = async (connId: string, database: string, group: TableGroup, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const dbKey = `${connId}:${database}`;
+    const assignMap = tableGroupAssignments[dbKey] || {};
+    const count = Object.values(assignMap).filter((gId) => gId === group.id).length;
+    const msg =
+      count > 0
+        ? `Delete table group "${group.name}"? (${count} table/view(s) inside will not be dropped and will be moved back to ungrouped.)`
+        : `Delete table group "${group.name}"?`;
+    const ok = await confirmDialog({
+      title: 'Delete Table Group',
+      message: msg,
+      confirmLabel: 'Delete',
+      isDanger: true,
+    });
+    if (!ok) return;
+    deleteTableGroup(connId, database, group.id);
   };
 
   // Context Menu state
@@ -3029,122 +3132,394 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                               );
                             })
                           ) : (
-                            <>
-                              <div className="text-[10px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
-                                <div className="flex items-center gap-1">
-                                  <Folder className="h-2.5 w-2.5" />
-                                  <span>{c.driver?.toLowerCase() === 'redis' ? `keys (${tables.length})` : c.driver === 'mongodb' ? `collections (${tables.length})` : `tables (${tables.length})`}</span>
-                                </div>
-                                <div className="flex items-center gap-0.5">
-                                  {c.driver === 'redis' ? (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleRefreshDatabase(c.id, dbName);
-                                      }}
-                                      className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                      title={`Refresh keys in "${dbName}"`}
-                                    >
-                                      <RefreshCw className="h-2.5 w-2.5" />
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenCreateTable(c, dbName, targetSchema);
-                                      }}
-                                      className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                      title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
-                                    >
-                                      <Plus className="h-2.5 w-2.5" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                              {tables.map((obj) => (
-                                <div
-                                  key={obj.name}
-                                  onClick={() => {
-                                    handleItemMouseLeave();
-                                    handleTableClick(c.id, dbName, targetSchema, obj.name);
-                                  }}
-                                  onContextMenu={(e) => {
-                                    handleItemMouseLeave();
-                                    openContextMenu(e, 'table', {
-                                      connection: c,
-                                      database: dbName,
-                                      schema: targetSchema,
-                                      table: obj,
-                                    });
-                                  }}
-                                  onMouseEnter={(e) =>
-                                    handleItemMouseEnter(e, {
-                                      kind: 'table',
-                                      title: obj.name,
-                                      badge: c.driver === 'redis' ? (obj.type || 'KEY').toUpperCase() : 'TABLE',
-                                      subtitle: `${c.name} / ${dbName}${obj.comment ? ` • ${obj.comment}` : ''}`,
-                                    })
-                                  }
-                                  onMouseLeave={handleItemMouseLeave}
-                                  title={obj.comment ? `${obj.name} (${obj.comment})` : obj.name}
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                >
-                                  {c.driver === 'redis' ? (
-                                    <Key className="h-3 w-3 shrink-0 text-amber-400" />
-                                  ) : (
-                                    <Table className="h-3 w-3 shrink-0 text-emerald-400" />
-                                  )}
-                                  <span className="truncate">{obj.name}</span>
-                                  {c.driver === 'redis' && (
-                                    <span className="ml-auto text-[9px] font-mono px-1 rounded bg-[#272932] text-zinc-400 uppercase shrink-0">
-                                      {obj.type || 'key'}
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
+                            (() => {
+                              const isMysqlFamily = c.driver === 'mysql' || c.driver === 'mariadb';
+                              const dbKey = `${c.id}:${dbName}`;
+                              const dbGroups = isMysqlFamily ? (tableGroups[dbKey] || []) : [];
+                              const dbAssignments = isMysqlFamily ? (tableGroupAssignments[dbKey] || {}) : {};
+                              const validGroupIds = new Set(dbGroups.map((g) => g.id));
 
-                              {views.length > 0 && (
-                                <>
-                                  <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
-                                    <Folder className="h-2.5 w-2.5" />
-                                    <span>views ({views.length})</span>
-                                  </div>
-                                  {views.map((obj) => (
-                                    <div
-                                      key={obj.name}
-                                      onClick={() => {
-                                        handleItemMouseLeave();
-                                        handleTableClick(c.id, dbName, targetSchema, obj.name);
-                                      }}
-                                      onContextMenu={(e) => {
-                                        handleItemMouseLeave();
-                                        openContextMenu(e, 'table', {
-                                          connection: c,
-                                          database: dbName,
-                                          schema: targetSchema,
-                                          table: obj,
-                                        });
-                                      }}
-                                      onMouseEnter={(e) =>
-                                        handleItemMouseEnter(e, {
-                                          kind: 'view',
-                                          title: obj.name,
-                                          badge: 'VIEW',
-                                          subtitle: `${c.name} / ${dbName}`,
-                                        })
-                                      }
-                                      onMouseLeave={handleItemMouseLeave}
-                                      title={obj.name}
-                                      className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
-                                    >
+                              const ungroupedTables = isMysqlFamily
+                                ? tables.filter((t) => !dbAssignments[t.name] || !validGroupIds.has(dbAssignments[t.name]))
+                                : tables;
+                              const ungroupedViews = isMysqlFamily
+                                ? views.filter((v) => !dbAssignments[v.name] || !validGroupIds.has(dbAssignments[v.name]))
+                                : views;
+
+                              const renderFlatObjectRow = (obj: ObjectSummary, isView: boolean) => {
+                                const objDragId = `${c.id}:${dbName}:${obj.name}`;
+                                return (
+                                  <div
+                                    key={obj.name}
+                                    draggable={isMysqlFamily}
+                                    onDragStart={(e) => {
+                                      if (!isMysqlFamily) return;
+                                      e.stopPropagation();
+                                      setDraggedItem({
+                                        type: 'table',
+                                        id: objDragId,
+                                        connId: c.id,
+                                        database: dbName,
+                                        schema: targetSchema,
+                                        table: obj,
+                                      });
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedItem(null);
+                                      setDropTarget(null);
+                                    }}
+                                    onClick={() => {
+                                      handleItemMouseLeave();
+                                      handleTableClick(c.id, dbName, targetSchema, obj.name);
+                                    }}
+                                    onContextMenu={(e) => {
+                                      handleItemMouseLeave();
+                                      openContextMenu(e, 'table', {
+                                        connection: c,
+                                        database: dbName,
+                                        schema: targetSchema,
+                                        table: obj,
+                                      });
+                                    }}
+                                    onMouseEnter={(e) =>
+                                      handleItemMouseEnter(e, {
+                                        kind: isView ? 'view' : 'table',
+                                        title: obj.name,
+                                        badge: isView
+                                          ? 'VIEW'
+                                          : c.driver === 'redis'
+                                          ? (obj.type || 'KEY').toUpperCase()
+                                          : 'TABLE',
+                                        subtitle: `${c.name} / ${dbName}${obj.comment ? ` • ${obj.comment}` : ''}`,
+                                      })
+                                    }
+                                    onMouseLeave={handleItemMouseLeave}
+                                    title={obj.comment ? `${obj.name} (${obj.comment})` : obj.name}
+                                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
+                                      draggedItem?.type === 'table' && draggedItem.id === objDragId
+                                        ? 'opacity-40'
+                                        : ''
+                                    }`}
+                                  >
+                                    {isView ? (
                                       <Eye className="h-3 w-3 shrink-0 text-purple-400" />
-                                      <span className="truncate">{obj.name}</span>
+                                    ) : c.driver === 'redis' ? (
+                                      <Key className="h-3 w-3 shrink-0 text-amber-400" />
+                                    ) : (
+                                      <Table className="h-3 w-3 shrink-0 text-emerald-400" />
+                                    )}
+                                    <span className="truncate">{obj.name}</span>
+                                    {!isView && c.driver === 'redis' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-[#272932] text-zinc-400 uppercase shrink-0">
+                                        {obj.type || 'key'}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              };
+
+                              return (
+                                <>
+                                  {/* Custom Table & View Groups (MySQL / MariaDB) */}
+                                  {isMysqlFamily && dbGroups.length > 0 && (
+                                    <div className="space-y-0.5 mb-1">
+                                      {dbGroups.map((grp) => {
+                                        const grpTables = tables.filter((t) => dbAssignments[t.name] === grp.id);
+                                        const grpViews = views.filter((v) => dbAssignments[v.name] === grp.id);
+                                        const totalInGrp = grpTables.length + grpViews.length;
+                                        const grpMatches = !filterLower || grp.name.toLowerCase().includes(filterLower);
+                                        if (filterLower && !grpMatches && totalInGrp === 0) {
+                                          return null;
+                                        }
+
+                                        const grpNodeKey = `tblgroup:${dbKey}:${grp.id}`;
+                                        const isGrpExpanded =
+                                          expandedNodes[grpNodeKey] !== false || (!!filterLower && totalInGrp > 0);
+                                        const isTableDropOver =
+                                          dropTarget?.type === 'table-group-into' &&
+                                          dropTarget.id === grp.id &&
+                                          dropTarget.connId === c.id &&
+                                          dropTarget.database === dbName;
+                                        const isSortBefore =
+                                          dropTarget?.type === 'table-group-sort' &&
+                                          dropTarget.id === grp.id &&
+                                          dropTarget.position === 'before';
+                                        const isSortAfter =
+                                          dropTarget?.type === 'table-group-sort' &&
+                                          dropTarget.id === grp.id &&
+                                          dropTarget.position === 'after';
+
+                                        return (
+                                          <div key={grp.id} className="mb-0.5">
+                                            <div
+                                              draggable
+                                              onDragStart={(e) => {
+                                                e.stopPropagation();
+                                                setDraggedItem({
+                                                  type: 'table-group',
+                                                  id: grp.id,
+                                                  connId: c.id,
+                                                  database: dbName,
+                                                  tableGroup: grp,
+                                                });
+                                              }}
+                                              onDragEnd={() => {
+                                                setDraggedItem(null);
+                                                setDropTarget(null);
+                                              }}
+                                              onDragOver={(e) => {
+                                                if (!draggedItem || draggedItem.connId !== c.id || draggedItem.database !== dbName) {
+                                                  return;
+                                                }
+                                                if (draggedItem.type === 'table') {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  e.dataTransfer.dropEffect = 'move';
+                                                  setDropTarget({
+                                                    type: 'table-group-into',
+                                                    id: grp.id,
+                                                    connId: c.id,
+                                                    database: dbName,
+                                                  });
+                                                } else if (draggedItem.type === 'table-group' && draggedItem.id !== grp.id) {
+                                                  e.preventDefault();
+                                                  e.stopPropagation();
+                                                  e.dataTransfer.dropEffect = 'move';
+                                                  const rect = e.currentTarget.getBoundingClientRect();
+                                                  const pos = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                                                  setDropTarget({
+                                                    type: 'table-group-sort',
+                                                    id: grp.id,
+                                                    position: pos,
+                                                    connId: c.id,
+                                                    database: dbName,
+                                                  });
+                                                }
+                                              }}
+                                              onDragLeave={(e) => {
+                                                if (e.currentTarget === e.target) {
+                                                  setDropTarget(null);
+                                                }
+                                              }}
+                                              onDrop={(e) => {
+                                                if (!draggedItem || draggedItem.connId !== c.id || draggedItem.database !== dbName) {
+                                                  return;
+                                                }
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                if (draggedItem.type === 'table' && draggedItem.table) {
+                                                  assignTableToGroup(c.id, dbName, draggedItem.table.name, grp.id);
+                                                } else if (draggedItem.type === 'table-group' && draggedItem.id !== grp.id) {
+                                                  const rect = e.currentTarget.getBoundingClientRect();
+                                                  const pos = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                                                  reorderTableGroup(c.id, dbName, draggedItem.id, grp.id, pos);
+                                                }
+                                                setDraggedItem(null);
+                                                setDropTarget(null);
+                                              }}
+                                              onClick={() => {
+                                                handleItemMouseLeave();
+                                                toggleNode(grpNodeKey);
+                                              }}
+                                              onContextMenu={(e) => {
+                                                handleItemMouseLeave();
+                                                openContextMenu(e, 'table-group', {
+                                                  connection: c,
+                                                  database: dbName,
+                                                  tableGroup: grp,
+                                                });
+                                              }}
+                                              className={`group/tgrp flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 transition-colors ${
+                                                isTableDropOver ? 'ring-1 ring-blue-400 bg-blue-950/40 text-blue-200' : ''
+                                              } ${isSortBefore ? 'border-t-2 border-blue-400' : ''} ${
+                                                isSortAfter ? 'border-b-2 border-blue-400' : ''
+                                              } ${
+                                                draggedItem?.type === 'table-group' && draggedItem.id === grp.id
+                                                  ? 'opacity-40'
+                                                  : ''
+                                              }`}
+                                            >
+                                              {isGrpExpanded ? (
+                                                <ChevronDown className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
+                                              ) : (
+                                                <ChevronRight className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
+                                              )}
+                                              {isGrpExpanded ? (
+                                                <FolderOpen
+                                                  className="h-3 w-3 shrink-0"
+                                                  style={{ color: grp.color || '#3b82f6' }}
+                                                />
+                                              ) : (
+                                                <Folder
+                                                  className="h-3 w-3 shrink-0"
+                                                  style={{ color: grp.color || '#3b82f6' }}
+                                                />
+                                              )}
+                                              <span className="truncate flex-1 text-[11px] font-medium">
+                                                {grp.name}
+                                              </span>
+                                              <span className="text-[9px] text-zinc-500 font-mono shrink-0">
+                                                {totalInGrp}
+                                              </span>
+                                              <div
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="opacity-0 group-hover/tgrp:opacity-100 flex items-center gap-0.5 transition-opacity"
+                                              >
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => handleOpenRenameTableGroup(c.id, dbName, grp, e)}
+                                                  className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors cursor-pointer"
+                                                  title={`Rename group "${grp.name}"`}
+                                                >
+                                                  <Pencil className="h-2.5 w-2.5" />
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => handleDeleteTableGroup(c.id, dbName, grp, e)}
+                                                  className="p-0.5 rounded text-zinc-400 hover:text-rose-400 hover:bg-[#2c303c] transition-colors cursor-pointer"
+                                                  title={`Delete group "${grp.name}"`}
+                                                >
+                                                  <Trash2 className="h-2.5 w-2.5" />
+                                                </button>
+                                              </div>
+                                            </div>
+
+                                            {isGrpExpanded && (
+                                              <div className="ml-3 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
+                                                {totalInGrp === 0 ? (
+                                                  <div className="px-2 py-0.5 text-[10px] italic text-zinc-600">
+                                                    Drag tables/views here
+                                                  </div>
+                                                ) : (
+                                                  <>
+                                                    {grpTables.map((obj) => renderFlatObjectRow(obj, false))}
+                                                    {grpViews.map((obj) => renderFlatObjectRow(obj, true))}
+                                                  </>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
-                                  ))}
-                                </>
-                              )}
+                                  )}
+
+                                  {/* Ungrouped Tables Header (also drop target to ungroup) */}
+                                  <div
+                                    onDragOver={(e) => {
+                                      if (
+                                        isMysqlFamily &&
+                                        draggedItem?.type === 'table' &&
+                                        draggedItem.connId === c.id &&
+                                        draggedItem.database === dbName &&
+                                        draggedItem.table &&
+                                        dbAssignments[draggedItem.table.name]
+                                      ) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        e.dataTransfer.dropEffect = 'move';
+                                        setDropTarget({
+                                          type: 'table-ungrouped',
+                                          id: dbKey,
+                                          connId: c.id,
+                                          database: dbName,
+                                        });
+                                      }
+                                    }}
+                                    onDragLeave={(e) => {
+                                      if (e.currentTarget === e.target && dropTarget?.type === 'table-ungrouped') {
+                                        setDropTarget(null);
+                                      }
+                                    }}
+                                    onDrop={(e) => {
+                                      if (
+                                        isMysqlFamily &&
+                                        draggedItem?.type === 'table' &&
+                                        draggedItem.connId === c.id &&
+                                        draggedItem.database === dbName &&
+                                        draggedItem.table
+                                      ) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        assignTableToGroup(c.id, dbName, draggedItem.table.name, null);
+                                        setDraggedItem(null);
+                                        setDropTarget(null);
+                                      }
+                                    }}
+                                    className={`text-[10px] text-zinc-500 flex items-center justify-between py-0.5 rounded group/tbl ${
+                                      dropTarget?.type === 'table-ungrouped' && dropTarget.id === dbKey
+                                        ? 'ring-1 ring-amber-400 bg-amber-950/30 text-amber-200 px-1'
+                                        : ''
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-1">
+                                      <Folder className="h-2.5 w-2.5" />
+                                      <span>
+                                        {c.driver?.toLowerCase() === 'redis'
+                                          ? `keys (${ungroupedTables.length})`
+                                          : c.driver === 'mongodb'
+                                          ? `collections (${ungroupedTables.length})`
+                                          : isMysqlFamily && dbGroups.length > 0
+                                          ? `ungrouped tables (${ungroupedTables.length})`
+                                          : `tables (${ungroupedTables.length})`}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-0.5">
+                                      {isMysqlFamily && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenCreateTableGroup(c.id, dbName);
+                                          }}
+                                          className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-amber-300 hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                          title={`New Table Group in "${dbName}"`}
+                                        >
+                                          <FolderPlus className="h-2.5 w-2.5" />
+                                        </button>
+                                      )}
+                                      {c.driver === 'redis' ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleRefreshDatabase(c.id, dbName);
+                                          }}
+                                          className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                          title={`Refresh keys in "${dbName}"`}
+                                        >
+                                          <RefreshCw className="h-2.5 w-2.5" />
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenCreateTable(c, dbName, targetSchema);
+                                          }}
+                                          className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                          title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
+                                        >
+                                          <Plus className="h-2.5 w-2.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {ungroupedTables.map((obj) => renderFlatObjectRow(obj, false))}
+
+                                  {ungroupedViews.length > 0 && (
+                                    <>
+                                      <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                        <Folder className="h-2.5 w-2.5" />
+                                        <span>
+                                          {isMysqlFamily && dbGroups.length > 0
+                                            ? `ungrouped views (${ungroupedViews.length})`
+                                            : `views (${ungroupedViews.length})`}
+                                        </span>
+                                      </div>
+                                      {ungroupedViews.map((obj) => renderFlatObjectRow(obj, true))}
+                                    </>
+                                  )}
 
                               {matViews.length > 0 && (
                                 <>
@@ -3355,7 +3730,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                   ))}
                                 </>
                               )}
-                            </>
+                                </>
+                              );
+                            })()
                           )}
                         </div>
                       )}
@@ -4226,6 +4603,22 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
+              {(contextMenu.connection.driver === 'mysql' || contextMenu.connection.driver === 'mariadb') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const connId = contextMenu.connection!.id;
+                    const db = contextMenu.database!;
+                    closeContextMenu();
+                    handleOpenCreateTableGroup(connId, db);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <FolderPlus className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                  <span>New Table Group...</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
@@ -4962,6 +5355,70 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </button>
                   )}
 
+                  {(contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && (contextMenu.table!.type === 'table' || contextMenu.table!.type === 'view' || !contextMenu.table!.type) && (() => {
+                    const conn = contextMenu.connection!;
+                    const db = contextMenu.database || 'main';
+                    const tblName = contextMenu.table!.name;
+                    const dbKey = `${conn.id}:${db}`;
+                    const dbGroups = tableGroups[dbKey] || [];
+                    const currentGroupId = (tableGroupAssignments[dbKey] || {})[tblName];
+                    return (
+                      <>
+                        <div className="my-1 border-t border-[#272932]" />
+                        <div className="px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                          Table / View Group
+                        </div>
+                        {dbGroups.map((grp) => {
+                          const isAssigned = currentGroupId === grp.id;
+                          return (
+                            <button
+                              key={grp.id}
+                              type="button"
+                              onClick={() => {
+                                closeContextMenu();
+                                assignTableToGroup(conn.id, db, tblName, isAssigned ? null : grp.id);
+                              }}
+                              className="w-full flex items-center justify-between gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Folder
+                                  className="h-3 w-3 shrink-0"
+                                  style={{ color: grp.color || '#3b82f6' }}
+                                />
+                                <span className="truncate">{grp.name}</span>
+                              </div>
+                              {isAssigned && <Check className="h-3 w-3 text-emerald-400 group-hover:text-white shrink-0" />}
+                            </button>
+                          );
+                        })}
+                        {currentGroupId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              closeContextMenu();
+                              assignTableToGroup(conn.id, db, tblName, null);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-400 transition-colors text-left cursor-pointer group text-xs"
+                          >
+                            <FolderInput className="h-3 w-3 text-zinc-400 group-hover:text-white" />
+                            <span>Remove from Group (Ungroup)</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            closeContextMenu();
+                            handleOpenCreateTableGroup(conn.id, db, tblName);
+                          }}
+                          className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-blue-400 transition-colors text-left cursor-pointer group text-xs"
+                        >
+                          <FolderPlus className="h-3 w-3 text-blue-400 group-hover:text-white" />
+                          <span>New Group with this {contextMenu.table!.type === 'view' ? 'View' : 'Table'}...</span>
+                        </button>
+                      </>
+                    );
+                  })()}
+
                   {(contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
                     <>
                       <div className="my-1 border-t border-[#272932]" />
@@ -5065,6 +5522,57 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   </button>
                 </>
               )}
+            </>
+          )}
+
+          {/* Table Group Menu Items (MySQL / MariaDB) */}
+          {contextMenu.type === 'table-group' && contextMenu.connection && contextMenu.database && contextMenu.tableGroup && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const connId = contextMenu.connection!.id;
+                  const db = contextMenu.database!;
+                  const grp = contextMenu.tableGroup!;
+                  closeContextMenu();
+                  handleOpenRenameTableGroup(connId, db, grp);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                <span>Rename Group...</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const connId = contextMenu.connection!.id;
+                  const db = contextMenu.database!;
+                  closeContextMenu();
+                  handleOpenCreateTableGroup(connId, db);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <FolderPlus className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                <span>New Table Group...</span>
+              </button>
+
+              <div className="my-1 border-t border-[#272932]" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  const connId = contextMenu.connection!.id;
+                  const db = contextMenu.database!;
+                  const grp = contextMenu.tableGroup!;
+                  closeContextMenu();
+                  handleDeleteTableGroup(connId, db, grp);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                <span>Delete Group (Ungroup Tables)...</span>
+              </button>
             </>
           )}
 
@@ -5237,6 +5745,122 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
                 >
                   {folderModal.mode === 'create' ? 'Create Folder' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create / Rename Table Group Modal (MySQL / MariaDB) */}
+      {tableGroupModal.isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() =>
+            setTableGroupModal((prev) => ({ ...prev, isOpen: false }))
+          }
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-[#2b2e3a] bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border"
+                  style={{
+                    backgroundColor: `${tableGroupModal.color}20`,
+                    borderColor: `${tableGroupModal.color}50`,
+                    color: tableGroupModal.color,
+                  }}
+                >
+                  <Folder className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-zinc-100">
+                    {tableGroupModal.mode === 'create'
+                      ? 'New Table Group'
+                      : 'Rename Table Group'}
+                  </h3>
+                  <p className="text-[11px] text-zinc-500">
+                    Group tables &amp; views in <span className="text-zinc-300 font-mono">{tableGroupModal.database}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setTableGroupModal((prev) => ({ ...prev, isOpen: false }))
+                }
+                className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-[#20222a] transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleTableGroupModalSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                  Group Name <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  placeholder="e.g. Auth, Billing, Master Data, Logs"
+                  value={tableGroupModal.name}
+                  onChange={(e) =>
+                    setTableGroupModal((prev) => ({ ...prev, name: e.target.value }))
+                  }
+                  className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">
+                  Group Color
+                </label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {FOLDER_COLORS.map((c) => {
+                    const isSelected = tableGroupModal.color === c.value;
+                    return (
+                      <button
+                        key={c.value}
+                        type="button"
+                        onClick={() =>
+                          setTableGroupModal((prev) => ({ ...prev, color: c.value }))
+                        }
+                        title={c.label}
+                        className={`h-7 w-7 rounded-full flex items-center justify-center transition-all cursor-pointer border-2 ${
+                          isSelected
+                            ? 'scale-110 border-white shadow-md'
+                            : 'border-transparent opacity-75 hover:opacity-100'
+                        }`}
+                        style={{ backgroundColor: c.value }}
+                      >
+                        {isSelected && <Check className="h-3.5 w-3.5 text-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTableGroupModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!tableGroupModal.name.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+                >
+                  {tableGroupModal.mode === 'create' ? 'Create Group' : 'Save Changes'}
                 </button>
               </div>
             </form>

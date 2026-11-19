@@ -1,11 +1,12 @@
 import { create } from 'zustand';
-import { ConnectionConfig, ConnectionFolder, ObjectSummary } from '../types/domain';
+import { ConnectionConfig, ConnectionFolder, ObjectSummary, TableGroup } from '../types/domain';
 import { ConnectionService, WorkspaceService } from '../../bindings/dhub/internal/services';
 
 const LEGACY_FOLDERS_KEY = 'dhub_connection_folders_v1';
 const LEGACY_CONN_FOLDER_MAP_KEY = 'dhub_connection_folder_map_v1';
 const LEGACY_CONN_ORDER_KEY = 'dhub_connection_order_v1';
 const VISIBLE_DATABASES_STORAGE_KEY = 'dhub_visible_databases_v1';
+const TABLE_GROUPS_STORAGE_KEY = 'dhub_table_groups_v1';
 
 interface VisibleDbConfig {
   selected: string[];
@@ -63,6 +64,54 @@ function persistVisibleDatabases(
 }
 
 const initialVisibleDbData = loadStoredVisibleDatabases();
+
+interface TableGroupsStoragePayload {
+  groups: Record<string, TableGroup[]>;
+  assignments: Record<string, Record<string, string>>;
+}
+
+function loadStoredTableGroups(): TableGroupsStoragePayload {
+  const groups: Record<string, TableGroup[]> = {};
+  const assignments: Record<string, Record<string, string>> = {};
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { groups, assignments };
+  }
+  try {
+    const raw = localStorage.getItem(TABLE_GROUPS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<TableGroupsStoragePayload>;
+      if (parsed.groups && typeof parsed.groups === 'object') {
+        for (const [k, v] of Object.entries(parsed.groups)) {
+          if (Array.isArray(v)) groups[k] = v;
+        }
+      }
+      if (parsed.assignments && typeof parsed.assignments === 'object') {
+        for (const [k, v] of Object.entries(parsed.assignments)) {
+          if (v && typeof v === 'object') assignments[k] = v;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load table groups from localStorage:', e);
+  }
+  return { groups, assignments };
+}
+
+function persistTableGroups(
+  groups: Record<string, TableGroup[]>,
+  assignments: Record<string, Record<string, string>>
+) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const serialized = JSON.stringify({ groups, assignments });
+    localStorage.setItem(TABLE_GROUPS_STORAGE_KEY, serialized);
+    WorkspaceService.SaveSetting(TABLE_GROUPS_STORAGE_KEY, serialized).catch(() => {});
+  } catch (e) {
+    console.warn('Failed to persist table groups:', e);
+  }
+}
+
+const initialTableGroupsData = loadStoredTableGroups();
 
 function sortConnectionsList(conns: ConnectionConfig[], order: string[]): ConnectionConfig[] {
   if (!order || order.length === 0) return conns;
@@ -125,6 +174,21 @@ interface ConnectionState {
     targetFolderId: string,
     position: 'before' | 'after'
   ) => void;
+
+  // Table / View Grouping per database (MySQL / MariaDB)
+  tableGroups: Record<string, TableGroup[]>; // key: connId:dbName
+  tableGroupAssignments: Record<string, Record<string, string>>; // key: connId:dbName -> { tableName: groupId }
+  createTableGroup: (connId: string, dbName: string, name: string, color?: string) => string;
+  renameTableGroup: (connId: string, dbName: string, groupId: string, name: string, color?: string) => void;
+  deleteTableGroup: (connId: string, dbName: string, groupId: string) => void;
+  assignTableToGroup: (connId: string, dbName: string, tableName: string, groupId: string | null) => void;
+  reorderTableGroup: (
+    connId: string,
+    dbName: string,
+    draggedGroupId: string,
+    targetGroupId: string,
+    position: 'before' | 'after'
+  ) => void;
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -143,6 +207,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   expandedNodes: {},
   isLoading: false,
   selectedTable: null,
+  tableGroups: initialTableGroupsData.groups,
+  tableGroupAssignments: initialTableGroupsData.assignments,
 
   setFolders: (folders) =>
     set((state) => {
@@ -531,6 +597,140 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       });
     }
   },
+
+  createTableGroup: (connId, dbName, name, color = '#3b82f6') => {
+    const dbKey = `${connId}:${dbName}`;
+    const id = `tgrp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const cleanName = name.trim() || 'New Group';
+
+    set((state) => {
+      const existing = state.tableGroups[dbKey] || [];
+      const newGroup: TableGroup = {
+        id,
+        name: cleanName,
+        color,
+        sortOrder: existing.length,
+      };
+      const nextGroups = {
+        ...state.tableGroups,
+        [dbKey]: [...existing, newGroup],
+      };
+      persistTableGroups(nextGroups, state.tableGroupAssignments);
+      return {
+        tableGroups: nextGroups,
+        expandedNodes: {
+          ...state.expandedNodes,
+          [`tblgroup:${dbKey}:${id}`]: true,
+        },
+      };
+    });
+
+    return id;
+  },
+
+  renameTableGroup: (connId, dbName, groupId, name, color) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    const dbKey = `${connId}:${dbName}`;
+
+    set((state) => {
+      const existing = state.tableGroups[dbKey] || [];
+      const nextList = existing.map((g) =>
+        g.id === groupId ? { ...g, name: cleanName, color: color ?? g.color ?? '#3b82f6' } : g
+      );
+      const nextGroups = { ...state.tableGroups, [dbKey]: nextList };
+      persistTableGroups(nextGroups, state.tableGroupAssignments);
+      return { tableGroups: nextGroups };
+    });
+  },
+
+  deleteTableGroup: (connId, dbName, groupId) => {
+    const dbKey = `${connId}:${dbName}`;
+
+    set((state) => {
+      const nextList = (state.tableGroups[dbKey] || []).filter((g) => g.id !== groupId);
+      const nextGroups = { ...state.tableGroups };
+      if (nextList.length > 0) {
+        nextGroups[dbKey] = nextList;
+      } else {
+        delete nextGroups[dbKey];
+      }
+
+      const currentAssign = state.tableGroupAssignments[dbKey] || {};
+      const nextAssignForDb: Record<string, string> = {};
+      for (const [tblName, gId] of Object.entries(currentAssign)) {
+        if (gId !== groupId) {
+          nextAssignForDb[tblName] = gId;
+        }
+      }
+      const nextAssignments = { ...state.tableGroupAssignments };
+      if (Object.keys(nextAssignForDb).length > 0) {
+        nextAssignments[dbKey] = nextAssignForDb;
+      } else {
+        delete nextAssignments[dbKey];
+      }
+
+      persistTableGroups(nextGroups, nextAssignments);
+      return {
+        tableGroups: nextGroups,
+        tableGroupAssignments: nextAssignments,
+      };
+    });
+  },
+
+  assignTableToGroup: (connId, dbName, tableName, groupId) => {
+    const dbKey = `${connId}:${dbName}`;
+    const normalizedGroupId = groupId || null;
+
+    set((state) => {
+      const currentAssign = { ...(state.tableGroupAssignments[dbKey] || {}) };
+      if (normalizedGroupId) {
+        currentAssign[tableName] = normalizedGroupId;
+      } else {
+        delete currentAssign[tableName];
+      }
+
+      const nextAssignments = { ...state.tableGroupAssignments };
+      if (Object.keys(currentAssign).length > 0) {
+        nextAssignments[dbKey] = currentAssign;
+      } else {
+        delete nextAssignments[dbKey];
+      }
+
+      persistTableGroups(state.tableGroups, nextAssignments);
+      return {
+        tableGroupAssignments: nextAssignments,
+        expandedNodes: normalizedGroupId
+          ? { ...state.expandedNodes, [`tblgroup:${dbKey}:${normalizedGroupId}`]: true }
+          : state.expandedNodes,
+      };
+    });
+  },
+
+  reorderTableGroup: (connId, dbName, draggedGroupId, targetGroupId, position) => {
+    if (draggedGroupId === targetGroupId) return;
+    const dbKey = `${connId}:${dbName}`;
+
+    set((state) => {
+      const existing = state.tableGroups[dbKey] || [];
+      const dragged = existing.find((g) => g.id === draggedGroupId);
+      if (!dragged) return state;
+
+      const withoutDragged = existing.filter((g) => g.id !== draggedGroupId);
+      const targetIdx = withoutDragged.findIndex((g) => g.id === targetGroupId);
+      if (targetIdx !== -1) {
+        const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+        withoutDragged.splice(insertIdx, 0, dragged);
+      } else {
+        withoutDragged.push(dragged);
+      }
+
+      const updated = withoutDragged.map((g, idx) => ({ ...g, sortOrder: idx }));
+      const nextGroups = { ...state.tableGroups, [dbKey]: updated };
+      persistTableGroups(nextGroups, state.tableGroupAssignments);
+      return { tableGroups: nextGroups };
+    });
+  },
 }));
 
 if (typeof window !== 'undefined') {
@@ -556,6 +756,36 @@ if (typeof window !== 'undefined') {
             useConnectionStore.setState({
               visibleDatabases: currentVisible,
               databaseTotals: currentTotals,
+            });
+          }
+        } catch {}
+      }
+      if (settings && settings[TABLE_GROUPS_STORAGE_KEY]) {
+        try {
+          const parsed = JSON.parse(settings[TABLE_GROUPS_STORAGE_KEY]) as Partial<TableGroupsStoragePayload>;
+          const currentGroups = { ...useConnectionStore.getState().tableGroups };
+          const currentAssignments = { ...useConnectionStore.getState().tableGroupAssignments };
+          let changed = false;
+          if (parsed.groups && typeof parsed.groups === 'object') {
+            for (const [k, v] of Object.entries(parsed.groups)) {
+              if (Array.isArray(v) && currentGroups[k] === undefined) {
+                currentGroups[k] = v;
+                changed = true;
+              }
+            }
+          }
+          if (parsed.assignments && typeof parsed.assignments === 'object') {
+            for (const [k, v] of Object.entries(parsed.assignments)) {
+              if (v && typeof v === 'object' && currentAssignments[k] === undefined) {
+                currentAssignments[k] = v;
+                changed = true;
+              }
+            }
+          }
+          if (changed) {
+            useConnectionStore.setState({
+              tableGroups: currentGroups,
+              tableGroupAssignments: currentAssignments,
             });
           }
         } catch {}
