@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"dhub/internal/config"
@@ -16,7 +17,8 @@ const (
 )
 
 type LocalStore struct {
-	db *sql.DB
+	db                 *sql.DB
+	historyInsertCount atomic.Int64
 }
 
 func NewLocalStore() (*LocalStore, error) {
@@ -276,11 +278,15 @@ func (s *LocalStore) RecordQueryHistory(entry QueryHistoryEntry) error {
 		return err
 	}
 
-	// Keep only the most recent entries per connection to bound DB size and memory.
-	_, err := s.db.Exec(`DELETE FROM query_history WHERE connection_id = ? AND id NOT IN (
-		SELECT id FROM query_history WHERE connection_id = ? ORDER BY id DESC LIMIT ?)`,
-		entry.ConnectionID, entry.ConnectionID, maxHistoryPerConnection)
-	return err
+	// Keep only the most recent entries per connection; prune every 25 inserts to avoid
+	// holding the single-writer SQLite lock on every query execution.
+	if s.historyInsertCount.Add(1)%25 == 0 {
+		_, err := s.db.Exec(`DELETE FROM query_history WHERE connection_id = ? AND id NOT IN (
+			SELECT id FROM query_history WHERE connection_id = ? ORDER BY id DESC LIMIT ?)`,
+			entry.ConnectionID, entry.ConnectionID, maxHistoryPerConnection)
+		return err
+	}
+	return nil
 }
 
 func (s *LocalStore) GetRecentHistory(connectionID string, limit int) ([]QueryHistoryEntry, error) {

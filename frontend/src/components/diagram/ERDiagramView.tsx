@@ -51,24 +51,81 @@ export const ERDiagramView: React.FC<ERDiagramViewProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Load tables and structure
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Load tables and structure (cache-first + bounded concurrency)
   const loadSchema = async () => {
     setLoading(true);
     try {
-      const objects = (await SchemaService.GetObjects(connectionId, database, schema)) || [];
-      const tableObjects = objects.filter((o) => o.type === 'table' || !o.type);
+      const [objects, cachedObjects] = await Promise.all([
+        SchemaService.GetObjects(connectionId, database, schema).then((r) => r || []),
+        SchemaService.GetCachedSchema(connectionId, database, schema).catch(() => []),
+      ]);
+      if (!isMountedRef.current) return;
 
-      // Fetch structures in parallel
-      const structures = await Promise.all(
-        tableObjects.map(async (t) => {
-          try {
-            const struct = await SchemaService.GetTableStructure(connectionId, database, schema, t.name);
-            return struct;
-          } catch {
-            return null;
-          }
-        })
-      );
+      const tableObjects = objects.filter((o) => o.type === 'table' || !o.type);
+      const cachedMap = new Map<string, any>();
+      for (const item of cachedObjects || []) {
+        if (item.objectName && item.columns && item.columns.length > 0) {
+          cachedMap.set(item.objectName.toLowerCase(), item);
+        }
+      }
+
+      const structures: Array<{
+        name: string;
+        columns: ColumnMeta[];
+        primaryKeys: string[];
+        foreignKeys: ForeignKeyMeta[];
+      } | null> = new Array(tableObjects.length).fill(null);
+
+      const missingIndices: number[] = [];
+      tableObjects.forEach((t, idx) => {
+        const cached = cachedMap.get(t.name.toLowerCase());
+        if (cached) {
+          const cols: ColumnMeta[] = cached.columns || [];
+          const pks = cols.filter((c) => c.isPrimaryKey).map((c) => c.name);
+          structures[idx] = {
+            name: cached.objectName || t.name,
+            columns: cols,
+            primaryKeys: pks,
+            foreignKeys: (cached.foreignKeys as ForeignKeyMeta[]) || [],
+          };
+        } else {
+          missingIndices.push(idx);
+        }
+      });
+
+      const concurrency = 4;
+      for (let i = 0; i < missingIndices.length; i += concurrency) {
+        if (!isMountedRef.current) return;
+        const batch = missingIndices.slice(i, i + concurrency);
+        await Promise.allSettled(
+          batch.map(async (idx) => {
+            const t = tableObjects[idx];
+            try {
+              const struct = await SchemaService.GetTableStructure(connectionId, database, schema, t.name);
+              if (struct) {
+                structures[idx] = {
+                  name: struct.name,
+                  columns: struct.columns || [],
+                  primaryKeys: struct.primaryKeys || [],
+                  foreignKeys: struct.foreignKeys || [],
+                };
+              }
+            } catch {
+              // ignore single table failure
+            }
+          })
+        );
+      }
+
+      if (!isMountedRef.current) return;
 
       // Layout in a multi-column grid
       const CARD_WIDTH = 240;

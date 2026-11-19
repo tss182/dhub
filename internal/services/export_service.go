@@ -243,21 +243,9 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		}
 	}
 
-	// Execute without pagination limit to stream full dataset
-	qReq := driver.QueryRequest{
-		ExecutionID:  "export-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-		ConnectionID: req.ConnectionID,
-		Database:     req.Database,
-		Schema:       req.Schema,
-		SQL:          querySQL,
-		Limit:        1000000, // Export up to 1M rows
-		Offset:       0,
-	}
-
-	res, err := drv.Execute(context.Background(), qReq)
-	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
-	}
+	// Stream dataset in chunks to avoid loading up to 1M rows into RAM at once.
+	const chunkSize = 5000
+	const maxExportRows = 1000000
 
 	f, err := os.Create(req.FilePath)
 	if err != nil {
@@ -266,121 +254,178 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	defer f.Close()
 
 	bw := bufio.NewWriterSize(f, 32*1024)
-	var exportedRows int64
+	format := strings.ToLower(req.Format)
 
-	switch strings.ToLower(req.Format) {
-	case "json":
-		colNames := make([]string, len(res.Columns))
-		for i, col := range res.Columns {
-			colNames[i] = col.Name
-		}
-
-		// Stream JSON array element-by-element to avoid doubling memory with []map[string]any.
-		if _, err := bw.WriteString("[\n"); err != nil {
-			return nil, fmt.Errorf("failed to write JSON export: %w", err)
-		}
-		obj := make(map[string]any, len(colNames))
-		for idx, row := range res.Rows {
-			clear(obj)
-			for i, val := range row {
-				if i < len(colNames) {
-					obj[colNames[i]] = val
-				}
-			}
-			raw, err := json.MarshalIndent(obj, "  ", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("failed to encode JSON export: %w", err)
-			}
-			if idx > 0 {
-				if _, err := bw.WriteString(",\n"); err != nil {
-					return nil, err
-				}
-			}
-			if _, err := bw.WriteString("  "); err != nil {
-				return nil, err
-			}
-			if _, err := bw.Write(raw); err != nil {
-				return nil, err
-			}
-			exportedRows++
-		}
-		if _, err := bw.WriteString("\n]\n"); err != nil {
-			return nil, err
-		}
-		if err := bw.Flush(); err != nil {
-			return nil, err
-		}
-
-	case "sql_insert", "sql":
-		targetTable := req.Table
-		if targetTable == "" {
-			targetTable = "exported_table"
-		} else {
-			targetTable = quoteIdentifier(driverType, targetTable)
-		}
-		colNames := make([]string, len(res.Columns))
-		for i, col := range res.Columns {
-			colNames[i] = quoteIdentifier(driverType, col.Name)
-		}
-		colsJoined := strings.Join(colNames, ", ")
-
-		for _, row := range res.Rows {
-			valStrs := make([]string, len(row))
-			for i, v := range row {
-				if v == nil {
-					valStrs[i] = "NULL"
-				} else {
-					s := fmt.Sprintf("%v", v)
-					valStrs[i] = "'" + strings.ReplaceAll(s, "'", "''") + "'"
-				}
-			}
-			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);\n", targetTable, colsJoined, strings.Join(valStrs, ", "))
-			if _, err := bw.WriteString(stmt); err != nil {
-				return nil, err
-			}
-			exportedRows++
-		}
-		if err := bw.Flush(); err != nil {
-			return nil, err
-		}
-
-	default: // CSV
+	var csvWriter *csv.Writer
+	if format != "json" && format != "sql_insert" && format != "sql" {
 		delimRune := ','
 		if req.Delimiter == ";" {
 			delimRune = ';'
 		} else if req.Delimiter == "\t" {
 			delimRune = '\t'
 		}
+		csvWriter = csv.NewWriter(bw)
+		csvWriter.Comma = delimRune
+	}
 
-		writer := csv.NewWriter(bw)
-		writer.Comma = delimRune
+	var exportedRows int64
+	var colNames []string
+	var sqlTargetTable string
+	var sqlColsJoined string
+	var jsonObj map[string]any
+	headerWritten := false
 
-		if req.IncludeHeader {
-			headers := make([]string, len(res.Columns))
-			for i, col := range res.Columns {
-				headers[i] = col.Name
-			}
-			if err := writer.Write(headers); err != nil {
-				return nil, err
-			}
+	offset := 0
+	for exportedRows < maxExportRows {
+		remaining := maxExportRows - int(exportedRows)
+		limit := chunkSize
+		if remaining < limit {
+			limit = remaining
 		}
 
-		for _, row := range res.Rows {
-			strRow := make([]string, len(row))
-			for i, v := range row {
-				if v == nil {
-					strRow[i] = ""
+		qReq := driver.QueryRequest{
+			ExecutionID:  "export-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+			ConnectionID: req.ConnectionID,
+			Database:     req.Database,
+			Schema:       req.Schema,
+			SQL:          querySQL,
+			Limit:        limit,
+			Offset:       offset,
+		}
+
+		res, err := drv.Execute(context.Background(), qReq)
+		if err != nil {
+			return nil, fmt.Errorf("query execution failed: %w", err)
+		}
+
+		if !headerWritten {
+			headerWritten = true
+			switch format {
+			case "json":
+				colNames = make([]string, len(res.Columns))
+				for i, col := range res.Columns {
+					colNames[i] = col.Name
+				}
+				jsonObj = make(map[string]any, len(colNames))
+				if _, err := bw.WriteString("[\n"); err != nil {
+					return nil, fmt.Errorf("failed to write JSON export: %w", err)
+				}
+			case "sql_insert", "sql":
+				sqlTargetTable = req.Table
+				if sqlTargetTable == "" {
+					sqlTargetTable = "exported_table"
 				} else {
-					strRow[i] = fmt.Sprintf("%v", v)
+					sqlTargetTable = quoteIdentifier(driverType, sqlTargetTable)
+				}
+				quotedCols := make([]string, len(res.Columns))
+				for i, col := range res.Columns {
+					quotedCols[i] = quoteIdentifier(driverType, col.Name)
+				}
+				sqlColsJoined = strings.Join(quotedCols, ", ")
+			default:
+				if req.IncludeHeader && len(res.Columns) > 0 {
+					headers := make([]string, len(res.Columns))
+					for i, col := range res.Columns {
+						headers[i] = col.Name
+					}
+					if err := csvWriter.Write(headers); err != nil {
+						return nil, err
+					}
 				}
 			}
-			if err := writer.Write(strRow); err != nil {
-				return nil, err
-			}
-			exportedRows++
 		}
-		writer.Flush()
-		if err := writer.Error(); err != nil {
+
+		rowCount := len(res.Rows)
+		if rowCount == 0 {
+			res = nil
+			break
+		}
+
+		switch format {
+		case "json":
+			for _, row := range res.Rows {
+				clear(jsonObj)
+				for i, val := range row {
+					if i < len(colNames) {
+						jsonObj[colNames[i]] = val
+					}
+				}
+				raw, err := json.MarshalIndent(jsonObj, "  ", "  ")
+				if err != nil {
+					return nil, fmt.Errorf("failed to encode JSON export: %w", err)
+				}
+				if exportedRows > 0 {
+					if _, err := bw.WriteString(",\n"); err != nil {
+						return nil, err
+					}
+				}
+				if _, err := bw.WriteString("  "); err != nil {
+					return nil, err
+				}
+				if _, err := bw.Write(raw); err != nil {
+					return nil, err
+				}
+				exportedRows++
+			}
+
+		case "sql_insert", "sql":
+			for _, row := range res.Rows {
+				valStrs := make([]string, len(row))
+				for i, v := range row {
+					if v == nil {
+						valStrs[i] = "NULL"
+					} else {
+						s := fmt.Sprintf("%v", v)
+						valStrs[i] = "'" + strings.ReplaceAll(s, "'", "''") + "'"
+					}
+				}
+				stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);\n", sqlTargetTable, sqlColsJoined, strings.Join(valStrs, ", "))
+				if _, err := bw.WriteString(stmt); err != nil {
+					return nil, err
+				}
+				exportedRows++
+			}
+
+		default:
+			for _, row := range res.Rows {
+				strRow := make([]string, len(row))
+				for i, v := range row {
+					if v == nil {
+						strRow[i] = ""
+					} else {
+						strRow[i] = fmt.Sprintf("%v", v)
+					}
+				}
+				if err := csvWriter.Write(strRow); err != nil {
+					return nil, err
+				}
+				exportedRows++
+			}
+		}
+
+		hasMore := res.HasMore && rowCount >= limit
+		res = nil
+		if !hasMore {
+			break
+		}
+		offset += rowCount
+	}
+
+	switch format {
+	case "json":
+		if _, err := bw.WriteString("\n]\n"); err != nil {
+			return nil, err
+		}
+		if err := bw.Flush(); err != nil {
+			return nil, err
+		}
+	case "sql_insert", "sql":
+		if err := bw.Flush(); err != nil {
+			return nil, err
+		}
+	default:
+		csvWriter.Flush()
+		if err := csvWriter.Error(); err != nil {
 			return nil, err
 		}
 		if err := bw.Flush(); err != nil {
@@ -389,7 +434,6 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 
 	// Release large result buffers promptly on low-memory systems.
-	res = nil
 	if exportedRows > 1000 {
 		debug.FreeOSMemory()
 	}
