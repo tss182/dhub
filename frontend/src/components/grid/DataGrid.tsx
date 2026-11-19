@@ -234,6 +234,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
     [isReadOnly, columns, isColumnEditable]
   );
 
+  const getRowByGlobalIndex = useCallback(
+    (globalIdx: number) => {
+      const rowInArray = globalIdx >= (startOffset || 0) ? globalIdx - (startOffset || 0) : globalIdx;
+      return rows[rowInArray] || rows[globalIdx];
+    },
+    [rows, startOffset]
+  );
+
   const buildRowMetaMaps = useCallback(
     (targetRow: any[] | undefined) => {
       const originalRowValues: Record<string, unknown> = {};
@@ -1328,7 +1336,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, newVal);
     } else {
       const gRowIndex = vr.globalRowIndex!;
-      const { originalRowValues, pkMap } = buildRowMetaMaps(rows[gRowIndex]);
+      const targetRow = vr.rowData || getRowByGlobalIndex(gRowIndex);
+      const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
       stageCellUpdate(tabId, gRowIndex, pkMap, originalRowValues, col.name, newVal);
     }
   };
@@ -1690,7 +1699,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
             stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, cleanPastedValue(val, col.dataType));
           });
         } else {
-          const { originalRowValues, pkMap } = buildRowMetaMaps(rows[vr.globalRowIndex!]);
+          const targetRow = vr.rowData || getRowByGlobalIndex(vr.globalRowIndex!);
+          const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
           targetColMap.forEach(({ col, val }) => {
             if (col.isAutoIncrement || !isColumnEditable(col.name, false)) return;
             stageCellUpdate(
@@ -1835,7 +1845,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           });
         }
       } else {
-        const sourceRow = rows[targetRowIndex];
+        const sourceRow = getRowByGlobalIndex(targetRowIndex);
         if (sourceRow) {
           const staged = latestStaged[targetRowIndex];
           columns.forEach((col, idx) => {

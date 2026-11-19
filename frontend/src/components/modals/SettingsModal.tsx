@@ -10,7 +10,6 @@ import {
   Check,
   RotateCcw,
   Sparkles,
-  Command,
   Hash,
   Palette,
   Moon,
@@ -436,18 +435,6 @@ export const SettingsModal: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setActiveSettingsTab('shortcuts')}
-              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
-                activeSettingsTab === 'shortcuts'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#20222b]'
-              }`}
-            >
-              <Command className="h-4 w-4" />
-              <span>Shortcuts</span>
-            </button>
-
-            <button
               onClick={() => setActiveSettingsTab('version')}
               className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
                 activeSettingsTab === 'version'
@@ -805,95 +792,6 @@ export const SettingsModal: React.FC = () => {
                   >
                     {showMinimap ? 'Minimap: ON' : 'Minimap: OFF'}
                   </button>
-                </div>
-              </div>
-            )}
-
-            {/* Shortcuts Tab */}
-            {activeSettingsTab === 'shortcuts' && (
-              <div className="space-y-5">
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                    <Command className="h-3.5 w-3.5 text-blue-400" />
-                    <span>Keyboard Shortcuts</span>
-                  </h4>
-                  <p className="text-[11px] text-zinc-400 mb-3">
-                    Quick keyboard shortcuts for navigation, query execution, and data grid editing.
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Help &amp; User Guide</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+H / ⌘H
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Search Everywhere</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+P / ⌘P
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Execute Query</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+Enter / ⌘Enter
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Apply Grid Changes</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+S / ⌘S
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Duplicate Row</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+D / ⌘D
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Delete Active Row</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Delete / ⌘⌫
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Revert / Cancel Changes</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Esc
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Settings & Preferences</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+I / ⌘I
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Close Active Tab</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+W / ⌘W
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Format SQL Code</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Shift+Alt+F
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Stop Query Execution</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+Shift+D / ⌘Shift+D
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">View As / Value Panel</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+T / ⌘T
-                      </kbd>
-                    </div>
-                  </div>
                 </div>
               </div>
             )}

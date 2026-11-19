@@ -3,7 +3,7 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update' | 'sql_upsert';
-export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'backup' | 'shortcuts' | 'version';
+export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'backup' | 'version';
 
 interface SettingsValues {
   theme: ThemeMode;

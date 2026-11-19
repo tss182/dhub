@@ -152,11 +152,11 @@ const KEYBOARD_SHORTCUT_GROUPS: Array<{
   {
     title: 'Global & Navigation',
     items: [
-      { action: 'Open Help & User Guide', win: 'Ctrl+H', mac: '⌘H' },
+      { action: 'Help & User Guide', win: 'Ctrl+H', mac: '⌘H' },
       { action: 'Search Everywhere', win: 'Ctrl+P', mac: '⌘P' },
       { action: 'Toggle Left Sidebar (Explorer / Workspaces)', win: 'Ctrl+B', mac: '⌘B' },
       { action: 'Toggle Right Sidebar (Consoles / Views)', win: 'Ctrl+R', mac: '⌘R' },
-      { action: 'Open Settings & Preferences', win: 'Ctrl+I', mac: '⌘I' },
+      { action: 'Settings & Preferences', win: 'Ctrl+I', mac: '⌘I' },
       { action: 'Close Active Tab', win: 'Ctrl+W', mac: '⌘W' },
     ],
   },
@@ -164,7 +164,8 @@ const KEYBOARD_SHORTCUT_GROUPS: Array<{
     title: 'Query Console & SQL Editor',
     items: [
       { action: 'Execute Query at Cursor / Selection', win: 'Ctrl+Enter', mac: '⌘Enter' },
-      { action: 'Stop Running Query', win: 'Ctrl+Shift+D', mac: '⌘Shift+D' },
+      { action: 'Execute All Statements in Editor', win: 'Ctrl+Shift+Enter', mac: '⌘Shift+Enter' },
+      { action: 'Stop Query Execution', win: 'Ctrl+Shift+D', mac: '⌘Shift+D' },
       { action: 'Format SQL Code', win: 'Shift+Alt+F', mac: 'Shift+Alt+F' },
       { action: 'Revert / Close Popovers & Modals', win: 'Esc', mac: 'Esc' },
     ],
@@ -172,11 +173,14 @@ const KEYBOARD_SHORTCUT_GROUPS: Array<{
   {
     title: 'Data Grid & Cell Editing',
     items: [
-      { action: 'Apply Staged Grid Changes', win: 'Ctrl+S', mac: '⌘S' },
+      { action: 'Apply Grid Changes', win: 'Ctrl+S', mac: '⌘S' },
       { action: 'Duplicate Active Row', win: 'Ctrl+D', mac: '⌘D' },
       { action: 'Delete Active Row', win: 'Delete', mac: '⌘⌫' },
-      { action: 'Toggle Cell Value Viewer (Views)', win: 'Ctrl+T', mac: '⌘T' },
-      { action: 'Revert Unsaved Cell / Grid Edits', win: 'Esc', mac: 'Esc' },
+      { action: 'View As / Value Panel', win: 'Ctrl+T', mac: '⌘T' },
+      { action: 'Copy Selected Cells', win: 'Ctrl+C', mac: '⌘C' },
+      { action: 'Copy As Format Dialog', win: 'Ctrl+Shift+C', mac: '⌘Shift+C' },
+      { action: 'Paste Data into Grid', win: 'Ctrl+V', mac: '⌘V' },
+      { action: 'Revert / Cancel Changes', win: 'Esc', mac: 'Esc' },
     ],
   },
 ];
@@ -1177,7 +1181,7 @@ export const HelpModal: React.FC = () => {
                             >
                               <span className="text-[11px] text-zinc-300">{item.action}</span>
                               <kbd className="shrink-0 font-mono text-[10px] bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                                {isMac ? item.mac : item.win}
+                                {item.win === item.mac ? item.win : `${item.win} / ${item.mac}`}
                               </kbd>
                             </div>
                           ))}

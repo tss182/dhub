@@ -273,4 +273,4 @@ DHub uses **Trust-On-First-Use (TOFU)** against its own local `known_hosts` file
 - Database passwords and SSH passphrases are stored in your system's native **OS Keyring** whenever available (with encrypted AES-GCM fallback).
 
 ### How do I run updates?
-Open **Settings -> Shortcuts & About** and click **Check for Updates**. DHub checks GitHub Releases for newer versions and lets you review the changelog before updating.
+Open **Settings -> Version** and click **Check for Updates**. DHub checks GitHub Releases for newer versions and lets you review the changelog before updating.
