@@ -29,4 +29,16 @@ type UpdateProgressEvent struct {
 	Error      string  `json:"error,omitempty"`
 }
 
+type BackupProgressEvent struct {
+	ConnectionID string  `json:"connectionId"`
+	Database     string  `json:"database"`
+	Status       string  `json:"status"` // "running" | "completed" | "error"
+	Percent      float64 `json:"percent"`
+	CurrentTable string  `json:"currentTable,omitempty"`
+	TablesDone   int     `json:"tablesDone"`
+	TotalTables  int     `json:"totalTables"`
+	BytesWritten int64   `json:"bytesWritten"`
+	Message      string  `json:"message,omitempty"`
+}
+
 

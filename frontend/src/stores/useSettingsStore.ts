@@ -15,6 +15,7 @@ interface SettingsValues {
   showMinimap: boolean;
   copyFormat: CopyFormat;
   checkUpdatesOnStartup: boolean;
+  backupToolPaths: Record<string, string>;
 }
 
 interface SettingsState extends SettingsValues {
@@ -32,6 +33,7 @@ interface SettingsState extends SettingsValues {
   setShowMinimap: (show: boolean) => void;
   setCopyFormat: (format: CopyFormat) => void;
   setCheckUpdatesOnStartup: (enabled: boolean) => void;
+  setBackupToolPath: (tool: string, path: string) => void;
   resetToDefaults: () => void;
   reloadSettings: () => Promise<void>;
 }
@@ -47,6 +49,7 @@ const DEFAULT_SETTINGS: SettingsValues = {
   showMinimap: false,
   copyFormat: 'csv',
   checkUpdatesOnStartup: true,
+  backupToolPaths: {},
 };
 
 function applyThemeToDocument(theme: ThemeMode) {
@@ -62,21 +65,45 @@ function applyThemeToDocument(theme: ThemeMode) {
   }
 }
 
+function parseSettingsObject(parsed: any): SettingsValues {
+  const backupToolPaths: Record<string, string> = {};
+  if (parsed?.backupToolPaths && typeof parsed.backupToolPaths === 'object') {
+    for (const [k, v] of Object.entries(parsed.backupToolPaths)) {
+      if (typeof v === 'string' && v.trim()) {
+        backupToolPaths[k] = v.trim();
+      }
+    }
+  }
+  return {
+    theme: parsed?.theme === 'light' ? 'light' : 'dark',
+    dataViewMode: parsed?.dataViewMode === 'infinite' ? 'infinite' : 'paged',
+    defaultPageSize:
+      typeof parsed?.defaultPageSize === 'number' && parsed.defaultPageSize > 0
+        ? parsed.defaultPageSize
+        : DEFAULT_SETTINGS.defaultPageSize,
+    editorFontSize:
+      typeof parsed?.editorFontSize === 'number'
+        ? parsed.editorFontSize
+        : DEFAULT_SETTINGS.editorFontSize,
+    wordWrap: typeof parsed?.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
+    showMinimap:
+      typeof parsed?.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
+    copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed?.copyFormat)
+      ? parsed.copyFormat
+      : DEFAULT_SETTINGS.copyFormat,
+    checkUpdatesOnStartup:
+      typeof parsed?.checkUpdatesOnStartup === 'boolean'
+        ? parsed.checkUpdatesOnStartup
+        : DEFAULT_SETTINGS.checkUpdatesOnStartup,
+    backupToolPaths,
+  };
+}
+
 function loadStoredSettings(): SettingsValues {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        theme: parsed.theme === 'light' ? 'light' : 'dark',
-        dataViewMode: parsed.dataViewMode === 'infinite' ? 'infinite' : 'paged',
-        defaultPageSize: typeof parsed.defaultPageSize === 'number' && parsed.defaultPageSize > 0 ? parsed.defaultPageSize : DEFAULT_SETTINGS.defaultPageSize,
-        editorFontSize: typeof parsed.editorFontSize === 'number' ? parsed.editorFontSize : DEFAULT_SETTINGS.editorFontSize,
-        wordWrap: typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
-        showMinimap: typeof parsed.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
-        copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat) ? parsed.copyFormat : DEFAULT_SETTINGS.copyFormat,
-        checkUpdatesOnStartup: typeof parsed.checkUpdatesOnStartup === 'boolean' ? parsed.checkUpdatesOnStartup : DEFAULT_SETTINGS.checkUpdatesOnStartup,
-      };
+      return parseSettingsObject(JSON.parse(raw));
     }
   } catch (err) {
     console.warn('Failed to load settings from localStorage:', err);
@@ -152,6 +179,20 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ checkUpdatesOnStartup });
   },
 
+  setBackupToolPath: (tool, path) => {
+    set((state) => {
+      const next = { ...state.backupToolPaths };
+      const trimmed = path.trim();
+      if (trimmed) {
+        next[tool] = trimmed;
+      } else {
+        delete next[tool];
+      }
+      persistSettings({ backupToolPaths: next });
+      return { backupToolPaths: next };
+    });
+  },
+
   resetToDefaults: () => {
     try {
       localStorage.removeItem(SETTINGS_STORAGE_KEY);
@@ -169,34 +210,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       if (settings && settings[SETTINGS_STORAGE_KEY]) {
         const raw = settings[SETTINGS_STORAGE_KEY];
         localStorage.setItem(SETTINGS_STORAGE_KEY, raw);
-        const parsed = JSON.parse(raw);
-        const theme: ThemeMode = parsed.theme === 'light' ? 'light' : 'dark';
-        applyThemeToDocument(theme);
-        set({
-          theme,
-          dataViewMode: parsed.dataViewMode === 'infinite' ? 'infinite' : 'paged',
-          defaultPageSize:
-            typeof parsed.defaultPageSize === 'number' && parsed.defaultPageSize > 0
-              ? parsed.defaultPageSize
-              : DEFAULT_SETTINGS.defaultPageSize,
-          editorFontSize:
-            typeof parsed.editorFontSize === 'number'
-              ? parsed.editorFontSize
-              : DEFAULT_SETTINGS.editorFontSize,
-          wordWrap:
-            typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
-          showMinimap:
-            typeof parsed.showMinimap === 'boolean'
-              ? parsed.showMinimap
-              : DEFAULT_SETTINGS.showMinimap,
-          copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat)
-            ? parsed.copyFormat
-            : DEFAULT_SETTINGS.copyFormat,
-          checkUpdatesOnStartup:
-            typeof parsed.checkUpdatesOnStartup === 'boolean'
-              ? parsed.checkUpdatesOnStartup
-              : DEFAULT_SETTINGS.checkUpdatesOnStartup,
-        });
+        const parsed = parseSettingsObject(JSON.parse(raw));
+        applyThemeToDocument(parsed.theme);
+        set(parsed);
       }
     } catch (err) {
       console.warn('Failed to reload settings from backend:', err);
@@ -209,35 +225,10 @@ if (typeof window !== 'undefined') {
     .then((settings) => {
       if (settings && settings[SETTINGS_STORAGE_KEY]) {
         try {
-          const parsed = JSON.parse(settings[SETTINGS_STORAGE_KEY]);
+          const parsed = parseSettingsObject(JSON.parse(settings[SETTINGS_STORAGE_KEY]));
           localStorage.setItem(SETTINGS_STORAGE_KEY, settings[SETTINGS_STORAGE_KEY]);
-          const theme: ThemeMode = parsed.theme === 'light' ? 'light' : 'dark';
-          applyThemeToDocument(theme);
-          useSettingsStore.setState({
-            theme,
-            dataViewMode: parsed.dataViewMode === 'infinite' ? 'infinite' : 'paged',
-            defaultPageSize:
-              typeof parsed.defaultPageSize === 'number' && parsed.defaultPageSize > 0
-                ? parsed.defaultPageSize
-                : DEFAULT_SETTINGS.defaultPageSize,
-            editorFontSize:
-              typeof parsed.editorFontSize === 'number'
-                ? parsed.editorFontSize
-                : DEFAULT_SETTINGS.editorFontSize,
-            wordWrap:
-              typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
-            showMinimap:
-              typeof parsed.showMinimap === 'boolean'
-                ? parsed.showMinimap
-                : DEFAULT_SETTINGS.showMinimap,
-            copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed.copyFormat)
-              ? parsed.copyFormat
-              : DEFAULT_SETTINGS.copyFormat,
-            checkUpdatesOnStartup:
-              typeof parsed.checkUpdatesOnStartup === 'boolean'
-                ? parsed.checkUpdatesOnStartup
-                : DEFAULT_SETTINGS.checkUpdatesOnStartup,
-          });
+          applyThemeToDocument(parsed.theme);
+          useSettingsStore.setState(parsed);
         } catch {
           // ignore
         }

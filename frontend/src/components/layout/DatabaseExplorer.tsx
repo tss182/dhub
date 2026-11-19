@@ -3,7 +3,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
-import { Dialogs } from '@wailsio/runtime';
+import { Dialogs, Events } from '@wailsio/runtime';
 import { Popover } from '../common/Popover';
 import { ExportModal } from '../modals/ExportModal';
 import { ImportModal } from '../modals/ImportModal';
@@ -500,6 +500,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     availableTables: string[];
     tableSearch: string;
     isLoadingTables: boolean;
+    toolPath: string;
+    backupProgress: {
+      percent: number;
+      currentTable?: string;
+      tablesDone: number;
+      totalTables: number;
+      bytesWritten: number;
+      message?: string;
+    } | null;
   }>({
     isOpen: false,
     mode: 'backup',
@@ -517,6 +526,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     availableTables: [],
     tableSearch: '',
     isLoadingTables: false,
+    toolPath: '',
+    backupProgress: null,
   });
 
   // Export / Import Table Modal state
@@ -572,12 +583,69 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     availableSchemas: [],
   });
 
+  const getBackupCliTool = (drv?: string) => {
+    switch (drv) {
+      case 'postgres':
+        return 'pg_dump';
+      case 'sqlite':
+        return 'sqlite3';
+      case 'mariadb':
+        return 'mariadb-dump';
+      case 'mongodb':
+        return 'mongodump';
+      case 'redis':
+        return 'redis-cli';
+      case 'mssql':
+        return 'sqlcmd';
+      case 'clickhouse':
+      case 'oracle':
+        return drv;
+      default:
+        return 'mysqldump';
+    }
+  };
+
+  useEffect(() => {
+    if (!backupRestoreModal.isOpen || backupRestoreModal.mode !== 'backup') return;
+    const unsubscribe = Events.On('backup:progress', (event: any) => {
+      const payload = event?.data ?? event;
+      if (!payload) return;
+      if (
+        payload.connectionId === backupRestoreModal.connection?.id &&
+        payload.database === backupRestoreModal.database
+      ) {
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          backupProgress: {
+            percent: typeof payload.percent === 'number' ? payload.percent : 0,
+            currentTable: payload.currentTable || '',
+            tablesDone: payload.tablesDone || 0,
+            totalTables: payload.totalTables || 0,
+            bytesWritten: payload.bytesWritten || 0,
+            message: payload.message || '',
+          },
+        }));
+      }
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [
+    backupRestoreModal.isOpen,
+    backupRestoreModal.mode,
+    backupRestoreModal.connection?.id,
+    backupRestoreModal.database,
+  ]);
+
   const handleOpenBackupModal = async (conn: ConnectionConfig, database: string) => {
     let defaultPath = `${database}_backup.sql`;
     try {
       const suggested = await SchemaService.GetDefaultBackupPath(database);
       if (suggested) defaultPath = suggested;
     } catch {}
+
+    const cliTool = getBackupCliTool(conn.driver);
+    const savedToolPath = useSettingsStore.getState().backupToolPaths?.[cliTool] || '';
 
     setBackupRestoreModal({
       isOpen: true,
@@ -596,6 +664,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       availableTables: [],
       tableSearch: '',
       isLoadingTables: true,
+      toolPath: savedToolPath,
+      backupProgress: null,
     });
 
     try {
@@ -616,6 +686,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         ...prev,
         isLoadingTables: false,
       }));
+    }
+  };
+
+  const handleBrowseBackupToolPath = async () => {
+    const cliTool = getBackupCliTool(backupRestoreModal.connection?.driver);
+    try {
+      const chosen: any = await Dialogs.OpenFile({
+        Title: `Select ${cliTool} Executable`,
+        CanChooseFiles: true,
+        AllowsMultipleSelection: false,
+      });
+      const picked = Array.isArray(chosen) ? chosen[0] : chosen;
+      if (picked && typeof picked === 'string' && picked.trim()) {
+        const clean = picked.trim();
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          toolPath: clean,
+        }));
+        useSettingsStore.getState().setBackupToolPath(cliTool, clean);
+      }
+    } catch (e) {
+      console.warn('OpenFile dialog error:', e);
     }
   };
 
@@ -737,10 +829,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       return;
     }
 
-    setBackupRestoreModal((prev) => ({ ...prev, isProcessing: true }));
+    setBackupRestoreModal((prev) => ({
+      ...prev,
+      isProcessing: true,
+      backupProgress:
+        mode === 'backup'
+          ? { percent: 0, tablesDone: 0, totalTables: 0, bytesWritten: 0, message: 'Preparing backup...' }
+          : null,
+    }));
 
     try {
       if (mode === 'backup') {
+        const cliTool = getBackupCliTool(connection.driver);
+        const cleanToolPath = backupRestoreModal.toolPath.trim();
+        useSettingsStore.getState().setBackupToolPath(cliTool, cleanToolPath);
         const backupOpts = {
           mode: backupRestoreModal.dumpMode,
           tableSelection: backupRestoreModal.tableSelection,
@@ -749,6 +851,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           includeTriggers: backupRestoreModal.includeTriggers,
           includeEvents: backupRestoreModal.includeEvents,
           singleTransaction: backupRestoreModal.singleTransaction,
+          toolPath: cleanToolPath || undefined,
         };
         const msg = await SchemaService.BackupDatabase(
           connection.id,
@@ -756,7 +859,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           cleanPath,
           JSON.stringify(backupOpts)
         );
-        setBackupRestoreModal((prev) => ({ ...prev, isOpen: false, isProcessing: false }));
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          isOpen: false,
+          isProcessing: false,
+          backupProgress: null,
+        }));
         alertSuccess(msg, 'Database Backup Completed');
       } else {
         const msg = await SchemaService.RestoreDatabase(connection.id, database, cleanPath);
@@ -765,7 +873,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         alertSuccess(msg, 'Database Restore Completed');
       }
     } catch (err: any) {
-      setBackupRestoreModal((prev) => ({ ...prev, isProcessing: false }));
+      setBackupRestoreModal((prev) => ({ ...prev, isProcessing: false, backupProgress: null }));
       alertError(
         err?.message || String(err),
         mode === 'backup' ? 'Database Backup Failed' : 'Database Restore Failed'
@@ -6214,6 +6322,58 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   </p>
                 </div>
 
+                {isBackup && drv !== 'clickhouse' && drv !== 'oracle' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                        Path to {cliTool}
+                      </label>
+                      <span className="text-[10px] text-zinc-500 font-mono">
+                        Optional (auto-detect in PATH)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        disabled={backupRestoreModal.isProcessing}
+                        placeholder={`Auto-detect (${cliTool} in PATH)`}
+                        value={backupRestoreModal.toolPath}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setBackupRestoreModal((prev) => ({
+                            ...prev,
+                            toolPath: val,
+                          }));
+                        }}
+                        className="flex-1 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                      />
+                      {backupRestoreModal.toolPath && (
+                        <button
+                          type="button"
+                          disabled={backupRestoreModal.isProcessing}
+                          title="Reset to auto-detect"
+                          onClick={() => {
+                            const tool = getBackupCliTool(drv);
+                            setBackupRestoreModal((prev) => ({ ...prev, toolPath: '' }));
+                            useSettingsStore.getState().setBackupToolPath(tool, '');
+                          }}
+                          className="p-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={backupRestoreModal.isProcessing}
+                        onClick={handleBrowseBackupToolPath}
+                        className="px-3 py-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-xs font-medium text-zinc-200 hover:text-white transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+                      >
+                        Browse...
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {isBackup && (
                   <>
                     {/* Dump Content Mode */}
@@ -6449,6 +6609,41 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   </div>
                 )}
 
+                {isBackup && backupRestoreModal.isProcessing && (() => {
+                  const prog = backupRestoreModal.backupProgress;
+                  const pct = Math.min(100, Math.max(0, Math.round(prog?.percent ?? 0)));
+                  const bytes = prog?.bytesWritten ?? 0;
+                  const sizeLabel =
+                    bytes >= 1024 * 1024
+                      ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+                      : bytes > 0
+                      ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+                      : '';
+                  return (
+                    <div className="rounded-xl bg-[#101115] border border-emerald-500/30 p-3.5 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-zinc-200 font-medium truncate pr-2">
+                          {prog?.message || 'Backing up database...'}
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0 font-mono">
+                          {sizeLabel && (
+                            <span className="text-[11px] text-zinc-400">{sizeLabel}</span>
+                          )}
+                          <span className="text-emerald-400 font-bold tabular-nums">
+                            {pct}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-[#1d1f28] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-emerald-500 transition-all duration-150"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530] shrink-0">
                   <button
                     type="button"
@@ -6475,7 +6670,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     {backupRestoreModal.isProcessing ? (
                       <>
                         <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>{isBackup ? 'Backing up...' : 'Restoring...'}</span>
+                        <span>
+                          {isBackup
+                            ? `Backing up (${Math.round(backupRestoreModal.backupProgress?.percent ?? 0)}%)...`
+                            : 'Restoring...'}
+                        </span>
                       </>
                     ) : (
                       <>

@@ -248,6 +248,224 @@ type BackupOptions struct {
 	IncludeTriggers   bool     `json:"includeTriggers"`   // mysqldump --triggers
 	IncludeEvents     bool     `json:"includeEvents"`     // mysqldump --events
 	SingleTransaction bool     `json:"singleTransaction"` // mysqldump --single-transaction
+	ToolPath          string   `json:"toolPath,omitempty"`
+}
+
+func (s *SchemaService) emitBackupProgress(ev app.BackupProgressEvent) {
+	if s.appGetter == nil {
+		return
+	}
+	if a := s.appGetter(); a != nil {
+		a.Event.Emit("backup:progress", ev)
+	}
+}
+
+func resolveBackupToolPath(customPath string, installHint string, candidates ...string) (string, error) {
+	custom := strings.TrimSpace(customPath)
+	if custom != "" {
+		if info, err := os.Stat(custom); err == nil && !info.IsDir() {
+			return custom, nil
+		}
+		if found, err := exec.LookPath(custom); err == nil {
+			return found, nil
+		}
+		return "", fmt.Errorf("custom backup executable not found at: %s", custom)
+	}
+	for _, bin := range candidates {
+		if found, err := exec.LookPath(bin); err == nil {
+			return found, nil
+		}
+	}
+	return "", fmt.Errorf("%s executable not found in PATH; %s", strings.Join(candidates, " or "), installHint)
+}
+
+type backupProgressWriter struct {
+	dst          io.Writer
+	lineBuf      []byte
+	skipLine     bool
+	bytesWritten int64
+	seenTables   map[string]struct{}
+	currentTable string
+	lastEmit     time.Time
+	onUpdate     func(bytesWritten int64, seenTables int, currentTable string)
+}
+
+func newBackupProgressWriter(dst io.Writer, onUpdate func(bytesWritten int64, seenTables int, currentTable string)) *backupProgressWriter {
+	return &backupProgressWriter{
+		dst:        dst,
+		lineBuf:    make([]byte, 0, 256),
+		seenTables: make(map[string]struct{}),
+		onUpdate:   onUpdate,
+	}
+}
+
+func (w *backupProgressWriter) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	if n <= 0 {
+		return n, err
+	}
+	w.bytesWritten += int64(n)
+
+	tableChanged := false
+	for _, b := range p[:n] {
+		if b == '\n' {
+			if !w.skipLine && len(w.lineBuf) > 0 {
+				line := strings.TrimSpace(string(w.lineBuf))
+				var tbl string
+				if strings.HasPrefix(line, "-- Table structure for table ") {
+					tbl = strings.TrimPrefix(line, "-- Table structure for table ")
+				} else if strings.HasPrefix(line, "-- Dumping data for table ") {
+					tbl = strings.TrimPrefix(line, "-- Dumping data for table ")
+				}
+				tbl = strings.Trim(tbl, "`\" ")
+				if tbl != "" {
+					if tbl != w.currentTable {
+						w.currentTable = tbl
+						tableChanged = true
+					}
+					w.seenTables[tbl] = struct{}{}
+				}
+			}
+			w.lineBuf = w.lineBuf[:0]
+			w.skipLine = false
+			continue
+		}
+		if w.skipLine {
+			continue
+		}
+		if len(w.lineBuf) < 256 {
+			w.lineBuf = append(w.lineBuf, b)
+			if len(w.lineBuf) == 3 && !bytes.HasPrefix(w.lineBuf, []byte("-- ")) {
+				w.skipLine = true
+			}
+		} else {
+			w.skipLine = true
+		}
+	}
+
+	if w.onUpdate != nil && (tableChanged || time.Since(w.lastEmit) >= 150*time.Millisecond) {
+		w.lastEmit = time.Now()
+		w.onUpdate(w.bytesWritten, len(w.seenTables), w.currentTable)
+	}
+	return n, err
+}
+
+func (s *SchemaService) estimateMySQLBackupMetadata(ctx context.Context, connectionID, database string, opts BackupOptions) (totalTables int, estimatedBytes int64) {
+	if opts.TableSelection == "include" {
+		totalTables = len(opts.Tables)
+	}
+	metaCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	drv, err := s.sessions.GetOrConnect(metaCtx, connectionID)
+	if err != nil {
+		return totalTables, 0
+	}
+
+	escapedDB := strings.ReplaceAll(database, "'", "''")
+	res, err := drv.Execute(metaCtx, driver.QueryRequest{
+		ConnectionID: connectionID,
+		Database:     database,
+		SQL:          fmt.Sprintf("SELECT TABLE_NAME, COALESCE(DATA_LENGTH, 0) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '%s' AND TABLE_TYPE = 'BASE TABLE'", escapedDB),
+		Limit:        10000,
+	})
+	if err != nil || res == nil {
+		if totalTables == 0 {
+			if objs, lErr := drv.ListObjects(metaCtx, database, database); lErr == nil {
+				for _, o := range objs {
+					if o.Type == "table" {
+						totalTables++
+					}
+				}
+			}
+		}
+		return totalTables, 0
+	}
+
+	selectedSet := make(map[string]struct{}, len(opts.Tables))
+	for _, t := range opts.Tables {
+		selectedSet[t] = struct{}{}
+	}
+
+	count := 0
+	var totalBytes int64
+	for _, row := range res.Rows {
+		if len(row) < 2 {
+			continue
+		}
+		name := fmt.Sprint(row[0])
+		if opts.TableSelection == "include" {
+			if _, ok := selectedSet[name]; !ok {
+				continue
+			}
+		} else if opts.TableSelection == "exclude" {
+			if _, ok := selectedSet[name]; ok {
+				continue
+			}
+		}
+		count++
+		switch v := row[1].(type) {
+		case int64:
+			totalBytes += v
+		case float64:
+			totalBytes += int64(v)
+		case int:
+			totalBytes += int64(v)
+		default:
+			if parsed, pErr := strconv.ParseInt(fmt.Sprint(v), 10, 64); pErr == nil {
+				totalBytes += parsed
+			}
+		}
+	}
+	if count > 0 {
+		totalTables = count
+	}
+	return totalTables, totalBytes
+}
+
+func computeBackupPercent(mode string, bytesWritten, estimatedBytes int64, seenTables, totalTables int) float64 {
+	tableRatio := 0.0
+	if totalTables > 0 {
+		completed := seenTables - 1
+		if completed < 0 {
+			completed = 0
+		}
+		tableRatio = float64(completed) / float64(totalTables)
+		if tableRatio > 0.98 {
+			tableRatio = 0.98
+		}
+	}
+
+	if mode == "schema_only" || estimatedBytes <= 0 {
+		pct := tableRatio * 96.0
+		if seenTables > 0 && pct < 2 {
+			pct = 2
+		}
+		if pct > 98 {
+			pct = 98
+		}
+		return pct
+	}
+
+	byteRatio := float64(bytesWritten) / float64(estimatedBytes)
+	if byteRatio > 0.99 {
+		byteRatio = 0.99
+	}
+
+	var ratio float64
+	if totalTables > 0 {
+		ratio = 0.35*tableRatio + 0.65*byteRatio
+	} else {
+		ratio = byteRatio
+	}
+	pct := ratio * 99.0
+	if bytesWritten > 0 && pct < 1 {
+		pct = 1
+	}
+	if pct > 99 {
+		pct = 99
+	}
+	return pct
 }
 
 func (s *SchemaService) BackupDatabase(connectionID, database, filePath, optionsJSON string) (string, error) {
@@ -313,6 +531,25 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		return "", fmt.Errorf("table selection is set to 'include' but no tables were selected")
 	}
 
+	s.emitBackupProgress(app.BackupProgressEvent{
+		ConnectionID: connectionID,
+		Database:     database,
+		Status:       "running",
+		Percent:      0,
+		Message:      "Preparing backup...",
+	})
+
+	emitErr := func(err error) error {
+		s.emitBackupProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "error",
+			Percent:      0,
+			Message:      err.Error(),
+		})
+		return err
+	}
+
 	switch conn.Driver {
 	case "mysql", "mariadb":
 		firstBin := "mysqldump"
@@ -321,13 +558,20 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			firstBin = "mariadb-dump"
 			secondBin = "mysqldump"
 		}
-		binPath, err := exec.LookPath(firstBin)
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install mysql-client or mariadb-client or set a custom path", firstBin, secondBin)
 		if err != nil {
-			binPath, err = exec.LookPath(secondBin)
-			if err != nil {
-				return "", fmt.Errorf("%s or %s executable not found in PATH; please install mysql-client or mariadb-client", firstBin, secondBin)
-			}
+			return "", emitErr(err)
 		}
+
+		totalTables, estimatedBytes := s.estimateMySQLBackupMetadata(ctx, connectionID, database, opts)
+		s.emitBackupProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "running",
+			Percent:      1,
+			TotalTables:  totalTables,
+			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
+		})
 
 		host := strings.TrimSpace(conn.Host)
 		if host == "" || strings.EqualFold(host, "localhost") {
@@ -390,11 +634,16 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			}
 		}
 
-		runDump := func(extraArgs ...string) ([]byte, error) {
-			args := make([]string, 0, len(baseArgs)+len(extraArgs)+len(opts.Tables)+2)
+		runDump := func(extraArgs ...string) (string, error) {
+			outFile, createErr := os.Create(filePath)
+			if createErr != nil {
+				return "", fmt.Errorf("failed to create backup file: %w", createErr)
+			}
+
+			args := make([]string, 0, len(baseArgs)+len(extraArgs)+len(opts.Tables)+1)
 			args = append(args, baseArgs...)
 			args = append(args, extraArgs...)
-			args = append(args, "--result-file="+filePath, database)
+			args = append(args, database)
 
 			// Table inclusions
 			if opts.TableSelection == "include" {
@@ -406,15 +655,43 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			if conn.Password != "" {
 				cmd.Env = append(cmd.Env, "MYSQL_PWD="+conn.Password)
 			}
-			return cmd.CombinedOutput()
+
+			var stderrBuf bytes.Buffer
+			pw := newBackupProgressWriter(outFile, func(bytesWritten int64, seenTables int, currentTable string) {
+				pct := computeBackupPercent(opts.Mode, bytesWritten, estimatedBytes, seenTables, totalTables)
+				msg := "Dumping database..."
+				if currentTable != "" {
+					if totalTables > 0 {
+						msg = fmt.Sprintf("Dumping table `%s` (%d/%d)", currentTable, seenTables, totalTables)
+					} else {
+						msg = fmt.Sprintf("Dumping table `%s`", currentTable)
+					}
+				}
+				s.emitBackupProgress(app.BackupProgressEvent{
+					ConnectionID: connectionID,
+					Database:     database,
+					Status:       "running",
+					Percent:      pct,
+					CurrentTable: currentTable,
+					TablesDone:   seenTables,
+					TotalTables:  totalTables,
+					BytesWritten: bytesWritten,
+					Message:      msg,
+				})
+			})
+			cmd.Stdout = pw
+			cmd.Stderr = &stderrBuf
+
+			runErr := cmd.Run()
+			_ = outFile.Close()
+			return stderrBuf.String(), runErr
 		}
 
 		binName := filepath.Base(binPath)
 		isMariaDBDump := strings.Contains(strings.ToLower(binName), "mariadb")
 
-		out, dumpErr := runDump()
+		errText, dumpErr := runDump()
 		if dumpErr != nil {
-			errText := string(out)
 			var retryFlags []string
 			if strings.Contains(errText, "COLUMN_STATISTICS") || strings.Contains(errText, "column-statistics") {
 				retryFlags = append(retryFlags, "--column-statistics=0")
@@ -423,22 +700,30 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 				retryFlags = append(retryFlags, "--set-gtid-purged=OFF")
 			}
 			if len(retryFlags) > 0 {
-				out, dumpErr = runDump(retryFlags...)
+				errText, dumpErr = runDump(retryFlags...)
 			}
 		}
 		if dumpErr != nil {
-			msg := strings.TrimSpace(string(out))
+			_ = os.Remove(filePath)
+			msg := strings.TrimSpace(errText)
 			if msg == "" {
 				msg = dumpErr.Error()
 			}
-			return "", fmt.Errorf("%s failed: %s", binName, msg)
+			return "", emitErr(fmt.Errorf("%s failed: %s", binName, msg))
 		}
 
 	case "postgres":
-		binPath, err := exec.LookPath("pg_dump")
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install postgresql-client or set a custom path", "pg_dump")
 		if err != nil {
-			return "", fmt.Errorf("pg_dump executable not found in PATH; please install postgresql-client")
+			return "", emitErr(err)
 		}
+		s.emitBackupProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "running",
+			Percent:      10,
+			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
+		})
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
 			host = "localhost"
@@ -506,14 +791,14 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			if msg == "" {
 				msg = err.Error()
 			}
-			return "", fmt.Errorf("pg_dump failed: %s", msg)
+			return "", emitErr(fmt.Errorf("pg_dump failed: %s", msg))
 		}
 
 	case "sqlite":
-		if binPath, err := exec.LookPath("sqlite3"); err == nil && conn.FilePath != "" {
+		if binPath, err := resolveBackupToolPath(opts.ToolPath, "", "sqlite3"); err == nil && conn.FilePath != "" {
 			outFile, err := os.Create(filePath)
 			if err != nil {
-				return "", fmt.Errorf("failed to create backup file: %w", err)
+				return "", emitErr(fmt.Errorf("failed to create backup file: %w", err))
 			}
 			cmdArgs := []string{conn.FilePath}
 			if opts.Mode == "schema_only" {
@@ -531,30 +816,40 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			runErr := cmd.Run()
 			_ = outFile.Close()
 			if runErr != nil {
-				return "", fmt.Errorf("sqlite3 dump failed: %s", strings.TrimSpace(stderr.String()))
+				return "", emitErr(fmt.Errorf("sqlite3 dump failed: %s", strings.TrimSpace(stderr.String())))
 			}
 		} else if conn.FilePath != "" {
+			if strings.TrimSpace(opts.ToolPath) != "" {
+				return "", emitErr(fmt.Errorf("custom backup executable not found at: %s", opts.ToolPath))
+			}
 			src, err := os.Open(conn.FilePath)
 			if err != nil {
-				return "", fmt.Errorf("failed to open sqlite file: %w", err)
+				return "", emitErr(fmt.Errorf("failed to open sqlite file: %w", err))
 			}
 			defer src.Close()
 			dst, err := os.Create(filePath)
 			if err != nil {
-				return "", fmt.Errorf("failed to create backup file: %w", err)
+				return "", emitErr(fmt.Errorf("failed to create backup file: %w", err))
 			}
 			if _, err := io.Copy(dst, src); err != nil {
 				_ = dst.Close()
-				return "", fmt.Errorf("failed to copy sqlite database: %w", err)
+				return "", emitErr(fmt.Errorf("failed to copy sqlite database: %w", err))
 			}
 			_ = dst.Close()
 		}
 
 	case "mongodb":
-		binPath, err := exec.LookPath("mongodump")
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install MongoDB Database Tools or set a custom path", "mongodump")
 		if err != nil {
-			return "", fmt.Errorf("mongodump executable not found in PATH; please install MongoDB Database Tools")
+			return "", emitErr(err)
 		}
+		s.emitBackupProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "running",
+			Percent:      10,
+			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
+		})
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
 			host = "localhost"
@@ -589,9 +884,9 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	case "redis":
-		binPath, err := exec.LookPath("redis-cli")
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install redis-tools or set a custom path", "redis-cli")
 		if err != nil {
-			return "", fmt.Errorf("redis-cli executable not found in PATH; please install redis-tools")
+			return "", emitErr(err)
 		}
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
@@ -616,9 +911,9 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	case "mssql":
-		binPath, err := exec.LookPath("sqlcmd")
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install Microsoft SQL Server Command Line Utilities or set a custom path", "sqlcmd")
 		if err != nil {
-			return "", fmt.Errorf("sqlcmd executable not found in PATH; please install Microsoft SQL Server Command Line Utilities")
+			return "", emitErr(err)
 		}
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
@@ -718,10 +1013,22 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	default:
-		return "", fmt.Errorf("unsupported driver for backup: %s", conn.Driver)
+		return "", emitErr(fmt.Errorf("unsupported driver for backup: %s", conn.Driver))
 	}
 
 	info, err := os.Stat(filePath)
+	var bytesWritten int64
+	if err == nil {
+		bytesWritten = info.Size()
+	}
+	s.emitBackupProgress(app.BackupProgressEvent{
+		ConnectionID: connectionID,
+		Database:     database,
+		Status:       "completed",
+		Percent:      100,
+		BytesWritten: bytesWritten,
+		Message:      "Backup completed",
+	})
 	if err != nil {
 		return fmt.Sprintf("Backup of '%s' saved to %s", database, filePath), nil
 	}
