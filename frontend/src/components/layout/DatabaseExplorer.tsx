@@ -1,15 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
 import { Call, Dialogs, Events } from '@wailsio/runtime';
 import { Popover } from '../common/Popover';
-import { ExportModal } from '../modals/ExportModal';
-import { ImportModal } from '../modals/ImportModal';
 import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisFlushModal } from '../modals/RedisFlushModal';
 import { RedisInfoModal } from '../modals/RedisInfoModal';
+
+const ExportModal = lazy(() =>
+  import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
+);
+const ImportModal = lazy(() =>
+  import('../modals/ImportModal').then((m) => ({ default: m.ImportModal }))
+);
 import {
   Database,
   Folder,
@@ -6993,24 +6998,32 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
       />
 
       {/* Export Table Modal */}
-      <ExportModal
-        isOpen={exportModal.isOpen}
-        onClose={() => setExportModal((prev) => ({ ...prev, isOpen: false }))}
-        connectionId={exportModal.connId}
-        database={exportModal.db}
-        schema={exportModal.schema}
-        table={exportModal.table}
-      />
+      {exportModal.isOpen && (
+        <Suspense fallback={null}>
+          <ExportModal
+            isOpen={exportModal.isOpen}
+            onClose={() => setExportModal((prev) => ({ ...prev, isOpen: false }))}
+            connectionId={exportModal.connId}
+            database={exportModal.db}
+            schema={exportModal.schema}
+            table={exportModal.table}
+          />
+        </Suspense>
+      )}
 
       {/* Import Table Modal */}
-      <ImportModal
-        isOpen={importModal.isOpen}
-        onClose={() => setImportModal((prev) => ({ ...prev, isOpen: false }))}
-        connectionId={importModal.connId}
-        database={importModal.db}
-        schema={importModal.schema}
-        table={importModal.table}
-      />
+      {importModal.isOpen && (
+        <Suspense fallback={null}>
+          <ImportModal
+            isOpen={importModal.isOpen}
+            onClose={() => setImportModal((prev) => ({ ...prev, isOpen: false }))}
+            connectionId={importModal.connId}
+            database={importModal.db}
+            schema={importModal.schema}
+            table={importModal.table}
+          />
+        </Suspense>
+      )}
 
       {/* Redis Modals */}
       <RedisAddKeyModal

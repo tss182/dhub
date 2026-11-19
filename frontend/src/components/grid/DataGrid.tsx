@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, Suspense, lazy } from 'react';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
@@ -16,11 +16,16 @@ import {
   ArrowUpCircle,
   Snowflake,
 } from 'lucide-react';
-import { ExportModal } from '../modals/ExportModal';
-import { ImportModal } from '../modals/ImportModal';
 import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
 import { CopyAsModal } from '../modals/CopyAsModal';
+
+const ExportModal = lazy(() =>
+  import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
+);
+const ImportModal = lazy(() =>
+  import('../modals/ImportModal').then((m) => ({ default: m.ImportModal }))
+);
 
 import {
   isMac,
@@ -2943,26 +2948,32 @@ export const DataGrid: React.FC<DataGridProps> = ({
         }}
       />
 
-      <ExportModal
-        isOpen={isExportOpen}
-        onClose={() => setIsExportOpen(false)}
-        connectionId={connectionId || ''}
-        database={database}
-        schema={schema}
-        table={tableName}
-        sql={rawSql}
-      />
+      {isExportOpen && (
+        <Suspense fallback={null}>
+          <ExportModal
+            isOpen={isExportOpen}
+            onClose={() => setIsExportOpen(false)}
+            connectionId={connectionId || ''}
+            database={database}
+            schema={schema}
+            table={tableName}
+            sql={rawSql}
+          />
+        </Suspense>
+      )}
 
-      {tableName && (
-        <ImportModal
-          isOpen={isImportOpen}
-          onClose={() => setIsImportOpen(false)}
-          connectionId={connectionId || ''}
-          database={database || ''}
-          schema={schema || ''}
-          table={tableName}
-          onImportComplete={onRefresh}
-        />
+      {tableName && isImportOpen && (
+        <Suspense fallback={null}>
+          <ImportModal
+            isOpen={isImportOpen}
+            onClose={() => setIsImportOpen(false)}
+            connectionId={connectionId || ''}
+            database={database || ''}
+            schema={schema || ''}
+            table={tableName}
+            onImportComplete={onRefresh}
+          />
+        </Suspense>
       )}
 
       {showAllSortsModal && (
