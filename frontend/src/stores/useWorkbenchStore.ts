@@ -153,6 +153,7 @@ export interface ActiveCellViewer {
 interface WorkbenchState {
   tabs: WorkbenchTab[];
   activeTabId: string | null;
+  splitTabId: string | null;
   activeBottomTab: 'result' | 'output' | 'history' | 'explain';
   isBottomPanelOpen: boolean;
   isRightPanelOpen: boolean;
@@ -176,6 +177,7 @@ interface WorkbenchState {
   closeTabsMatching: (predicate: (tab: WorkbenchTab) => boolean) => void;
   refreshTab: (tabId: string) => void;
   setActiveTabId: (tabId: string) => void;
+  setSplitTabId: (tabId: string | null) => void;
   reorderTab: (draggedTabId: string, targetTabId: string, position: 'before' | 'after') => void;
   swapTabs: (tabIdA: string, tabIdB: string) => void;
   updateTabContent: (tabId: string, content: string) => void;
@@ -226,6 +228,7 @@ const initialTabState = getSavedTabs();
 export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   tabs: initialTabState.tabs,
   activeTabId: initialTabState.activeTabId,
+  splitTabId: null,
   activeBottomTab: 'result',
   isBottomPanelOpen: true,
   isRightPanelOpen: true,
@@ -380,23 +383,28 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   },
 
   closeTab: (tabId) => {
-    const { tabs, activeTabId } = get();
+    const { tabs, activeTabId, splitTabId } = get();
     const filtered = tabs.filter((t) => t.id !== tabId);
     let nextActive = activeTabId;
     if (activeTabId === tabId) {
       nextActive = filtered.length > 0 ? filtered[filtered.length - 1].id : null;
     }
-    set({ tabs: filtered, activeTabId: nextActive });
+    const nextSplit = splitTabId === tabId || splitTabId === nextActive ? null : splitTabId;
+    set({ tabs: filtered, activeTabId: nextActive, splitTabId: nextSplit });
   },
 
   closeTabsMatching: (predicate) => {
-    const { tabs, activeTabId } = get();
+    const { tabs, activeTabId, splitTabId } = get();
     const filtered = tabs.filter((t) => !predicate(t));
     let nextActive = activeTabId;
     if (activeTabId && !filtered.some((t) => t.id === activeTabId)) {
       nextActive = filtered.length > 0 ? filtered[filtered.length - 1].id : null;
     }
-    set({ tabs: filtered, activeTabId: nextActive });
+    const nextSplit =
+      splitTabId && filtered.some((t) => t.id === splitTabId) && splitTabId !== nextActive
+        ? splitTabId
+        : null;
+    set({ tabs: filtered, activeTabId: nextActive, splitTabId: nextSplit });
   },
 
   refreshTab: (tabId) => {
@@ -408,7 +416,15 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     }));
   },
 
-  setActiveTabId: (activeTabId) => set({ activeTabId }),
+  setActiveTabId: (activeTabId) =>
+    set((state) => ({
+      activeTabId,
+      splitTabId: state.splitTabId === activeTabId ? null : state.splitTabId,
+    })),
+  setSplitTabId: (splitTabId) =>
+    set((state) => ({
+      splitTabId: splitTabId && splitTabId !== state.activeTabId ? splitTabId : null,
+    })),
 
   reorderTab: (draggedTabId, targetTabId, position) =>
     set((state) => {

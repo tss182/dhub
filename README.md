@@ -12,7 +12,7 @@ For full usage instructions, engine-specific query guides, and troubleshooting, 
 
 ---
 
-## Supported Database Engines (8 Drivers)
+## Supported Database Engines (9 Drivers)
 
 DHub supports both relational SQL databases and NoSQL engines out of the box:
 
@@ -23,6 +23,7 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 | **MariaDB** | `3306` | Relational (`SQL`) | Full MariaDB dialect formatting, `ANALYZE` plans, and user/privilege management |
 | **SQLite** | Local file | Relational (`SQL`) | Zero-config local file databases, schema designer, DDL viewer, and inline editing |
 | **SQL Server (MSSQL)** | `1433` | Relational (`SQL`) | Multi-database & multi-schema (`dbo`, etc.) browsing, stored procedures/functions, T-SQL execution |
+| **Oracle** | `1521` | Relational (`SQL`) | Schema browsing, tables, views, materialized views, routines, triggers, sequences, PL/SQL execution, and user/privilege management |
 | **ClickHouse** | `9000` | Column-Oriented (`SQL`) | High-speed OLAP query execution, system catalog inspection, `EXPLAIN PIPELINE` |
 | **MongoDB** | `27017` | Document (`NoSQL`) | Collection browsing, BSON schema & index inference, Mongo Shell methods (`db.<coll>.find()`, `countDocuments()`, `insertOne()`, `deleteOne()`, `deleteMany()`, `drop()`), SQL-like `SELECT` syntax, raw JSON commands, and inline document editing |
 | **Redis** | `6379` | Key-Value (`NoSQL`) | Logical database switcher (`db0`–`db15`), key scanner with type & TTL badges (`string`, `hash`, `list`, `set`, `zset`), Add Key / Flush DB / Server Info modals, Redis CLI commands, and pseudo-SQL (`SELECT * FROM keys`) |

@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileCode, Users, Table, Pencil, Copy, RefreshCw, Eraser, Trash2, X } from 'lucide-react';
+import { FileCode, Users, Table, Pencil, Copy, RefreshCw, Eraser, Trash2, X, Columns } from 'lucide-react';
 import { ConnectionConfig, WorkbenchTab } from '../../types/domain';
 
 export interface TabContextMenuProps {
@@ -7,6 +7,8 @@ export interface TabContextMenuProps {
   x: number;
   y: number;
   tab?: WorkbenchTab;
+  activeTabId?: string | null;
+  splitTabId?: string | null;
   resolveTableTabMeta: (tab: WorkbenchTab) => {
     conn?: ConnectionConfig;
     driver: string;
@@ -15,6 +17,8 @@ export interface TabContextMenuProps {
   onCloseMenu: () => void;
   onOpenRename: (id: string, title: string) => void;
   onDuplicateTab: (id: string) => void;
+  onOpenSplitView?: (id: string) => void;
+  onCloseSplitView?: () => void;
   onReloadTableData: (tab: WorkbenchTab) => void;
   onTruncateTable: (tab: WorkbenchTab) => void;
   onDropTable: (tab: WorkbenchTab) => void;
@@ -28,10 +32,14 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
   x,
   y,
   tab,
+  activeTabId,
+  splitTabId,
   resolveTableTabMeta,
   onCloseMenu,
   onOpenRename,
   onDuplicateTab,
+  onOpenSplitView,
+  onCloseSplitView,
   onReloadTableData,
   onTruncateTable,
   onDropTable,
@@ -149,6 +157,34 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
       })()}
 
       <div className="my-1 border-t border-[#272932]" />
+
+      {onOpenSplitView && tab.id !== activeTabId && splitTabId !== tab.id && (
+        <button
+          type="button"
+          onClick={() => {
+            onCloseMenu();
+            onOpenSplitView(tab.id);
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+        >
+          <Columns className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+          <span>Open in Split View (Right)</span>
+        </button>
+      )}
+
+      {onCloseSplitView && splitTabId === tab.id && (
+        <button
+          type="button"
+          onClick={() => {
+            onCloseMenu();
+            onCloseSplitView();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#22242c] hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+        >
+          <Columns className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+          <span>Close Split View</span>
+        </button>
+      )}
 
       <button
         type="button"

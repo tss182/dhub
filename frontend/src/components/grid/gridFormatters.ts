@@ -654,6 +654,35 @@ export function formatSelectedCells(params: {
     return `INSERT INTO ${quotedTbl} (${colNames})\nVALUES\n${valueTuples.join(',\n')}\nON CONFLICT (${conflictTargets}) DO UPDATE SET\n${setClauses};`;
   }
 
+  if (targetFormat === 'markdown') {
+    const escMd = (s: string) => s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+    const headers: string[] = [];
+    const colIndices: number[] = [];
+    for (const c of selectedColIndices) {
+      if (columns[c]) {
+        headers.push(escMd(columns[c].name));
+        colIndices.push(c);
+      }
+    }
+    if (headers.length === 0) return '';
+    const mdLines: string[] = [
+      `| ${headers.join(' | ')} |`,
+      `| ${headers.map(() => '---').join(' | ')} |`,
+    ];
+    for (const r of selectedRowIndices) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      const cells = colIndices.map((c) => {
+        const col = columns[c];
+        const raw = !isMultiRange || isCellSelected(r, c) ? getVal(vr, c, col.name) : null;
+        if (raw === null || raw === undefined) return 'NULL';
+        return escMd(String(raw));
+      });
+      mdLines.push(`| ${cells.join(' | ')} |`);
+    }
+    return mdLines.join('\n');
+  }
+
   // Default: CSV (RFC 4180 standard)
   const lines: string[] = [];
   const headerCols: string[] = [];

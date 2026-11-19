@@ -20,6 +20,11 @@ export const COPY_FORMAT_OPTIONS: CopyFormatOption[] = [
     description: 'Array of JSON objects with column names as keys. Ideal for API payloads, scripts, or NoSQL tools.',
   },
   {
+    id: 'markdown',
+    label: 'Markdown Table',
+    description: 'GitHub-flavored Markdown table (| col | ... |). Ideal for docs, PRs, and issue trackers.',
+  },
+  {
     id: 'sql_insert',
     label: 'SQL INSERT',
     description: 'Generates INSERT INTO ... VALUES (...) statements to insert selected rows into a SQL table.',

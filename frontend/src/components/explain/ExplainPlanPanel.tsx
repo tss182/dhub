@@ -12,51 +12,148 @@ interface PlanNode {
   title: string;
   detail?: string;
   cost?: string;
+  numericCost?: number;
   rows?: string;
+  actualRows?: string;
   actualTime?: string;
   isWarning?: boolean;
+  isHotspot?: boolean;
+  isRowEstimateSkew?: boolean;
   children: PlanNode[];
 }
 
 function parseJsonPlan(raw: string): PlanNode | null {
   try {
     const parsed = JSON.parse(raw);
-    const rootObj = Array.isArray(parsed) ? parsed[0]?.Plan : parsed?.Plan || parsed?.query_block;
-    if (!rootObj) return null;
+    const pgRoot = Array.isArray(parsed) ? parsed[0]?.Plan : parsed?.Plan;
+    const mysqlRoot = parsed?.query_block;
 
     let counter = 0;
-    const convertPg = (node: any): PlanNode => {
-      const nodeType = node['Node Type'] || 'Operation';
-      const rel = node['Relation Name'] ? ` on ${node['Relation Name']}` : '';
-      const alias = node['Alias'] && node['Alias'] !== node['Relation Name'] ? ` (${node['Alias']})` : '';
-      const cost =
-        node['Total Cost'] !== undefined
-          ? `${node['Startup Cost'] ?? 0}..${node['Total Cost']}`
-          : undefined;
-      const rows = node['Plan Rows'] !== undefined ? String(node['Plan Rows']) : undefined;
-      const actualTime =
-        node['Actual Total Time'] !== undefined ? `${node['Actual Total Time']} ms` : undefined;
-      const isWarning = nodeType.includes('Seq Scan') || nodeType.includes('Table Scan');
-      const children = Array.isArray(node['Plans']) ? node['Plans'].map(convertPg) : [];
 
-      return {
-        id: `pg-${counter++}`,
-        title: `${nodeType}${rel}${alias}`,
-        detail: node['Filter'] || node['Index Cond'] || node['Hash Cond'] || undefined,
-        cost,
-        rows,
-        actualTime,
-        isWarning,
-        children,
+    if (pgRoot && pgRoot['Node Type']) {
+      const convertPg = (node: any): PlanNode => {
+        const nodeType = node['Node Type'] || 'Operation';
+        const rel = node['Relation Name'] ? ` on ${node['Relation Name']}` : '';
+        const alias = node['Alias'] && node['Alias'] !== node['Relation Name'] ? ` (${node['Alias']})` : '';
+        const totalCost = typeof node['Total Cost'] === 'number' ? node['Total Cost'] : undefined;
+        const cost =
+          totalCost !== undefined
+            ? `${node['Startup Cost'] ?? 0}..${totalCost}`
+            : undefined;
+        const planRows = typeof node['Plan Rows'] === 'number' ? node['Plan Rows'] : undefined;
+        const actualRowsNum = typeof node['Actual Rows'] === 'number' ? node['Actual Rows'] : undefined;
+        const rows = planRows !== undefined ? String(planRows) : undefined;
+        const actualRows = actualRowsNum !== undefined ? String(actualRowsNum) : undefined;
+        const actualTime =
+          node['Actual Total Time'] !== undefined ? `${node['Actual Total Time']} ms` : undefined;
+        const isWarning = nodeType.includes('Seq Scan') || nodeType.includes('Table Scan');
+        const isRowEstimateSkew =
+          planRows !== undefined &&
+          actualRowsNum !== undefined &&
+          Math.max(planRows, actualRowsNum) > 10 &&
+          (actualRowsNum > planRows * 5 || planRows > actualRowsNum * 5);
+        const children = Array.isArray(node['Plans']) ? node['Plans'].map(convertPg) : [];
+
+        return {
+          id: `pg-${counter++}`,
+          title: `${nodeType}${rel}${alias}`,
+          detail: node['Filter'] || node['Index Cond'] || node['Hash Cond'] || undefined,
+          cost,
+          numericCost: totalCost,
+          rows,
+          actualRows,
+          actualTime,
+          isWarning,
+          isRowEstimateSkew,
+          children,
+        };
       };
-    };
 
-    if (rootObj['Node Type']) {
-      return convertPg(rootObj);
+      const root = convertPg(pgRoot);
+      markHotspot(root);
+      return root;
     }
+
+    if (mysqlRoot) {
+      const convertMysql = (obj: any, fallbackTitle = 'Query Block'): PlanNode => {
+        const children: PlanNode[] = [];
+        let title = fallbackTitle;
+        let detail: string | undefined;
+        let cost: string | undefined;
+        let numericCost: number | undefined;
+        let rows: string | undefined;
+        let isWarning = false;
+
+        if (obj.table) {
+          const t = obj.table;
+          const access = t.access_type ? ` [${t.access_type}]` : '';
+          title = `Table: ${t.table_name || 'unknown'}${access}`;
+          detail = t.attached_condition || (t.key ? `key: ${t.key}` : undefined);
+          if (t.cost_info?.read_cost !== undefined) {
+            numericCost = Number(t.cost_info.read_cost) + Number(t.cost_info.eval_cost || 0);
+            cost = numericCost.toFixed(2);
+          }
+          if (t.rows_examined_per_scan !== undefined) {
+            rows = String(t.rows_examined_per_scan);
+          }
+          isWarning = t.access_type === 'ALL';
+        } else if (obj.cost_info?.query_cost !== undefined) {
+          numericCost = Number(obj.cost_info.query_cost);
+          cost = numericCost.toFixed(2);
+        }
+
+        if (Array.isArray(obj.nested_loop)) {
+          obj.nested_loop.forEach((nl: any) => children.push(convertMysql(nl, 'Nested Loop')));
+        }
+        if (obj.ordering_operation) {
+          children.push(convertMysql(obj.ordering_operation, 'Sort / Ordering'));
+        }
+        if (obj.grouping_operation) {
+          children.push(convertMysql(obj.grouping_operation, 'Group By'));
+        }
+        if (obj.duplicates_removal) {
+          children.push(convertMysql(obj.duplicates_removal, 'Distinct'));
+        }
+        if (obj.table && obj !== mysqlRoot) {
+          // already handled above
+        }
+
+        return {
+          id: `my-${counter++}`,
+          title,
+          detail,
+          cost,
+          numericCost,
+          rows,
+          isWarning,
+          children,
+        };
+      };
+
+      const root = convertMysql(mysqlRoot, `Query Block #${mysqlRoot.select_id ?? 1}`);
+      markHotspot(root);
+      return root;
+    }
+
     return null;
   } catch {
     return null;
+  }
+}
+
+function markHotspot(root: PlanNode) {
+  let maxCost = -1;
+  let maxNode: PlanNode | null = null;
+  const walk = (n: PlanNode) => {
+    if (typeof n.numericCost === 'number' && n.numericCost > maxCost) {
+      maxCost = n.numericCost;
+      maxNode = n;
+    }
+    n.children.forEach(walk);
+  };
+  walk(root);
+  if (maxNode && maxCost > 0 && root.children.length > 0) {
+    (maxNode as PlanNode).isHotspot = true;
   }
 }
 
@@ -145,12 +242,25 @@ const PlanTreeNode: React.FC<{ node: PlanNode; depth?: number }> = ({ node, dept
             )}
             {node.rows && (
               <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 font-mono text-[10px]">
-                rows: {node.rows}
+                rows: {node.rows}{node.actualRows !== undefined ? ` (actual: ${node.actualRows})` : ''}
               </span>
             )}
             {node.actualTime && (
               <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 font-mono text-[10px]">
                 time: {node.actualTime}
+              </span>
+            )}
+            {node.isHotspot && (
+              <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono text-[10px] font-bold">
+                HOTSPOT
+              </span>
+            )}
+            {node.isRowEstimateSkew && (
+              <span
+                className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono text-[10px]"
+                title="Estimated rows differ significantly from actual rows (>5x). Consider running ANALYZE."
+              >
+                ESTIMATE SKEW
               </span>
             )}
           </div>

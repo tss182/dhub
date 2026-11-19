@@ -12,6 +12,7 @@ import { AlertModal } from './components/modals/AlertModal';
 import { ToastContainer } from './components/common/ToastContainer';
 import { Popover } from './components/common/Popover';
 import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
+import { ResultChartPanel } from './components/grid/ResultChartPanel';
 
 const SqlWorksheet = lazy(() =>
   import('./components/editor/SqlWorksheet').then((m) => ({ default: m.SqlWorksheet }))
@@ -121,6 +122,9 @@ import {
   Plus,
   Eraser,
   Trash2,
+  BarChart3,
+  Columns,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 import { parseSingleTableSelect } from './utils/querySource';
@@ -147,6 +151,7 @@ export function App() {
   const {
     tabs,
     activeTabId,
+    splitTabId,
     activeBottomTab,
     isBottomPanelOpen,
     isRightPanelOpen,
@@ -161,6 +166,7 @@ export function App() {
     closeTab,
     closeTabsMatching,
     setActiveTabId,
+    setSplitTabId,
     reorderTab,
     swapTabs,
     updateTabContent,
@@ -187,6 +193,7 @@ export function App() {
     useShallow((s) => ({
       tabs: s.tabs,
       activeTabId: s.activeTabId,
+      splitTabId: s.splitTabId,
       activeBottomTab: s.activeBottomTab,
       isBottomPanelOpen: s.isBottomPanelOpen,
       isRightPanelOpen: s.isRightPanelOpen,
@@ -201,6 +208,7 @@ export function App() {
       closeTab: s.closeTab,
       closeTabsMatching: s.closeTabsMatching,
       setActiveTabId: s.setActiveTabId,
+      setSplitTabId: s.setSplitTabId,
       reorderTab: s.reorderTab,
       swapTabs: s.swapTabs,
       updateTabContent: s.updateTabContent,
@@ -278,6 +286,7 @@ export function App() {
   const [isSchemaDiffOpen, setIsSchemaDiffOpen] = useState(false);
   const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
   const [isMockDataOpen, setIsMockDataOpen] = useState(false);
+  const [resultViewMode, setResultViewMode] = useState<'table' | 'chart'>('table');
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
 
@@ -836,6 +845,7 @@ export function App() {
   };
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
+  const splitTab = splitTabId && splitTabId !== activeTabId ? tabs.find((t) => t.id === splitTabId) : undefined;
   const currentTabId = activeTab?.id || '';
 
   const isRunning = isRunningByTab[currentTabId] || false;
@@ -1562,7 +1572,16 @@ export function App() {
         loadTableData(activeTab);
       }
     }
-  }, [activeTabId, tabRefreshTrigger[activeTabId || '']]);
+    if (splitTab && splitTab.type === 'table_data') {
+      const existingSplit = tableDataByTab[splitTab.id];
+      const refreshCount = tabRefreshTrigger[splitTab.id] || 0;
+      const refreshed = refreshCount !== (lastRefreshHandledRef.current[splitTab.id] || 0);
+      if (refreshed) lastRefreshHandledRef.current[splitTab.id] = refreshCount;
+      if (refreshed || !existingSplit || (!existingSplit.isLoading && existingSplit.rows.length === 0 && !existingSplit.error)) {
+        loadTableData(splitTab);
+      }
+    }
+  }, [activeTabId, splitTabId, tabRefreshTrigger[activeTabId || ''], tabRefreshTrigger[splitTabId || '']]);
 
   // Free cached rows and query results of closed tabs so they can be garbage collected
   useEffect(() => {
@@ -2543,8 +2562,9 @@ export function App() {
             );
           })()}
 
-          {/* Active Tab View */}
-          <div className="flex-1 min-h-0 flex flex-col">
+          {/* Active Tab View (supports optional Split View side-by-side) */}
+          <div className="flex-1 min-h-0 flex flex-row overflow-hidden">
+          <div className="flex-1 min-w-0 min-h-0 flex flex-col">
             {activeTab?.type === 'worksheet' ? (() => {
               const tabConn = connections.find((c) => c.id === (activeTab.connectionId || activeConnectionId));
               const tabConnDbs = treeDatabases[tabConn?.id || ''] || [];
@@ -3140,6 +3160,36 @@ export function App() {
                         </button>
                       </div>
 
+                      {/* Table / Chart View Toggle & Raw Query Preview */}
+                      {activeBottomTab === 'result' && (currentActiveRes?.columns?.length ?? 0) > 0 && (
+                        <div className="flex items-center rounded bg-[#101115] border border-[#272932] p-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setResultViewMode('table')}
+                            className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                              resultViewMode === 'table'
+                                ? 'bg-blue-600/25 text-blue-300 font-medium'
+                                : 'text-zinc-400 hover:text-zinc-200'
+                            }`}
+                          >
+                            <Table className="h-3 w-3" />
+                            <span>Table</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setResultViewMode('chart')}
+                            className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                              resultViewMode === 'chart'
+                                ? 'bg-blue-600/25 text-blue-300 font-medium'
+                                : 'text-zinc-400 hover:text-zinc-200'
+                            }`}
+                          >
+                            <BarChart3 className="h-3 w-3" />
+                            <span>Chart</span>
+                          </button>
+                        </div>
+                      )}
+
                       {/* Raw Query Preview & 1-Click Copy in Tab Bar */}
                       {activeBottomTab === 'result' && currentRawSql && (
                         <div className="flex items-center gap-1.5 min-w-0 flex-1 justify-end max-w-xl mx-2">
@@ -3283,8 +3333,15 @@ export function App() {
                         <div className="flex flex-1 flex-col min-h-0">
                           {multiResultTabsBar}
                           <div className="flex-1 min-h-0">
-                            <DataGrid
-                              key={`result-grid-${queryResult?.executionId || ''}-${safeResultIdx}`}
+                            {resultViewMode === 'chart' ? (
+                              <ResultChartPanel
+                                columns={resultSource?.columns || currentRes.columns || []}
+                                rows={currentRes.rows || []}
+                                title={activeTab?.title}
+                              />
+                            ) : (
+                              <DataGrid
+                                key={`result-grid-${queryResult?.executionId || ''}-${safeResultIdx}`}
                             tabId={resultGridTabId}
                             connectionId={activeTab?.connectionId || activeConnectionId || undefined}
                             database={resultSource?.database ?? activeTab?.database}
@@ -3315,6 +3372,7 @@ export function App() {
                                 ) || !resultSource
                               }
                             />
+                            )}
                           </div>
                         </div>
                       );
@@ -3385,6 +3443,136 @@ export function App() {
             )}
           </>
         )}
+      </div>
+
+          {/* Optional Right Split View Pane */}
+          {splitTab && (
+            <div className="w-[45%] min-w-[320px] max-w-[65%] h-full flex flex-col border-l-2 border-[#2b2e3a] bg-[#14151a] shrink-0">
+              <div className="flex h-8 items-center justify-between border-b border-[#272932] bg-[#16171d] px-3 shrink-0 select-none">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Columns className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+                  <span className="text-[11px] font-semibold text-zinc-200 truncate" title={splitTab.title}>
+                    {splitTab.title}
+                  </span>
+                  {splitTab.database && (
+                    <span className="text-[10px] font-mono text-zinc-500 truncate">
+                      /{splitTab.database}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!activeTab) return;
+                      const prevActive = activeTab.id;
+                      setActiveTabId(splitTab.id);
+                      setSplitTabId(prevActive);
+                    }}
+                    className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                    title="Swap Left & Right Panes"
+                  >
+                    <ArrowLeftRight className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSplitTabId(null)}
+                    className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                    title="Close Split View"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 min-h-0 flex flex-col">
+                {splitTab.type === 'table_data' ? (() => {
+                  const splitConn = connections.find((c) => c.id === splitTab.connectionId);
+                  const splitEnv = resolveConnectionEnv(splitConn);
+                  return (
+                    <DataGrid
+                      tabId={splitTab.id}
+                      connectionId={splitTab.connectionId}
+                      driver={splitConn?.driver || splitTab.driver}
+                      database={splitTab.database}
+                      schema={splitTab.schema}
+                      tableName={splitTab.table}
+                      envType={splitEnv}
+                      columns={tableDataByTab[splitTab.id]?.columns || []}
+                      rows={tableDataByTab[splitTab.id]?.rows || []}
+                      primaryKeys={tableDataByTab[splitTab.id]?.primaryKeys || []}
+                      totalCount={tableDataByTab[splitTab.id]?.totalCount}
+                      onCountRows={() => handleCountTableRows(splitTab)}
+                      hasMore={tableDataByTab[splitTab.id]?.hasMore}
+                      isLoadingMore={tableDataByTab[splitTab.id]?.isLoadingMore}
+                      startOffset={tableDataByTab[splitTab.id]?.startOffset ?? 0}
+                      page={tableDataByTab[splitTab.id]?.page || 1}
+                      pageSize={tableDataByTab[splitTab.id]?.pageSize || 100}
+                      whereClause={tableDataByTab[splitTab.id]?.whereClause}
+                      errorMessage={tableDataByTab[splitTab.id]?.error}
+                      isTableTab={true}
+                      sortConfigs={tableDataByTab[splitTab.id]?.sortConfigs || []}
+                      onRefresh={() => loadTableData(splitTab)}
+                      onSubmitChanges={(skip) => handleSubmitChanges(skip === true, {
+                        stagedKey: splitTab.id,
+                        connectionId: splitTab.connectionId,
+                        database: splitTab.database || '',
+                        schema: splitTab.schema || '',
+                        table: splitTab.table || '',
+                        onApplied: () => loadTableData(splitTab),
+                      })}
+                      onPreviewChanges={() => handlePreviewChanges({
+                        stagedKey: splitTab.id,
+                        connectionId: splitTab.connectionId,
+                        database: splitTab.database || '',
+                        schema: splitTab.schema || '',
+                        table: splitTab.table || '',
+                        onApplied: () => loadTableData(splitTab),
+                      })}
+                      isReadOnly={Boolean(splitConn?.isReadOnly)}
+                    />
+                  );
+                })() : splitTab.type === 'er_diagram' ? (
+                  <ERDiagramView
+                    connectionId={splitTab.connectionId}
+                    database={splitTab.database}
+                    schema={splitTab.schema}
+                    onOpenTable={(tblName) => {
+                      const conn = connections.find((c) => c.id === splitTab.connectionId);
+                      openTab({
+                        id: `table-${splitTab.connectionId}-${splitTab.database}-${tblName}`,
+                        type: 'table_data',
+                        title: tblName,
+                        connectionId: splitTab.connectionId,
+                        driver: conn?.driver,
+                        database: splitTab.database,
+                        schema: splitTab.schema,
+                        table: tblName,
+                      });
+                    }}
+                  />
+                ) : splitTab.type === 'users' ? (
+                  <UserManager
+                    tab={splitTab}
+                    connection={connections.find((c) => c.id === splitTab.connectionId) || null}
+                  />
+                ) : (
+                  <SqlWorksheet
+                    tabId={splitTab.id}
+                    sql={splitTab.content || ''}
+                    connection={connections.find((c) => c.id === splitTab.connectionId)}
+                    database={splitTab.database || ''}
+                    schema={splitTab.schema || ''}
+                    availableDatabases={treeDatabases[splitTab.connectionId] || []}
+                    isRunning={isRunningByTab[splitTab.id] || false}
+                    onChange={(val) => updateTabContent(splitTab.id, val)}
+                    onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || splitTab.database)}
+                    onCancel={() => handleCancelQuery(splitTab.id)}
+                  />
+                )}
+              </div>
+            </div>
+          )}
       </div>
     </div>
 
@@ -3540,10 +3728,14 @@ export function App() {
         x={tabContextMenu.x}
         y={tabContextMenu.y}
         tab={tabContextMenu.tab}
+        activeTabId={activeTabId}
+        splitTabId={splitTabId}
         resolveTableTabMeta={resolveTableTabMeta}
         onCloseMenu={() => setTabContextMenu((prev) => ({ ...prev, isOpen: false }))}
         onOpenRename={handleOpenRename}
         onDuplicateTab={duplicateTab}
+        onOpenSplitView={(id) => setSplitTabId(id)}
+        onCloseSplitView={() => setSplitTabId(null)}
         onReloadTableData={loadTableData}
         onTruncateTable={handleTruncateTableFromTab}
         onDropTable={handleDropTableFromTab}

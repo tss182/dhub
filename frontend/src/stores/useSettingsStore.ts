@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
 export type ThemeMode = 'dark' | 'light';
-export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update' | 'sql_upsert';
+export type CopyFormat = 'csv' | 'json' | 'markdown' | 'sql_insert' | 'sql_update' | 'sql_upsert';
 export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'backup' | 'version';
 
 interface SettingsValues {
@@ -86,7 +86,7 @@ function parseSettingsObject(parsed: any): SettingsValues {
     wordWrap: typeof parsed?.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
     showMinimap:
       typeof parsed?.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
-    copyFormat: ['csv', 'json', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed?.copyFormat)
+    copyFormat: ['csv', 'json', 'markdown', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed?.copyFormat)
       ? parsed.copyFormat
       : DEFAULT_SETTINGS.copyFormat,
     checkUpdatesOnStartup:
