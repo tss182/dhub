@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Check,
 } from 'lucide-react';
+import { APP_DEFAULTS } from '../../config/defaults';
 
 interface GridPaginationProps {
   currentPage: number;
@@ -98,7 +99,7 @@ export const GridPagination: React.FC<GridPaginationProps> = ({
               <div className="px-2 py-1 text-[10px] font-sans font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1">
                 Rows per page
               </div>
-              {Array.from(new Set([25, 50, 100, 250, 500, 1000, globalDefaultPageSize, localPageSize]))
+              {Array.from(new Set([...APP_DEFAULTS.pageSizeOptions, globalDefaultPageSize, localPageSize]))
                 .sort((a, b) => a - b)
                 .map((size) => {
                   const isSelected = size === localPageSize;

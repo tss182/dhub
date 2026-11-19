@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
+import { APP_DEFAULTS } from '../../config/defaults';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useAlertStore, alertWarning } from '../../stores/useAlertStore';
@@ -106,7 +107,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   startOffset = 0,
   page,
   onPageChange,
-  pageSize = 500,
+  pageSize = APP_DEFAULTS.pageSize,
   onPageSizeChange,
   onRefresh,
   whereClause = '',
@@ -766,7 +767,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const copyFormat = useSettingsStore((state) => state.copyFormat);
 
   const [currentPage, setCurrentPage] = useState(page || 1);
-  const [localPageSize, setLocalPageSize] = useState(pageSize || globalDefaultPageSize || 500);
+  const [localPageSize, setLocalPageSize] = useState(pageSize || globalDefaultPageSize || APP_DEFAULTS.pageSize);
   const [isCountingTotal, setIsCountingTotal] = useState(false);
   const [isPageSizeOpen, setIsPageSizeOpen] = useState(false);
 

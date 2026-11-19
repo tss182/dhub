@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { APP_DEFAULTS } from '../../config/defaults';
 import {
   X,
   Settings as SettingsIcon,
@@ -179,7 +180,7 @@ export const SettingsModal: React.FC = () => {
     }
   };
 
-  const presetSizes = [25, 50, 100, 250, 500, 1000];
+  const presetSizes = APP_DEFAULTS.pageSizeOptions;
 
   const handleBrowseSaveConfig = async () => {
     if (!exportSettings && !exportConnections) {

@@ -5,9 +5,10 @@ import { ColumnMeta, resolveConnectionEnv } from '../../types/domain';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { alertError, alertSuccess } from '../../stores/useAlertStore';
 import { createIdentityGenerator, generateMockValue } from '../../utils/mockData';
+import { APP_DEFAULTS } from '../../config/defaults';
 
-const MAX_MOCK_ROWS = 1000000;
-const MOCK_INSERT_BATCH_SIZE = 500;
+const MAX_MOCK_ROWS = APP_DEFAULTS.mockMaxRows;
+const MOCK_INSERT_BATCH_SIZE = APP_DEFAULTS.mockInsertBatchSize;
 
 interface MockProgress {
   inserted: number;
@@ -37,7 +38,7 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
 }) => {
   const [columns, setColumns] = useState<ColumnMeta[]>([]);
   const [selectedCols, setSelectedCols] = useState<Record<string, boolean>>({});
-  const [rowCount, setRowCount] = useState(25);
+  const [rowCount, setRowCount] = useState<number>(APP_DEFAULTS.mockDefaultRows);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<MockProgress | null>(null);
   const cancelRef = useRef(false);

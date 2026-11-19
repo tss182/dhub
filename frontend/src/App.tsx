@@ -79,6 +79,7 @@ const ActivityMonitor = lazy(() =>
 );
 import { useAlertStore, alertSuccess, alertError, alertWarning, confirmDialog } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
+import { APP_DEFAULTS } from './config/defaults';
 import { useUpdateStore } from './stores/useUpdateStore';
 import { useWorkspaceSessionStore } from './stores/useWorkspaceSessionStore';
 import { WorkspaceSelector } from './components/layout/WorkspaceSelector';
@@ -847,7 +848,7 @@ export function App() {
   const queryResult = queryResultByTab[currentTabId] || null;
   const activeResultIndex = activeResultIndexByTab[currentTabId] || 0;
   const statusMessage = statusMessageByTab[currentTabId] || 'Ready';
-  const defaultPageSize = useSettingsStore((s) => s.defaultPageSize) || 500;
+  const defaultPageSize = useSettingsStore((s) => s.defaultPageSize) || APP_DEFAULTS.pageSize;
   const queryPagination = queryPaginationByTab[currentTabId] || {
     page: 1,
     pageSize: defaultPageSize,
@@ -1219,7 +1220,7 @@ export function App() {
   const loadTableData = async (
     tab: WorkbenchTab,
     offset = 0,
-    limit = useSettingsStore.getState().defaultPageSize || 500,
+    limit = useSettingsStore.getState().defaultPageSize || APP_DEFAULTS.pageSize,
     mode: 'replace' | 'append' | 'prepend' | boolean = 'replace',
     page = 1,
     newWhereClause?: string,
@@ -1266,7 +1267,7 @@ export function App() {
     const effectivePageSize =
       limit > 0
         ? limit
-        : prevTabData?.pageSize || savedViewState?.pageSize || useSettingsStore.getState().defaultPageSize || 500;
+        : prevTabData?.pageSize || savedViewState?.pageSize || useSettingsStore.getState().defaultPageSize || APP_DEFAULTS.pageSize;
 
     // Windowed / Centered Offset calculation
     let effectiveOffset = offset;
@@ -1695,7 +1696,7 @@ export function App() {
       if (currentTab) {
         setActiveExecIdByTab((prev) => ({ ...prev, [currentTab.id]: execId }));
       }
-      const defaultLimit = useSettingsStore.getState().defaultPageSize || 500;
+      const defaultLimit = useSettingsStore.getState().defaultPageSize || APP_DEFAULTS.pageSize;
       const res = await QueryService.ExecuteQuery({
         executionId: execId,
         connectionId: targetConnId,
@@ -1838,7 +1839,7 @@ export function App() {
         ? (queryResult.results[activeResultIndex] ?? queryResult.results[queryResult.results.length - 1])
         : queryResult;
     const currentRows = currentRes?.rows || [];
-    const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || 500;
+    const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || APP_DEFAULTS.pageSize;
     const offset = currentRows.length;
 
     setQueryPagination((p) => ({ ...p, isLoadingMore: true }));
@@ -1892,7 +1893,7 @@ export function App() {
 
   const handleQueryPageChange = async (newPage: number) => {
     if (queryPagination.isLoadingMore || !queryResult || !queryPagination.lastSql) return;
-    const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || 500;
+    const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || APP_DEFAULTS.pageSize;
     const offset = (newPage - 1) * limit;
 
     setQueryPagination((p) => ({ ...p, page: newPage, isLoadingMore: true }));

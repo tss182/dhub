@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { WorkspaceService } from '../../bindings/dhub/internal/services';
+import { APP_DEFAULTS } from '../config/defaults';
 
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'markdown' | 'sql_insert' | 'sql_update' | 'sql_upsert';
@@ -40,14 +41,14 @@ interface SettingsState extends SettingsValues {
 const SETTINGS_STORAGE_KEY = 'dhub_settings_v1';
 
 const DEFAULT_SETTINGS: SettingsValues = {
-  theme: 'dark',
-  defaultPageSize: 500,     // Default batch size 500
-  editorFontSize: 13,
-  wordWrap: false,
-  showMinimap: false,
-  copyFormat: 'csv',
-  checkUpdatesOnStartup: true,
-  checkUpdatesPeriodically: true,
+  theme: APP_DEFAULTS.theme,
+  defaultPageSize: APP_DEFAULTS.pageSize,
+  editorFontSize: APP_DEFAULTS.editorFontSize,
+  wordWrap: APP_DEFAULTS.wordWrap,
+  showMinimap: APP_DEFAULTS.showMinimap,
+  copyFormat: APP_DEFAULTS.copyFormat,
+  checkUpdatesOnStartup: APP_DEFAULTS.checkUpdatesOnStartup,
+  checkUpdatesPeriodically: APP_DEFAULTS.checkUpdatesPeriodically,
   backupToolPaths: {},
 };
 
