@@ -511,21 +511,22 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
         alertSuccess(`User '${uname}'@'${host}' created successfully.`, 'User Created');
       } else if (connection.driver === 'postgres') {
+        const safePgUser = uname.replace(/"/g, '""');
         const passClause = createModal.password ? ` PASSWORD '${createModal.password.replace(/'/g, "''")}'` : '';
         const loginClause = createModal.pgCanLogin ? ' LOGIN' : ' NOLOGIN';
         const superClause = createModal.pgSuperuser ? ' SUPERUSER' : ' NOSUPERUSER';
         const dbClause = createModal.pgCreateDb ? ' CREATEDB' : ' NOCREATEDB';
         const roleClause = createModal.pgCreateRole ? ' CREATEROLE' : ' NOCREATEROLE';
 
-        const createSql = `CREATE ROLE "${uname}" WITH${loginClause}${superClause}${dbClause}${roleClause}${passClause};`;
+        const createSql = `CREATE ROLE "${safePgUser}" WITH${loginClause}${superClause}${dbClause}${roleClause}${passClause};`;
         let grantSql = '';
         if (createModal.selectedPrivileges.length > 0 && !createModal.pgSuperuser) {
           const privsStr = createModal.selectedPrivileges.includes('ALL PRIVILEGES')
             ? 'ALL PRIVILEGES'
             : createModal.selectedPrivileges.join(', ');
-          grantSql = ` GRANT USAGE ON SCHEMA "${targetSchema}" TO "${uname}"; GRANT ${privsStr} ON ALL TABLES IN SCHEMA "${targetSchema}" TO "${uname}";`;
+          grantSql = ` GRANT USAGE ON SCHEMA "${targetSchema}" TO "${safePgUser}"; GRANT ${privsStr} ON ALL TABLES IN SCHEMA "${targetSchema}" TO "${safePgUser}";`;
           if (createModal.selectedPrivileges.some((p) => ['INSERT', 'UPDATE', 'ALL PRIVILEGES'].includes(p))) {
-            grantSql += ` GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "${targetSchema}" TO "${uname}";`;
+            grantSql += ` GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "${targetSchema}" TO "${safePgUser}";`;
           }
         }
 
@@ -542,6 +543,38 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         } as any);
 
         alertSuccess(`Role/User "${uname}" created successfully.`, 'User Created');
+      } else if (connection.driver === 'oracle') {
+        const safeUser = uname.replace(/"/g, '""');
+        const safePass = createModal.password.replace(/"/g, '""');
+        const createSql = `CREATE USER "${safeUser}" IDENTIFIED BY "${safePass}"`;
+        const grantSql =
+          createModal.preset === 'admin'
+            ? `GRANT CONNECT, RESOURCE, DBA TO "${safeUser}"`
+            : createModal.preset === 'readwrite'
+            ? `GRANT CREATE SESSION, CREATE TABLE, CREATE VIEW, CREATE SEQUENCE TO "${safeUser}"`
+            : `GRANT CREATE SESSION TO "${safeUser}"`;
+
+        await QueryService.ExecuteQuery({
+          executionId: execId,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: '',
+          sql: createSql,
+          limit: 10,
+          offset: 0,
+        } as any);
+
+        await QueryService.ExecuteQuery({
+          executionId: `${execId}-grant`,
+          connectionId: connection.id,
+          database: targetDb,
+          schema: '',
+          sql: grantSql,
+          limit: 10,
+          offset: 0,
+        } as any);
+
+        alertSuccess(`Oracle user "${uname}" created successfully.`, 'User Created');
       } else if (connection.driver === 'mssql') {
         const safeUser = uname.replace(/\]/g, ']]');
         const safePass = createModal.password.replace(/'/g, "''");
@@ -682,7 +715,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
           connectionId: connection.id,
           database: targetDb,
           schema: 'public',
-          sql: `SELECT DISTINCT privilege_type FROM information_schema.role_table_grants WHERE grantee = '${u.username}';`,
+          sql: `SELECT DISTINCT privilege_type FROM information_schema.role_table_grants WHERE grantee = '${u.username.replace(/'/g, "''")}';`,
           limit: 100,
           offset: 0,
         } as any);
@@ -769,23 +802,24 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
         alertSuccess(`Permissions updated for '${user.username}'@'${host}'.`, 'Permissions Updated');
       } else if (connection.driver === 'postgres') {
+        const safePgUser = user.username.replace(/"/g, '""');
         const superClause = permissionModal.pgSuperuser ? ' SUPERUSER' : ' NOSUPERUSER';
         const dbClause = permissionModal.pgCreateDb ? ' CREATEDB' : ' NOCREATEDB';
         const roleClause = permissionModal.pgCreateRole ? ' CREATEROLE' : ' NOCREATEROLE';
         const loginClause = permissionModal.pgCanLogin ? ' LOGIN' : ' NOLOGIN';
 
-        let sql = `ALTER ROLE "${user.username}" WITH${superClause}${dbClause}${roleClause}${loginClause};`;
+        let sql = `ALTER ROLE "${safePgUser}" WITH${superClause}${dbClause}${roleClause}${loginClause};`;
 
         if (!permissionModal.pgSuperuser) {
           if (selectedPrivileges.length === 0) {
-            sql += ` REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "${targetSchema}" FROM "${user.username}";`;
+            sql += ` REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "${targetSchema}" FROM "${safePgUser}";`;
           } else {
             const privsStr = selectedPrivileges.includes('ALL PRIVILEGES')
               ? 'ALL PRIVILEGES'
               : selectedPrivileges.join(', ');
-            sql += ` GRANT USAGE ON SCHEMA "${targetSchema}" TO "${user.username}"; GRANT ${privsStr} ON ALL TABLES IN SCHEMA "${targetSchema}" TO "${user.username}";`;
+            sql += ` GRANT USAGE ON SCHEMA "${targetSchema}" TO "${safePgUser}"; GRANT ${privsStr} ON ALL TABLES IN SCHEMA "${targetSchema}" TO "${safePgUser}";`;
             if (selectedPrivileges.some((p) => ['INSERT', 'UPDATE', 'ALL PRIVILEGES'].includes(p))) {
-              sql += ` GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "${targetSchema}" TO "${user.username}";`;
+              sql += ` GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "${targetSchema}" TO "${safePgUser}";`;
             }
           }
         }
@@ -877,7 +911,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         const host = user.host || '%';
         sql = `ALTER USER \`${user.username}\`@\`${host}\` IDENTIFIED BY '${password.replace(/'/g, "\\'")}'; FLUSH PRIVILEGES;`;
       } else if (connection.driver === 'postgres') {
-        sql = `ALTER ROLE "${user.username}" WITH PASSWORD '${password.replace(/'/g, "''")}';`;
+        const safePgUser = user.username.replace(/"/g, '""');
+        sql = `ALTER ROLE "${safePgUser}" WITH PASSWORD '${password.replace(/'/g, "''")}';`;
       } else if (connection.driver === 'mssql') {
         const safeUser = user.username.replace(/\]/g, ']]');
         sql = `ALTER LOGIN [${safeUser}] WITH PASSWORD = '${password.replace(/'/g, "''")}';`;
@@ -942,7 +977,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
           ? `DROP USER "${u.username.replace(/"/g, '""')}" CASCADE`
           : connection.driver === 'redis'
           ? `ACL DELUSER ${u.username}`
-          : `DROP ROLE "${u.username}";`;
+          : `DROP ROLE "${u.username.replace(/"/g, '""')}";`;
 
       await QueryService.ExecuteQuery({
         executionId: execId,

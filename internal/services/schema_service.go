@@ -25,17 +25,62 @@ import (
 )
 
 type SchemaService struct {
-	store     *store.LocalStore
-	sessions  *manager.SessionManager
-	appGetter func() *application.App
+	store      *store.LocalStore
+	sessions   *manager.SessionManager
+	appGetter  func() *application.App
+	mu         sync.Mutex
+	runningOps map[string]context.CancelFunc
 }
 
 func NewSchemaService(s *store.LocalStore, sm *manager.SessionManager, appGetter func() *application.App) *SchemaService {
 	return &SchemaService{
-		store:     s,
-		sessions:  sm,
-		appGetter: appGetter,
+		store:      s,
+		sessions:   sm,
+		appGetter:  appGetter,
+		runningOps: make(map[string]context.CancelFunc),
 	}
+}
+
+func backupRestoreOpKey(connectionID, database string) string {
+	return connectionID + "::" + strings.TrimSpace(database)
+}
+
+func (s *SchemaService) registerOp(key string, cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runningOps == nil {
+		s.runningOps = make(map[string]context.CancelFunc)
+	}
+	s.runningOps[key] = cancel
+}
+
+func (s *SchemaService) unregisterOp(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.runningOps, key)
+}
+
+// CancelBackupRestore cancels an active backup or restore operation for the given connection and database.
+func (s *SchemaService) CancelBackupRestore(connectionID, database string) bool {
+	key := backupRestoreOpKey(connectionID, database)
+	s.mu.Lock()
+	cancel, ok := s.runningOps[key]
+	if !ok {
+		prefix := connectionID + "::"
+		for k, fn := range s.runningOps {
+			if strings.HasPrefix(k, prefix) {
+				cancel = fn
+				ok = true
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+		return true
+	}
+	return false
 }
 
 func (s *SchemaService) GetDatabases(connectionID string) ([]string, error) {
@@ -568,6 +613,10 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		return "", fmt.Errorf("database name is required for backup")
 	}
 
+	opKey := backupRestoreOpKey(connectionID, database)
+	s.registerOp(opKey, cancel)
+	defer s.unregisterOp(opKey)
+
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
 		filePath, _ = s.GetDefaultBackupPath(database)
@@ -1097,6 +1146,9 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 	if err != nil {
 		return "", fmt.Errorf("failed to get connection config: %w", err)
 	}
+	if conn.IsReadOnly {
+		return "", fmt.Errorf("restore blocked: connection %q is configured as read-only", conn.Name)
+	}
 	conn, closeTunnel, err := withSSHTunnel(conn)
 	if err != nil {
 		return "", err
@@ -1110,6 +1162,10 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 	if database == "" {
 		return "", fmt.Errorf("database name is required for restore")
 	}
+
+	opKey := backupRestoreOpKey(connectionID, database)
+	s.registerOp(opKey, cancel)
+	defer s.unregisterOp(opKey)
 
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {

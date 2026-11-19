@@ -14,7 +14,7 @@ import (
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 )
 
-const maxExtraPools = 4
+const maxExtraPools = 8
 
 type ClickHouseDriver struct {
 	db        *sql.DB
@@ -90,13 +90,20 @@ func (c *ClickHouseDriver) dbFor(database string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	for len(c.poolOrder) >= maxExtraPools {
-		evict := c.poolOrder[0]
-		c.poolOrder = c.poolOrder[1:]
-		if oldPool, exists := c.pools[evict]; exists {
-			_ = oldPool.Close()
-			delete(c.pools, evict)
+	for i := 0; i < len(c.poolOrder) && len(c.poolOrder) >= maxExtraPools; {
+		evict := c.poolOrder[i]
+		oldPool, exists := c.pools[evict]
+		if !exists {
+			c.poolOrder = append(c.poolOrder[:i], c.poolOrder[i+1:]...)
+			continue
 		}
+		if oldPool.Stats().InUse > 0 {
+			i++
+			continue
+		}
+		c.poolOrder = append(c.poolOrder[:i], c.poolOrder[i+1:]...)
+		_ = oldPool.Close()
+		delete(c.pools, evict)
 	}
 	c.pools[database] = pool
 	c.poolOrder = append(c.poolOrder, database)

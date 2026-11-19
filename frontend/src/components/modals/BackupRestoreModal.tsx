@@ -41,6 +41,7 @@ export interface BackupRestoreModalProps {
   getBackupCliTool: (drv?: string) => string;
   getRestoreCliTool: (drv?: string, filePath?: string) => string;
   onSubmit: (e: React.FormEvent) => void;
+  onCancelProcessing?: () => void;
   onBrowseBackupFile: () => void;
   onBrowseRestoreFile: () => void;
   onBrowseBackupToolPath: () => void;
@@ -52,6 +53,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
   getBackupCliTool,
   getRestoreCliTool,
   onSubmit: handleConfirmBackupRestore,
+  onCancelProcessing,
   onBrowseBackupFile: handleBrowseBackupFile,
   onBrowseRestoreFile: handleBrowseRestoreFile,
   onBrowseBackupToolPath: handleBrowseBackupToolPath,
@@ -751,13 +753,21 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
           <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530] shrink-0">
             <button
               type="button"
-              disabled={backupRestoreModal.isProcessing}
-              onClick={() =>
-                setBackupRestoreModal((prev) => ({ ...prev, isOpen: false }))
-              }
-              className="px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 text-xs font-medium cursor-pointer transition-colors disabled:opacity-40"
+              disabled={backupRestoreModal.isProcessing && !onCancelProcessing}
+              onClick={() => {
+                if (backupRestoreModal.isProcessing) {
+                  onCancelProcessing?.();
+                } else {
+                  setBackupRestoreModal((prev) => ({ ...prev, isOpen: false }));
+                }
+              }}
+              className={`px-3.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer transition-colors disabled:opacity-40 ${
+                backupRestoreModal.isProcessing
+                  ? 'bg-rose-600/20 hover:bg-rose-600/35 border-rose-500/40 text-rose-300'
+                  : 'bg-[#20222a] hover:bg-[#2b2d38] border-[#2d303f] text-zinc-300'
+              }`}
             >
-              Cancel
+              {backupRestoreModal.isProcessing ? 'Stop' : 'Cancel'}
             </button>
             <button
               type="submit"

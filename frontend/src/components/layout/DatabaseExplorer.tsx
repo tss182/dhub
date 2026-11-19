@@ -981,6 +981,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   };
 
   const handleOpenRestoreModal = async (conn: ConnectionConfig, database: string) => {
+    if (conn.isReadOnly) {
+      alertWarning(
+        `Connection "${conn.name}" is configured as Read-Only. Restore is disabled.`,
+        'Read-Only Connection'
+      );
+      return;
+    }
     const cliTool = getRestoreCliTool(conn.driver);
     const savedToolPath = cliTool ? (useSettingsStore.getState().backupToolPaths?.[cliTool] || '') : '';
     setBackupRestoreModal((prev) => ({
@@ -1116,6 +1123,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         err?.message || String(err),
         mode === 'backup' ? 'Database Backup Failed' : 'Database Restore Failed'
       );
+    }
+  };
+
+  const handleCancelBackupRestore = async () => {
+    const { connection, database, isProcessing } = backupRestoreModal;
+    if (!connection || !database || !isProcessing) return;
+    try {
+      await Call.ByName(
+        'dhub/internal/services.SchemaService.CancelBackupRestore',
+        connection.id,
+        database
+      );
+    } catch (e) {
+      console.warn('CancelBackupRestore failed:', e);
     }
   };
 
@@ -5152,21 +5173,23 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const conn = contextMenu.connection!;
-                      const db = contextMenu.database!;
-                      closeContextMenu();
-                      handleOpenRestoreModal(conn, db);
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <Upload className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-                    <span>
-                      Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : contextMenu.connection.driver === 'mariadb' ? 'mariadb' : 'mysql'})...
-                    </span>
-                  </button>
+                  {!contextMenu.connection.isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const conn = contextMenu.connection!;
+                        const db = contextMenu.database!;
+                        closeContextMenu();
+                        handleOpenRestoreModal(conn, db);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Upload className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                      <span>
+                        Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : contextMenu.connection.driver === 'mariadb' ? 'mariadb' : 'mysql'})...
+                      </span>
+                    </button>
+                  )}
 
                   <div className="my-1 border-t border-[#272932]" />
 
@@ -6310,6 +6333,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         getBackupCliTool={getBackupCliTool}
         getRestoreCliTool={getRestoreCliTool}
         onSubmit={handleConfirmBackupRestore}
+        onCancelProcessing={handleCancelBackupRestore}
         onBrowseBackupFile={handleBrowseBackupFile}
         onBrowseRestoreFile={handleBrowseRestoreFile}
         onBrowseBackupToolPath={handleBrowseBackupToolPath}

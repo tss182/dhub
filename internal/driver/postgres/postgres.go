@@ -18,7 +18,7 @@ import (
 // switch databases within a single connection, so every database the user
 // browses or queries gets its own lazily-created pool derived from the same
 // connection string (and therefore the same SSH tunnel / credentials).
-const maxExtraPools = 4
+const maxExtraPools = 8
 
 type PostgresDriver struct {
 	db        *sql.DB // pool for the default database
@@ -93,13 +93,20 @@ func (p *PostgresDriver) dbFor(database string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	for len(p.poolOrder) >= maxExtraPools {
-		evict := p.poolOrder[0]
-		p.poolOrder = p.poolOrder[1:]
-		if oldPool, exists := p.pools[evict]; exists {
-			_ = oldPool.Close()
-			delete(p.pools, evict)
+	for i := 0; i < len(p.poolOrder) && len(p.poolOrder) >= maxExtraPools; {
+		evict := p.poolOrder[i]
+		oldPool, exists := p.pools[evict]
+		if !exists {
+			p.poolOrder = append(p.poolOrder[:i], p.poolOrder[i+1:]...)
+			continue
 		}
+		if oldPool.Stats().InUse > 0 {
+			i++
+			continue
+		}
+		p.poolOrder = append(p.poolOrder[:i], p.poolOrder[i+1:]...)
+		_ = oldPool.Close()
+		delete(p.pools, evict)
 	}
 	p.pools[database] = pool
 	p.poolOrder = append(p.poolOrder, database)

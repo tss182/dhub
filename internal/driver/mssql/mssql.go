@@ -14,7 +14,7 @@ import (
 	_ "github.com/microsoft/go-mssqldb"
 )
 
-const maxExtraPools = 4
+const maxExtraPools = 8
 
 type MSSQLDriver struct {
 	db        *sql.DB
@@ -92,13 +92,20 @@ func (m *MSSQLDriver) dbFor(database string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	for len(m.poolOrder) >= maxExtraPools {
-		evict := m.poolOrder[0]
-		m.poolOrder = m.poolOrder[1:]
-		if oldPool, exists := m.pools[evict]; exists {
-			_ = oldPool.Close()
-			delete(m.pools, evict)
+	for i := 0; i < len(m.poolOrder) && len(m.poolOrder) >= maxExtraPools; {
+		evict := m.poolOrder[i]
+		oldPool, exists := m.pools[evict]
+		if !exists {
+			m.poolOrder = append(m.poolOrder[:i], m.poolOrder[i+1:]...)
+			continue
 		}
+		if oldPool.Stats().InUse > 0 {
+			i++
+			continue
+		}
+		m.poolOrder = append(m.poolOrder[:i], m.poolOrder[i+1:]...)
+		_ = oldPool.Close()
+		delete(m.pools, evict)
 	}
 	m.pools[database] = pool
 	m.poolOrder = append(m.poolOrder, database)

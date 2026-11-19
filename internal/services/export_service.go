@@ -372,12 +372,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			for _, row := range res.Rows {
 				valStrs := make([]string, len(row))
 				for i, v := range row {
-					if v == nil {
-						valStrs[i] = "NULL"
-					} else {
-						s := fmt.Sprintf("%v", v)
-						valStrs[i] = "'" + strings.ReplaceAll(s, "'", "''") + "'"
-					}
+					valStrs[i] = formatSQLValue(driverType, v)
 				}
 				stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);\n", sqlTargetTable, sqlColsJoined, strings.Join(valStrs, ", "))
 				if _, err := bw.WriteString(stmt); err != nil {

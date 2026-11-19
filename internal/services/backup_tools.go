@@ -957,7 +957,8 @@ func (s *SchemaService) backupDatabaseNativeSQL(
 	return bw.Flush()
 }
 
-// restoreDatabaseNativeSQL reads a .sql file and executes statements sequentially via DHub's database driver.
+// restoreDatabaseNativeSQL streams a .sql file and executes statements sequentially via DHub's database driver
+// without loading the entire script into memory.
 func (s *SchemaService) restoreDatabaseNativeSQL(
 	ctx context.Context,
 	connectionID, driverType, database, filePath string,
@@ -968,15 +969,11 @@ func (s *SchemaService) restoreDatabaseNativeSQL(
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	sqlBytes, err := os.ReadFile(filePath)
+	f, err := os.Open(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to read SQL file: %w", err)
+		return fmt.Errorf("failed to open SQL file: %w", err)
 	}
-
-	statements := splitSQLStatementsForRestore(string(sqlBytes), driverType)
-	if len(statements) == 0 {
-		return nil
-	}
+	defer f.Close()
 
 	driverLower := strings.ToLower(strings.TrimSpace(driverType))
 	targetSchema := database
@@ -988,27 +985,26 @@ func (s *SchemaService) restoreDatabaseNativeSQL(
 		targetSchema = ""
 	}
 
-	var bytesProcessed int64
 	var currentTable string
+	var stmtCount int
 	lastEmit := time.Now()
-	totalStmts := len(statements)
 
-	for idx, stmt := range statements {
+	err = streamSQLStatements(f, driverType, func(stmt string, bytesProcessed int64) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		bytesProcessed += int64(len(stmt))
 		trimmed := strings.TrimSpace(stmt)
 		if trimmed == "" {
-			continue
+			return nil
 		}
+		stmtCount++
 
 		if tbl := detectTableNameFromSQL(trimmed); tbl != "" {
 			currentTable = tbl
 		}
 
 		_, execErr := drv.Execute(ctx, driver.QueryRequest{
-			ExecutionID:  fmt.Sprintf("restore-%d", idx),
+			ExecutionID:  fmt.Sprintf("restore-%d", stmtCount),
 			ConnectionID: connectionID,
 			Database:     database,
 			Schema:       targetSchema,
@@ -1016,18 +1012,24 @@ func (s *SchemaService) restoreDatabaseNativeSQL(
 			Limit:        1,
 		})
 		if execErr != nil {
-			return fmt.Errorf("error executing statement #%d: %w", idx+1, execErr)
+			return fmt.Errorf("error executing statement #%d: %w", stmtCount, execErr)
 		}
 
-		if time.Since(lastEmit) >= 120*time.Millisecond || idx == totalStmts-1 {
+		if time.Since(lastEmit) >= 120*time.Millisecond || (totalBytes > 0 && bytesProcessed >= totalBytes) {
 			lastEmit = time.Now()
-			pct := (float64(idx+1) / float64(totalStmts)) * 99.0
-			if pct < 1 {
-				pct = 1
+			pct := 1.0
+			if totalBytes > 0 {
+				pct = (float64(bytesProcessed) / float64(totalBytes)) * 99.0
+				if pct < 1 {
+					pct = 1
+				}
+				if pct > 99 {
+					pct = 99
+				}
 			}
-			msg := fmt.Sprintf("Restoring statement %d/%d...", idx+1, totalStmts)
+			msg := fmt.Sprintf("Restoring statement #%d...", stmtCount)
 			if currentTable != "" {
-				msg = fmt.Sprintf("Restoring table `%s` (%d/%d)...", currentTable, idx+1, totalStmts)
+				msg = fmt.Sprintf("Restoring table `%s` (stmt #%d)...", currentTable, stmtCount)
 			}
 			s.emitRestoreProgress(app.BackupProgressEvent{
 				ConnectionID: connectionID,
@@ -1040,6 +1042,10 @@ func (s *SchemaService) restoreDatabaseNativeSQL(
 				Message:      msg,
 			})
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -1064,6 +1070,17 @@ func detectTableNameFromSQL(sqlText string) string {
 // respecting single/double/backtick quotes, dollar-quoting, comments, MySQL DELIMITER, MSSQL GO, and Oracle /.
 func splitSQLStatementsForRestore(script, driverType string) []string {
 	var stmts []string
+	_ = streamSQLStatements(strings.NewReader(script), driverType, func(stmt string, _ int64) error {
+		stmts = append(stmts, stmt)
+		return nil
+	})
+	return stmts
+}
+
+// streamSQLStatements reads a SQL script incrementally from r and invokes onStmt for each statement,
+// keeping memory usage bounded to a single statement regardless of total file size.
+func streamSQLStatements(r io.Reader, driverType string, onStmt func(stmt string, bytesRead int64) error) error {
+	br := bufio.NewReaderSize(r, 64*1024)
 	var buf strings.Builder
 	delimiter := ";"
 
@@ -1073,65 +1090,134 @@ func splitSQLStatementsForRestore(script, driverType string) []string {
 	inLineComment := false
 	inBlockComment := false
 	dollarTag := ""
+	atLineStart := true
+	var bytesRead int64
 
-	n := len(script)
-	for i := 0; i < n; i++ {
-		ch := script[i]
+	readByte := func() (byte, bool, error) {
+		b, err := br.ReadByte()
+		if err != nil {
+			if err == io.EOF {
+				return 0, true, nil
+			}
+			return 0, false, err
+		}
+		bytesRead++
+		return b, false, nil
+	}
+
+	peekBytes := func(n int) []byte {
+		p, _ := br.Peek(n)
+		return p
+	}
+
+	consumeLine := func(firstByte byte) (string, error) {
+		var line strings.Builder
+		line.WriteByte(firstByte)
+		for {
+			b, eof, err := readByte()
+			if err != nil {
+				return "", err
+			}
+			if eof {
+				break
+			}
+			if b == '\n' {
+				break
+			}
+			line.WriteByte(b)
+		}
+		return line.String(), nil
+	}
+
+	flushStmt := func() error {
+		if s := strings.TrimSpace(buf.String()); s != "" {
+			if err := onStmt(s, bytesRead); err != nil {
+				return err
+			}
+		}
+		buf.Reset()
+		return nil
+	}
+
+	for {
+		ch, eof, err := readByte()
+		if err != nil {
+			return err
+		}
+		if eof {
+			break
+		}
 
 		if inLineComment {
 			if ch == '\n' {
 				inLineComment = false
+				atLineStart = true
 			}
 			continue
 		}
 
 		if inBlockComment {
-			if ch == '*' && i+1 < n && script[i+1] == '/' {
-				inBlockComment = false
-				i++
+			if ch == '*' {
+				if p := peekBytes(1); len(p) == 1 && p[0] == '/' {
+					_, _, _ = readByte()
+					inBlockComment = false
+				}
+			}
+			if ch == '\n' {
+				atLineStart = true
 			}
 			continue
 		}
 
 		if dollarTag != "" {
-			if strings.HasPrefix(script[i:], dollarTag) {
-				buf.WriteString(dollarTag)
-				i += len(dollarTag) - 1
-				dollarTag = ""
-			} else {
-				buf.WriteByte(ch)
+			buf.WriteByte(ch)
+			if len(dollarTag) == 1 {
+				// unreachable
+			} else if ch == dollarTag[0] {
+				need := len(dollarTag) - 1
+				if p := peekBytes(need); len(p) == need && string(p) == dollarTag[1:] {
+					for k := 0; k < need; k++ {
+						nb, _, _ := readByte()
+						buf.WriteByte(nb)
+					}
+					dollarTag = ""
+				}
 			}
+			atLineStart = (ch == '\n')
 			continue
 		}
 
 		if inSingleQuote {
 			buf.WriteByte(ch)
-			if ch == '\\' && i+1 < n {
-				i++
-				buf.WriteByte(script[i])
-				continue
-			}
-			if ch == '\'' {
-				if i+1 < n && script[i+1] == '\'' {
-					i++
-					buf.WriteByte(script[i])
-					continue
+			if ch == '\\' {
+				if nb, neof, nerr := readByte(); nerr != nil {
+					return nerr
+				} else if !neof {
+					buf.WriteByte(nb)
 				}
-				inSingleQuote = false
+			} else if ch == '\'' {
+				if p := peekBytes(1); len(p) == 1 && p[0] == '\'' {
+					nb, _, _ := readByte()
+					buf.WriteByte(nb)
+				} else {
+					inSingleQuote = false
+				}
 			}
+			atLineStart = (ch == '\n')
 			continue
 		}
 
 		if inDoubleQuote {
 			buf.WriteByte(ch)
 			if ch == '"' {
-				if i+1 < n && script[i+1] == '"' {
-					i++
-					buf.WriteByte(script[i])
-					continue
+				if p := peekBytes(1); len(p) == 1 && p[0] == '"' {
+					nb, _, _ := readByte()
+					buf.WriteByte(nb)
+				} else {
+					inDoubleQuote = false
 				}
-				inDoubleQuote = false
 			}
+			atLineStart = (ch == '\n')
 			continue
 		}
 
@@ -1140,84 +1226,112 @@ func splitSQLStatementsForRestore(script, driverType string) []string {
 			if ch == '`' {
 				inBacktick = false
 			}
+			atLineStart = (ch == '\n')
 			continue
 		}
 
-		// Check comments outside quotes
-		if ch == '-' && i+1 < n && script[i+1] == '-' {
-			inLineComment = true
-			i++
-			continue
-		}
-		if ch == '/' && i+1 < n && script[i+1] == '*' {
-			// Preserve MySQL conditional comments /*! ... */
-			if i+2 < n && script[i+2] == '!' {
-				buf.WriteByte(ch)
+		// Line comment --
+		if ch == '-' {
+			if p := peekBytes(1); len(p) == 1 && p[0] == '-' {
+				_, _, _ = readByte()
+				inLineComment = true
+				atLineStart = false
 				continue
 			}
-			inBlockComment = true
-			i++
-			continue
 		}
 
-		// Handle DELIMITER directive at start of line
-		if (i == 0 || script[i-1] == '\n') && len(script[i:]) >= 10 && strings.EqualFold(script[i:i+9], "DELIMITER") && (script[i+9] == ' ' || script[i+9] == '\t') {
-			lineEnd := strings.IndexByte(script[i:], '\n')
-			var line string
-			if lineEnd == -1 {
-				line = script[i:]
-				i = n
-			} else {
-				line = script[i : i+lineEnd]
-				i += lineEnd
-			}
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				delimiter = parts[1]
-			}
-			continue
-		}
-
-		// Handle MSSQL GO or Oracle / on its own line
-		if i == 0 || script[i-1] == '\n' {
-			lineEnd := strings.IndexByte(script[i:], '\n')
-			var line string
-			if lineEnd == -1 {
-				line = script[i:]
-			} else {
-				line = script[i : i+lineEnd]
-			}
-			trimmedLine := strings.TrimSpace(line)
-			if strings.EqualFold(trimmedLine, "GO") || (trimmedLine == "/" && strings.EqualFold(driverType, "oracle")) {
-				if s := strings.TrimSpace(buf.String()); s != "" {
-					stmts = append(stmts, s)
+		// Block comment /* ... */ (preserve MySQL conditional comments /*! ... */)
+		if ch == '/' {
+			if p := peekBytes(2); len(p) >= 1 && p[0] == '*' {
+				if len(p) >= 2 && p[1] == '!' {
+					buf.WriteByte(ch)
+					atLineStart = false
+					continue
 				}
-				buf.Reset()
-				if lineEnd == -1 {
-					break
-				}
-				i += lineEnd
+				_, _, _ = readByte()
+				inBlockComment = true
+				atLineStart = false
 				continue
+			}
+		}
+
+		// Line-start directives: DELIMITER, MSSQL GO, Oracle /
+		if atLineStart {
+			if ch == 'd' || ch == 'D' {
+				if p := peekBytes(9); len(p) == 9 && strings.EqualFold(string(p[:8]), "ELIMITER") && (p[8] == ' ' || p[8] == '\t') {
+					line, lErr := consumeLine(ch)
+					if lErr != nil {
+						return lErr
+					}
+					parts := strings.Fields(line)
+					if len(parts) >= 2 {
+						delimiter = parts[1]
+					}
+					atLineStart = true
+					continue
+				}
+			}
+			if ch == 'g' || ch == 'G' {
+				if p := peekBytes(2); len(p) >= 1 && (p[0] == 'o' || p[0] == 'O') && (len(p) == 1 || p[1] == '\r' || p[1] == '\n' || p[1] == ' ' || p[1] == '\t') {
+					line, lErr := consumeLine(ch)
+					if lErr != nil {
+						return lErr
+					}
+					if strings.EqualFold(strings.TrimSpace(line), "GO") {
+						if err := flushStmt(); err != nil {
+							return err
+						}
+						atLineStart = true
+						continue
+					}
+					buf.WriteString(line)
+					buf.WriteByte('\n')
+					atLineStart = true
+					continue
+				}
+			}
+			if ch == '/' && strings.EqualFold(driverType, "oracle") {
+				if p := peekBytes(1); len(p) == 0 || p[0] == '\r' || p[0] == '\n' || p[0] == ' ' || p[0] == '\t' {
+					line, lErr := consumeLine(ch)
+					if lErr != nil {
+						return lErr
+					}
+					if strings.TrimSpace(line) == "/" {
+						if err := flushStmt(); err != nil {
+							return err
+						}
+						atLineStart = true
+						continue
+					}
+					buf.WriteString(line)
+					buf.WriteByte('\n')
+					atLineStart = true
+					continue
+				}
 			}
 		}
 
 		// Dollar quote start in PostgreSQL ($tag$ or $$)
 		if ch == '$' && strings.EqualFold(driverType, "postgres") {
-			endIdx := strings.IndexByte(script[i+1:], '$')
+			p := peekBytes(33)
+			endIdx := bytes.IndexByte(p, '$')
 			if endIdx >= 0 && endIdx <= 32 {
-				candidate := script[i : i+endIdx+2]
 				validTag := true
-				for k := 1; k < len(candidate)-1; k++ {
-					c := candidate[k]
+				for k := 0; k < endIdx; k++ {
+					c := p[k]
 					if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
 						validTag = false
 						break
 					}
 				}
 				if validTag {
-					dollarTag = candidate
-					buf.WriteString(candidate)
-					i += len(candidate) - 1
+					tag := "$" + string(p[:endIdx+1])
+					for k := 0; k <= endIdx; k++ {
+						_, _, _ = readByte()
+					}
+					dollarTag = tag
+					buf.WriteString(tag)
+					atLineStart = false
 					continue
 				}
 			}
@@ -1226,33 +1340,45 @@ func splitSQLStatementsForRestore(script, driverType string) []string {
 		if ch == '\'' {
 			inSingleQuote = true
 			buf.WriteByte(ch)
+			atLineStart = false
 			continue
 		}
 		if ch == '"' {
 			inDoubleQuote = true
 			buf.WriteByte(ch)
+			atLineStart = false
 			continue
 		}
 		if ch == '`' {
 			inBacktick = true
 			buf.WriteByte(ch)
+			atLineStart = false
 			continue
 		}
 
-		if delimiter != "" && strings.HasPrefix(script[i:], delimiter) {
-			if s := strings.TrimSpace(buf.String()); s != "" {
-				stmts = append(stmts, s)
+		if delimiter != "" && ch == delimiter[0] {
+			matched := true
+			if len(delimiter) > 1 {
+				p := peekBytes(len(delimiter) - 1)
+				if len(p) != len(delimiter)-1 || string(p) != delimiter[1:] {
+					matched = false
+				}
 			}
-			buf.Reset()
-			i += len(delimiter) - 1
-			continue
+			if matched {
+				for k := 1; k < len(delimiter); k++ {
+					_, _, _ = readByte()
+				}
+				if err := flushStmt(); err != nil {
+					return err
+				}
+				atLineStart = false
+				continue
+			}
 		}
 
 		buf.WriteByte(ch)
+		atLineStart = (ch == '\n')
 	}
 
-	if s := strings.TrimSpace(buf.String()); s != "" {
-		stmts = append(stmts, s)
-	}
-	return stmts
+	return flushStmt()
 }
