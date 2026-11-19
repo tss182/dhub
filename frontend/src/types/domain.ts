@@ -252,6 +252,8 @@ export interface TableViewState {
   whereClause?: string;
   sortConfigs?: Array<{ column: string; direction: 'asc' | 'desc' }>;
   frozenColumns?: string[];
+  hiddenColumns?: string[];
+  columnOrder?: string[];
   activeRowIndex?: number;
   topRowIndex?: number;
   topRowOffsetPx?: number;

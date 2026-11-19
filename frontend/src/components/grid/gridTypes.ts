@@ -100,6 +100,10 @@ export interface DataGridProps {
   rawSql?: string;
   initialFrozenColumns?: string[];
   onFrozenColumnsChange?: (columns: string[]) => void;
+  onColumnReorder?: (fromColName: string, toColName: string, position: 'before' | 'after') => void;
+  onHideColumn?: (colName: string) => void;
+  hiddenColumnsCount?: number;
+  onShowAllColumns?: () => void;
   targetRowIndex?: number;
   onActiveRowChange?: (rowIndex: number) => void;
   initialScrollTop?: number;

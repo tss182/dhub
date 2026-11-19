@@ -17,6 +17,8 @@ import {
   RotateCcw,
   PanelRight,
   CheckSquare,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { CopyFormat } from '../../stores/useSettingsStore';
@@ -54,6 +56,9 @@ interface GridContextMenuProps {
   onResetAllColumnWidths: () => void;
   onToggleValuePanel: () => void;
   onSelectAll: () => void;
+  onHideColumn?: (colName: string) => void;
+  hiddenColumnsCount?: number;
+  onShowAllColumns?: () => void;
 }
 
 export const GridContextMenu: React.FC<GridContextMenuProps> = ({
@@ -86,8 +91,134 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   onResetAllColumnWidths,
   onToggleValuePanel,
   onSelectAll,
+  onHideColumn,
+  hiddenColumnsCount = 0,
+  onShowAllColumns,
 }) => {
   if (!contextMenu.isOpen) return null;
+
+  const isHeaderContextMenu = contextMenu.vIdx === null && contextMenu.cIdx !== null;
+  if (isHeaderContextMenu) {
+    const col = columns[contextMenu.cIdx!];
+    if (!col) return null;
+    const isFrozen = frozenColumns.includes(col.name);
+
+    return (
+      <div
+        data-grid-context-menu="true"
+        className="fixed z-50 w-60 rounded-lg border border-[#3b3e4f] bg-[#1a1b22] shadow-2xl p-1 text-xs text-zinc-200 select-none animate-in fade-in zoom-in-95 duration-75"
+        style={{ top: contextMenu.y, left: contextMenu.x }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {onHideColumn && (
+          <button
+            type="button"
+            disabled={columns.length <= 1}
+            onClick={() => {
+              onClose();
+              onHideColumn(col.name);
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 disabled:opacity-40 disabled:pointer-events-none transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <EyeOff className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white shrink-0" />
+              <span className="truncate">Hide Field ({col.name})</span>
+            </div>
+          </button>
+        )}
+
+        {onShowAllColumns && hiddenColumnsCount > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onShowAllColumns();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+              <span>Show All Fields ({hiddenColumnsCount} hidden)</span>
+            </div>
+          </button>
+        )}
+
+        {(onHideColumn || (onShowAllColumns && hiddenColumnsCount > 0)) && (
+          <div className="my-1 border-t border-[#272932]" />
+        )}
+
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onToggleFreeze(col.name);
+          }}
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Snowflake
+              className={`h-3.5 w-3.5 shrink-0 ${
+                isFrozen ? 'text-cyan-400' : 'text-zinc-400'
+              } group-hover:text-white`}
+            />
+            <span className="truncate">
+              {isFrozen ? `Unfreeze Column (${col.name})` : `Freeze Column (${col.name})`}
+            </span>
+          </div>
+          <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Alt+Click</kbd>
+        </button>
+
+        {frozenColumns.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onUnfreezeAll();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Unfreeze All Columns ({frozenColumns.length})</span>
+            </div>
+          </button>
+        )}
+
+        <div className="my-1 border-t border-[#272932]" />
+
+        <button
+          type="button"
+          onClick={() => {
+            const cIdx = contextMenu.cIdx!;
+            onClose();
+            onAutoFitColumn(cIdx);
+          }}
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+        >
+          <div className="flex items-center gap-2">
+            <ArrowUpDown className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white rotate-90" />
+            <span>Auto-fit Column Width</span>
+          </div>
+          <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">2x Click</kbd>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onResetAllColumnWidths();
+          }}
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+        >
+          <div className="flex items-center gap-2">
+            <RotateCcw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+            <span>Reset All Column Widths</span>
+          </div>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -439,6 +570,26 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                   <div className="flex items-center gap-2">
                     <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                     <span>Unfreeze All Columns ({frozenColumns.length})</span>
+                  </div>
+                </button>
+              )}
+
+              {onHideColumn && contextMenu.cIdx !== null && columns[contextMenu.cIdx] && (
+                <button
+                  type="button"
+                  disabled={columns.length <= 1}
+                  onClick={() => {
+                    const { cIdx } = contextMenu;
+                    onClose();
+                    if (cIdx !== null && columns[cIdx]) {
+                      onHideColumn(columns[cIdx].name);
+                    }
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 disabled:opacity-40 disabled:pointer-events-none transition-colors text-left cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <EyeOff className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white shrink-0" />
+                    <span className="truncate">Hide Field ({columns[contextMenu.cIdx]?.name})</span>
                   </div>
                 </button>
               )}

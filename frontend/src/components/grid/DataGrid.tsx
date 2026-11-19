@@ -119,6 +119,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   rawSql,
   initialFrozenColumns,
   onFrozenColumnsChange,
+  onColumnReorder,
+  onHideColumn,
+  hiddenColumnsCount = 0,
+  onShowAllColumns,
   targetRowIndex,
   onActiveRowChange,
   initialScrollTop,
@@ -162,6 +166,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const thRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const [resizingCol, setResizingCol] = useState<string | null>(null);
+  const [draggedColName, setDraggedColName] = useState<string | null>(null);
+  const [colDropTarget, setColDropTarget] = useState<{ name: string; pos: 'before' | 'after' } | null>(null);
   const resizingRef = useRef<{ colName: string; startX: number; startWidth: number } | null>(null);
   const isResizingRef = useRef(false);
   const currentWidthsRef = useRef<Record<string, number>>({});
@@ -1574,6 +1580,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
     setContextMenu({ isOpen: true, x: Math.max(10, x), y: Math.max(10, y), vIdx, cIdx: 0 });
   };
 
+  const handleColHeaderContextMenu = (e: React.MouseEvent, cIdx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleColMouseLeave();
+
+    const x = Math.min(e.clientX, window.innerWidth - 240 - 10);
+    const y = Math.min(e.clientY, window.innerHeight - 280 - 10);
+    setContextMenu({ isOpen: true, x: Math.max(10, x), y: Math.max(10, y), vIdx: null, cIdx });
+  };
+
   const getFormattedCopyText = (fmt?: CopyFormat) => {
     const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
     return formatSelectedCells({
@@ -2660,6 +2676,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   const isLastFrozen = col.name === lastFrozenColName;
                   const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
                   const w = colWidths[col.name] || 120;
+                  const isDraggingThisCol = draggedColName === col.name;
+                  const isDropColBefore =
+                    colDropTarget?.name === col.name && colDropTarget.pos === 'before';
+                  const isDropColAfter =
+                    colDropTarget?.name === col.name && colDropTarget.pos === 'after';
 
                   return (
                     <th
@@ -2667,6 +2688,50 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       ref={(el) => {
                         thRefs.current[col.name] = el;
                       }}
+                      draggable={Boolean(onColumnReorder) && !resizingCol}
+                      onDragStart={(e) => {
+                        if (!onColumnReorder || isResizingRef.current) {
+                          e.preventDefault();
+                          return;
+                        }
+                        handleColMouseLeave();
+                        setDraggedColName(col.name);
+                        e.dataTransfer.effectAllowed = 'move';
+                        try {
+                          e.dataTransfer.setData('text/plain', col.name);
+                        } catch {}
+                      }}
+                      onDragOver={(e) => {
+                        if (!onColumnReorder || !draggedColName || draggedColName === col.name) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const pos: 'before' | 'after' =
+                          e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+                        if (colDropTarget?.name !== col.name || colDropTarget?.pos !== pos) {
+                          setColDropTarget({ name: col.name, pos });
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (colDropTarget?.name === col.name) {
+                          setColDropTarget(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (!onColumnReorder || !draggedColName || draggedColName === col.name) return;
+                        e.preventDefault();
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const pos: 'before' | 'after' =
+                          e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+                        onColumnReorder(draggedColName, col.name, pos);
+                        setDraggedColName(null);
+                        setColDropTarget(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedColName(null);
+                        setColDropTarget(null);
+                      }}
+                      onContextMenu={(e) => handleColHeaderContextMenu(e, cIdx)}
                       onClick={(e) => {
                         if (isResizingRef.current) return;
                         if (e.altKey) {
@@ -2682,6 +2747,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       } ${
                         isLastFrozen && isScrolledX
                           ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                          : ''
+                      } ${
+                        isDraggingThisCol ? 'opacity-40' : ''
+                      } ${
+                        isDropColBefore
+                          ? 'border-l-2 border-l-blue-400'
+                          : isDropColAfter
+                          ? 'border-r-2 border-r-blue-400'
                           : ''
                       } ${
                         envType === 'prod'
@@ -3032,6 +3105,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
             setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
           }
         }}
+        onHideColumn={onHideColumn}
+        hiddenColumnsCount={hiddenColumnsCount}
+        onShowAllColumns={onShowAllColumns}
       />
 
       {isExportOpen && (

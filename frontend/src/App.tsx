@@ -85,6 +85,7 @@ import { WorkspaceSelector } from './components/layout/WorkspaceSelector';
 import { WorkbenchHeader } from './components/layout/WorkbenchHeader';
 import { EmptyWorkbenchState } from './components/layout/EmptyWorkbenchState';
 import { TabContextMenu } from './components/layout/TabContextMenu';
+import { ColumnVisibilityPopover, resolveOrderedColumns } from './components/grid/ColumnVisibilityPopover';
 import { DHubLogo } from './components/common/DHubLogo';
 import { APP_VERSION } from './version';
 import {
@@ -478,33 +479,6 @@ export function App() {
     id: string;
     position: 'before' | 'after';
   } | null>(null);
-
-  const [copiedSchemaTabId, setCopiedSchemaTabId] = useState<string | null>(null);
-  const handleCopyCurrentTableSchema = async (tab: WorkbenchTab) => {
-    if (!tab.connectionId || !tab.table) return;
-    try {
-      const tabConn = connections.find((c) => c.id === tab.connectionId);
-      const targetDb = tab.database || tabConn?.databaseName || 'main';
-      const targetSchema = tab.schema || (tabConn?.driver === 'postgres' ? 'public' : tabConn?.driver === 'mssql' ? 'dbo' : tabConn?.driver === 'oracle' ? '' : targetDb);
-      const struct = await SchemaService.GetTableStructure(
-        tab.connectionId,
-        targetDb,
-        targetSchema,
-        tab.table
-      );
-      const ddl = struct?.ddl || '';
-      if (ddl) {
-        await navigator.clipboard.writeText(ddl);
-        setCopiedSchemaTabId(tab.id);
-        setTimeout(() => setCopiedSchemaTabId(null), 1500);
-        alertSuccess(`Schema (DDL) for "${tab.table}" copied to clipboard`);
-      } else {
-        alertWarning(`No DDL schema available for "${tab.table}"`);
-      }
-    } catch (err: any) {
-      alertError('Failed to copy table schema: ' + (err?.message || String(err)));
-    }
-  };
 
   const resolveTableTabMeta = (tab: WorkbenchTab) => {
     const conn = connections.find((c) => c.id === tab.connectionId);
@@ -2712,18 +2686,6 @@ export function App() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleCopyCurrentTableSchema(activeTab)}
-                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                            title="Copy Table Schema (DDL)"
-                          >
-                            {copiedSchemaTabId === activeTab.id ? (
-                              <Check className="h-3 w-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => {
                               const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
                               openDdlModal({
@@ -2734,11 +2696,34 @@ export function App() {
                                 tableName: activeTab.table,
                               });
                             }}
-                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
                             title="View Table DDL"
                           >
-                            <Eye className="h-3 w-3" />
+                            DDL
                           </button>
+                          <ColumnVisibilityPopover
+                            columns={tableDataByTab[activeTab.id]?.columns || []}
+                            primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
+                            hiddenColumns={activeTab.tableViewState?.hiddenColumns}
+                            columnOrder={activeTab.tableViewState?.columnOrder}
+                            onChange={(nextHidden, nextOrder) => {
+                              const currTabs = useWorkbenchStore.getState().tabs;
+                              useWorkbenchStore.setState({
+                                tabs: currTabs.map((t) =>
+                                  t.id === activeTab.id
+                                    ? {
+                                        ...t,
+                                        tableViewState: {
+                                          ...(t.tableViewState || {}),
+                                          hiddenColumns: nextHidden,
+                                          columnOrder: nextOrder,
+                                        },
+                                      }
+                                    : t
+                                ),
+                              });
+                            }}
+                          />
                           <button
                             type="button"
                             onClick={() => {
@@ -2850,7 +2835,30 @@ export function App() {
                       <RefreshCw className="h-4 w-4 animate-spin text-blue-400" />
                       <span>Loading rows from `{activeTab.table}`...</span>
                     </div>
-                  ) : (
+                  ) : (() => {
+                    const rawColumns = tableDataByTab[activeTab.id]?.columns || [];
+                    const rawRows = tableDataByTab[activeTab.id]?.rows || [];
+                    const hiddenSet = new Set(activeTab.tableViewState?.hiddenColumns || []);
+                    const orderedCols = resolveOrderedColumns(
+                      rawColumns,
+                      activeTab.tableViewState?.columnOrder
+                    );
+                    const visibleCols = orderedCols.filter((c) => !hiddenSet.has(c.name));
+                    const finalColumns = visibleCols.length > 0 ? visibleCols : orderedCols;
+                    const needsProjection =
+                      finalColumns.length !== rawColumns.length ||
+                      finalColumns.some((c, i) => rawColumns[i]?.name !== c.name);
+                    const finalRows = needsProjection
+                      ? (() => {
+                          const colIdxMap = new Map(rawColumns.map((c, idx) => [c.name, idx]));
+                          const projectedIndices = finalColumns.map((c) => colIdxMap.get(c.name) ?? -1);
+                          return rawRows.map((row) =>
+                            projectedIndices.map((idx) => (idx >= 0 ? row[idx] : undefined))
+                          );
+                        })()
+                      : rawRows;
+
+                    return (
                     <DataGrid
                       tabId={activeTab.id}
                       connectionId={activeTab.connectionId}
@@ -2859,8 +2867,8 @@ export function App() {
                       schema={activeTab.schema}
                       tableName={activeTab.table}
                       envType={tableEnv}
-                      columns={tableDataByTab[activeTab.id]?.columns || []}
-                      rows={tableDataByTab[activeTab.id]?.rows || []}
+                      columns={finalColumns}
+                      rows={finalRows}
                       primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
                       totalCount={tableDataByTab[activeTab.id]?.totalCount}
                       onCountRows={() => handleCountTableRows(activeTab)}
@@ -2982,6 +2990,66 @@ export function App() {
                           ),
                         });
                       }}
+                      hiddenColumnsCount={(activeTab.tableViewState?.hiddenColumns || []).length}
+                      onHideColumn={(colName) => {
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        const currentHidden = activeTab.tableViewState?.hiddenColumns || [];
+                        if (currentHidden.includes(colName)) return;
+                        const nextHidden = [...currentHidden, colName];
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    hiddenColumns: nextHidden,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
+                      }}
+                      onShowAllColumns={() => {
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    hiddenColumns: [],
+                                  },
+                                }
+                              : t
+                          ),
+                        });
+                      }}
+                      onColumnReorder={(fromColName, toColName, pos) => {
+                        if (fromColName === toColName) return;
+                        const baseNames = orderedCols.map((c) => c.name);
+                        const withoutFrom = baseNames.filter((n) => n !== fromColName);
+                        const targetIdx = withoutFrom.indexOf(toColName);
+                        if (targetIdx === -1) return;
+                        const insertIdx = pos === 'before' ? targetIdx : targetIdx + 1;
+                        withoutFrom.splice(insertIdx, 0, fromColName);
+
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    columnOrder: withoutFrom,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
+                      }}
                       targetRowIndex={activeTab.tableViewState?.activeRowIndex}
                       initialScrollTop={activeTab.tableViewState?.scrollTop}
                       initialScrollLeft={activeTab.tableViewState?.scrollLeft}
@@ -3038,7 +3106,8 @@ export function App() {
                         });
                       }}
                     />
-                  )}
+                    );
+                  })()}
 
                   {isTableExportOpen && (
                     <ExportModal
