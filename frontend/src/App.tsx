@@ -126,7 +126,7 @@ import {
   Columns,
   ArrowLeftRight,
 } from 'lucide-react';
-import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
+import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv, buildAlertConnectionContext } from './types/domain';
 import { parseSingleTableSelect } from './utils/querySource';
 import { quoteSqlIdentifier, buildQualifiedTablePath } from './utils/sqlIdentifier';
 
@@ -536,6 +536,12 @@ export function App() {
     const ok = await confirmDialog({
       title: 'Truncate Table',
       message: `Are you sure you want to TRUNCATE table "${tableName}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: targetDb,
+        schema: targetSchema,
+        targetName: tableName,
+        targetLabel: 'Table',
+      }),
       confirmLabel: 'Truncate Table',
       isDanger: true,
     });
@@ -595,6 +601,12 @@ export function App() {
     const ok = await confirmDialog({
       title: `Drop ${isView ? 'View' : 'Table'}`,
       message: `Are you sure you want to DROP ${keyword.toLowerCase()} "${tableName}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: targetDb,
+        schema: targetSchema,
+        targetName: tableName,
+        targetLabel: isView ? 'View' : 'Table',
+      }),
       confirmLabel: `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
     });

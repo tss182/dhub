@@ -9,6 +9,10 @@ import {
   X,
   Copy,
   Check,
+  Server,
+  Database,
+  Table2,
+  MapPin,
 } from 'lucide-react';
 
 export const AlertModal: React.FC = () => {
@@ -18,6 +22,7 @@ export const AlertModal: React.FC = () => {
     title,
     message,
     details,
+    connectionContext,
     confirmLabel,
     cancelLabel,
     isDanger,
@@ -120,6 +125,109 @@ export const AlertModal: React.FC = () => {
     return 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-950/40 shadow-sm';
   };
 
+  const env = connectionContext?.envType;
+  const modalBorderClass =
+    env === 'prod'
+      ? 'border-rose-500/50'
+      : env === 'dev'
+      ? 'border-emerald-500/45'
+      : 'border-[#2b2e3a]';
+
+  const renderConnectionContext = () => {
+    if (!connectionContext) return null;
+
+    const isProd = connectionContext.envType === 'prod';
+    const isDev = connectionContext.envType === 'dev';
+    const envLabel = isProd ? 'PROD' : isDev ? 'DEV' : 'NORMAL';
+    const dotColor =
+      connectionContext.colorTag ||
+      (isProd ? '#ef4444' : isDev ? '#10b981' : '#71717a');
+
+    const cardClass = isProd
+      ? 'border-rose-500/40 bg-rose-950/30'
+      : isDev
+      ? 'border-emerald-500/35 bg-emerald-950/25'
+      : 'border-[#2b2e3a] bg-[#1a1c24]';
+
+    const badgeClass = isProd
+      ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+      : isDev
+      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+      : 'bg-zinc-500/15 text-zinc-300 border-zinc-600/40';
+
+    const dbDisplay =
+      connectionContext.database &&
+      connectionContext.schema &&
+      connectionContext.schema !== connectionContext.database &&
+      connectionContext.schema !== connectionContext.targetName
+        ? `${connectionContext.database} (${connectionContext.schema})`
+        : connectionContext.database || connectionContext.schema || '';
+
+    return (
+      <div className={`rounded-xl border p-3 space-y-2 text-xs ${cardClass}`}>
+        <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-white/10">
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className="h-2.5 w-2.5 rounded-full shrink-0 ring-2 ring-white/10"
+              style={{ backgroundColor: dotColor }}
+            />
+            <Server className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+            <span className="font-semibold text-zinc-100 truncate">
+              {connectionContext.connectionName}
+            </span>
+            {connectionContext.driver && (
+              <span className="text-[10px] font-mono uppercase text-zinc-400 shrink-0">
+                ({connectionContext.driver})
+              </span>
+            )}
+          </div>
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase font-mono border shrink-0 ${badgeClass}`}
+          >
+            {envLabel}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-1.5 text-[11px]">
+          {connectionContext.location && (
+            <div className="flex items-center gap-2 min-w-0">
+              <MapPin className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+              <span className="text-zinc-400 shrink-0 w-16">Location</span>
+              <span className="font-mono text-zinc-200 truncate" title={connectionContext.location}>
+                {connectionContext.location}
+              </span>
+            </div>
+          )}
+
+          {dbDisplay && (
+            <div className="flex items-center gap-2 min-w-0">
+              <Database className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+              <span className="text-zinc-400 shrink-0 w-16">Database</span>
+              <span className="font-mono text-zinc-200 truncate" title={dbDisplay}>
+                {dbDisplay}
+              </span>
+            </div>
+          )}
+
+          {connectionContext.targetName && (
+            <div className="flex items-center gap-2 min-w-0">
+              <Table2 className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+              <span className="text-zinc-400 shrink-0 w-16">
+                {connectionContext.targetLabel || 'Table'}
+              </span>
+              <span
+                className="font-mono font-semibold text-zinc-100 truncate"
+                title={connectionContext.targetName}
+              >
+                {connectionContext.targetName}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-150"
@@ -129,7 +237,7 @@ export const AlertModal: React.FC = () => {
       }}
     >
       <div
-        className="w-full max-w-md rounded-2xl border border-[#2b2e3a] bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200"
+        className={`w-full max-w-md rounded-2xl border ${modalBorderClass} bg-[#14151a] p-6 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4 text-zinc-200`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: Icon + Title + Close button */}
@@ -158,6 +266,9 @@ export const AlertModal: React.FC = () => {
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Connection & Target Context */}
+        {renderConnectionContext()}
 
         {/* Message Body */}
         <div className="text-xs text-zinc-300 leading-relaxed pl-0.5">

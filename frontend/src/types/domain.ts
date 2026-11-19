@@ -83,6 +83,58 @@ export function getConnectionEnvInfo(
   };
 }
 
+export interface AlertConnectionContext {
+  connectionName: string;
+  driver?: string;
+  location?: string;
+  database?: string;
+  schema?: string;
+  targetName?: string;
+  targetLabel?: string;
+  envType: ConnectionEnvType;
+  colorTag?: string;
+}
+
+/** Formats the physical/network location of a connection (host:port, SSH tunnel, or SQLite file path). */
+export function formatConnectionLocation(
+  conn?: Partial<ConnectionConfig> | null
+): string {
+  if (!conn) return '';
+  if (conn.driver === 'sqlite') {
+    return conn.filePath || conn.databaseName || 'Local SQLite File';
+  }
+  const hostPort = `${conn.host || 'localhost'}${conn.port ? `:${conn.port}` : ''}`;
+  if (conn.sshEnabled && conn.sshHost) {
+    return `${hostPort} (SSH: ${conn.sshHost}${conn.sshPort ? `:${conn.sshPort}` : ''})`;
+  }
+  return hostPort;
+}
+
+/** Builds structured connection & target metadata for destructive confirmation alerts. */
+export function buildAlertConnectionContext(
+  conn?: Partial<ConnectionConfig> | null,
+  opts?: {
+    database?: string;
+    schema?: string;
+    targetName?: string;
+    targetLabel?: string;
+  }
+): AlertConnectionContext {
+  const envType = resolveConnectionEnv(conn);
+  const envInfo = getConnectionEnvInfo(conn);
+  return {
+    connectionName: conn?.name || 'Unknown Connection',
+    driver: conn?.driver,
+    location: formatConnectionLocation(conn),
+    database: opts?.database,
+    schema: opts?.schema,
+    targetName: opts?.targetName,
+    targetLabel: opts?.targetLabel,
+    envType,
+    colorTag: envInfo.color || conn?.colorTag || undefined,
+  };
+}
+
 export interface ColumnMeta {
   name: string;
   dataType: string;

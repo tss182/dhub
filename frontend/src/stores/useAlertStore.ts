@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { AlertConnectionContext } from '../types/domain';
 
 export type AlertType = 'success' | 'error' | 'warning' | 'info' | 'confirm';
 
@@ -7,6 +8,7 @@ export interface AlertModalOptions {
   title?: string;
   message: string;
   details?: string;
+  connectionContext?: AlertConnectionContext;
   confirmLabel?: string;
   cancelLabel?: string;
   isDanger?: boolean;
@@ -29,6 +31,7 @@ interface AlertStoreState {
   title: string;
   message: string;
   details?: string;
+  connectionContext?: AlertConnectionContext;
   confirmLabel: string;
   cancelLabel: string;
   isDanger: boolean;
@@ -51,6 +54,7 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
   title: '',
   message: '',
   details: undefined,
+  connectionContext: undefined,
   confirmLabel: 'OK',
   cancelLabel: 'Cancel',
   isDanger: false,
@@ -80,6 +84,7 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
         title: options.title || defaultTitle,
         message: options.message,
         details: options.details,
+        connectionContext: options.connectionContext,
         confirmLabel: options.confirmLabel || (type === 'error' ? 'Close' : 'OK'),
         cancelLabel: options.cancelLabel || 'Cancel',
         isDanger: options.isDanger || false,
@@ -115,6 +120,7 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
       title: options.title || 'Confirmation',
       message: options.message,
       details: options.details,
+      connectionContext: options.connectionContext,
       confirmLabel: options.confirmLabel || 'Proceed',
       cancelLabel: options.cancelLabel || 'Cancel',
       isDanger: options.isDanger ?? false,
@@ -151,6 +157,7 @@ export const useAlertStore = create<AlertStoreState>((set) => ({
       onConfirm: undefined,
       onCancel: undefined,
       details: undefined,
+      connectionContext: undefined,
     }),
 }));
 

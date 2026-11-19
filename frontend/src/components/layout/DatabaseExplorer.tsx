@@ -60,6 +60,7 @@ import {
   TableGroup,
   resolveConnectionEnv,
   getConnectionEnvInfo,
+  buildAlertConnectionContext,
 } from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning, confirmDialog } from '../../stores/useAlertStore';
 import { SchemaFilterModal } from '../modals/SchemaFilterModal';
@@ -1464,6 +1465,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const ok = await confirmDialog({
       title: 'Drop Collection / Schema',
       message: `Are you sure you want to DROP collection/schema "${schemaName}" in database "${dbName}"? All tables, views, and data in this collection will be permanently deleted (CASCADE). This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: dbName,
+        targetName: schemaName,
+        targetLabel: 'Schema',
+      }),
       confirmLabel: 'Drop Schema',
       isDanger: true,
     });
@@ -1708,6 +1714,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const okDrop = await confirmDialog({
       title: 'Drop Database',
       message: `Are you sure you want to DROP database "${dbName}"? This will permanently delete the database and all its tables and data. This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: dbName,
+        targetName: dbName,
+        targetLabel: 'Database',
+      }),
       confirmLabel: 'Drop Database',
       isDanger: true,
     });
@@ -1810,6 +1821,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       message: isRedis
         ? `Are you sure you want to delete key "${obj.name}" from ${db}? This action cannot be undone.`
         : `Are you sure you want to DROP ${keyword.toLowerCase()} "${obj.name}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: db,
+        schema,
+        targetName: obj.name,
+        targetLabel: isRedis ? 'Key' : isView ? 'View' : 'Table',
+      }),
       confirmLabel: isRedis ? 'Delete Key' : `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
     });
@@ -1876,6 +1893,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const ok = await confirmDialog({
       title: 'Truncate Table',
       message: `Are you sure you want to TRUNCATE table "${obj.name}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: db,
+        schema,
+        targetName: obj.name,
+        targetLabel: 'Table',
+      }),
       confirmLabel: 'Truncate Table',
       isDanger: true,
     });
@@ -1983,6 +2006,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const ok = await confirmDialog({
       title: 'Drop Event',
       message: `Are you sure you want to DROP scheduled event "${eventName}"? This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: db,
+        targetName: eventName,
+        targetLabel: 'Event',
+      }),
       confirmLabel: 'Drop Event',
       isDanger: true,
     });
@@ -2045,6 +2073,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const ok = await confirmDialog({
       title: 'Drop Sequence',
       message: `Are you sure you want to DROP sequence "${seqName}"? This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: db,
+        schema,
+        targetName: seqName,
+        targetLabel: 'Sequence',
+      }),
       confirmLabel: 'Drop Sequence',
       isDanger: true,
     });
@@ -2163,6 +2197,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const ok = await confirmDialog({
       title: isFunction ? 'Drop Function' : isProcedure ? 'Drop Procedure' : 'Drop Routine',
       message: `Are you sure you want to DROP ${isFunction ? 'function' : isProcedure ? 'procedure' : 'routine/function'} "${routineName}"? This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: db,
+        schema,
+        targetName: routineName,
+        targetLabel: isFunction ? 'Function' : isProcedure ? 'Procedure' : 'Routine',
+      }),
       confirmLabel: isFunction ? 'Drop Function' : isProcedure ? 'Drop Procedure' : 'Drop Routine',
       isDanger: true,
     });
@@ -2220,6 +2260,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const ok = await confirmDialog({
       title: 'Drop Trigger',
       message: `Are you sure you want to DROP trigger "${triggerName}"? This action cannot be undone.`,
+      connectionContext: buildAlertConnectionContext(conn, {
+        database: db,
+        schema,
+        targetName: triggerName,
+        targetLabel: 'Trigger',
+      }),
       confirmLabel: 'Drop Trigger',
       isDanger: true,
     });
