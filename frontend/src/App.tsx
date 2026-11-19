@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useWorkbenchStore } from './stores/useWorkbenchStore';
 import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
@@ -177,7 +178,48 @@ export function App() {
     ddlModal,
     openDdlModal,
     closeDdlModal,
-  } = useWorkbenchStore();
+  } = useWorkbenchStore(
+    useShallow((s) => ({
+      tabs: s.tabs,
+      activeTabId: s.activeTabId,
+      activeBottomTab: s.activeBottomTab,
+      isBottomPanelOpen: s.isBottomPanelOpen,
+      isRightPanelOpen: s.isRightPanelOpen,
+      activeRightSidebarTab: s.activeRightSidebarTab,
+      setActiveRightSidebarTab: s.setActiveRightSidebarTab,
+      setRightPanelOpen: s.setRightPanelOpen,
+      isLeftPanelOpen: s.isLeftPanelOpen,
+      consoles: s.consoles,
+      hasLoadedConsoles: s.hasLoadedConsoles,
+      loadConsoles: s.loadConsoles,
+      openTab: s.openTab,
+      closeTab: s.closeTab,
+      closeTabsMatching: s.closeTabsMatching,
+      setActiveTabId: s.setActiveTabId,
+      reorderTab: s.reorderTab,
+      swapTabs: s.swapTabs,
+      updateTabContent: s.updateTabContent,
+      updateTabDatabase: s.updateTabDatabase,
+      updateTabConnection: s.updateTabConnection,
+      renameTab: s.renameTab,
+      duplicateTab: s.duplicateTab,
+      setActiveBottomTab: s.setActiveBottomTab,
+      toggleBottomPanel: s.toggleBottomPanel,
+      toggleRightPanel: s.toggleRightPanel,
+      toggleLeftPanel: s.toggleLeftPanel,
+      setLeftPanelOpen: s.setLeftPanelOpen,
+      setSearchEverywhereOpen: s.setSearchEverywhereOpen,
+      setConnectionDialogOpen: s.setConnectionDialogOpen,
+      openHelpModal: s.openHelpModal,
+      tabRefreshTrigger: s.tabRefreshTrigger,
+      tableStructureModal: s.tableStructureModal,
+      openEditTableModal: s.openEditTableModal,
+      closeTableStructureModal: s.closeTableStructureModal,
+      ddlModal: s.ddlModal,
+      openDdlModal: s.openDdlModal,
+      closeDdlModal: s.closeDdlModal,
+    }))
+  );
 
   const {
     activeConnectionId,
@@ -192,7 +234,22 @@ export function App() {
     setTreeObjects,
     removeTreeObject,
     setActiveConnection,
-  } = useConnectionStore();
+  } = useConnectionStore(
+    useShallow((s) => ({
+      activeConnectionId: s.activeConnectionId,
+      activeDatabase: s.activeDatabase,
+      activeSchema: s.activeSchema,
+      connections: s.connections,
+      setConnections: s.setConnections,
+      treeDatabases: s.treeDatabases,
+      visibleDatabases: s.visibleDatabases,
+      setTreeDatabases: s.setTreeDatabases,
+      treeObjects: s.treeObjects,
+      setTreeObjects: s.setTreeObjects,
+      removeTreeObject: s.removeTreeObject,
+      setActiveConnection: s.setActiveConnection,
+    }))
+  );
   const [isRunningByTab, setIsRunningByTab] = useState<Record<string, boolean>>({});
   const [queryResultByTab, setQueryResultByTab] = useState<Record<string, QueryResult | null>>({});
   const [activeResultIndexByTab, setActiveResultIndexByTab] = useState<Record<string, number>>({});
@@ -219,7 +276,8 @@ export function App() {
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
 
-  const { updateInfo, checkUpdate, openUpdateModal } = useUpdateStore();
+  const { updateInfo, isUpdateModalOpen, checkUpdate, openUpdateModal } = useUpdateStore();
+  const checkUpdatesPeriodically = useSettingsStore((s) => s.checkUpdatesPeriodically);
 
   useEffect(() => {
     // Check for updates automatically on startup and prompt modal if a newer version is found
@@ -230,6 +288,18 @@ export function App() {
     }, 1200);
     return () => clearTimeout(timer);
   }, [checkUpdate]);
+
+  useEffect(() => {
+    // Periodically check for updates every 10 minutes while the app is open
+    if (!checkUpdatesPeriodically) return;
+    const interval = setInterval(() => {
+      const state = useUpdateStore.getState();
+      if (!state.isChecking && !state.isDownloading && !state.isInstalling) {
+        state.checkUpdate(true);
+      }
+    }, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [checkUpdatesPeriodically]);
 
   const handleCopyResultRawSql = async (rawSql: string) => {
     if (!rawSql) return;
@@ -673,11 +743,11 @@ export function App() {
       const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
       latestWidth = newWidth;
       setLeftSidebarWidth(newWidth);
-      localStorage.setItem('dhub_left_sidebar_w', String(newWidth));
     };
 
     const handleMouseUp = () => {
       setIsDraggingLeftResizer(false);
+      localStorage.setItem('dhub_left_sidebar_w', String(latestWidth));
       WorkspaceService.SaveSetting('dhub_left_sidebar_w', String(latestWidth)).catch(() => {});
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -700,11 +770,11 @@ export function App() {
       const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
       latestWidth = newWidth;
       setRightSidebarWidth(newWidth);
-      localStorage.setItem('dhub_right_sidebar_w', String(newWidth));
     };
 
     const handleMouseUp = () => {
       setIsDraggingRightResizer(false);
+      localStorage.setItem('dhub_right_sidebar_w', String(latestWidth));
       WorkspaceService.SaveSetting('dhub_right_sidebar_w', String(latestWidth)).catch(() => {});
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -756,11 +826,11 @@ export function App() {
       const newHeight = Math.max(100, Math.min(maxH, startHeight + deltaY));
       latestHeight = newHeight;
       setBottomPanelHeight(newHeight);
-      localStorage.setItem('dhub_bottom_panel_h', String(newHeight));
     };
 
     const handleMouseUp = () => {
       setIsDraggingBottomResizer(false);
+      localStorage.setItem('dhub_bottom_panel_h', String(latestHeight));
       WorkspaceService.SaveSetting('dhub_bottom_panel_h', String(latestHeight)).catch(() => {});
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -2061,6 +2131,23 @@ export function App() {
         <div className="flex items-center gap-2">
           {/* Workspace Combobox Selector */}
           <WorkspaceSelector />
+
+          {/* Update Shortcut Button (shown when update is detected & modal is dismissed/closed) */}
+          {updateInfo?.hasUpdate && !isUpdateModalOpen && (
+            <button
+              type="button"
+              onClick={openUpdateModal}
+              className="flex items-center gap-1.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:text-emerald-200 transition-colors cursor-pointer shadow-xs"
+              title={`Update ${updateInfo.latestVersion} available — Click to open update menu`}
+              aria-label={`Update ${updateInfo.latestVersion} available`}
+            >
+              <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Update</span>
+              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200 font-mono leading-none">
+                {updateInfo.latestVersion}
+              </span>
+            </button>
+          )}
 
           {/* Settings & Tools Dropdown */}
           <div className="relative" ref={settingsMenuRef}>

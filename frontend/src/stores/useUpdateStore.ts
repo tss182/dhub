@@ -64,11 +64,17 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       ...(silent ? {} : { hasDismissed: false }),
     });
     try {
+      const previousLatestVersion = get().updateInfo?.latestVersion;
       const info = await checkForUpdate();
+      const isNewerReleaseThanSeen =
+        Boolean(info.hasUpdate) &&
+        Boolean(info.latestVersion) &&
+        info.latestVersion !== previousLatestVersion;
       set({
         updateInfo: info,
         isChecking: false,
         lastCheckedAt: new Date().toLocaleTimeString(),
+        ...(isNewerReleaseThanSeen ? { hasDismissed: false } : {}),
       });
       if (info.hasUpdate && showModalIfFound && (!silent || !get().hasDismissed)) {
         set({ isUpdateModalOpen: true });
@@ -87,7 +93,10 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   openUpdateModal: () => set({ isUpdateModalOpen: true }),
   closeUpdateModal: () => {
     // If downloading, don't kill the download silently; user can re-open or cancel
-    set({ isUpdateModalOpen: false });
+    set((state) => ({
+      isUpdateModalOpen: false,
+      hasDismissed: state.updateInfo?.hasUpdate ? true : state.hasDismissed,
+    }));
   },
   dismissUpdate: () => set({ isUpdateModalOpen: false, hasDismissed: true }),
 

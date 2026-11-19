@@ -1,4 +1,5 @@
 import React, { useEffect, useState, Suspense, lazy } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -143,7 +144,46 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     deleteTableGroup,
     assignTableToGroup,
     reorderTableGroup,
-  } = useConnectionStore();
+  } = useConnectionStore(
+    useShallow((s) => ({
+      connections: s.connections,
+      folders: s.folders,
+      connectionFolders: s.connectionFolders,
+      activeConnectionId: s.activeConnectionId,
+      activeDatabase: s.activeDatabase,
+      activeSchema: s.activeSchema,
+      setConnections: s.setConnections,
+      loadConnectionsAndFolders: s.loadConnectionsAndFolders,
+      setActiveConnection: s.setActiveConnection,
+      treeDatabases: s.treeDatabases,
+      visibleDatabases: s.visibleDatabases,
+      databaseTotals: s.databaseTotals,
+      getVisibleDatabases: s.getVisibleDatabases,
+      setTreeDatabases: s.setTreeDatabases,
+      setVisibleDatabases: s.setVisibleDatabases,
+      removeTreeDatabase: s.removeTreeDatabase,
+      treeObjects: s.treeObjects,
+      setTreeObjects: s.setTreeObjects,
+      removeTreeObject: s.removeTreeObject,
+      expandedNodes: s.expandedNodes,
+      toggleNode: s.toggleNode,
+      setNodeExpanded: s.setNodeExpanded,
+      setPendingFolderIdForNewConn: s.setPendingFolderIdForNewConn,
+      createFolder: s.createFolder,
+      renameFolder: s.renameFolder,
+      deleteFolder: s.deleteFolder,
+      moveConnectionToFolder: s.moveConnectionToFolder,
+      reorderConnection: s.reorderConnection,
+      reorderFolder: s.reorderFolder,
+      tableGroups: s.tableGroups,
+      tableGroupAssignments: s.tableGroupAssignments,
+      createTableGroup: s.createTableGroup,
+      renameTableGroup: s.renameTableGroup,
+      deleteTableGroup: s.deleteTableGroup,
+      assignTableToGroup: s.assignTableToGroup,
+      reorderTableGroup: s.reorderTableGroup,
+    }))
+  );
 
   const {
     tabs,
@@ -155,7 +195,19 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     openCreateTableModal,
     openEditTableModal,
     openDdlModal,
-  } = useWorkbenchStore();
+  } = useWorkbenchStore(
+    useShallow((s) => ({
+      tabs: s.tabs,
+      openTab: s.openTab,
+      closeTab: s.closeTab,
+      closeTabsMatching: s.closeTabsMatching,
+      refreshTab: s.refreshTab,
+      setConnectionDialogOpen: s.setConnectionDialogOpen,
+      openCreateTableModal: s.openCreateTableModal,
+      openEditTableModal: s.openEditTableModal,
+      openDdlModal: s.openDdlModal,
+    }))
+  );
 
   const [filterText, setFilterText] = useState('');
   const [loadingConnId, setLoadingConnId] = useState<string | null>(null);

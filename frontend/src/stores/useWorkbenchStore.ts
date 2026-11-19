@@ -702,10 +702,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     })),
 }));
 
-// Automatically persist open tabs and active tab to SQLite & localStorage on any state changes
+// Automatically persist open tabs and active tab to SQLite & localStorage when tabs or activeTabId change
 if (typeof window !== 'undefined') {
-  useWorkbenchStore.subscribe((state) => {
-    saveTabsToStorage(state.tabs, state.activeTabId);
+  useWorkbenchStore.subscribe((state, prevState) => {
+    if (state.tabs !== prevState.tabs || state.activeTabId !== prevState.activeTabId) {
+      saveTabsToStorage(state.tabs, state.activeTabId);
+    }
   });
 
   WorkspaceService.GetSettings()

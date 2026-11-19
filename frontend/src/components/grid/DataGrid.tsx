@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, Suspense, lazy } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
@@ -700,6 +701,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageSizeMenuRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizerRef = useRef<ReturnType<typeof useVirtualizer<HTMLDivElement, Element>> | null>(null);
 
   const onScrollChangeRef = useRef(onScrollChange);
   onScrollChangeRef.current = onScrollChange;
@@ -742,6 +744,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   const scrollToCell = useCallback(
     (vIdx: number, cIdx: number) => {
+      rowVirtualizerRef.current?.scrollToIndex(vIdx, { align: 'auto' });
       requestAnimationFrame(() => {
         const container = containerRef.current;
         if (!container) return;
@@ -966,6 +969,29 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     return list;
   }, [displayedRows, insertedChanges, currentPage, localPageSize]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: visualRows.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => 28,
+    overscan: 10,
+  });
+  rowVirtualizerRef.current = rowVirtualizer;
+
+  const colInputTypes = useMemo(
+    () => columns.map((col) => getColumnInputType(col.dataType)),
+    [columns]
+  );
+
+  const colEditableUpdate = useMemo(
+    () => columns.map((col) => isColumnEditable(col.name, false)),
+    [columns, isColumnEditable]
+  );
+
+  const colEditableInsert = useMemo(
+    () => columns.map((col) => isColumnEditable(col.name, true)),
+    [columns, isColumnEditable]
+  );
 
   const handleAddRow = () => {
     if (isReadOnly) return;
@@ -2531,284 +2557,307 @@ export const DataGrid: React.FC<DataGridProps> = ({
               </tr>
             </thead>
             <tbody>
-              {displayedRows.length === 0 && insertedChanges.length === 0 ? null : (
-                <>
-                  {displayedRows.map((row, rIdx) => {
-                    const globalRowIndex = (currentPage - 1) * localPageSize + rIdx;
-                    const vIdx = rIdx;
-                    const staged = stagedChanges[globalRowIndex];
-                    const isDeleted = staged?.type === 'delete';
+              {visualRows.length === 0 ? null : (() => {
+                const virtualItems = rowVirtualizer.getVirtualItems();
+                const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+                const paddingBottom =
+                  virtualItems.length > 0
+                    ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
+                    : 0;
 
-                    let rowClass = gridRowClass;
-                    if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
+                return (
+                  <>
+                    {paddingTop > 0 && (
+                      <tr aria-hidden="true">
+                        <td colSpan={columns.length + 2} style={{ height: `${paddingTop}px`, padding: 0, border: 0 }} />
+                      </tr>
+                    )}
+                    {virtualItems.map((virtualRow) => {
+                      const vr = visualRows[virtualRow.index];
+                      if (!vr) return null;
+                      const vIdx = vr.vIdx;
 
-                    const isRowInSelection = allSelectionRanges.some(
-                      (rng) => vIdx >= rng.startR && vIdx <= rng.endR
-                    );
-                    const isFullRowSelected = isRowFullySelected(vIdx);
+                      if (!vr.isInsert) {
+                        const row = vr.rowData!;
+                        const globalRowIndex = vr.globalRowIndex!;
+                        const staged = stagedChanges[globalRowIndex];
+                        const isDeleted = staged?.type === 'delete';
 
-                    return (
-                      <tr key={globalRowIndex} className={`${rowClass} group/row`}>
-                        <td
-                          onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                          onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                          onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                          className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r ${gridCellBorder} select-none cursor-pointer transition-colors ${
-                            isFullRowSelected
-                              ? 'bg-[#1b4ea3] text-white font-semibold'
-                              : isRowInSelection
-                              ? 'bg-[#1e293b] text-blue-300 font-medium'
-                              : isDeleted
-                              ? 'bg-rose-950/40 text-rose-400/70 line-through'
-                              : 'bg-[#14151a] text-zinc-500 group-hover/row:bg-[#20222a] group-hover/row:text-zinc-300'
-                          } ${
-                            frozenColumns.length === 0 && isScrolledX
-                              ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
-                              : ''
-                          }`}
-                          style={{
-                            width: `${ROW_NUM_COL_WIDTH}px`,
-                            minWidth: `${ROW_NUM_COL_WIDTH}px`,
-                            maxWidth: `${ROW_NUM_COL_WIDTH}px`,
-                          }}
-                          title={`Row ${globalRowIndex + 1} (Click to select entire row)`}
-                        >
-                          {globalRowIndex + 1}
-                        </td>
-                        {columns.map((col, cIdx) => {
-                          const isSelected = isCellSelected(vIdx, cIdx);
-                          const isEditing =
-                            editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
-                          const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
-                          const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
-                          const colInputType = getColumnInputType(col.dataType);
-                          const isFrozen = frozenColumnSet.has(col.name);
-                          const isLastFrozen = col.name === lastFrozenColName;
-                          const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
-                          const w = colWidths[col.name] || 120;
-                          const isEditable = isCellEditable(globalRowIndex, cIdx);
+                        let rowClass = gridRowClass;
+                        if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
 
-                          return (
+                        const isRowInSelection = allSelectionRanges.some(
+                          (rng) => vIdx >= rng.startR && vIdx <= rng.endR
+                        );
+                        const isFullRowSelected = isRowFullySelected(vIdx);
+
+                        return (
+                          <tr key={globalRowIndex} style={{ height: '28px' }} className={`${rowClass} group/row`}>
                             <td
-                              key={col.name}
-                              data-vidx={vIdx}
-                              data-cidx={cIdx}
-                              onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
-                              onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
-                              onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                              onDoubleClick={() => {
-                                if (isEditable) {
-                                  if (isRedis && col.name.toLowerCase() === 'ttl') {
-                                    handleOpenTtlModal(globalRowIndex, displayVal, false);
-                                    return;
-                                  }
-                                  handleStartEdit(globalRowIndex, cIdx, displayVal);
-                                }
-                              }}
-                              className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
-                                isFrozen
-                                  ? `sticky z-10 ${
-                                      isSelected
-                                        ? 'bg-[#1b4ea3] text-white font-medium'
-                                        : hasColChange
-                                        ? 'bg-blue-900/40 text-blue-200 font-medium'
-                                        : isDeleted
-                                        ? 'bg-rose-950/40 text-zinc-500 line-through'
-                                        : !isEditable
-                                        ? 'bg-[#121318]/70 text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
-                                        : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
-                                    }`
-                                  : isSelected
-                                  ? 'bg-[#1b4ea3] text-white font-medium'
-                                  : hasColChange
-                                  ? 'bg-blue-900/30 text-blue-200 font-medium'
-                                  : !isEditable
-                                  ? 'bg-[#111216]/50 text-zinc-400/80 group-hover/row:bg-[#181920]'
-                                  : ''
-                              } ${!isEditable ? 'cursor-default' : 'cursor-text'} ${
-                                isLastFrozen && isScrolledX
-                                  ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                              onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                              onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                              onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                              className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r ${gridCellBorder} select-none cursor-pointer transition-colors ${
+                                isFullRowSelected
+                                  ? 'bg-[#1b4ea3] text-white font-semibold'
+                                  : isRowInSelection
+                                  ? 'bg-[#1e293b] text-blue-300 font-medium'
+                                  : isDeleted
+                                  ? 'bg-rose-950/40 text-rose-400/70 line-through'
+                                  : 'bg-[#14151a] text-zinc-500 group-hover/row:bg-[#20222a] group-hover/row:text-zinc-300'
+                              } ${
+                                frozenColumns.length === 0 && isScrolledX
+                                  ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
                                   : ''
                               }`}
                               style={{
-                                width: `${w}px`,
-                                minWidth: `${w}px`,
-                                maxWidth: `${w}px`,
-                                ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                                width: `${ROW_NUM_COL_WIDTH}px`,
+                                minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                                maxWidth: `${ROW_NUM_COL_WIDTH}px`,
                               }}
-                              title={
-                                isEditable
-                                  ? isRedis && col.name.toLowerCase() === 'ttl'
-                                    ? 'Double-click to update TTL (Time-To-Live)'
-                                    : 'Click to select, type or double-click to edit'
-                                  : 'Read-only: this column cannot be edited in Redis'
-                              }
+                              title={`Row ${globalRowIndex + 1} (Click to select entire row)`}
                             >
-                              {isEditing ? (
-                                <GridCellEditor
-                                  colInputType={colInputType}
-                                  editVal={editVal}
-                                  variant="update"
-                                  isFirstEditRenderRef={isFirstEditRenderRef}
-                                  onChange={setEditVal}
-                                  onFinishEdit={handleFinishEdit}
-                                  onCancelEdit={() => {
-                                    setEditingCell(null);
-                                    if (stagedCount > 0) setShowCancelConfirm(true);
-                                  }}
-                                  onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
-                                />
-                              ) : displayVal === null || displayVal === undefined ? (
-                                <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
-                                  NULL
-                                </span>
-                              ) : colInputType !== 'text' ? (
-                                String(displayVal).replace('T', ' ').replace(/Z$/, '')
-                              ) : (
-                                String(displayVal)
-                              )}
+                              {globalRowIndex + 1}
                             </td>
-                          );
-                        })}
-                        <td className="p-0 border-none pointer-events-none" />
-                      </tr>
-                    );
-                  })}
+                            {columns.map((col, cIdx) => {
+                              const isSelected = isCellSelected(vIdx, cIdx);
+                              const isEditing =
+                                editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
+                              const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
+                              const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
+                              const colInputType = colInputTypes[cIdx];
+                              const isFrozen = frozenColumnSet.has(col.name);
+                              const isLastFrozen = col.name === lastFrozenColName;
+                              const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                              const w = colWidths[col.name] || 120;
+                              const isEditable = colEditableUpdate[cIdx];
 
-                  {insertedChanges.map((change, insIdx) => {
-                    const vIdx = displayedRows.length + insIdx;
-                    const rowClass =
-                      'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
-
-                    const isRowInSelection = allSelectionRanges.some(
-                      (rng) => vIdx >= rng.startR && vIdx <= rng.endR
-                    );
-                    const isFullRowSelected = isRowFullySelected(vIdx);
-
-                    return (
-                      <tr key={change.rowIndex} className={rowClass}>
-                        <td
-                          onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                          onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                          onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                          className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-[#22242c] select-none cursor-pointer transition-colors ${
-                            isFullRowSelected
-                              ? 'bg-[#1b4ea3] text-white'
-                              : isRowInSelection
-                              ? 'bg-[#1e293b] text-blue-300'
-                              : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-emerald-400'
-                          } ${
-                            frozenColumns.length === 0 && isScrolledX
-                              ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
-                              : ''
-                          }`}
-                          style={{
-                            width: `${ROW_NUM_COL_WIDTH}px`,
-                            minWidth: `${ROW_NUM_COL_WIDTH}px`,
-                            maxWidth: `${ROW_NUM_COL_WIDTH}px`,
-                          }}
-                          title="New row (Click to select entire row)"
-                        >
-                          +
-                        </td>
-                        {columns.map((col, cIdx) => {
-                          const isSelected = isCellSelected(vIdx, cIdx);
-                          const isEditing =
-                            editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
-                          const colVal = change.changes[col.name];
-                          const isSet = colVal !== undefined;
-                          const displayVal = isSet ? colVal : col.defaultValue || null;
-                          const colInputType = getColumnInputType(col.dataType);
-                          const isFrozen = frozenColumnSet.has(col.name);
-                          const isLastFrozen = col.name === lastFrozenColName;
-                          const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
-                          const w = colWidths[col.name] || 120;
-                          const isInsEditable = isCellEditable(change.rowIndex, cIdx);
-
-                          return (
-                            <td
-                              key={col.name}
-                              data-vidx={vIdx}
-                              data-cidx={cIdx}
-                              onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
-                              onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
-                              onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                              onDoubleClick={() => {
-                                if (!isEditing && isInsEditable) {
-                                  if (isRedis && col.name.toLowerCase() === 'ttl') {
-                                    handleOpenTtlModal(change.rowIndex, displayVal ?? '', true);
-                                    return;
+                              return (
+                                <td
+                                  key={col.name}
+                                  data-vidx={vIdx}
+                                  data-cidx={cIdx}
+                                  onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
+                                  onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
+                                  onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
+                                  onDoubleClick={() => {
+                                    if (isEditable) {
+                                      if (isRedis && col.name.toLowerCase() === 'ttl') {
+                                        handleOpenTtlModal(globalRowIndex, displayVal, false);
+                                        return;
+                                      }
+                                      handleStartEdit(globalRowIndex, cIdx, displayVal);
+                                    }
+                                  }}
+                                  className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
+                                    isFrozen
+                                      ? `sticky z-10 ${
+                                          isSelected
+                                            ? 'bg-[#1b4ea3] text-white font-medium'
+                                            : hasColChange
+                                            ? 'bg-blue-900/40 text-blue-200 font-medium'
+                                            : isDeleted
+                                            ? 'bg-rose-950/40 text-zinc-500 line-through'
+                                            : !isEditable
+                                            ? 'bg-[#121318]/70 text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
+                                            : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
+                                        }`
+                                      : isSelected
+                                      ? 'bg-[#1b4ea3] text-white font-medium'
+                                      : hasColChange
+                                      ? 'bg-blue-900/30 text-blue-200 font-medium'
+                                      : !isEditable
+                                      ? 'bg-[#111216]/50 text-zinc-400/80 group-hover/row:bg-[#181920]'
+                                      : ''
+                                  } ${!isEditable ? 'cursor-default' : 'cursor-text'} ${
+                                    isLastFrozen && isScrolledX
+                                      ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                                      : ''
+                                  }`}
+                                  style={{
+                                    width: `${w}px`,
+                                    minWidth: `${w}px`,
+                                    maxWidth: `${w}px`,
+                                    ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                                  }}
+                                  title={
+                                    isEditable
+                                      ? isRedis && col.name.toLowerCase() === 'ttl'
+                                        ? 'Double-click to update TTL (Time-To-Live)'
+                                        : 'Click to select, type or double-click to edit'
+                                      : 'Read-only: this column cannot be edited in Redis'
                                   }
-                                  handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
+                                >
+                                  {isEditing ? (
+                                    <GridCellEditor
+                                      colInputType={colInputType}
+                                      editVal={editVal}
+                                      variant="update"
+                                      isFirstEditRenderRef={isFirstEditRenderRef}
+                                      onChange={setEditVal}
+                                      onFinishEdit={handleFinishEdit}
+                                      onCancelEdit={() => {
+                                        setEditingCell(null);
+                                        if (stagedCount > 0) setShowCancelConfirm(true);
+                                      }}
+                                      onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
+                                    />
+                                  ) : displayVal === null || displayVal === undefined ? (
+                                    <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
+                                      NULL
+                                    </span>
+                                  ) : colInputType !== 'text' ? (
+                                    String(displayVal).replace('T', ' ').replace(/Z$/, '')
+                                  ) : (
+                                    String(displayVal)
+                                  )}
+                                </td>
+                              );
+                            })}
+                            <td className="p-0 border-none pointer-events-none" />
+                          </tr>
+                        );
+                      }
+
+                      const change = vr.insertChange!;
+                      const rowClass =
+                        'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
+
+                      const isRowInSelection = allSelectionRanges.some(
+                        (rng) => vIdx >= rng.startR && vIdx <= rng.endR
+                      );
+                      const isFullRowSelected = isRowFullySelected(vIdx);
+
+                      return (
+                        <tr key={change.rowIndex} style={{ height: '28px' }} className={rowClass}>
+                          <td
+                            onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                            onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                            onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                            className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-[#22242c] select-none cursor-pointer transition-colors ${
+                              isFullRowSelected
+                                ? 'bg-[#1b4ea3] text-white'
+                                : isRowInSelection
+                                ? 'bg-[#1e293b] text-blue-300'
+                                : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-emerald-400'
+                            } ${
+                              frozenColumns.length === 0 && isScrolledX
+                                ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
+                                : ''
+                            }`}
+                            style={{
+                              width: `${ROW_NUM_COL_WIDTH}px`,
+                              minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                              maxWidth: `${ROW_NUM_COL_WIDTH}px`,
+                            }}
+                            title="New row (Click to select entire row)"
+                          >
+                            +
+                          </td>
+                          {columns.map((col, cIdx) => {
+                            const isSelected = isCellSelected(vIdx, cIdx);
+                            const isEditing =
+                              editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
+                            const colVal = change.changes[col.name];
+                            const isSet = colVal !== undefined;
+                            const displayVal = isSet ? colVal : col.defaultValue || null;
+                            const colInputType = colInputTypes[cIdx];
+                            const isFrozen = frozenColumnSet.has(col.name);
+                            const isLastFrozen = col.name === lastFrozenColName;
+                            const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                            const w = colWidths[col.name] || 120;
+                            const isInsEditable = colEditableInsert[cIdx];
+
+                            return (
+                              <td
+                                key={col.name}
+                                data-vidx={vIdx}
+                                data-cidx={cIdx}
+                                onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
+                                onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
+                                onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
+                                onDoubleClick={() => {
+                                  if (!isEditing && isInsEditable) {
+                                    if (isRedis && col.name.toLowerCase() === 'ttl') {
+                                      handleOpenTtlModal(change.rowIndex, displayVal ?? '', true);
+                                      return;
+                                    }
+                                    handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
+                                  }
+                                }}
+                                className={`px-3 py-1 border-r border-[#22242c] truncate select-none transition-colors ${
+                                  isFrozen
+                                    ? `sticky z-10 ${
+                                        isSelected
+                                          ? 'bg-[#1b4ea3] text-white font-medium'
+                                          : isSet
+                                          ? 'bg-emerald-900/50 text-emerald-100 font-medium'
+                                          : !isInsEditable
+                                          ? 'bg-[#0a1611]/80 text-zinc-500'
+                                          : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-400'
+                                      }`
+                                    : isSelected
+                                    ? 'bg-[#1b4ea3] text-white font-medium'
+                                    : isSet
+                                    ? 'bg-emerald-900/40 text-emerald-100 font-medium'
+                                    : !isInsEditable
+                                    ? 'bg-[#08120e]/60 text-zinc-500'
+                                    : 'text-zinc-400'
+                                } ${!isInsEditable ? 'cursor-default' : 'cursor-text'} ${
+                                  isLastFrozen && isScrolledX
+                                    ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                                    : ''
+                                }`}
+                                style={{
+                                  width: `${w}px`,
+                                  minWidth: `${w}px`,
+                                  maxWidth: `${w}px`,
+                                  ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                                }}
+                                title={
+                                  isInsEditable
+                                    ? 'Click to select, type or double-click to edit'
+                                    : 'Read-only: generated or calculated metadata'
                                 }
-                              }}
-                              className={`px-3 py-1 border-r border-[#22242c] truncate select-none transition-colors ${
-                                isFrozen
-                                  ? `sticky z-10 ${
-                                      isSelected
-                                        ? 'bg-[#1b4ea3] text-white font-medium'
-                                        : isSet
-                                        ? 'bg-emerald-900/50 text-emerald-100 font-medium'
-                                        : !isInsEditable
-                                        ? 'bg-[#0a1611]/80 text-zinc-500'
-                                        : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-400'
-                                    }`
-                                  : isSelected
-                                  ? 'bg-[#1b4ea3] text-white font-medium'
-                                  : isSet
-                                  ? 'bg-emerald-900/40 text-emerald-100 font-medium'
-                                  : !isInsEditable
-                                  ? 'bg-[#08120e]/60 text-zinc-500'
-                                  : 'text-zinc-400'
-                              } ${!isInsEditable ? 'cursor-default' : 'cursor-text'} ${
-                                isLastFrozen && isScrolledX
-                                  ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
-                                  : ''
-                              }`}
-                              style={{
-                                width: `${w}px`,
-                                minWidth: `${w}px`,
-                                maxWidth: `${w}px`,
-                                ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
-                              }}
-                              title={
-                                isInsEditable
-                                  ? 'Click to select, type or double-click to edit'
-                                  : 'Read-only: generated or calculated metadata'
-                              }
-                            >
-                              {isEditing ? (
-                                <GridCellEditor
-                                  colInputType={colInputType}
-                                  editVal={editVal}
-                                  variant="insert"
-                                  isFirstEditRenderRef={isFirstEditRenderRef}
-                                  onChange={setEditVal}
-                                  onFinishEdit={handleFinishEdit}
-                                  onCancelEdit={() => {
-                                    setEditingCell(null);
-                                    if (stagedCount > 0) setShowCancelConfirm(true);
-                                  }}
-                                  onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
-                                />
-                              ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
-                                <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
-                                  {col.isAutoIncrement ? '(Auto)' : 'NULL'}
-                                </span>
-                              ) : colInputType !== 'text' ? (
-                                String(displayVal).replace('T', ' ').replace(/Z$/, '')
-                              ) : (
-                                String(displayVal)
-                              )}
-                            </td>
-                          );
-                        })}
-                        <td className="p-0 border-none pointer-events-none" />
+                              >
+                                {isEditing ? (
+                                  <GridCellEditor
+                                    colInputType={colInputType}
+                                    editVal={editVal}
+                                    variant="insert"
+                                    isFirstEditRenderRef={isFirstEditRenderRef}
+                                    onChange={setEditVal}
+                                    onFinishEdit={handleFinishEdit}
+                                    onCancelEdit={() => {
+                                      setEditingCell(null);
+                                      if (stagedCount > 0) setShowCancelConfirm(true);
+                                    }}
+                                    onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
+                                  />
+                                ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
+                                  <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
+                                    {col.isAutoIncrement ? '(Auto)' : 'NULL'}
+                                  </span>
+                                ) : colInputType !== 'text' ? (
+                                  String(displayVal).replace('T', ' ').replace(/Z$/, '')
+                                ) : (
+                                  String(displayVal)
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="p-0 border-none pointer-events-none" />
+                        </tr>
+                      );
+                    })}
+                    {paddingBottom > 0 && (
+                      <tr aria-hidden="true">
+                        <td colSpan={columns.length + 2} style={{ height: `${paddingBottom}px`, padding: 0, border: 0 }} />
                       </tr>
-                    );
-                  })}
-                </>
-              )}
+                    )}
+                  </>
+                );
+              })()}
             </tbody>
           </table>
           {displayedRows.length === 0 && insertedChanges.length === 0 && (

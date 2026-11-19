@@ -57,6 +57,7 @@ export const SettingsModal: React.FC = () => {
     showMinimap,
     copyFormat,
     checkUpdatesOnStartup,
+    checkUpdatesPeriodically,
     setCopyFormat,
     closeSettings,
     setActiveSettingsTab,
@@ -66,6 +67,7 @@ export const SettingsModal: React.FC = () => {
     setWordWrap,
     setShowMinimap,
     setCheckUpdatesOnStartup,
+    setCheckUpdatesPeriodically,
     resetToDefaults,
     reloadSettings,
   } = useSettingsStore();
@@ -422,41 +424,6 @@ export const SettingsModal: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setActiveSettingsTab('updates')}
-              className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
-                activeSettingsTab === 'updates'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#20222b]'
-              }`}
-              title={
-                updateInfo?.hasUpdate
-                  ? `New version ${updateInfo.latestVersion} available!`
-                  : 'Check for application updates and release notes'
-              }
-            >
-              <span className="flex items-center gap-2.5 min-w-0">
-                <Sparkles className="h-4 w-4 shrink-0" />
-                <span className="truncate">Software Updates</span>
-              </span>
-              {updateInfo?.hasUpdate && (
-                <span
-                  className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold border shrink-0 ${
-                    activeSettingsTab === 'updates'
-                      ? 'bg-white/20 border-white/35 text-white'
-                      : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                  }`}
-                >
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full animate-pulse ${
-                      activeSettingsTab === 'updates' ? 'bg-emerald-300' : 'bg-emerald-400'
-                    }`}
-                  />
-                  <span>New</span>
-                </span>
-              )}
-            </button>
-
-            <button
               onClick={() => setActiveSettingsTab('backup')}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
                 activeSettingsTab === 'backup'
@@ -518,7 +485,7 @@ export const SettingsModal: React.FC = () => {
 
           {/* Settings Main Panel */}
           <div className="flex-1 p-5 overflow-y-auto min-h-0 text-xs">
-            {activeSettingsTab !== 'updates' && activeSettingsTab !== 'version' && updateInfo?.hasUpdate && (
+            {activeSettingsTab !== 'version' && updateInfo?.hasUpdate && (
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-emerald-950/30 border border-emerald-700/40 px-3.5 py-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 shrink-0">
@@ -536,7 +503,7 @@ export const SettingsModal: React.FC = () => {
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    onClick={() => setActiveSettingsTab('updates')}
+                    onClick={() => setActiveSettingsTab('version')}
                     className="px-2.5 py-1 rounded-md border border-emerald-600/40 bg-[#1a2220] hover:bg-[#212d2a] text-emerald-200 text-[11px] font-medium transition-colors cursor-pointer"
                   >
                     View Details
@@ -842,13 +809,133 @@ export const SettingsModal: React.FC = () => {
               </div>
             )}
 
-            {/* Software Updates Tab */}
-            {activeSettingsTab === 'updates' && (
+            {/* Shortcuts Tab */}
+            {activeSettingsTab === 'shortcuts' && (
               <div className="space-y-5">
+                <div>
+                  <h4 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                    <Command className="h-3.5 w-3.5 text-blue-400" />
+                    <span>Keyboard Shortcuts</span>
+                  </h4>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Quick keyboard shortcuts for navigation, query execution, and data grid editing.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Help &amp; User Guide</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+H / ⌘H
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Search Everywhere</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+P / ⌘P
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Execute Query</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+Enter / ⌘Enter
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Apply Grid Changes</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+S / ⌘S
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Duplicate Row</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+D / ⌘D
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Delete Active Row</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Delete / ⌘⌫
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Revert / Cancel Changes</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Esc
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Settings & Preferences</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+I / ⌘I
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Close Active Tab</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+W / ⌘W
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Format SQL Code</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Shift+Alt+F
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">Stop Query Execution</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+Shift+D / ⌘Shift+D
+                      </kbd>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
+                      <span className="text-zinc-400">View As / Value Panel</span>
+                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
+                        Ctrl+T / ⌘T
+                      </kbd>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Version Tab */}
+            {activeSettingsTab === 'version' && (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3.5">
+                    <DHubLogo variant="badge" size={44} className="mt-0.5 shrink-0" />
+                    <div>
+                      <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        Modern high-performance Database Client &amp; SQL/NoSQL IDE.
+                      </p>
+                      <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
+                        <span>Version {APP_VERSION}</span>
+                        <span className="text-zinc-500">•</span>
+                        <span className="text-emerald-400">Stable</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeSettings();
+                      useWorkbenchStore.getState().openHelpModal('quickstart');
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/35 text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    <span>Open Help &amp; User Guide (Ctrl+H / ⌘H)</span>
+                  </button>
+                </div>
+
+                <div className="h-[1px] bg-[#272932]" />
+
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
-                      Software Updates &amp; Version Info
+                      Software Updates &amp; Release Info
                     </label>
                     {lastCheckedAt && (
                       <span className="flex items-center gap-1 text-[10px] text-zinc-400 font-mono">
@@ -1163,192 +1250,28 @@ export const SettingsModal: React.FC = () => {
                     {checkUpdatesOnStartup ? 'Enabled' : 'Disabled'}
                   </button>
                 </div>
-              </div>
-            )}
 
-            {/* Shortcuts Tab */}
-            {activeSettingsTab === 'shortcuts' && (
-              <div className="space-y-5">
-                <div>
-                  <h4 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                    <Command className="h-3.5 w-3.5 text-blue-400" />
-                    <span>Keyboard Shortcuts</span>
-                  </h4>
-                  <p className="text-[11px] text-zinc-400 mb-3">
-                    Quick keyboard shortcuts for navigation, query execution, and data grid editing.
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Help &amp; User Guide</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+H / ⌘H
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Search Everywhere</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+P / ⌘P
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Execute Query</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+Enter / ⌘Enter
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Apply Grid Changes</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+S / ⌘S
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Duplicate Row</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+D / ⌘D
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Delete Active Row</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Delete / ⌘⌫
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Revert / Cancel Changes</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Esc
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Settings & Preferences</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+I / ⌘I
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Close Active Tab</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+W / ⌘W
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Format SQL Code</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Shift+Alt+F
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">Stop Query Execution</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+Shift+D / ⌘Shift+D
-                      </kbd>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-[#1e2027] border border-[#272932]">
-                      <span className="text-zinc-400">View As / Value Panel</span>
-                      <kbd className="font-mono bg-[#14151a] border border-[#2e313f] px-1.5 py-0.5 rounded text-zinc-200">
-                        Ctrl+T / ⌘T
-                      </kbd>
-                    </div>
+                {/* Periodic Update Check Preference */}
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-[#14151a] border border-[#272932]">
+                  <div>
+                    <h4 className="text-xs font-semibold text-zinc-200">
+                      Check for updates periodically (every 10 minutes)
+                    </h4>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                      When enabled, DHub checks for a newer version every 10 minutes while the app is open.
+                    </p>
                   </div>
-                </div>
-              </div>
-            )}
-
-            {/* Version Tab */}
-            {activeSettingsTab === 'version' && (
-              <div className="space-y-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex items-start gap-3.5">
-                    <DHubLogo variant="badge" size={44} className="mt-0.5 shrink-0" />
-                    <div>
-                      <h3 className="text-sm font-semibold text-zinc-100">DHub Desktop</h3>
-                      <p className="text-xs text-zinc-400 mt-0.5">
-                        Modern high-performance Database Client &amp; SQL/NoSQL IDE.
-                      </p>
-                      <div className="mt-2 inline-flex items-center gap-2 rounded bg-[#20222b] px-2.5 py-1 text-[11px] font-mono text-zinc-300 border border-[#2d303e]">
-                        <span>Version {APP_VERSION}</span>
-                        <span className="text-zinc-500">•</span>
-                        <span className="text-emerald-400">Stable</span>
-                      </div>
-                    </div>
-                  </div>
-
                   <button
                     type="button"
-                    onClick={() => {
-                      closeSettings();
-                      useWorkbenchStore.getState().openHelpModal('quickstart');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/35 text-xs font-medium transition-colors cursor-pointer"
+                    onClick={() => setCheckUpdatesPeriodically(!checkUpdatesPeriodically)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer shrink-0 ${
+                      checkUpdatesPeriodically
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:text-zinc-200'
+                    }`}
                   >
-                    <BookOpen className="h-3.5 w-3.5" />
-                    <span>Open Help &amp; User Guide (Ctrl+H / ⌘H)</span>
+                    {checkUpdatesPeriodically ? 'Enabled' : 'Disabled'}
                   </button>
-                </div>
-
-                {/* Software Updates Box */}
-                <div className="p-3.5 rounded-xl bg-[#14151a] border border-[#272932] space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-2">
-                        <Sparkles className="h-3.5 w-3.5 text-blue-400" />
-                        Software Updates
-                      </h4>
-                      <p className="text-[11px] text-zinc-400 mt-0.5">
-                        GitHub Releases update channel (User Scope • No Admin/Root required)
-                        {lastCheckedAt ? ` • Last checked ${lastCheckedAt}` : ''}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveSettingsTab('updates')}
-                        className="px-2.5 py-1.5 rounded-lg bg-[#1c1e26] hover:bg-[#252834] text-blue-300 border border-[#2f3240] text-xs font-medium transition-colors cursor-pointer"
-                      >
-                        Update Settings
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isCheckingUpdate}
-                        onClick={() => checkUpdate(false)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#20222b] hover:bg-[#282a36] text-zinc-200 border border-[#2f3240] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
-                      >
-                        <RefreshCw className={`h-3 w-3 ${isCheckingUpdate ? 'animate-spin text-blue-400' : ''}`} />
-                        <span>{isCheckingUpdate ? 'Checking...' : 'Check for Updates'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {updateInfo?.hasUpdate ? (
-                    <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-950/25 border border-emerald-800/40 text-emerald-300">
-                      <div>
-                        <span className="font-semibold text-emerald-200">
-                          New version {updateInfo.latestVersion} available!
-                        </span>
-                        <p className="text-[10px] text-zinc-400 mt-0.5">
-                          Click to view changelog and download installer
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={openUpdateModal}
-                        className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer"
-                      >
-                        View & Install
-                      </button>
-                    </div>
-                  ) : updateInfo && !updateInfo.hasUpdate ? (
-                    <div className="p-2 rounded-lg bg-[#191b22] border border-[#232530] text-zinc-400 text-[11px] flex items-center gap-2">
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                      <span>You are running the latest version of DHub.</span>
-                    </div>
-                  ) : updateError ? (
-                    <div className="p-2 rounded-lg bg-red-950/20 border border-red-900/30 text-red-400 text-[11px]">
-                      {updateError}
-                    </div>
-                  ) : null}
                 </div>
               </div>
             )}

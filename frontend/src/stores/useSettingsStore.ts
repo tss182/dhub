@@ -3,7 +3,7 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update' | 'sql_upsert';
-export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'updates' | 'backup' | 'shortcuts' | 'version';
+export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'backup' | 'shortcuts' | 'version';
 
 interface SettingsValues {
   theme: ThemeMode;
@@ -13,6 +13,7 @@ interface SettingsValues {
   showMinimap: boolean;
   copyFormat: CopyFormat;
   checkUpdatesOnStartup: boolean;
+  checkUpdatesPeriodically: boolean;
   backupToolPaths: Record<string, string>;
 }
 
@@ -30,6 +31,7 @@ interface SettingsState extends SettingsValues {
   setShowMinimap: (show: boolean) => void;
   setCopyFormat: (format: CopyFormat) => void;
   setCheckUpdatesOnStartup: (enabled: boolean) => void;
+  setCheckUpdatesPeriodically: (enabled: boolean) => void;
   setBackupToolPath: (tool: string, path: string) => void;
   resetToDefaults: () => void;
   reloadSettings: () => Promise<void>;
@@ -45,6 +47,7 @@ const DEFAULT_SETTINGS: SettingsValues = {
   showMinimap: false,
   copyFormat: 'csv',
   checkUpdatesOnStartup: true,
+  checkUpdatesPeriodically: true,
   backupToolPaths: {},
 };
 
@@ -90,6 +93,10 @@ function parseSettingsObject(parsed: any): SettingsValues {
       typeof parsed?.checkUpdatesOnStartup === 'boolean'
         ? parsed.checkUpdatesOnStartup
         : DEFAULT_SETTINGS.checkUpdatesOnStartup,
+    checkUpdatesPeriodically:
+      typeof parsed?.checkUpdatesPeriodically === 'boolean'
+        ? parsed.checkUpdatesPeriodically
+        : DEFAULT_SETTINGS.checkUpdatesPeriodically,
     backupToolPaths,
   };
 }
@@ -167,6 +174,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setCheckUpdatesOnStartup: (checkUpdatesOnStartup) => {
     persistSettings({ checkUpdatesOnStartup });
     set({ checkUpdatesOnStartup });
+  },
+
+  setCheckUpdatesPeriodically: (checkUpdatesPeriodically) => {
+    persistSettings({ checkUpdatesPeriodically });
+    set({ checkUpdatesPeriodically });
   },
 
   setBackupToolPath: (tool, path) => {

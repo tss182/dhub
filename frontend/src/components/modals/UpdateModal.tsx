@@ -189,7 +189,7 @@ export const UpdateModal: React.FC = () => {
                   {getPlatformLabel(updateInfo.platformOS)}
                 </span>
                 <p className="text-zinc-400 text-[10px] mt-0.5">
-                  Update will be downloaded directly inside DHub and applied seamlessly without requiring browser intervention. If you choose <span className="text-zinc-200 font-medium">Update Later</span>, you can still view release details and install anytime in <span className="text-blue-400 font-medium">Settings → Software Updates</span>.
+                  Update will be downloaded directly inside DHub and applied seamlessly without requiring browser intervention. If you choose <span className="text-zinc-200 font-medium">Update Later</span>, you can still view release details and install anytime in <span className="text-blue-400 font-medium">Settings → Version</span>.
                 </p>
               </div>
             </div>
