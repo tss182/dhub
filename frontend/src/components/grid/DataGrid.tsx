@@ -1,52 +1,19 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
-import { ColumnMeta, ConnectionEnvType } from '../../types/domain';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { useGridEditStore, StagedRowChange } from '../../stores/useGridEditStore';
 import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
-import { useAlertStore, alertWarning, alertSuccess } from '../../stores/useAlertStore';
-import { CopyFormatSelector, COPY_FORMAT_LABELS, COPY_FORMAT_OPTIONS } from './CopyFormatSelector';
+import { useAlertStore, alertWarning } from '../../stores/useAlertStore';
 import {
-  Plus,
-  Trash2,
-  RotateCcw,
-  Check,
-  Eye,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  ChevronUp,
-  ChevronDown,
   RefreshCw,
-  Search,
-  X,
-  Layers,
-  ArrowDownCircle,
-  ArrowUpCircle,
-  Filter,
+  RotateCcw,
   Key,
-  Hash,
-  Info,
-  ArrowUp,
-  ArrowDown,
   ArrowDownAZ,
   ArrowDownZA,
   ArrowUpDown,
-  Copy,
   AlertCircle,
-  FileText,
-  Code,
-  Edit3,
-  Pencil,
-  Ban,
   Lock,
-  CheckSquare,
-  ClipboardPaste,
-  Clock,
-  PanelRight,
-  Download,
-  Upload,
+  ArrowUpCircle,
   Snowflake,
 } from 'lucide-react';
 import { ExportModal } from '../modals/ExportModal';
@@ -55,612 +22,56 @@ import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
 import { CopyAsModal } from '../modals/CopyAsModal';
 
-const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
-const modKey = isMac ? 'Cmd' : 'Ctrl';
+import {
+  isMac,
+  ROW_NUM_COL_WIDTH,
+  EMPTY_STAGED,
+  EMPTY_PRIMARY_KEYS,
+  EMPTY_SORT_CONFIGS,
+  SortConfig,
+  WhereSuggestionItem,
+  CellRect,
+  VisualRow,
+  ColumnHoverInfo,
+  TtlModalState,
+  ContextMenuState,
+  DataGridProps,
+} from './gridTypes';
+import {
+  parseColumnTypeDetails,
+  formatSqlLiteral,
+  getColumnInputType,
+  formatToDateInputValue,
+  normalizeDateCommitValue,
+  tryParseSqlInsert,
+  tryParseSqlUpdate,
+  tryParseJson,
+  cleanPastedValue,
+  buildUpdateSql,
+  formatSelectedCells,
+} from './gridFormatters';
+import {
+  getColWidthsStorageKey,
+  saveColWidths,
+  loadColWidths,
+  getMinimumColumnWidth,
+  getInitialColumnWidth,
+} from './gridColumnWidths';
+import { getWhereCurrentToken, computeWhereSuggestions } from './whereAutocomplete';
+import { GridToolbar } from './GridToolbar';
+import { GridPagination } from './GridPagination';
+import { GridContextMenu } from './GridContextMenu';
+import { GridCellEditor } from './GridCellEditor';
+import {
+  ColumnHoverPopover,
+  CancelChangesModal,
+  AllSortsModal,
+  AllFrozenModal,
+  RedisTtlModal,
+} from './GridModals';
 
-function parseColumnTypeDetails(dataType?: string) {
-  if (!dataType) return { baseType: 'UNKNOWN', size: null, extra: null };
-  const trimmed = dataType.trim();
-  const match = trimmed.match(/^([a-zA-Z\s_]+)(?:\(([^)]+)\))?(.*)$/);
-  if (!match) {
-    return { baseType: trimmed.toUpperCase(), size: null, extra: null };
-  }
-  const baseType = match[1].trim().toUpperCase();
-  const size = match[2]?.trim() || null;
-  const extra = match[3]?.trim().toUpperCase() || null;
-  return { baseType, size, extra };
-}
-
-export function formatSqlLiteral(val: any, dataType?: string): string {
-  if (val === null || val === undefined) return 'NULL';
-  const rawType = (dataType || '').toLowerCase();
-  const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
-  if (isNum && !isNaN(Number(val)) && String(val).trim() !== '') {
-    return String(val);
-  }
-  if (typeof val === 'boolean') {
-    return val ? 'TRUE' : 'FALSE';
-  }
-  return `'${String(val).replace(/'/g, "''")}'`;
-}
-
-function getColumnInputType(dataType?: string): 'date' | 'datetime-local' | 'time' | 'text' {
-  if (!dataType) return 'text';
-  const { baseType } = parseColumnTypeDetails(dataType);
-  const upper = baseType.toUpperCase();
-
-  if (upper === 'DATE') {
-    return 'date';
-  }
-  if (
-    upper.includes('TIMESTAMP') ||
-    upper.includes('DATETIME')
-  ) {
-    return 'datetime-local';
-  }
-  if (upper.includes('TIME') && !upper.includes('TIMESTAMP')) {
-    return 'time';
-  }
-  return 'text';
-}
-
-function formatToDateInputValue(val: any, type: 'date' | 'datetime-local' | 'time' | 'text'): string {
-  if (val === null || val === undefined) return '';
-  const str = String(val).trim();
-  if (!str) return '';
-
-  if (type === 'date') {
-    const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (match) return match[1];
-    const d = new Date(str);
-    if (!isNaN(d.getTime())) {
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    }
-    return '';
-  }
-
-  if (type === 'datetime-local') {
-    const normalized = str.replace(' ', 'T').replace(/Z$/, '');
-    const match = normalized.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)/);
-    if (match) return match[1];
-    const d = new Date(str);
-    if (!isNaN(d.getTime())) {
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    }
-    return '';
-  }
-
-  if (type === 'time') {
-    const match = str.match(/(\d{2}:\d{2}(?::\d{2})?)/);
-    if (match) return match[1];
-    return '';
-  }
-
-  return str;
-}
-
-function normalizeDateCommitValue(val: string, inputType: 'date' | 'datetime-local' | 'time' | 'text'): string | null {
-  if (val === null || val === undefined) return null;
-  const trimmed = String(val).trim();
-  if (!trimmed) return null;
-
-  if (inputType === 'datetime-local') {
-    let s = trimmed.replace('T', ' ').replace(/Z$/, '').trim();
-    s = s.replace(/([+-]\d{2}:?\d{2})$/, '').trim();
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) {
-      s += ':00';
-    }
-    return s;
-  }
-  if (inputType === 'date') {
-    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (match) return match[1];
-    return trimmed;
-  }
-  if (inputType === 'time') {
-    const match = trimmed.match(/(\d{2}:\d{2}(?::\d{2})?)/);
-    if (match) {
-      let t = match[1];
-      if (/^\d{2}:\d{2}$/.test(t)) t += ':00';
-      return t;
-    }
-    return trimmed;
-  }
-  return trimmed;
-}
-
-function unquoteIdentifier(ident: string): string {
-  const trimmed = ident.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith('`') && trimmed.endsWith('`')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'))
-  ) {
-    return trimmed.slice(1, -1).replace(/""|``|\]\]/g, (m) => m[0]);
-  }
-  return trimmed;
-}
-
-function unquoteSqlLiteral(literal: string): string | null {
-  const trimmed = literal.trim();
-  if (/^null$/i.test(trimmed)) return null;
-  if (/^default$/i.test(trimmed)) return null;
-  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
-    return trimmed
-      .slice(1, -1)
-      .replace(/''|\\'/g, "'")
-      .replace(/\\n/g, '\n')
-      .replace(/\\r/g, '\r')
-      .replace(/\\t/g, '\t');
-  }
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1).replace(/""|\\"/g, '"');
-  }
-  return trimmed;
-}
-
-function splitSqlList(str: string): string[] {
-  const items: string[] = [];
-  let curr = '';
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let inBacktick = false;
-  let parenDepth = 0;
-
-  for (let i = 0; i < str.length; i++) {
-    const ch = str[i];
-    if (ch === "'" && !inDoubleQuote && !inBacktick) {
-      if (inSingleQuote && str[i + 1] === "'") {
-        curr += "''";
-        i++;
-      } else {
-        inSingleQuote = !inSingleQuote;
-        curr += ch;
-      }
-    } else if (ch === '"' && !inSingleQuote && !inBacktick) {
-      if (inDoubleQuote && str[i + 1] === '"') {
-        curr += '""';
-        i++;
-      } else {
-        inDoubleQuote = !inDoubleQuote;
-        curr += ch;
-      }
-    } else if (ch === '`' && !inSingleQuote && !inDoubleQuote) {
-      inBacktick = !inBacktick;
-      curr += ch;
-    } else if (ch === '(' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
-      parenDepth++;
-      curr += ch;
-    } else if (ch === ')' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
-      parenDepth = Math.max(0, parenDepth - 1);
-      curr += ch;
-    } else if (ch === ',' && !inSingleQuote && !inDoubleQuote && !inBacktick && parenDepth === 0) {
-      items.push(curr.trim());
-      curr = '';
-    } else {
-      curr += ch;
-    }
-  }
-  if (curr.trim().length > 0) {
-    items.push(curr.trim());
-  }
-  return items;
-}
-
-function tryParseSqlInsert(sqlText: string): { headers?: string[]; rows: (string | null)[][] } | null {
-  const clean = sqlText.trim();
-  if (!/^INSERT\s+INTO\b/i.test(clean)) return null;
-
-  const insertMatch = clean.match(/^INSERT\s+INTO\s+[^\(]+?(?:\(([\s\S]+?)\))?\s*VALUES\s*([\s\S]+)$/i);
-  if (!insertMatch) return null;
-
-  let headers: string[] | undefined;
-  if (insertMatch[1]) {
-    headers = splitSqlList(insertMatch[1]).map(unquoteIdentifier);
-  }
-
-  const rawValues = insertMatch[2];
-  const rows: (string | null)[][] = [];
-
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let inBacktick = false;
-  let parenDepth = 0;
-  let tupleStart = -1;
-
-  for (let i = 0; i < rawValues.length; i++) {
-    const ch = rawValues[i];
-    if (ch === "'" && !inDoubleQuote && !inBacktick) {
-      if (inSingleQuote && rawValues[i + 1] === "'") {
-        i++;
-      } else {
-        inSingleQuote = !inSingleQuote;
-      }
-    } else if (ch === '"' && !inSingleQuote && !inBacktick) {
-      if (inDoubleQuote && rawValues[i + 1] === '"') {
-        i++;
-      } else {
-        inDoubleQuote = !inDoubleQuote;
-      }
-    } else if (ch === '`' && !inSingleQuote && !inDoubleQuote) {
-      inBacktick = !inBacktick;
-    } else if (ch === '(' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
-      if (parenDepth === 0) tupleStart = i + 1;
-      parenDepth++;
-    } else if (ch === ')' && !inSingleQuote && !inDoubleQuote && !inBacktick) {
-      parenDepth--;
-      if (parenDepth === 0 && tupleStart !== -1) {
-        const tupleContent = rawValues.substring(tupleStart, i);
-        const cellLiterals = splitSqlList(tupleContent);
-        rows.push(cellLiterals.map(unquoteSqlLiteral));
-        tupleStart = -1;
-      }
-    } else if (parenDepth === 0 && (ch === ';' || /^[oO][nN]\s/i.test(rawValues.slice(i)))) {
-      break;
-    }
-  }
-
-  if (rows.length > 0) {
-    return { headers, rows };
-  }
-  return null;
-}
-
-function tryParseSqlUpdate(sqlText: string): { headers?: string[]; rows: (string | null)[][] } | null {
-  const clean = sqlText.trim();
-  if (!/^UPDATE\s+/i.test(clean)) return null;
-
-  const statements = clean.split(/;\s*(?=UPDATE\b)/i).filter((s) => s.trim().length > 0);
-  const rows: (string | null)[][] = [];
-  const headerSet: string[] = [];
-  const parsedStatements: Array<Record<string, string | null>> = [];
-
-  for (const stmt of statements) {
-    const setMatch = stmt.match(/SET\s+([\s\S]+?)(?:\s+WHERE\b|$|;)/i);
-    if (!setMatch) continue;
-
-    const setClauses = splitSqlList(setMatch[1]);
-    const rowObj: Record<string, string | null> = {};
-
-    for (const clause of setClauses) {
-      const eqIdx = clause.indexOf('=');
-      if (eqIdx === -1) continue;
-      const colName = unquoteIdentifier(clause.substring(0, eqIdx));
-      const valStr = unquoteSqlLiteral(clause.substring(eqIdx + 1));
-      rowObj[colName] = valStr;
-      if (!headerSet.includes(colName)) {
-        headerSet.push(colName);
-      }
-    }
-
-    if (Object.keys(rowObj).length > 0) {
-      parsedStatements.push(rowObj);
-    }
-  }
-
-  if (parsedStatements.length === 0) return null;
-
-  for (const rowObj of parsedStatements) {
-    rows.push(headerSet.map((h) => rowObj[h] ?? null));
-  }
-
-  return { headers: headerSet, rows };
-}
-
-function tryParseJson(text: string): { headers?: string[]; rows: (string | null)[][] } | null {
-  const trimmed = text.trim();
-  if (!((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}')))) {
-    return null;
-  }
-  try {
-    const json = JSON.parse(trimmed);
-    if (Array.isArray(json)) {
-      if (json.length === 0) return null;
-
-      if (Array.isArray(json[0])) {
-        const rows = json.map((subArr) =>
-          Array.isArray(subArr)
-            ? subArr.map((v) =>
-                v === null || v === undefined ? null : typeof v === 'object' ? JSON.stringify(v) : String(v)
-              )
-            : [String(subArr)]
-        );
-        return { rows };
-      }
-
-      if (typeof json[0] === 'object' && json[0] !== null) {
-        const keys: string[] = [];
-        json.forEach((item) => {
-          if (typeof item === 'object' && item !== null) {
-            Object.keys(item).forEach((k) => {
-              if (!keys.includes(k)) keys.push(k);
-            });
-          }
-        });
-        const rows = json.map((item) =>
-          keys.map((k) => {
-            const v = item?.[k];
-            if (v === null || v === undefined) return null;
-            return typeof v === 'object' ? JSON.stringify(v) : String(v);
-          })
-        );
-        return { headers: keys, rows };
-      }
-
-      const rows = json.map((v) => [v === null || v === undefined ? null : String(v)]);
-      return { rows };
-    }
-
-    if (typeof json === 'object' && json !== null) {
-      const keys = Object.keys(json);
-      const row = keys.map((k) => {
-        const v = json[k];
-        if (v === null || v === undefined) return null;
-        return typeof v === 'object' ? JSON.stringify(v) : String(v);
-      });
-      return { headers: keys, rows: [row] };
-    }
-  } catch {}
-  return null;
-}
-
-function cleanPastedValue(val: any, dataType?: string): any {
-  if (val === null || val === undefined) return null;
-  let str = String(val).trim();
-  if (str === '' || str.toUpperCase() === 'NULL' || str.toLowerCase() === '<null>') {
-    return null;
-  }
-  // Strip surrounding quotes if present
-  if ((str.startsWith("'") && str.endsWith("'")) || (str.startsWith('"') && str.endsWith('"'))) {
-    str = str.slice(1, -1).trim();
-  }
-  if (str === '' || str.toUpperCase() === 'NULL' || str.toLowerCase() === '<null>') {
-    return null;
-  }
-
-  const upperType = (dataType || '').toUpperCase();
-  if (upperType.includes('BOOL') || upperType.includes('BIT')) {
-    if (str === 'true' || str === 't' || str === '1') return true;
-    if (str === 'false' || str === 'f' || str === '0') return false;
-  }
-
-  const inputType = getColumnInputType(dataType);
-  if (inputType !== 'text') {
-    return normalizeDateCommitValue(str, inputType);
-  }
-  return str;
-}
-
-export interface SortConfig {
-  column: string;
-  direction: 'asc' | 'desc';
-}
-
-const EMPTY_STAGED: Record<number, any> = {};
-const EMPTY_PRIMARY_KEYS: string[] = [];
-const EMPTY_SORT_CONFIGS: SortConfig[] = [];
-
-export interface WhereSuggestionItem {
-  id: string;
-  type: 'column' | 'keyword';
-  name: string;
-  dataType?: string;
-  isPK?: boolean;
-  iconType?: 'pk' | 'number' | 'date' | 'boolean' | 'text';
-}
-
-const SQL_WHERE_KEYWORDS = [
-  'AND',
-  'OR',
-  'LIKE',
-  'NOT LIKE',
-  'ILIKE',
-  'IN',
-  'NOT IN',
-  'IS NULL',
-  'IS NOT NULL',
-  'BETWEEN',
-  'ORDER BY',
-  'ASC',
-  'DESC',
-  'LIMIT',
-];
-
-function getWhereColumnIconType(dataType?: string, isPK?: boolean): 'pk' | 'number' | 'date' | 'boolean' | 'text' {
-  if (isPK) return 'pk';
-  if (!dataType) return 'text';
-  const upper = dataType.toUpperCase();
-  if (
-    upper.includes('INT') ||
-    upper.includes('NUMERIC') ||
-    upper.includes('DECIMAL') ||
-    upper.includes('FLOAT') ||
-    upper.includes('DOUBLE') ||
-    upper.includes('REAL') ||
-    upper.includes('SERIAL')
-  ) {
-    return 'number';
-  }
-  if (upper.includes('DATE') || upper.includes('TIME')) {
-    return 'date';
-  }
-  if (upper.includes('BOOL') || upper.includes('BIT')) {
-    return 'boolean';
-  }
-  return 'text';
-}
-
-function isInsideQuotes(text: string, cursor: number): boolean {
-  const textBefore = text.slice(0, cursor);
-  let inSingle = false;
-  let inDouble = false;
-
-  for (let i = 0; i < textBefore.length; i++) {
-    const ch = textBefore[i];
-    if (ch === "'" && !inDouble) {
-      if (inSingle && textBefore[i + 1] === "'") {
-        i++; // Escaped ''
-      } else {
-        inSingle = !inSingle;
-      }
-    } else if (ch === '"' && !inSingle) {
-      if (inDouble && textBefore[i + 1] === '"') {
-        i++; // Escaped ""
-      } else {
-        inDouble = !inDouble;
-      }
-    }
-  }
-
-  return inSingle || inDouble;
-}
-
-function getWhereCurrentToken(text: string, cursor: number) {
-  const textBefore = text.slice(0, cursor);
-  const match = textBefore.match(/([a-zA-Z0-9_`"'.%]+)$/);
-  if (!match) {
-    return { start: cursor, end: cursor, word: '' };
-  }
-  const rawWord = match[1];
-  const word = rawWord.replace(/[`"']/g, '');
-  const start = cursor - rawWord.length;
-  const textAfter = text.slice(cursor);
-  const afterMatch = textAfter.match(/^([a-zA-Z0-9_`"'.%]+)/);
-  const end = cursor + (afterMatch ? afterMatch[1].length : 0);
-  return { start, end, word };
-}
-
-interface DataGridProps {
-  tabId: string;
-  connectionId?: string | null;
-  database?: string;
-  schema?: string;
-  tableName?: string;
-  driver?: string;
-  isReadOnly?: boolean;
-  columns: ColumnMeta[];
-  rows: any[][];
-  primaryKeys?: string[];
-  onSubmitChanges: (skipConfirm?: boolean) => void;
-  onPreviewChanges: () => void;
-  totalCount?: number;
-  onCountRows?: () => Promise<void> | void;
-  hasMore?: boolean;
-  isLoadingMore?: boolean;
-  hasPrevious?: boolean;
-  isLoadingPrevious?: boolean;
-  onLoadPrevious?: () => void;
-  startOffset?: number;
-  page?: number;
-  onPageChange?: (newPage: number) => void;
-  pageSize?: number;
-  onPageSizeChange?: (newSize: number) => void;
-  onLoadMore?: () => void;
-  onRefresh?: () => void;
-  whereClause?: string;
-  errorMessage?: string | null;
-  onApplyWhere?: (whereClause: string) => void;
-  isTableTab?: boolean;
-  sortConfigs?: SortConfig[];
-  onSortChange?: (sortConfigs: SortConfig[]) => void;
-  envType?: ConnectionEnvType;
-  rawSql?: string;
-  initialFrozenColumns?: string[];
-  onFrozenColumnsChange?: (columns: string[]) => void;
-  targetRowIndex?: number;
-  onActiveRowChange?: (rowIndex: number) => void;
-  initialScrollTop?: number;
-  initialScrollLeft?: number;
-  onScrollChange?: (scrollTop: number, scrollLeft: number, firstVisibleRowIndex: number, topRowOffsetPx?: number) => void;
-}
-
-function getColWidthsStorageKey(
-  connectionId?: string | null,
-  database?: string,
-  tableName?: string,
-  tabId?: string,
-  columns?: ColumnMeta[]
-): string {
-  if (tableName) {
-    return `dhub:col_widths:table:${connectionId || 'default'}:${database || ''}:${tableName}`;
-  }
-  const colSig = (columns || []).map((c) => c.name).slice(0, 10).join(',');
-  return `dhub:col_widths:query:${tabId || 'default'}:${colSig}`;
-}
-
-function saveColWidths(key: string, widths: Record<string, number>) {
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      localStorage.setItem(key, JSON.stringify(widths));
-    }
-  } catch {}
-}
-
-function loadColWidths(key: string): Record<string, number> | null {
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const raw = localStorage.getItem(key);
-      if (raw) return JSON.parse(raw);
-    }
-  } catch {}
-  return null;
-}
-
-function getLongestWordLength(str: string): number {
-  if (!str) return 0;
-  // Treat underscore '_' and whitespace as word separators
-  const words = str.split(/[_\s]+/).filter(Boolean);
-  if (words.length === 0) return str.length;
-  return Math.max(...words.map((w) => w.length));
-}
-
-function getMinimumColumnWidth(col: ColumnMeta, isPK?: boolean): number {
-  // Longest word in column name with _ or space as separator
-  const longestWordLen = getLongestWordLength(col.name || '');
-  // Chrome width: 24px (px-3) + 20px (freeze button) + 40px (sort badge) + 8px (gap)
-  const chromeWidth = isPK ? 112 : 94;
-  const wordWidth = Math.ceil(longestWordLen * 8.5);
-  // Full column name width if it's reasonably short (up to 24 chars)
-  const nameLen = (col.name || '').length;
-  const nameWidth = Math.ceil(Math.min(nameLen, 24) * 8.5);
-
-  const calculatedMin = Math.max(wordWidth, nameWidth) + chromeWidth;
-  // Ensure minimum is at least 140px (or 160px for PK) so no column ever squishes to tiny width
-  return Math.max(isPK ? 160 : 140, Math.min(calculatedMin, 340));
-}
-
-function getInitialColumnWidth(col: ColumnMeta, sampleRows: any[][], colIdx: number, isPK?: boolean): number {
-  const minWidth = getMinimumColumnWidth(col, isPK);
-
-  let maxDataLen = 0;
-  let maxDataWordLen = 0;
-  const maxRowsToCheck = Math.min(sampleRows.length, 60);
-
-  for (let i = 0; i < maxRowsToCheck; i++) {
-    const v = sampleRows[i]?.[colIdx];
-    if (v !== null && v !== undefined) {
-      const s = String(v).trim();
-      if (s) {
-        if (s.length > maxDataLen) maxDataLen = s.length;
-        const words = s.split(/[_\s]+/).filter(Boolean);
-        for (const w of words) {
-          if (w.length > maxDataWordLen) maxDataWordLen = w.length;
-        }
-      }
-    }
-  }
-
-  // Cover data values up to 50 chars, or at least data words up to 30 chars
-  const effectiveDataLen = Math.max(Math.min(maxDataLen, 45), Math.min(maxDataWordLen, 30));
-  // 24px padding for data cell (px-3) + 4px buffer
-  const dataCalculated = Math.ceil(effectiveDataLen * 8.5) + 28;
-
-  // The final width is at least minWidth (which covers at least 1 word of column name + chrome),
-  // and expands to fit data content up to 480px.
-  return Math.max(minWidth, Math.min(dataCalculated, 480));
-}
+export { formatSqlLiteral };
+export type { SortConfig, WhereSuggestionItem };
 
 export const DataGrid: React.FC<DataGridProps> = ({
   tabId,
@@ -687,7 +98,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onPageChange,
   pageSize = 100,
   onPageSizeChange,
-  onLoadMore,
   onRefresh,
   whereClause = '',
   errorMessage,
@@ -723,9 +133,53 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const hasInitializedPKsRef = useRef<boolean>(false);
   const primaryKeysKey = primaryKeys.join(',');
 
+  // O(1) lookup structures for columns, primary keys, and frozen columns
+  const primaryKeySet = useMemo(() => new Set(primaryKeys), [primaryKeys]);
+  const frozenColumnSet = useMemo(() => new Set(frozenColumns), [frozenColumns]);
+  const colIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    columns.forEach((col, idx) => map.set(col.name, idx));
+    return map;
+  }, [columns]);
+
+  const stagedChanges = useGridEditStore((state) => state.stagedByTab[tabId] ?? EMPTY_STAGED);
+  const stageCellUpdate = useGridEditStore((state) => state.stageCellUpdate);
+  const stageRowInsert = useGridEditStore((state) => state.stageRowInsert);
+  const stageRowDelete = useGridEditStore((state) => state.stageRowDelete);
+  const revertTabChanges = useGridEditStore((state) => state.revertTabChanges);
+  const stagedCount = Object.keys(stagedChanges).length;
+
+  const thRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const [resizingCol, setResizingCol] = useState<string | null>(null);
+  const resizingRef = useRef<{ colName: string; startX: number; startWidth: number } | null>(null);
+  const isResizingRef = useRef(false);
+  const currentWidthsRef = useRef<Record<string, number>>({});
+  const userHasResizedRef = useRef<boolean>(false);
+  const hasSampledRowsRef = useRef<boolean>(false);
+  const [isScrolledX, setIsScrolledX] = useState<boolean>(false);
+  const [copiedRawSql, setCopiedRawSql] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [showAllSortsModal, setShowAllSortsModal] = useState(false);
+  const [showAllFrozenModal, setShowAllFrozenModal] = useState(false);
+  const [isCopyAsOpen, setIsCopyAsOpen] = useState(false);
+  const [isCopyAsSubmenuOpen, setIsCopyAsSubmenuOpen] = useState(false);
+
+  const [ttlModal, setTtlModal] = useState<TtlModalState | null>(null);
+  const [ttlMode, setTtlMode] = useState<'persist' | 'custom'>('custom');
+  const [ttlAmount, setTtlAmount] = useState<string>('3600');
+  const [ttlUnit, setTtlUnit] = useState<'s' | 'm' | 'h' | 'd'>('s');
+
+  const [redisAddKeyOpen, setRedisAddKeyOpen] = useState(false);
+  const [redisRenameModal, setRedisRenameModal] = useState<{
+    isOpen: boolean;
+    oldKeyName: string;
+  }>({ isOpen: false, oldKeyName: '' });
+
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
-    const pks = columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name);
+    const pks = columns.filter((c) => c.isPrimaryKey || primaryKeySet.has(c.name)).map((c) => c.name);
     const uniquePKs = Array.from(new Set(pks));
 
     if (prevTabTableKeyRef.current !== currentKey) {
@@ -735,11 +189,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
       hasSampledRowsRef.current = false;
       userHasResizedRef.current = false;
     } else if (!hasInitializedPKsRef.current && uniquePKs.length > 0) {
-      // If table just loaded and primary keys arrived asynchronously
       hasInitializedPKsRef.current = true;
       setFrozenColumns((prev) => Array.from(new Set([...prev, ...uniquePKs])));
     }
-  }, [tabId, tableName, columns, primaryKeysKey]);
+  }, [tabId, tableName, columns, primaryKeysKey, primaryKeySet]);
 
   const isRedis = useMemo(() => {
     if ((driver || '').toLowerCase() === 'redis') return true;
@@ -750,41 +203,46 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return false;
   }, [driver, connectionId]);
 
-  const isColumnEditable = (colName: string, isInsert: boolean = false): boolean => {
-    if (isReadOnly) return false;
-    if (isRedis) {
-      const colNameLower = colName.toLowerCase();
-      if (isInsert) {
-        return colNameLower === 'key' || colNameLower === 'value' || colNameLower === 'ttl';
+  const isColumnEditable = useCallback(
+    (colName: string, isInsert: boolean = false): boolean => {
+      if (isReadOnly) return false;
+      if (isRedis) {
+        const colNameLower = colName.toLowerCase();
+        if (isInsert) {
+          return colNameLower === 'key' || colNameLower === 'value' || colNameLower === 'ttl';
+        }
+        return colNameLower === 'value' || colNameLower === 'ttl';
       }
-      return colNameLower === 'value' || colNameLower === 'ttl';
-    }
-    return true;
-  };
+      return true;
+    },
+    [isReadOnly, isRedis]
+  );
 
-  const isCellEditable = (rowIndex: number, colIndex: number): boolean => {
-    if (isReadOnly) return false;
-    const col = columns[colIndex];
-    if (!col) return false;
-    const isInsert = rowIndex < 0;
-    return isColumnEditable(col.name, isInsert);
-  };
+  const isCellEditable = useCallback(
+    (rowIndex: number, colIndex: number): boolean => {
+      if (isReadOnly) return false;
+      const col = columns[colIndex];
+      if (!col) return false;
+      return isColumnEditable(col.name, rowIndex < 0);
+    },
+    [isReadOnly, columns, isColumnEditable]
+  );
 
-  const [ttlModal, setTtlModal] = useState<{
-    rowIndex: number;
-    keyName: string;
-    currentTtl: string;
-    isInsert: boolean;
-  } | null>(null);
-  const [ttlMode, setTtlMode] = useState<'persist' | 'custom'>('custom');
-  const [ttlAmount, setTtlAmount] = useState<string>('3600');
-  const [ttlUnit, setTtlUnit] = useState<'s' | 'm' | 'h' | 'd'>('s');
-
-  const [redisAddKeyOpen, setRedisAddKeyOpen] = useState(false);
-  const [redisRenameModal, setRedisRenameModal] = useState<{
-    isOpen: boolean;
-    oldKeyName: string;
-  }>({ isOpen: false, oldKeyName: '' });
+  const buildRowMetaMaps = useCallback(
+    (targetRow: any[] | undefined) => {
+      const originalRowValues: Record<string, unknown> = {};
+      columns.forEach((c, idx) => {
+        originalRowValues[c.name] = targetRow?.[idx];
+      });
+      const pkMap: Record<string, unknown> = {};
+      primaryKeys.forEach((pk) => {
+        const idx = colIndexMap.get(pk);
+        if (idx !== undefined) pkMap[pk] = targetRow?.[idx];
+      });
+      return { originalRowValues, pkMap };
+    },
+    [columns, primaryKeys, colIndexMap]
+  );
 
   const handleOpenTtlModal = (rowIndex: number, currentDisplayVal: any, isInsert: boolean) => {
     let keyName = '';
@@ -799,12 +257,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
 
     const cur = String(currentDisplayVal ?? 'no ttl').trim();
-    setTtlModal({
-      rowIndex,
-      keyName,
-      currentTtl: cur,
-      isInsert,
-    });
+    setTtlModal({ rowIndex, keyName, currentTtl: cur, isInsert });
 
     if (cur === 'no ttl' || cur === '-1' || cur === 'persist' || cur === '') {
       setTtlMode('persist');
@@ -814,20 +267,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
       setTtlMode('custom');
       const lower = cur.toLowerCase();
       if (lower.endsWith('days') || lower.endsWith('day') || lower.endsWith('d')) {
-        const num = lower.replace(/(days|day|d)/g, '').trim();
-        setTtlAmount(num || '1');
+        setTtlAmount(lower.replace(/(days|day|d)/g, '').trim() || '1');
         setTtlUnit('d');
       } else if (lower.endsWith('hours') || lower.endsWith('hour') || lower.endsWith('h')) {
-        const num = lower.replace(/(hours|hour|h)/g, '').trim();
-        setTtlAmount(num || '1');
+        setTtlAmount(lower.replace(/(hours|hour|h)/g, '').trim() || '1');
         setTtlUnit('h');
       } else if (lower.endsWith('minutes') || lower.endsWith('minute') || lower.endsWith('m')) {
-        const num = lower.replace(/(minutes|minute|m)/g, '').trim();
-        setTtlAmount(num || '1');
+        setTtlAmount(lower.replace(/(minutes|minute|m)/g, '').trim() || '1');
         setTtlUnit('m');
       } else if (lower.endsWith('seconds') || lower.endsWith('second') || lower.endsWith('s')) {
-        const num = lower.replace(/(seconds|second|s)/g, '').trim();
-        setTtlAmount(num || '60');
+        setTtlAmount(lower.replace(/(seconds|second|s)/g, '').trim() || '60');
         setTtlUnit('s');
       } else if (!isNaN(Number(cur))) {
         setTtlAmount(cur);
@@ -847,17 +296,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (ttlModal.isInsert) {
       stageCellUpdate(tabId, targetIdx, {}, {}, 'ttl', finalVal);
     } else {
-      const originalRowValues: Record<string, unknown> = {};
       const rowInArray = targetIdx >= (startOffset || 0) ? targetIdx - (startOffset || 0) : targetIdx;
       const targetRow = rows[rowInArray] || rows[targetIdx];
-      columns.forEach((c, idx) => {
-        originalRowValues[c.name] = targetRow?.[idx];
-      });
-      const pkMap: Record<string, unknown> = {};
-      primaryKeys.forEach((pk) => {
-        const idx = columns.findIndex((c) => c.name === pk);
-        if (idx !== -1) pkMap[pk] = targetRow?.[idx];
-      });
+      const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
       stageCellUpdate(tabId, targetIdx, pkMap, originalRowValues, 'ttl', finalVal);
     }
 
@@ -869,22 +310,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
       }, 50);
     }
   };
-  const thRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
-  const [colWidths, setColWidths] = useState<Record<string, number>>({});
-  const [resizingCol, setResizingCol] = useState<string | null>(null);
-  const resizingRef = useRef<{ colName: string; startX: number; startWidth: number } | null>(null);
-  const isResizingRef = useRef(false);
-  const currentWidthsRef = useRef<Record<string, number>>({});
-  const userHasResizedRef = useRef<boolean>(false);
-  const hasSampledRowsRef = useRef<boolean>(false);
-  const [isScrolledX, setIsScrolledX] = useState<boolean>(false);
-  const [copiedRawSql, setCopiedRawSql] = useState(false);
-  const [isExportOpen, setIsExportOpen] = useState(false);
-  const [isImportOpen, setIsImportOpen] = useState(false);
-  const [showAllSortsModal, setShowAllSortsModal] = useState(false);
-  const [showAllFrozenModal, setShowAllFrozenModal] = useState(false);
-  const [isCopyAsOpen, setIsCopyAsOpen] = useState(false);
-  const [isCopyAsSubmenuOpen, setIsCopyAsSubmenuOpen] = useState(false);
 
   const handleCopyRawSql = async () => {
     if (!rawSql) return;
@@ -906,72 +331,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
     } catch (_) {}
   };
 
-  const whereSuggestions = useMemo<WhereSuggestionItem[]>(() => {
-    if (!isTableTab || !columns || columns.length === 0) return [];
-
-    // 1. NEVER show autocomplete inside string literals (single or double quotes)
-    if (isInsideQuotes(whereInput, whereCursorPos)) {
-      return [];
-    }
-
-    const token = getWhereCurrentToken(whereInput, whereCursorPos);
-    const search = token.word.toLowerCase();
-
-    // 2. NEVER show autocomplete if typing numbers, wildcards %, or operators
-    if (/^[0-9%'".,+\-*/<>=!]/.test(search)) {
-      return [];
-    }
-
-    const columnItems: WhereSuggestionItem[] = columns.map((col) => {
-      const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
-      return {
-        id: `col-${col.name}`,
-        type: 'column',
-        name: col.name,
-        dataType: col.dataType,
-        isPK,
-        iconType: getWhereColumnIconType(col.dataType, isPK),
-      };
-    });
-
-    // 3. If no search prefix typed, only show if user explicitly pressed Ctrl+Space
-    if (!search) {
-      if (!forceShowSuggestions) {
-        return [];
-      }
-      return columnItems.sort((a, b) => {
-        if (a.isPK && !b.isPK) return -1;
-        if (!a.isPK && b.isPK) return 1;
-        return a.name.localeCompare(b.name);
-      });
-    }
-
-    // 4. Filter columns by prefix or contains
-    const matchedCols = columnItems
-      .filter((col) => col.name.toLowerCase().includes(search))
-      .sort((a, b) => {
-        const aLower = a.name.toLowerCase();
-        const bLower = b.name.toLowerCase();
-        const aStarts = aLower.startsWith(search);
-        const bStarts = bLower.startsWith(search);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-        if (a.isPK && !b.isPK) return -1;
-        if (!a.isPK && b.isPK) return 1;
-        return a.name.localeCompare(b.name);
-      });
-
-    // 5. Filter keywords (starts-with only)
-    const matchedKeywords: WhereSuggestionItem[] = SQL_WHERE_KEYWORDS
-      .filter((kw) => kw.toLowerCase().startsWith(search))
-      .map((kw) => ({
-        id: `kw-${kw}`,
-        type: 'keyword',
-        name: kw,
-      }));
-
-    return [...matchedCols, ...matchedKeywords];
-  }, [isTableTab, columns, primaryKeys, whereInput, whereCursorPos, forceShowSuggestions]);
+  const whereSuggestions = useMemo<WhereSuggestionItem[]>(
+    () =>
+      computeWhereSuggestions({
+        isTableTab,
+        columns,
+        primaryKeys,
+        whereInput,
+        whereCursorPos,
+        forceShowSuggestions,
+      }),
+    [isTableTab, columns, primaryKeys, whereInput, whereCursorPos, forceShowSuggestions]
+  );
 
   const applyWhereSuggestion = (item: WhereSuggestionItem) => {
     const inputEl = whereInputRef.current;
@@ -1003,8 +374,23 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   };
 
+  const applyWhereValue = () => {
+    setShowWhereSuggestions(false);
+    setForceShowSuggestions(false);
+    let finalVal = whereInput.trim();
+    if (
+      isRedis &&
+      finalVal &&
+      !finalVal.toLowerCase().includes('key') &&
+      !finalVal.toLowerCase().includes('like') &&
+      !finalVal.toLowerCase().includes('=')
+    ) {
+      finalVal = `key LIKE '${finalVal}'`;
+    }
+    onApplyWhere?.(finalVal);
+  };
+
   const handleWhereKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Explicit trigger: Ctrl+Space opens all columns
     if (e.ctrlKey && e.code === 'Space') {
       e.preventDefault();
       setForceShowSuggestions(true);
@@ -1041,13 +427,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     if (e.key === 'Enter') {
       e.preventDefault();
-      setShowWhereSuggestions(false);
-      setForceShowSuggestions(false);
-      let finalVal = whereInput.trim();
-      if (isRedis && finalVal && !finalVal.toLowerCase().includes('key') && !finalVal.toLowerCase().includes('like') && !finalVal.toLowerCase().includes('=')) {
-        finalVal = `key LIKE '${finalVal}'`;
-      }
-      onApplyWhere?.(finalVal);
+      applyWhereValue();
     }
   };
 
@@ -1083,8 +463,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const handleToggleSort = (colName: string, e?: React.MouseEvent) => {
     const existingIdx = localSortConfigs.findIndex((s) => s.column === colName);
     let nextConfigs: SortConfig[] = [];
-
-    // Optional Alt or Ctrl key to sort exclusively by this single column
     const isSingleExclusive = e && (e.altKey || (e.ctrlKey && !e.shiftKey));
 
     if (isSingleExclusive) {
@@ -1097,17 +475,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
       }
     } else {
       if (existingIdx === -1) {
-        // Multi-sort: Append to the end. The first clicked remains first (priority 1), next is priority 2, etc.
         nextConfigs = [...localSortConfigs, { column: colName, direction: 'asc' }];
       } else {
         const existing = localSortConfigs[existingIdx];
         if (existing.direction === 'asc') {
-          // Switch to desc in-place (keeps its priority index)
           nextConfigs = localSortConfigs.map((s, idx) =>
             idx === existingIdx ? { ...s, direction: 'desc' as const } : s
           );
         } else {
-          // 3rd click: remove from sort list; remaining sorted columns shift up in priority
           nextConfigs = localSortConfigs.filter((_, idx) => idx !== existingIdx);
         }
       }
@@ -1130,12 +505,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   };
 
+  const storageKey = useMemo(
+    () => getColWidthsStorageKey(connectionId, database, tableName, tabId, columns),
+    [connectionId, database, tableName, tabId, columns]
+  );
 
-  const storageKey = useMemo(() => {
-    return getColWidthsStorageKey(connectionId, database, tableName, tabId, columns);
-  }, [connectionId, database, tableName, tabId, columns]);
-
-  // Initialize and load column widths from localStorage or calculate initial widths
   useLayoutEffect(() => {
     if (!columns || columns.length === 0) return;
 
@@ -1143,7 +517,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const newWidths: Record<string, number> = {};
 
     columns.forEach((col, idx) => {
-      const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+      const isPK = Boolean(col.isPrimaryKey || primaryKeySet.has(col.name));
       const minRequired = getMinimumColumnWidth(col, isPK);
 
       if (saved[col.name] && typeof saved[col.name] === 'number') {
@@ -1159,16 +533,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const prevKeys = Object.keys(prevWidths);
     const nextKeys = Object.keys(newWidths);
     const changed =
-      prevKeys.length !== nextKeys.length ||
-      nextKeys.some((k) => prevWidths[k] !== newWidths[k]);
+      prevKeys.length !== nextKeys.length || nextKeys.some((k) => prevWidths[k] !== newWidths[k]);
 
     if (changed) {
       currentWidthsRef.current = newWidths;
       setColWidths(newWidths);
     }
-  }, [columns, storageKey, primaryKeysKey]);
+  }, [columns, storageKey, primaryKeysKey, primaryKeySet]);
 
-  // When rows arrive asynchronously and user hasn't resized manually, recalculate initial widths
   useLayoutEffect(() => {
     if (rows.length > 0 && !hasSampledRowsRef.current && !userHasResizedRef.current) {
       hasSampledRowsRef.current = true;
@@ -1177,7 +549,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         const next = { ...prev };
         let changed = false;
         columns.forEach((col, idx) => {
-          const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+          const isPK = Boolean(col.isPrimaryKey || primaryKeySet.has(col.name));
           if (!saved[col.name]) {
             const optimal = getInitialColumnWidth(col, rows, idx, isPK);
             if (optimal > (prev[col.name] || 0)) {
@@ -1193,7 +565,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         return prev;
       });
     }
-  }, [rows.length, columns, storageKey, primaryKeysKey]);
+  }, [rows.length, columns, storageKey, primaryKeysKey, primaryKeySet]);
 
   const handleResizeStart = (e: React.MouseEvent, colName: string) => {
     e.stopPropagation();
@@ -1235,8 +607,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
       resizingRef.current = null;
       setResizingCol(null);
       userHasResizedRef.current = true;
-
-      // Persist to localStorage
       saveColWidths(storageKey, currentWidthsRef.current);
 
       setTimeout(() => {
@@ -1253,7 +623,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     e.preventDefault();
     const col = columns[cIdx];
     if (!col) return;
-    const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
+    const isPK = Boolean(col.isPrimaryKey || primaryKeySet.has(col.name));
     const autoWidth = getInitialColumnWidth(col, rows, cIdx, isPK);
     setColWidths((prev) => {
       const next = { ...prev, [colName]: autoWidth };
@@ -1263,40 +633,31 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   };
 
-  const ROW_NUM_COL_WIDTH = 52;
-
   const frozenOffsets = useMemo(() => {
     const offsets: Record<string, number> = {};
     let currentLeft = ROW_NUM_COL_WIDTH;
     for (const col of columns) {
-      if (frozenColumns.includes(col.name)) {
+      if (frozenColumnSet.has(col.name)) {
         offsets[col.name] = currentLeft;
         currentLeft += colWidths[col.name] || 120;
       }
     }
     return offsets;
-  }, [columns, frozenColumns, colWidths]);
+  }, [columns, frozenColumnSet, colWidths]);
 
   const lastFrozenColName = useMemo(() => {
     for (let i = columns.length - 1; i >= 0; i--) {
-      if (frozenColumns.includes(columns[i].name)) {
+      if (frozenColumnSet.has(columns[i].name)) {
         return columns[i].name;
       }
     }
     return null;
-  }, [columns, frozenColumns]);
+  }, [columns, frozenColumnSet]);
 
-  const [hoveredCol, setHoveredCol] = useState<{
-    col: ColumnMeta;
-    isPK: boolean;
-    details: { baseType: string; size: string | null; extra: string | null };
-    x: number;
-    y: number;
-  } | null>(null);
+  const [hoveredCol, setHoveredCol] = useState<ColumnHoverInfo | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const hoverTimeoutRef = useRef<any>(null);
-
-  const handleColMouseEnter = (e: React.MouseEvent, col: ColumnMeta, isPK: boolean) => {
+  const handleColMouseEnter = (e: React.MouseEvent, col: typeof columns[0], isPK: boolean) => {
     if (isResizingRef.current || resizingRef.current) return;
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -1306,13 +667,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const details = parseColumnTypeDetails(col.dataType);
 
     hoverTimeoutRef.current = setTimeout(() => {
-      setHoveredCol({
-        col,
-        isPK,
-        details,
-        x,
-        y,
-      });
+      setHoveredCol({ col, isPK, details, x, y });
     }, 120);
   };
 
@@ -1344,7 +699,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const onScrollChangeRef = useRef(onScrollChange);
   onScrollChangeRef.current = onScrollChange;
 
-  const debouncedScrollTimerRef = useRef<any>(null);
+  const debouncedScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScrollStateRef = useRef<{ scrollTop: number; scrollLeft: number; rowIndex: number }>({
     scrollTop: initialScrollTop || 0,
     scrollLeft: initialScrollLeft || 0,
@@ -1358,7 +713,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
     hasRestoredScrollRef.current = false;
   }, [tabId]);
 
-  // Preserve scroll position when previous rows are prepended to grid
   useLayoutEffect(() => {
     if (scrollAdjustRef.current && containerRef.current) {
       const { prevScrollHeight, prevScrollTop } = scrollAdjustRef.current;
@@ -1371,7 +725,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   }, [rows, startOffset]);
 
-  // Flush debounced scroll change on unmount
   useEffect(() => {
     return () => {
       if (debouncedScrollTimerRef.current) {
@@ -1382,64 +735,62 @@ export const DataGrid: React.FC<DataGridProps> = ({
     };
   }, []);
 
-  const scrollToCell = (vIdx: number, cIdx: number) => {
-    requestAnimationFrame(() => {
-      const container = containerRef.current;
-      if (!container) return;
+  const scrollToCell = useCallback(
+    (vIdx: number, cIdx: number) => {
+      requestAnimationFrame(() => {
+        const container = containerRef.current;
+        if (!container) return;
 
-      const targetCell = container.querySelector<HTMLElement>(
-        `td[data-vidx="${vIdx}"][data-cidx="${cIdx}"]`
-      );
-      if (!targetCell) return;
+        const targetCell = container.querySelector<HTMLElement>(
+          `td[data-vidx="${vIdx}"][data-cidx="${cIdx}"]`
+        );
+        if (!targetCell) return;
 
-      const containerRect = container.getBoundingClientRect();
-      const cellRect = targetCell.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const cellRect = targetCell.getBoundingClientRect();
+        const thead = container.querySelector('thead');
+        const theadHeight = thead ? thead.offsetHeight : 34;
 
-      const thead = container.querySelector('thead');
-      const theadHeight = thead ? thead.offsetHeight : 34;
+        const targetCol = columns[cIdx];
+        const isTargetFrozen = targetCol && frozenColumnSet.has(targetCol.name);
 
-      const targetCol = columns[cIdx];
-      const isTargetFrozen = targetCol && frozenColumns.includes(targetCol.name);
-
-      let frozenLeftOffset = ROW_NUM_COL_WIDTH;
-      if (!isTargetFrozen && frozenColumns.length > 0) {
-        for (const col of columns) {
-          if (frozenColumns.includes(col.name)) {
-            frozenLeftOffset += (currentWidthsRef.current[col.name] || colWidths[col.name] || 120);
+        let frozenLeftOffset = ROW_NUM_COL_WIDTH;
+        if (!isTargetFrozen && frozenColumns.length > 0) {
+          for (const col of columns) {
+            if (frozenColumnSet.has(col.name)) {
+              frozenLeftOffset += currentWidthsRef.current[col.name] || colWidths[col.name] || 120;
+            }
           }
         }
-      }
 
-      // Vertical scrolling
-      if (cellRect.top < containerRect.top + theadHeight) {
-        const diff = containerRect.top + theadHeight - cellRect.top;
-        container.scrollTop = Math.max(0, container.scrollTop - diff - 4);
-      } else if (cellRect.bottom > containerRect.bottom) {
-        const diff = cellRect.bottom - containerRect.bottom;
-        container.scrollTop = container.scrollTop + diff + 4;
-      }
-
-      // Horizontal scrolling
-      if (!isTargetFrozen) {
-        if (cellRect.left < containerRect.left + frozenLeftOffset) {
-          const diff = containerRect.left + frozenLeftOffset - cellRect.left;
-          container.scrollLeft = Math.max(0, container.scrollLeft - diff - 8);
-        } else if (cellRect.right > containerRect.right) {
-          const diff = cellRect.right - containerRect.right;
-          container.scrollLeft = container.scrollLeft + diff + 8;
+        if (cellRect.top < containerRect.top + theadHeight) {
+          const diff = containerRect.top + theadHeight - cellRect.top;
+          container.scrollTop = Math.max(0, container.scrollTop - diff - 4);
+        } else if (cellRect.bottom > containerRect.bottom) {
+          const diff = cellRect.bottom - containerRect.bottom;
+          container.scrollTop = container.scrollTop + diff + 4;
         }
-      }
-    });
-  };
 
-  // Sync external page prop
+        if (!isTargetFrozen) {
+          if (cellRect.left < containerRect.left + frozenLeftOffset) {
+            const diff = containerRect.left + frozenLeftOffset - cellRect.left;
+            container.scrollLeft = Math.max(0, container.scrollLeft - diff - 8);
+          } else if (cellRect.right > containerRect.right) {
+            const diff = cellRect.right - containerRect.right;
+            container.scrollLeft = container.scrollLeft + diff + 8;
+          }
+        }
+      });
+    },
+    [columns, frozenColumns.length, frozenColumnSet, colWidths]
+  );
+
   useEffect(() => {
     if (page && page !== currentPage) {
       setCurrentPage(page);
     }
   }, [page]);
 
-  // Close page size dropdown on outside click or Escape
   useEffect(() => {
     if (!isPageSizeOpen) return;
     const handleOutsideClick = (e: MouseEvent) => {
@@ -1458,20 +809,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
     };
   }, [isPageSizeOpen]);
 
-  // Sync external pageSize prop
   useEffect(() => {
     if (pageSize && pageSize !== localPageSize) {
       setLocalPageSize(pageSize);
     }
   }, [pageSize]);
 
-  // Fix inverted horizontal scrolling (touchpad swipe, tilt wheel, and Shift + Wheel on WebKitGTK / Linux)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleWheel = (e: WheelEvent) => {
-      // 1. Shift + Wheel: scroll horizontally
       if (e.shiftKey) {
         e.preventDefault();
         const multiplier = e.deltaMode === 1 ? 24 : 1;
@@ -1480,8 +828,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
         return;
       }
 
-      // 2. Direct horizontal scroll (touchpad swipe / tilt wheel):
-      // WebKitGTK on Linux sends inverted deltaX, so we flip the sign
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 0.5) {
         e.preventDefault();
         const multiplier = e.deltaMode === 1 ? 24 : 1;
@@ -1495,25 +841,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     };
   }, []);
 
-  const stagedChanges = useGridEditStore((state) => state.stagedByTab[tabId] ?? EMPTY_STAGED);
-  const stageCellUpdate = useGridEditStore((state) => state.stageCellUpdate);
-  const stageRowInsert = useGridEditStore((state) => state.stageRowInsert);
-  const stageRowDelete = useGridEditStore((state) => state.stageRowDelete);
-  const revertTabChanges = useGridEditStore((state) => state.revertTabChanges);
-  const stagedCount = Object.keys(stagedChanges).length;
-
-  type CellRect = { startR: number; endR: number; startC: number; endC: number };
   const [selectionAnchor, setSelectionAnchor] = useState<{ r: number; c: number } | null>(null);
   const [selectionFocus, setSelectionFocus] = useState<{ r: number; c: number } | null>(null);
   const [additionalSelections, setAdditionalSelections] = useState<CellRect[]>([]);
   const isDraggingRef = useRef(false);
-  const [contextMenu, setContextMenu] = useState<{
-    isOpen: boolean;
-    x: number;
-    y: number;
-    vIdx: number | null;
-    cIdx: number | null;
-  }>({
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     isOpen: false,
     x: 0,
     y: 0,
@@ -1526,8 +858,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const activeRightSidebarTab = useWorkbenchStore((state) => state.activeRightSidebarTab);
   const setRightPanelOpen = useWorkbenchStore((state) => state.setRightPanelOpen);
   const setActiveRightSidebarTab = useWorkbenchStore((state) => state.setActiveRightSidebarTab);
-
-  const isValuePanelOpen = isRightPanelOpen && activeRightSidebarTab === 'views';
 
   const handleToggleValuePanel = () => {
     if (!isRightPanelOpen) {
@@ -1555,219 +885,19 @@ export const DataGrid: React.FC<DataGridProps> = ({
     isFirstEditRenderRef.current = true;
     setEditingCell({ rowIndex, colIndex });
     if (initialVal !== undefined) {
-      if (inputType === 'text') {
-        setEditVal(initialVal);
-      } else {
-        setEditVal(formatToDateInputValue(currentVal, inputType));
-      }
+      setEditVal(inputType === 'text' ? initialVal : formatToDateInputValue(currentVal, inputType));
     } else {
       setEditVal(formatToDateInputValue(currentVal, inputType));
     }
   };
 
-  const handleAddRow = () => {
-    if (isReadOnly) return;
-    const newRowId = -Date.now();
-    stageRowInsert(tabId, newRowId);
-    const newRowVIdx = displayedRows.length + insertedChanges.length;
-    setAdditionalSelections([]);
-    setSelectionAnchor({ r: newRowVIdx, c: 0 });
-    setSelectionFocus({ r: newRowVIdx, c: columns.length > 0 ? columns.length - 1 : 0 });
-
-    // Scroll to bottom so new row is visible
-    setTimeout(() => {
-      if (containerRef.current) {
-        containerRef.current.scrollTop = containerRef.current.scrollHeight;
-      }
-    }, 20);
-
-    // Auto-focus first editable column of the newly inserted row
-    const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement && isColumnEditable(c.name, true));
-    const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
-    if (columns.length > 0 && targetColIdx !== -1) {
-      setTimeout(() => {
-        handleStartEdit(newRowId, targetColIdx, '');
-      }, 50);
-    }
-  };
-
-  const generateUpdateSql = (rowIndex: number, colName: string, newVal: any): string => {
-    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb' || (driver || '').toLowerCase() === 'clickhouse';
-    const isMSSQL = (driver || '').toLowerCase() === 'mssql' || (driver || '').toLowerCase() === 'sqlserver';
-    const isNoSQL = (driver || '').toLowerCase() === 'redis' || (driver || '').toLowerCase() === 'mongodb';
-    const quoteIdent = (name: string) =>
-      isNoSQL ? name : isMySQL ? `\`${name.replace(/`/g, '``')}\`` : isMSSQL ? `[${name.replace(/]/g, ']]')}]` : `"${name.replace(/"/g, '""')}"`;
-    const tbl = tableName || 'table_name';
-    const quotedTbl = tbl.includes('.')
-      ? tbl.split('.').map(quoteIdent).join('.')
-      : quoteIdent(tbl);
-
-    const col = columns.find((c) => c.name === colName);
-    const colDataType = col?.dataType;
-    const formattedVal = formatSqlLiteral(newVal, colDataType);
-
-    const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
-    const targetRow = rows[rowInArray] || rows[rowIndex];
-
-    // Build WHERE clause using primary keys if available
-    let whereClause = '';
-    const detectedPKs = primaryKeys.length > 0
-      ? primaryKeys
-      : columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
-
-    if (detectedPKs.length > 0) {
-      const pkConds: string[] = [];
-      detectedPKs.forEach((pk) => {
-        const cIdx = columns.findIndex((c) => c.name === pk);
-        const colMeta = columns[cIdx];
-        const pkVal = cIdx !== -1 ? targetRow?.[cIdx] : undefined;
-        if (pkVal !== undefined && pkVal !== null) {
-          pkConds.push(`${quoteIdent(pk)} = ${formatSqlLiteral(pkVal, colMeta?.dataType)}`);
-        }
-      });
-      if (pkConds.length > 0) {
-        whereClause = pkConds.join(' AND ');
-      }
-    }
-
-    if (!whereClause) {
-      // Fallback: match using original row values
-      const fallbackConds: string[] = [];
-      columns.forEach((c, idx) => {
-        const val = targetRow?.[idx];
-        if (val === null || val === undefined) {
-          fallbackConds.push(`${quoteIdent(c.name)} IS NULL`);
-        } else {
-          fallbackConds.push(`${quoteIdent(c.name)} = ${formatSqlLiteral(val, c.dataType)}`);
-        }
-      });
-      whereClause =
-        fallbackConds.length > 0
-          ? fallbackConds.join(' AND ')
-          : `${quoteIdent(colName)} = ${formatSqlLiteral(
-              targetRow?.[columns.findIndex((c) => c.name === colName)],
-              colDataType
-            )}`;
-    }
-
-    return `UPDATE ${quotedTbl}
-SET ${quoteIdent(colName)} = ${formattedVal}
-WHERE ${whereClause};`;
-  };
-
-  const openUpdateQueryInTab = (rowIndex: number, colName: string, newVal: any) => {
-    const sql = generateUpdateSql(rowIndex, colName, newVal);
-    const cleanTable = tableName || 'table';
-    const consoleTitle = `update_${cleanTable}.sql`;
-
-    const workbenchStore = useWorkbenchStore.getState();
-    const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
-    const connId = currentTab?.connectionId || '';
-    const database = currentTab?.database || '';
-    const schema = currentTab?.schema || '';
-
-    // Check if an update console tab for this table already exists
-    const existingTab = workbenchStore.tabs.find(
-      (t) => t.type === 'worksheet' && t.title === consoleTitle
-    );
-
-    if (existingTab) {
-      workbenchStore.updateTabContent(existingTab.id, sql);
-      workbenchStore.setActiveTabId(existingTab.id);
-    } else {
-      workbenchStore.createConsole(connId, database, schema, consoleTitle, sql);
-    }
-
-    useAlertStore.getState().showToast({
-      type: 'info',
-      message: `UPDATE query ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
-    });
-  };
-
-  const handleFinishEdit = () => {
-    if (!editingCell) return;
-    const { rowIndex, colIndex } = editingCell;
-    const col = columns[colIndex];
-    if (!col) {
-      setEditingCell(null);
-      return;
-    }
-
-    const inputType = getColumnInputType(col.dataType);
-    const finalVal = normalizeDateCommitValue(editVal, inputType);
-
-    if (rowIndex < 0) {
-      // Staged inserted row (negative rowIndex)
-      stageCellUpdate(tabId, rowIndex, {}, {}, col.name, finalVal);
-    } else {
-      // Existing database row
-      const originalRowValues: Record<string, unknown> = {};
-      const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
-      const targetRow = rows[rowInArray] || rows[rowIndex];
-      columns.forEach((c, idx) => {
-        originalRowValues[c.name] = targetRow?.[idx];
-      });
-
-      const pkMap: Record<string, unknown> = {};
-      primaryKeys.forEach((pk) => {
-        const idx = columns.findIndex((c) => c.name === pk);
-        if (idx !== -1) {
-          pkMap[pk] = targetRow?.[idx];
-        }
-      });
-
-      stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, finalVal);
-    }
-    setEditingCell(null);
-  };
-
-  const handleUpdateCellFromValueViewer = (newVal: any) => {
-    if (!activeFocusedCell) return;
-    const { rowIndex: vIdx, columnIndex: cIdx } = activeFocusedCell;
-    const vr = visualRows[vIdx];
-    const col = columns[cIdx];
-    if (!vr || !col || !isCellEditable(vr.rowId, cIdx)) return;
-
-    if (vr.isInsert) {
-      stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, newVal);
-    } else {
-      const gRowIndex = vr.globalRowIndex!;
-      const originalRowValues: Record<string, unknown> = {};
-      columns.forEach((c, idx) => {
-        originalRowValues[c.name] = rows[gRowIndex]?.[idx];
-      });
-
-      const pkMap: Record<string, unknown> = {};
-      primaryKeys.forEach((pk) => {
-        const idx = columns.findIndex((c) => c.name === pk);
-        if (idx !== -1) {
-          pkMap[pk] = rows[gRowIndex]?.[idx];
-        }
-      });
-
-      stageCellUpdate(tabId, gRowIndex, pkMap, originalRowValues, col.name, newVal);
-    }
-  };
-
-  const handleApplyChanges = () => {
-    if (editingCell) {
-      handleFinishEdit();
-    }
-    const currentStaged = useGridEditStore.getState().stagedByTab[tabId] || {};
-    const count = Object.keys(currentStaged).length;
-    if (count > 0 && onSubmitChanges) {
-      onSubmitChanges();
-    }
-  };
-
-  // Sort rows client-side (when onSortChange is not provided, e.g. query console results)
   const sortedRows = useMemo(() => {
     if (onSortChange || localSortConfigs.length === 0) return rows;
 
     return [...rows].sort((rowA, rowB) => {
       for (const sortItem of localSortConfigs) {
-        const colIdx = columns.findIndex((c) => c.name === sortItem.column);
-        if (colIdx === -1) continue;
+        const colIdx = colIndexMap.get(sortItem.column);
+        if (colIdx === undefined) continue;
 
         const valA = rowA[colIdx];
         const valB = rowB[colIdx];
@@ -1799,25 +929,15 @@ WHERE ${whereClause};`;
       }
       return 0;
     });
-  }, [rows, localSortConfigs, onSortChange, columns]);
+  }, [rows, localSortConfigs, onSortChange, columns, colIndexMap]);
 
   const isMultiPageInMemory = sortedRows.length > localPageSize;
-
-  // Rows to display for current page
   const displayedRows = isMultiPageInMemory
     ? sortedRows.slice((currentPage - 1) * localPageSize, currentPage * localPageSize)
     : sortedRows;
 
-  // Visual rows in display order (displayed database rows first, then new added rows at bottom)
-  const visualRows = useMemo(() => {
-    const list: Array<{
-      vIdx: number;
-      rowId: number;
-      isInsert: boolean;
-      insertChange?: (typeof insertedChanges)[0];
-      rowData?: any[];
-      globalRowIndex?: number;
-    }> = [];
+  const visualRows = useMemo<VisualRow[]>(() => {
+    const list: VisualRow[] = [];
 
     displayedRows.forEach((row, rIdx) => {
       const globalRowIndex = (currentPage - 1) * localPageSize + rIdx;
@@ -1842,7 +962,132 @@ WHERE ${whereClause};`;
     return list;
   }, [displayedRows, insertedChanges, currentPage, localPageSize]);
 
-  // Rectangular cell selection range (active range)
+  const handleAddRow = () => {
+    if (isReadOnly) return;
+    const newRowId = -Date.now();
+    stageRowInsert(tabId, newRowId);
+    const newRowVIdx = displayedRows.length + insertedChanges.length;
+    setAdditionalSelections([]);
+    setSelectionAnchor({ r: newRowVIdx, c: 0 });
+    setSelectionFocus({ r: newRowVIdx, c: columns.length > 0 ? columns.length - 1 : 0 });
+
+    setTimeout(() => {
+      if (containerRef.current) {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+    }, 20);
+
+    const firstColIdx = columns.findIndex((c) => !c.isAutoIncrement && isColumnEditable(c.name, true));
+    const targetColIdx = firstColIdx !== -1 ? firstColIdx : 0;
+    if (columns.length > 0 && targetColIdx !== -1) {
+      setTimeout(() => {
+        handleStartEdit(newRowId, targetColIdx, '');
+      }, 50);
+    }
+  };
+
+  const openUpdateQueryInTab = (rowIndex: number, colName: string, newVal: any) => {
+    const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+    const targetRow = rows[rowInArray] || rows[rowIndex];
+    const sql = buildUpdateSql({ driver, tableName, columns, primaryKeys, targetRow, colName, newVal });
+    const cleanTable = tableName || 'table';
+    const consoleTitle = `update_${cleanTable}.sql`;
+
+    const workbenchStore = useWorkbenchStore.getState();
+    const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
+    const connId = currentTab?.connectionId || '';
+    const db = currentTab?.database || '';
+    const sch = currentTab?.schema || '';
+
+    const existingTab = workbenchStore.tabs.find(
+      (t) => t.type === 'worksheet' && t.title === consoleTitle
+    );
+
+    if (existingTab) {
+      workbenchStore.updateTabContent(existingTab.id, sql);
+      workbenchStore.setActiveTabId(existingTab.id);
+    } else {
+      workbenchStore.createConsole(connId, db, sch, consoleTitle, sql);
+    }
+
+    useAlertStore.getState().showToast({
+      type: 'info',
+      message: `UPDATE query ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
+    });
+  };
+
+  const handleFinishEdit = () => {
+    if (!editingCell) return;
+    const { rowIndex, colIndex } = editingCell;
+    const col = columns[colIndex];
+    if (!col) {
+      setEditingCell(null);
+      return;
+    }
+
+    const inputType = getColumnInputType(col.dataType);
+    const finalVal = normalizeDateCommitValue(editVal, inputType);
+
+    if (rowIndex < 0) {
+      stageCellUpdate(tabId, rowIndex, {}, {}, col.name, finalVal);
+    } else {
+      const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+      const targetRow = rows[rowInArray] || rows[rowIndex];
+      const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
+      stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, finalVal);
+    }
+    setEditingCell(null);
+  };
+
+  const handleTabNextFromEditor = (vIdx: number, cIdx: number) => {
+    handleFinishEdit();
+    let nextCol = (cIdx + 1) % columns.length;
+    let nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
+    let attempts = 0;
+    while (attempts < columns.length * 2) {
+      const targetVr = visualRows[nextVIdx];
+      if (targetVr && isCellEditable(targetVr.rowId, nextCol)) {
+        break;
+      }
+      nextCol = (nextCol + 1) % columns.length;
+      if (nextCol === 0) {
+        nextVIdx = Math.min(visualRows.length - 1, nextVIdx + 1);
+      }
+      attempts++;
+    }
+    const nextVr = visualRows[nextVIdx];
+    setAdditionalSelections([]);
+    setSelectionAnchor({ r: nextVIdx, c: nextCol });
+    setSelectionFocus({ r: nextVIdx, c: nextCol });
+    scrollToCell(nextVIdx, nextCol);
+    setTimeout(() => {
+      if (nextVr) {
+        const nextColMeta = columns[nextCol];
+        let nextVal: any;
+        if (nextVr.isInsert) {
+          nextVal = nextVr.insertChange?.changes[nextColMeta.name] ?? (nextColMeta.defaultValue ?? '');
+        } else {
+          const stagedNext = stagedChanges[nextVr.globalRowIndex!];
+          nextVal =
+            stagedNext?.type === 'update' && stagedNext.changes[nextColMeta.name] !== undefined
+              ? stagedNext.changes[nextColMeta.name]
+              : nextVr.rowData?.[nextCol];
+        }
+        handleStartEdit(nextVr.rowId, nextCol, nextVal ?? '');
+      }
+    }, 10);
+  };
+
+  const handleApplyChanges = () => {
+    if (editingCell) {
+      handleFinishEdit();
+    }
+    const currentStaged = useGridEditStore.getState().stagedByTab[tabId] || {};
+    if (Object.keys(currentStaged).length > 0 && onSubmitChanges) {
+      onSubmitChanges();
+    }
+  };
+
   const selectionRange = useMemo<CellRect | null>(() => {
     if (!selectionAnchor || !selectionFocus) return null;
     return {
@@ -1853,24 +1098,30 @@ WHERE ${whereClause};`;
     };
   }, [selectionAnchor, selectionFocus]);
 
-  // All selected ranges (committed Ctrl/Cmd ranges + current active range)
   const allSelectionRanges = useMemo<CellRect[]>(() => {
     if (!selectionRange) return additionalSelections;
     return [...additionalSelections, selectionRange];
   }, [additionalSelections, selectionRange]);
 
-  const isCellSelected = (vIdx: number, cIdx: number) => {
-    return allSelectionRanges.some(
-      (rng) => vIdx >= rng.startR && vIdx <= rng.endR && cIdx >= rng.startC && cIdx <= rng.endC
-    );
-  };
+  const isCellSelected = useCallback(
+    (vIdx: number, cIdx: number) => {
+      if (allSelectionRanges.length === 0) return false;
+      return allSelectionRanges.some(
+        (rng) => vIdx >= rng.startR && vIdx <= rng.endR && cIdx >= rng.startC && cIdx <= rng.endC
+      );
+    },
+    [allSelectionRanges]
+  );
 
-  const isRowFullySelected = (vIdx: number) => {
-    if (columns.length === 0) return false;
-    return allSelectionRanges.some(
-      (rng) => vIdx >= rng.startR && vIdx <= rng.endR && rng.startC === 0 && rng.endC === columns.length - 1
-    );
-  };
+  const isRowFullySelected = useCallback(
+    (vIdx: number) => {
+      if (columns.length === 0 || allSelectionRanges.length === 0) return false;
+      return allSelectionRanges.some(
+        (rng) => vIdx >= rng.startR && vIdx <= rng.endR && rng.startC === 0 && rng.endC === columns.length - 1
+      );
+    },
+    [columns.length, allSelectionRanges]
+  );
 
   const removeRowFromRects = (rects: CellRect[], targetR: number): CellRect[] => {
     const result: CellRect[] = [];
@@ -1878,12 +1129,8 @@ WHERE ${whereClause};`;
       if (targetR < rect.startR || targetR > rect.endR) {
         result.push(rect);
       } else {
-        if (targetR > rect.startR) {
-          result.push({ ...rect, endR: targetR - 1 });
-        }
-        if (targetR < rect.endR) {
-          result.push({ ...rect, startR: targetR + 1 });
-        }
+        if (targetR > rect.startR) result.push({ ...rect, endR: targetR - 1 });
+        if (targetR < rect.endR) result.push({ ...rect, startR: targetR + 1 });
       }
     }
     return result;
@@ -1940,7 +1187,6 @@ WHERE ${whereClause};`;
     return `${rSet.size}r × ${cSet.size}c`;
   }, [allSelectionRanges]);
 
-  // Restore initial scroll or scroll to target row on mount or workspace restore
   useEffect(() => {
     if (!hasRestoredScrollRef.current && containerRef.current && displayedRows.length > 0) {
       const st = initialScrollTop;
@@ -1949,12 +1195,8 @@ WHERE ${whereClause};`;
       const applyScrollAndSelection = () => {
         if (!containerRef.current) return;
 
-        if (st !== undefined && st > 0) {
-          containerRef.current.scrollTop = st;
-        }
-        if (sl !== undefined && sl > 0) {
-          containerRef.current.scrollLeft = sl;
-        }
+        if (st !== undefined && st > 0) containerRef.current.scrollTop = st;
+        if (sl !== undefined && sl > 0) containerRef.current.scrollLeft = sl;
 
         if (targetRowIndex !== undefined && targetRowIndex >= 0) {
           const matchIdx = visualRows.findIndex((vr) => vr.globalRowIndex === targetRowIndex);
@@ -1971,7 +1213,6 @@ WHERE ${whereClause};`;
 
       applyScrollAndSelection();
       requestAnimationFrame(applyScrollAndSelection);
-
       hasRestoredScrollRef.current = true;
     }
   }, [tabId, displayedRows.length, targetRowIndex, initialScrollTop, initialScrollLeft]);
@@ -1993,7 +1234,6 @@ WHERE ${whereClause};`;
     return visualRows[selectionFocus.r]?.rowId ?? null;
   }, [selectionFocus, visualRows]);
 
-  // Active focused cell details for ValueViewerPanel
   const activeFocusedCell = useMemo(() => {
     let r = selectionFocus?.r;
     let c = selectionFocus?.c;
@@ -2040,6 +1280,22 @@ WHERE ${whereClause};`;
     };
   }, [selectionFocus, contextMenu.vIdx, contextMenu.cIdx, visualRows, columns, stagedChanges]);
 
+  const handleUpdateCellFromValueViewer = (newVal: any) => {
+    if (!activeFocusedCell) return;
+    const { rowIndex: vIdx, columnIndex: cIdx } = activeFocusedCell;
+    const vr = visualRows[vIdx];
+    const col = columns[cIdx];
+    if (!vr || !col || !isCellEditable(vr.rowId, cIdx)) return;
+
+    if (vr.isInsert) {
+      stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, newVal);
+    } else {
+      const gRowIndex = vr.globalRowIndex!;
+      const { originalRowValues, pkMap } = buildRowMetaMaps(rows[gRowIndex]);
+      stageCellUpdate(tabId, gRowIndex, pkMap, originalRowValues, col.name, newVal);
+    }
+  };
+
   const handleUpdateRef = useRef(handleUpdateCellFromValueViewer);
   handleUpdateRef.current = handleUpdateCellFromValueViewer;
 
@@ -2051,7 +1307,6 @@ WHERE ${whereClause};`;
     rawValue: any;
   } | null>(null);
 
-  // Sync active focused cell with the right sidebar Views tab
   useEffect(() => {
     if (!activeFocusedCell) return;
 
@@ -2107,7 +1362,6 @@ WHERE ${whereClause};`;
     };
   }, [tabId]);
 
-  // Global mouseup to release cell drag selection and close context menu
   useEffect(() => {
     const handleMouseUp = () => {
       isDraggingRef.current = false;
@@ -2144,18 +1398,9 @@ WHERE ${whereClause};`;
       onActiveRowChange?.(targetVr.globalRowIndex);
     }
 
-    const menuWidth = 220;
-    const menuHeight = 340;
-    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
-    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
-
-    setContextMenu({
-      isOpen: true,
-      x: Math.max(10, x),
-      y: Math.max(10, y),
-      vIdx,
-      cIdx,
-    });
+    const x = Math.min(e.clientX, window.innerWidth - 220 - 10);
+    const y = Math.min(e.clientY, window.innerHeight - 340 - 10);
+    setContextMenu({ isOpen: true, x: Math.max(10, x), y: Math.max(10, y), vIdx, cIdx });
   };
 
   const handleRowHeaderContextMenu = (e: React.MouseEvent, vIdx: number) => {
@@ -2172,266 +1417,24 @@ WHERE ${whereClause};`;
       onActiveRowChange?.(targetVr.globalRowIndex);
     }
 
-    const menuWidth = 220;
-    const menuHeight = 340;
-    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
-    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
-
-    setContextMenu({
-      isOpen: true,
-      x: Math.max(10, x),
-      y: Math.max(10, y),
-      vIdx,
-      cIdx: 0,
-    });
+    const x = Math.min(e.clientX, window.innerWidth - 220 - 10);
+    const y = Math.min(e.clientY, window.innerHeight - 340 - 10);
+    setContextMenu({ isOpen: true, x: Math.max(10, x), y: Math.max(10, y), vIdx, cIdx: 0 });
   };
 
   const getFormattedCopyText = (fmt?: CopyFormat) => {
     const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
-    if (allSelectionRanges.length === 0 || columns.length === 0) return '';
-    const selectedRowSet = new Set<number>();
-    const selectedColSet = new Set<number>();
-    allSelectionRanges.forEach((rng) => {
-      for (let r = rng.startR; r <= rng.endR; r++) selectedRowSet.add(r);
-      for (let c = rng.startC; c <= rng.endC; c++) selectedColSet.add(c);
+    return formatSelectedCells({
+      targetFormat,
+      allSelectionRanges,
+      columns,
+      visualRows,
+      stagedChanges,
+      primaryKeys,
+      tableName,
+      driver,
+      isCellSelected,
     });
-    const selectedRowIndices = Array.from(selectedRowSet).sort((a, b) => a - b);
-    const selectedColIndices = Array.from(selectedColSet).sort((a, b) => a - b);
-    if (selectedRowIndices.length === 0 || selectedColIndices.length === 0) return '';
-    const isMultiRange = allSelectionRanges.length > 1;
-
-    const tbl = tableName || 'table_name';
-    const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb' || (driver || '').toLowerCase() === 'clickhouse';
-    const isMSSQL = (driver || '').toLowerCase() === 'mssql' || (driver || '').toLowerCase() === 'sqlserver';
-    const isNoSQL = (driver || '').toLowerCase() === 'redis' || (driver || '').toLowerCase() === 'mongodb';
-    const quoteIdent = (name: string) =>
-      isNoSQL ? name : isMySQL ? `\`${name.replace(/`/g, '``')}\`` : isMSSQL ? `[${name.replace(/]/g, ']]')}]` : `"${name.replace(/"/g, '""')}"`;
-    const quotedTbl = tbl.includes('.')
-      ? tbl.split('.').map((p) => quoteIdent(p)).join('.')
-      : quoteIdent(tbl);
-
-    const getVal = (vr: (typeof visualRows)[0], cIdx: number, colName: string) => {
-      if (vr.isInsert) {
-        const staged = vr.insertChange;
-        return staged?.changes[colName] !== undefined
-          ? staged.changes[colName]
-          : (columns[cIdx]?.defaultValue ?? null);
-      }
-      const staged = stagedChanges[vr.globalRowIndex!];
-      if (staged?.type === 'update' && staged.changes[colName] !== undefined) {
-        return staged.changes[colName];
-      }
-      return vr.rowData?.[cIdx];
-    };
-
-    // 1. JSON
-    if (targetFormat === 'json') {
-      const list: Record<string, any>[] = [];
-      for (const r of selectedRowIndices) {
-        const vr = visualRows[r];
-        if (!vr) continue;
-        const rowObj: Record<string, any> = {};
-        for (const c of selectedColIndices) {
-          if (isMultiRange && !isCellSelected(r, c)) continue;
-          const col = columns[c];
-          if (!col) continue;
-          rowObj[col.name] = getVal(vr, c, col.name);
-        }
-        list.push(rowObj);
-      }
-      return JSON.stringify(list, null, 2);
-    }
-
-    // 2. SQL INSERT
-    if (targetFormat === 'sql_insert') {
-      const selectedCols: Array<{ col: ColumnMeta; cIdx: number }> = [];
-      for (const c of selectedColIndices) {
-        if (columns[c]) selectedCols.push({ col: columns[c], cIdx: c });
-      }
-      if (selectedCols.length === 0) return '';
-      const colNames = selectedCols.map(({ col }) => quoteIdent(col.name)).join(', ');
-      const valueTuples: string[] = [];
-      for (const r of selectedRowIndices) {
-        const vr = visualRows[r];
-        if (!vr) continue;
-        const vals = selectedCols.map(({ col, cIdx }) => {
-          const val = !isMultiRange || isCellSelected(r, cIdx) ? getVal(vr, cIdx, col.name) : null;
-          return formatSqlLiteral(val, col.dataType);
-        });
-        valueTuples.push(`  (${vals.join(', ')})`);
-      }
-      return `INSERT INTO ${quotedTbl} (${colNames})
-VALUES
-${valueTuples.join(',\n')};`;
-    }
-
-    // 3. SQL UPDATE
-    if (targetFormat === 'sql_update') {
-      const statements: string[] = [];
-      for (const r of selectedRowIndices) {
-        const vr = visualRows[r];
-        if (!vr) continue;
-
-        const rowSelectedCols = selectedColIndices.filter((c) => !isMultiRange || isCellSelected(r, c));
-        const setClauses: string[] = [];
-        for (const c of rowSelectedCols) {
-          const col = columns[c];
-          if (!col) continue;
-          const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
-          if (!isPK || rowSelectedCols.length === 1) {
-            const val = getVal(vr, c, col.name);
-            setClauses.push(`${quoteIdent(col.name)} = ${formatSqlLiteral(val, col.dataType)}`);
-          }
-        }
-
-        let whereClause = '';
-        if (primaryKeys.length > 0) {
-          const pkConds: string[] = [];
-          primaryKeys.forEach((pk) => {
-            const cIdx = columns.findIndex((c) => c.name === pk);
-            const colMeta = columns[cIdx];
-            const pkVal = cIdx !== -1 ? getVal(vr, cIdx, pk) : undefined;
-            if (pkVal !== undefined && pkVal !== null) {
-              pkConds.push(`${quoteIdent(pk)} = ${formatSqlLiteral(pkVal, colMeta?.dataType)}`);
-            }
-          });
-          if (pkConds.length > 0) {
-            whereClause = pkConds.join(' AND ');
-          }
-        }
-
-        if (!whereClause) {
-          const fallbackConds: string[] = [];
-          for (const c of rowSelectedCols) {
-            const col = columns[c];
-            if (!col) continue;
-            const val = getVal(vr, c, col.name);
-            if (val === null || val === undefined) {
-              fallbackConds.push(`${quoteIdent(col.name)} IS NULL`);
-            } else {
-              fallbackConds.push(`${quoteIdent(col.name)} = ${formatSqlLiteral(val, col.dataType)}`);
-            }
-          }
-          whereClause = fallbackConds.join(' AND ');
-        }
-
-        statements.push(`UPDATE ${quotedTbl}
-SET ${setClauses.join(', ')}
-WHERE ${whereClause};`);
-      }
-      return statements.join('\n\n');
-    }
-
-    // 4. SQL UPSERT
-    if (targetFormat === 'sql_upsert') {
-      const selectedColsWithIdx: Array<{ col: ColumnMeta; cIdx: number }> = [];
-      for (const c of selectedColIndices) {
-        if (columns[c]) selectedColsWithIdx.push({ col: columns[c], cIdx: c });
-      }
-      if (selectedColsWithIdx.length === 0) return '';
-      const selectedCols = selectedColsWithIdx.map(({ col }) => col);
-      const colNames = selectedCols.map((c) => quoteIdent(c.name)).join(', ');
-      const valueTuples: string[] = [];
-      for (const r of selectedRowIndices) {
-        const vr = visualRows[r];
-        if (!vr) continue;
-        const vals = selectedColsWithIdx.map(({ col, cIdx }) => {
-          const val = !isMultiRange || isCellSelected(r, cIdx) ? getVal(vr, cIdx, col.name) : null;
-          return formatSqlLiteral(val, col.dataType);
-        });
-        valueTuples.push(`  (${vals.join(', ')})`);
-      }
-
-      // Determine Primary / Conflict Keys
-      const detectedPKs = primaryKeys.length > 0
-        ? primaryKeys
-        : columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
-
-      const fallbackPK =
-        columns.find((c) => /^id$/i.test(c.name))?.name ||
-        selectedCols.find((c) => /^id$/i.test(c.name))?.name ||
-        selectedCols[0]?.name ||
-        'id';
-
-      const effectivePKs = detectedPKs.length > 0 ? detectedPKs : [fallbackPK];
-
-      // Non-PK columns to be updated upon collision
-      const updateCols = selectedCols.filter((c) => !effectivePKs.includes(c.name));
-
-      if (isMySQL) {
-        // MySQL ON DUPLICATE KEY UPDATE
-        const setClauses =
-          updateCols.length > 0
-            ? updateCols
-                .map((c) => `  ${quoteIdent(c.name)} = VALUES(${quoteIdent(c.name)})`)
-                .join(',\n')
-            : `  ${quoteIdent(effectivePKs[0])} = ${quoteIdent(effectivePKs[0])}`;
-
-        return `INSERT INTO ${quotedTbl} (${colNames})
-VALUES
-${valueTuples.join(',\n')}
-ON DUPLICATE KEY UPDATE
-${setClauses};`;
-      }
-
-      // PostgreSQL / SQLite ON CONFLICT (...) DO UPDATE SET ...
-      const conflictTargets = effectivePKs.map((pk) => quoteIdent(pk)).join(', ');
-
-      if (updateCols.length === 0) {
-        return `INSERT INTO ${quotedTbl} (${colNames})
-VALUES
-${valueTuples.join(',\n')}
-ON CONFLICT (${conflictTargets}) DO NOTHING;`;
-      }
-
-      const setClauses = updateCols
-        .map((c) => `  ${quoteIdent(c.name)} = EXCLUDED.${quoteIdent(c.name)}`)
-        .join(',\n');
-
-      return `INSERT INTO ${quotedTbl} (${colNames})
-VALUES
-${valueTuples.join(',\n')}
-ON CONFLICT (${conflictTargets}) DO UPDATE SET
-${setClauses};`;
-    }
-
-    // 4. Default: CSV (RFC 4180 standard)
-    const lines: string[] = [];
-    const headerCols: string[] = [];
-    for (const c of selectedColIndices) {
-      if (columns[c]) {
-        const name = columns[c].name;
-        headerCols.push(
-          name.includes(',') || name.includes('"') || name.includes('\n')
-            ? `"${name.replace(/"/g, '""')}"`
-            : name
-        );
-      }
-    }
-    lines.push(headerCols.join(','));
-
-    for (const r of selectedRowIndices) {
-      const vr = visualRows[r];
-      if (!vr) continue;
-      const cellVals: string[] = [];
-      for (const c of selectedColIndices) {
-        const col = columns[c];
-        if (!col) continue;
-        const raw = !isMultiRange || isCellSelected(r, c) ? getVal(vr, c, col.name) : null;
-        if (raw === null || raw === undefined) {
-          cellVals.push('');
-        } else {
-          const s = String(raw);
-          if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-            cellVals.push(`"${s.replace(/"/g, '""')}"`);
-          } else {
-            cellVals.push(s);
-          }
-        }
-      }
-      lines.push(cellVals.join(','));
-    }
-    return lines.join('\n');
   };
 
   const handleSetSelectedToNull = (targetVIdx?: number | null, targetCIdx?: number | null) => {
@@ -2454,20 +1457,12 @@ ${setClauses};`;
           if (vr.isInsert) {
             stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, null);
           } else {
-            const originalRowValues: Record<string, unknown> = {};
             const rowInArray =
               vr.globalRowIndex !== undefined && vr.globalRowIndex >= (startOffset || 0)
                 ? vr.globalRowIndex - (startOffset || 0)
                 : (vr.globalRowIndex ?? 0);
             const targetRow = vr.rowData || rows[rowInArray];
-            columns.forEach((colMeta, idx) => {
-              originalRowValues[colMeta.name] = targetRow?.[idx];
-            });
-            const pkMap: Record<string, unknown> = {};
-            primaryKeys.forEach((pk) => {
-              const idx = columns.findIndex((colMeta) => colMeta.name === pk);
-              if (idx !== -1) pkMap[pk] = targetRow?.[idx];
-            });
+            const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
             stageCellUpdate(tabId, vr.globalRowIndex!, pkMap, originalRowValues, col.name, null);
           }
         }
@@ -2487,14 +1482,12 @@ ${setClauses};`;
     let parsedRows: (string | null)[][] = [];
     let detectedHeaders: string[] | undefined;
 
-    // A. Check if SQL INSERT (e.g. from copyFormat = 'sql_insert' or 'sql_upsert')
     const sqlInsertResult = tryParseSqlInsert(trimmed);
     if (sqlInsertResult) {
       parsedRows = sqlInsertResult.rows;
       detectedHeaders = sqlInsertResult.headers;
     }
 
-    // B. Check if SQL UPDATE (e.g. from copyFormat = 'sql_update')
     if (parsedRows.length === 0) {
       const sqlUpdateResult = tryParseSqlUpdate(trimmed);
       if (sqlUpdateResult) {
@@ -2503,7 +1496,6 @@ ${setClauses};`;
       }
     }
 
-    // C. Check if JSON (e.g. from copyFormat = 'json')
     if (parsedRows.length === 0) {
       const jsonResult = tryParseJson(trimmed);
       if (jsonResult) {
@@ -2512,7 +1504,6 @@ ${setClauses};`;
       }
     }
 
-    // D. Check if TSV or CSV
     if (parsedRows.length === 0) {
       const rawLines = trimmed.split(/\r?\n/).filter((l) => l.length > 0);
       if (rawLines.length === 0) return;
@@ -2526,7 +1517,6 @@ ${setClauses};`;
           })
         );
       } else {
-        // Standard CSV parser
         parsedRows = rawLines.map((line) => {
           const cells: string[] = [];
           let inQuotes = false;
@@ -2561,7 +1551,6 @@ ${setClauses};`;
       return;
     }
 
-    // Detect if first row is headers matching column names
     if (!detectedHeaders && parsedRows.length > 1) {
       const firstRow = parsedRows[0];
       const matchesHeader =
@@ -2573,43 +1562,29 @@ ${setClauses};`;
       }
     }
 
-    const startR = selectionRange
-      ? selectionRange.startR
-      : selectionAnchor
-      ? selectionAnchor.r
-      : 0;
-    const endR = selectionRange
-      ? selectionRange.endR
-      : startR;
-    const startC = selectionRange
-      ? selectionRange.startC
-      : selectionAnchor
-      ? selectionAnchor.c
-      : 0;
-    const endC = selectionRange
-      ? selectionRange.endC
-      : startC;
+    const startR = selectionRange ? selectionRange.startR : selectionAnchor ? selectionAnchor.r : 0;
+    const endR = selectionRange ? selectionRange.endR : startR;
+    const startC = selectionRange ? selectionRange.startC : selectionAnchor ? selectionAnchor.c : 0;
+    const endC = selectionRange ? selectionRange.endC : startC;
 
     const selRowCount = Math.max(1, endR - startR + 1);
     const selColCount = Math.max(1, endC - startC + 1);
-    const hasMultiSelect = Boolean(selectionRange && (selectionRange.endR > selectionRange.startR || selectionRange.endC > selectionRange.startC));
+    const hasMultiSelect = Boolean(
+      selectionRange && (selectionRange.endR > selectionRange.startR || selectionRange.endC > selectionRange.startC)
+    );
 
     let rowsToPaste: (string | null)[][] = parsedRows;
 
-    // If user has multi-cell selection, expand clipboard data to fill the selected cells
     if (hasMultiSelect) {
       const srcRowCount = parsedRows.length;
       const srcColCount = parsedRows[0]?.length || 0;
 
-      // Case A: Single cell copied (1x1) -> fill entire selected range with that single value
       if (srcRowCount === 1 && srcColCount === 1) {
         const singleVal = parsedRows[0][0];
         rowsToPaste = Array.from({ length: selRowCount }, () =>
           Array.from({ length: selColCount }, () => singleVal)
         );
-      }
-      // Case B: 1 row copied -> replicate row across all selected rows
-      else if (srcRowCount === 1 && selRowCount > 1) {
+      } else if (srcRowCount === 1 && selRowCount > 1) {
         const templateRow = parsedRows[0];
         if (selColCount > templateRow.length && templateRow.length === 1) {
           const singleVal = templateRow[0];
@@ -2619,9 +1594,7 @@ ${setClauses};`;
         } else {
           rowsToPaste = Array.from({ length: selRowCount }, () => [...templateRow]);
         }
-      }
-      // Case C: Multi-row copied and selected area has more rows -> repeat rows modularly
-      else if (selRowCount > srcRowCount) {
+      } else if (selRowCount > srcRowCount) {
         rowsToPaste = Array.from({ length: selRowCount }, (_, rIdx) => {
           const srcRow = parsedRows[rIdx % srcRowCount];
           if (selColCount > srcRow.length && srcRow.length === 1) {
@@ -2640,10 +1613,9 @@ ${setClauses};`;
       const targetVIdx = startR + rOffset;
       maxAffectedVIdx = Math.max(maxAffectedVIdx, targetVIdx);
 
-      const targetColMap: Array<{ colIdx: number; col: ColumnMeta; val: string | null }> = [];
+      const targetColMap: Array<{ colIdx: number; col: typeof columns[0]; val: string | null }> = [];
       let mappedByHeader = false;
 
-      // Only map by header if NOT multi-select (multi-selection targets the exact selected columns)
       if (!hasMultiSelect && detectedHeaders && detectedHeaders.length > 1) {
         const matchingCols = detectedHeaders.filter((h) =>
           columns.some((col) => col.name.toLowerCase() === h.toLowerCase())
@@ -2659,7 +1631,6 @@ ${setClauses};`;
         }
       }
 
-      // If headers didn't match or multi-selection, map positionally starting from startC
       if (!mappedByHeader) {
         rowVals.forEach((val, cOffset) => {
           const colIdx = startC + cOffset;
@@ -2674,41 +1645,28 @@ ${setClauses};`;
         maxAffectedCIdx = Math.max(maxAffectedCIdx, colIdx);
       });
 
-      // Target row exists in visualRows
       if (targetVIdx < visualRows.length) {
         const vr = visualRows[targetVIdx];
         if (vr.isInsert) {
           targetColMap.forEach(({ col, val }) => {
             if (col.isAutoIncrement || !isColumnEditable(col.name, true)) return;
-            const finalVal = cleanPastedValue(val, col.dataType);
-            stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, finalVal);
+            stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, cleanPastedValue(val, col.dataType));
           });
         } else {
-          const originalRowValues: Record<string, unknown> = {};
-          columns.forEach((c, idx) => {
-            originalRowValues[c.name] = rows[vr.globalRowIndex!]?.[idx];
-          });
-          const pkMap: Record<string, unknown> = {};
-          primaryKeys.forEach((pk) => {
-            const idx = columns.findIndex((c) => c.name === pk);
-            if (idx !== -1) pkMap[pk] = rows[vr.globalRowIndex!]?.[idx];
-          });
-
+          const { originalRowValues, pkMap } = buildRowMetaMaps(rows[vr.globalRowIndex!]);
           targetColMap.forEach(({ col, val }) => {
             if (col.isAutoIncrement || !isColumnEditable(col.name, false)) return;
-            const finalVal = cleanPastedValue(val, col.dataType);
             stageCellUpdate(
               tabId,
               vr.globalRowIndex!,
               pkMap,
               originalRowValues,
               col.name,
-              finalVal
+              cleanPastedValue(val, col.dataType)
             );
           });
         }
       } else {
-        // Target row is beyond current rows: auto create a new staged inserted row at bottom!
         const newRowId = -(baseInsertId + (targetVIdx - visualRows.length));
         const initialValues: Record<string, unknown> = {};
         targetColMap.forEach(({ col, val }) => {
@@ -2719,7 +1677,6 @@ ${setClauses};`;
       }
     });
 
-    // Update selection range to highlight the newly pasted cells
     setAdditionalSelections([]);
     setSelectionAnchor({ r: startR, c: startC });
     setSelectionFocus({ r: maxAffectedVIdx, c: Math.min(columns.length - 1, maxAffectedCIdx) });
@@ -2729,30 +1686,22 @@ ${setClauses};`;
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
-    if (editingCell) {
-      handleFinishEdit();
-    }
-
+    if (editingCell) handleFinishEdit();
     containerRef.current?.focus({ preventScroll: true });
 
     const isMod = e.ctrlKey || e.metaKey;
 
     if (e.shiftKey && selectionAnchor) {
       window.getSelection()?.removeAllRanges();
-      if (!isMod) {
-        setAdditionalSelections([]);
-      }
+      if (!isMod) setAdditionalSelections([]);
       setSelectionFocus({ r: vIdx, c: cIdx });
     } else if (isMod) {
       window.getSelection()?.removeAllRanges();
       if (isCellSelected(vIdx, cIdx)) {
-        const remaining = removeCellFromRects(allSelectionRanges, vIdx, cIdx);
-        applyRemainingRects(remaining);
+        applyRemainingRects(removeCellFromRects(allSelectionRanges, vIdx, cIdx));
         isDraggingRef.current = false;
       } else {
-        if (selectionRange) {
-          setAdditionalSelections((prev) => [...prev, selectionRange]);
-        }
+        if (selectionRange) setAdditionalSelections((prev) => [...prev, selectionRange]);
         isDraggingRef.current = true;
         setSelectionAnchor({ r: vIdx, c: cIdx });
         setSelectionFocus({ r: vIdx, c: cIdx });
@@ -2779,7 +1728,6 @@ ${setClauses};`;
   const handleRowHeaderMouseDown = (e: React.MouseEvent, vIdx: number) => {
     if (e.button !== 0) return;
     if (editingCell) handleFinishEdit();
-
     containerRef.current?.focus({ preventScroll: true });
 
     const isMod = e.ctrlKey || e.metaKey;
@@ -2787,21 +1735,16 @@ ${setClauses};`;
 
     if (e.shiftKey && selectionAnchor) {
       window.getSelection()?.removeAllRanges();
-      if (!isMod) {
-        setAdditionalSelections([]);
-      }
+      if (!isMod) setAdditionalSelections([]);
       setSelectionAnchor({ r: selectionAnchor.r, c: 0 });
       setSelectionFocus({ r: vIdx, c: lastColIdx });
     } else if (isMod) {
       window.getSelection()?.removeAllRanges();
       if (isRowFullySelected(vIdx)) {
-        const remaining = removeRowFromRects(allSelectionRanges, vIdx);
-        applyRemainingRects(remaining);
+        applyRemainingRects(removeRowFromRects(allSelectionRanges, vIdx));
         isDraggingRef.current = false;
       } else {
-        if (selectionRange) {
-          setAdditionalSelections((prev) => [...prev, selectionRange]);
-        }
+        if (selectionRange) setAdditionalSelections((prev) => [...prev, selectionRange]);
         isDraggingRef.current = true;
         setSelectionAnchor({ r: vIdx, c: 0 });
         setSelectionFocus({ r: vIdx, c: lastColIdx });
@@ -2827,9 +1770,7 @@ ${setClauses};`;
 
   const handleDuplicateRow = () => {
     if (isReadOnly) return;
-    if (editingCell) {
-      handleFinishEdit();
-    }
+    if (editingCell) handleFinishEdit();
 
     const targets =
       selectedRowKeys.size > 0
@@ -2925,15 +1866,7 @@ ${setClauses};`;
       }
       const rowInArray = idx >= (startOffset || 0) ? idx - (startOffset || 0) : idx;
       const targetRow = rows[rowInArray] || rows[idx];
-      const pkMap: Record<string, unknown> = {};
-      const originalRowValues: Record<string, unknown> = {};
-      columns.forEach((c, ci) => {
-        originalRowValues[c.name] = targetRow?.[ci];
-      });
-      primaryKeys.forEach((pk) => {
-        const ci = columns.findIndex((c) => c.name === pk);
-        if (ci !== -1) pkMap[pk] = targetRow?.[ci];
-      });
+      const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
       stageRowDelete(tabId, idx, pkMap, originalRowValues);
     });
 
@@ -2942,375 +1875,308 @@ ${setClauses};`;
     setSelectionFocus(null);
   };
 
-  // Keyboard shortcuts: Range Copy (Ctrl+C), Apply (Ctrl+S), Duplicate (Ctrl+D), Delete, Cancel (Esc), Arrow Navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.('.monaco-editor')) return;
+  // Stable-listener pattern for global keyboard, copy, and paste shortcuts
+  // Prevents re-attaching window listeners on every keystroke or selection change
+  const keyDownHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyDownHandlerRef.current = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.('.monaco-editor')) return;
 
-      if (showCancelConfirm) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          setShowCancelConfirm(false);
-          return;
-        }
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          e.stopPropagation();
-          revertTabChanges(tabId);
-          setEditingCell(null);
-          setAdditionalSelections([]);
-          setSelectionAnchor(null);
-          setSelectionFocus(null);
-          setShowCancelConfirm(false);
-          return;
-        }
-        return;
-      }
-
-      const isInFilterOrWhere = target?.closest?.('[data-filter-input]') || target?.closest?.('[data-where-input]');
-
+    if (showCancelConfirm) {
       if (e.key === 'Escape') {
-        if (isInFilterOrWhere) return;
-        if (editingCell) {
-          e.preventDefault();
-          setEditingCell(null);
-          if (stagedCount > 0) {
-            setShowCancelConfirm(true);
-          }
-          return;
-        }
-        if (stagedCount > 0) {
-          e.preventDefault();
-          setShowCancelConfirm(true);
-          return;
-        }
-      }
-
-      const activeEl = document.activeElement;
-      const isTyping =
-        (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) ||
-        (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA'));
-
-      // Shortcut: Ctrl+T / Cmd+T to Toggle Result Panels (Value Panel)
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 't' || e.key === 'T')) {
         e.preventDefault();
-        handleToggleValuePanel();
+        e.stopPropagation();
+        setShowCancelConfirm(false);
         return;
       }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        revertTabChanges(tabId);
+        setEditingCell(null);
+        setAdditionalSelections([]);
+        setSelectionAnchor(null);
+        setSelectionFocus(null);
+        setShowCancelConfirm(false);
+        return;
+      }
+      return;
+    }
 
-      // Arrow keys / PageUp / PageDown / Home / End / Tab navigation across grid cells
-      if (!isTyping && visualRows.length > 0 && columns.length > 0) {
-        const isNavKey =
-          e.key === 'ArrowUp' ||
-          e.key === 'ArrowDown' ||
-          e.key === 'ArrowLeft' ||
-          e.key === 'ArrowRight' ||
-          e.key === 'PageUp' ||
-          e.key === 'PageDown' ||
-          e.key === 'Home' ||
-          e.key === 'End' ||
-          e.key === 'Tab';
+    const isInFilterOrWhere = target?.closest?.('[data-filter-input]') || target?.closest?.('[data-where-input]');
 
-        if (isNavKey) {
-          if (e.key === 'Tab') {
-            e.preventDefault();
-            const currentR = selectionFocus ? selectionFocus.r : 0;
-            const currentC = selectionFocus ? selectionFocus.c : 0;
-            let nextR = currentR;
-            let nextC = currentC + (e.shiftKey ? -1 : 1);
-            if (nextC >= columns.length) {
-              nextC = 0;
-              nextR = Math.min(visualRows.length - 1, nextR + 1);
-            } else if (nextC < 0) {
-              nextC = columns.length - 1;
-              nextR = Math.max(0, nextR - 1);
-            }
-            setAdditionalSelections([]);
-            setSelectionAnchor({ r: nextR, c: nextC });
-            setSelectionFocus({ r: nextR, c: nextC });
-            scrollToCell(nextR, nextC);
-            const targetVr = visualRows[nextR];
-            if (targetVr && targetVr.globalRowIndex !== undefined) {
-              onActiveRowChange?.(targetVr.globalRowIndex);
-            }
-            return;
-          }
+    if (e.key === 'Escape') {
+      if (isInFilterOrWhere) return;
+      if (editingCell) {
+        e.preventDefault();
+        setEditingCell(null);
+        if (stagedCount > 0) setShowCancelConfirm(true);
+        return;
+      }
+      if (stagedCount > 0) {
+        e.preventDefault();
+        setShowCancelConfirm(true);
+        return;
+      }
+    }
 
+    const activeEl = document.activeElement;
+    const isTyping =
+      (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) ||
+      (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA'));
+
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 't' || e.key === 'T')) {
+      e.preventDefault();
+      handleToggleValuePanel();
+      return;
+    }
+
+    if (!isTyping && visualRows.length > 0 && columns.length > 0) {
+      const isNavKey =
+        e.key === 'ArrowUp' ||
+        e.key === 'ArrowDown' ||
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight' ||
+        e.key === 'PageUp' ||
+        e.key === 'PageDown' ||
+        e.key === 'Home' ||
+        e.key === 'End' ||
+        e.key === 'Tab';
+
+      if (isNavKey) {
+        if (e.key === 'Tab') {
           e.preventDefault();
           const currentR = selectionFocus ? selectionFocus.r : 0;
           const currentC = selectionFocus ? selectionFocus.c : 0;
-          let targetR = currentR;
-          let targetC = currentC;
-
-          if (e.key === 'ArrowUp') targetR -= 1;
-          else if (e.key === 'ArrowDown') targetR += 1;
-          else if (e.key === 'ArrowLeft') targetC -= 1;
-          else if (e.key === 'ArrowRight') targetC += 1;
-          else if (e.key === 'PageUp') targetR -= 15;
-          else if (e.key === 'PageDown') targetR += 15;
-          else if (e.key === 'Home') {
-            if (e.ctrlKey || e.metaKey) {
-              targetR = 0;
-              targetC = 0;
-            } else {
-              targetC = 0;
-            }
-          } else if (e.key === 'End') {
-            if (e.ctrlKey || e.metaKey) {
-              targetR = visualRows.length - 1;
-              targetC = columns.length - 1;
-            } else {
-              targetC = columns.length - 1;
-            }
+          let nextR = currentR;
+          let nextC = currentC + (e.shiftKey ? -1 : 1);
+          if (nextC >= columns.length) {
+            nextC = 0;
+            nextR = Math.min(visualRows.length - 1, nextR + 1);
+          } else if (nextC < 0) {
+            nextC = columns.length - 1;
+            nextR = Math.max(0, nextR - 1);
           }
-
-          const newR = Math.max(0, Math.min(visualRows.length - 1, targetR));
-          const newC = Math.max(0, Math.min(columns.length - 1, targetC));
-
-          if (e.shiftKey && e.key.startsWith('Arrow')) {
-            setSelectionFocus({ r: newR, c: newC });
-          } else {
-            setAdditionalSelections([]);
-            setSelectionAnchor({ r: newR, c: newC });
-            setSelectionFocus({ r: newR, c: newC });
-          }
-          scrollToCell(newR, newC);
-          const navVr = visualRows[newR];
-          if (navVr && navVr.globalRowIndex !== undefined) {
-            onActiveRowChange?.(navVr.globalRowIndex);
+          setAdditionalSelections([]);
+          setSelectionAnchor({ r: nextR, c: nextC });
+          setSelectionFocus({ r: nextR, c: nextC });
+          scrollToCell(nextR, nextC);
+          const targetVr = visualRows[nextR];
+          if (targetVr && targetVr.globalRowIndex !== undefined) {
+            onActiveRowChange?.(targetVr.globalRowIndex);
           }
           return;
         }
-      }
 
-      const isMod = isMac ? e.metaKey : e.ctrlKey;
+        e.preventDefault();
+        const currentR = selectionFocus ? selectionFocus.r : 0;
+        const currentC = selectionFocus ? selectionFocus.c : 0;
+        let targetR = currentR;
+        let targetC = currentC;
 
-      // Enter to start editing selected cell
-      if (!isTyping && !isMod && !e.shiftKey && e.key === 'Enter') {
-        if (selectionFocus && visualRows.length > 0 && columns.length > 0 && !isReadOnly) {
-          const vr = visualRows[selectionFocus.r];
-          if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
-            e.preventDefault();
-            const col = columns[selectionFocus.c];
-            let val: any;
-            if (vr.isInsert) {
-              val = vr.insertChange?.changes[col.name] ?? (col.defaultValue ?? '');
-            } else {
-              const staged = stagedChanges[vr.globalRowIndex!];
-              val =
-                staged?.type === 'update' && staged.changes[col.name] !== undefined
-                  ? staged.changes[col.name]
-                  : vr.rowData?.[selectionFocus.c];
-            }
-            handleStartEdit(vr.rowId, selectionFocus.c, val ?? '');
-            return;
+        if (e.key === 'ArrowUp') targetR -= 1;
+        else if (e.key === 'ArrowDown') targetR += 1;
+        else if (e.key === 'ArrowLeft') targetC -= 1;
+        else if (e.key === 'ArrowRight') targetC += 1;
+        else if (e.key === 'PageUp') targetR -= 15;
+        else if (e.key === 'PageDown') targetR += 15;
+        else if (e.key === 'Home') {
+          if (e.ctrlKey || e.metaKey) {
+            targetR = 0;
+            targetC = 0;
+          } else {
+            targetC = 0;
+          }
+        } else if (e.key === 'End') {
+          if (e.ctrlKey || e.metaKey) {
+            targetR = visualRows.length - 1;
+            targetC = columns.length - 1;
+          } else {
+            targetC = columns.length - 1;
           }
         }
-      }
 
-      // Delete active / selected row(s)
-      const isMacDelete = isMac && e.metaKey && (e.key === 'Backspace' || e.key === 'Delete');
-      const isOtherDelete = !isMac && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Delete';
+        const newR = Math.max(0, Math.min(visualRows.length - 1, targetR));
+        const newC = Math.max(0, Math.min(columns.length - 1, targetC));
 
-      if (!isTyping && (isMacDelete || isOtherDelete)) {
-        e.preventDefault();
-        handleDeleteActiveRow();
+        if (e.shiftKey && e.key.startsWith('Arrow')) {
+          setSelectionFocus({ r: newR, c: newC });
+        } else {
+          setAdditionalSelections([]);
+          setSelectionAnchor({ r: newR, c: newC });
+          setSelectionFocus({ r: newR, c: newC });
+        }
+        scrollToCell(newR, newC);
+        const navVr = visualRows[newR];
+        if (navVr && navVr.globalRowIndex !== undefined) {
+          onActiveRowChange?.(navVr.globalRowIndex);
+        }
         return;
       }
+    }
 
-      // Backspace to clear and edit selected cell
-      if (!isTyping && !isMod && !e.altKey && e.key === 'Backspace') {
-        if (
-          selectionFocus &&
-          visualRows.length > 0 &&
-          columns.length > 0 &&
-          !isReadOnly &&
-          !isExportOpen &&
-          !isImportOpen &&
-          !showAllSortsModal &&
-          !showAllFrozenModal &&
-          !isCopyAsOpen
-        ) {
-          const vr = visualRows[selectionFocus.r];
-          if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
-            const col = columns[selectionFocus.c];
-            if (col) {
-              e.preventDefault();
-              handleStartEdit(vr.rowId, selectionFocus.c, '', '');
-              setSelectionAnchor({ r: selectionFocus.r, c: selectionFocus.c });
-              return;
-            }
-          }
-        }
-      }
+    const isMod = isMac ? e.metaKey : e.ctrlKey;
 
-      // Direct typing to start editing selected cell (letters, numbers, symbols)
-      if (
-        !isTyping &&
-        !isMod &&
-        !e.altKey &&
-        e.key.length === 1 &&
-        selectionFocus &&
-        visualRows.length > 0 &&
-        columns.length > 0 &&
-        !isReadOnly &&
-        !isExportOpen &&
-        !isImportOpen &&
-        !showAllSortsModal &&
-        !showAllFrozenModal &&
-        !isCopyAsOpen
-      ) {
+    if (!isTyping && !isMod && !e.shiftKey && e.key === 'Enter') {
+      if (selectionFocus && visualRows.length > 0 && columns.length > 0 && !isReadOnly) {
         const vr = visualRows[selectionFocus.r];
         if (vr && isCellEditable(vr.rowId, selectionFocus.c)) {
+          e.preventDefault();
           const col = columns[selectionFocus.c];
-          if (col) {
-            e.preventDefault();
-            handleStartEdit(vr.rowId, selectionFocus.c, '', e.key);
-            setSelectionAnchor({ r: selectionFocus.r, c: selectionFocus.c });
-            return;
-          }
-        }
-      }
-
-      if (!isMod) return;
-
-      if (isTyping && !target?.closest?.('[data-grid-container]')) {
-        return;
-      }
-
-      // Select All
-      if (e.key === 'a' || e.key === 'A') {
-        if (!isTyping && visualRows.length > 0 && columns.length > 0) {
-          e.preventDefault();
-          setAdditionalSelections([]);
-          setSelectionAnchor({ r: 0, c: 0 });
-          setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
-          return;
-        }
-      }
-
-      // Copy As modal (Ctrl+Shift+C / Cmd+Shift+C) or regular Copy based on active copyFormat
-      if (e.key === 'c' || e.key === 'C') {
-        if (!isTyping && allSelectionRanges.length > 0 && columns.length > 0) {
-          e.preventDefault();
-          if (e.shiftKey) {
-            setIsCopyAsOpen(true);
+          let val: any;
+          if (vr.isInsert) {
+            val = vr.insertChange?.changes[col.name] ?? (col.defaultValue ?? '');
           } else {
-            const text = getFormattedCopyText();
-            if (text) {
-              navigator.clipboard.writeText(text);
-            }
+            const staged = stagedChanges[vr.globalRowIndex!];
+            val =
+              staged?.type === 'update' && staged.changes[col.name] !== undefined
+                ? staged.changes[col.name]
+                : vr.rowData?.[selectionFocus.c];
           }
+          handleStartEdit(vr.rowId, selectionFocus.c, val ?? '');
           return;
         }
       }
+    }
 
-      // Shortcut: Apply (Ctrl+S on Linux/Win, Cmd+S on macOS)
-      if (e.key === 's' || e.key === 'S') {
-        e.preventDefault();
-        handleApplyChanges();
-        return;
-      }
+    const isMacDelete = isMac && e.metaKey && (e.key === 'Backspace' || e.key === 'Delete');
+    const isOtherDelete = !isMac && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Delete';
 
-      // Paste selected cells / multi rows (Ctrl+V on Linux/Win, Cmd+V on macOS)
-      if (e.key === 'v' || e.key === 'V') {
-        if (!isTyping) {
+    if (!isTyping && (isMacDelete || isOtherDelete)) {
+      e.preventDefault();
+      handleDeleteActiveRow();
+      return;
+    }
+
+    const noModalOpen =
+      !isReadOnly &&
+      !isExportOpen &&
+      !isImportOpen &&
+      !showAllSortsModal &&
+      !showAllFrozenModal &&
+      !isCopyAsOpen;
+
+    if (!isTyping && !isMod && !e.altKey && e.key === 'Backspace') {
+      if (selectionFocus && visualRows.length > 0 && columns.length > 0 && noModalOpen) {
+        const vr = visualRows[selectionFocus.r];
+        if (vr && isCellEditable(vr.rowId, selectionFocus.c) && columns[selectionFocus.c]) {
           e.preventDefault();
-          navigator.clipboard
-            ?.readText?.()
-            .then((text) => {
-              if (text) handlePasteData(text);
-            })
-            .catch(() => {});
+          handleStartEdit(vr.rowId, selectionFocus.c, '', '');
+          setSelectionAnchor({ r: selectionFocus.r, c: selectionFocus.c });
           return;
         }
       }
+    }
 
-      // Shortcut: Add Row (Ctrl+I on Linux/Win, Cmd+I on macOS)
-      if (e.key === 'i' || e.key === 'I') {
+    if (!isTyping && !isMod && !e.altKey && e.key.length === 1 && selectionFocus && visualRows.length > 0 && columns.length > 0 && noModalOpen) {
+      const vr = visualRows[selectionFocus.r];
+      if (vr && isCellEditable(vr.rowId, selectionFocus.c) && columns[selectionFocus.c]) {
         e.preventDefault();
-        handleAddRow();
+        handleStartEdit(vr.rowId, selectionFocus.c, '', e.key);
+        setSelectionAnchor({ r: selectionFocus.r, c: selectionFocus.c });
         return;
       }
+    }
 
-      // Shortcut: Duplicate (Ctrl+D on Linux/Win, Cmd+D on macOS)
-      if (e.key === 'd' || e.key === 'D') {
+    if (!isMod) return;
+    if (isTyping && !target?.closest?.('[data-grid-container]')) return;
+
+    if (e.key === 'a' || e.key === 'A') {
+      if (!isTyping && visualRows.length > 0 && columns.length > 0) {
         e.preventDefault();
-        handleDuplicateRow();
+        setAdditionalSelections([]);
+        setSelectionAnchor({ r: 0, c: 0 });
+        setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
         return;
       }
-    };
+    }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    tabId,
-    isMac,
-    isReadOnly,
-    editingCell,
-    editVal,
-    columns,
-    rows,
-    selectionAnchor,
-    selectionFocus,
-    selectionRange,
-    allSelectionRanges,
-    visualRows,
-    selectedRowKeys,
-    onSubmitChanges,
-    stagedCount,
-    showCancelConfirm,
-    copyFormat,
-    tableName,
-    primaryKeys,
-    driver,
-    frozenColumns,
-    colWidths,
-    isExportOpen,
-    isImportOpen,
-    showAllSortsModal,
-    showAllFrozenModal,
-    isCopyAsOpen,
-  ]);
-
-  // Global clipboard copy event to ensure Ctrl+C always outputs the selected format
-  useEffect(() => {
-    const handleNativeCopy = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const isTyping =
-        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
-      if (isTyping) return;
-
-      if (allSelectionRanges.length > 0 && columns.length > 0) {
-        const text = getFormattedCopyText();
-        if (text) {
-          e.preventDefault();
-          e.clipboardData?.setData('text/plain', text);
+    if (e.key === 'c' || e.key === 'C') {
+      if (!isTyping && allSelectionRanges.length > 0 && columns.length > 0) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          setIsCopyAsOpen(true);
+        } else {
+          const text = getFormattedCopyText();
+          if (text) navigator.clipboard.writeText(text);
         }
+        return;
       }
-    };
+    }
 
-    const handleNativePaste = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
-      if (isTyping) return;
+    if (e.key === 's' || e.key === 'S') {
+      e.preventDefault();
+      handleApplyChanges();
+      return;
+    }
 
-      const text = e.clipboardData?.getData('text/plain');
+    if (e.key === 'v' || e.key === 'V') {
+      if (!isTyping) {
+        e.preventDefault();
+        navigator.clipboard
+          ?.readText?.()
+          .then((text) => {
+            if (text) handlePasteData(text);
+          })
+          .catch(() => {});
+        return;
+      }
+    }
+
+    if (e.key === 'i' || e.key === 'I') {
+      e.preventDefault();
+      handleAddRow();
+      return;
+    }
+
+    if (e.key === 'd' || e.key === 'D') {
+      e.preventDefault();
+      handleDuplicateRow();
+      return;
+    }
+  };
+
+  const copyHandlerRef = useRef<(e: ClipboardEvent) => void>(() => {});
+  copyHandlerRef.current = (e: ClipboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+
+    if (allSelectionRanges.length > 0 && columns.length > 0) {
+      const text = getFormattedCopyText();
       if (text) {
         e.preventDefault();
-        handlePasteData(text);
+        e.clipboardData?.setData('text/plain', text);
       }
-    };
+    }
+  };
 
-    window.addEventListener('copy', handleNativeCopy);
-    window.addEventListener('paste', handleNativePaste);
+  const pasteHandlerRef = useRef<(e: ClipboardEvent) => void>(() => {});
+  pasteHandlerRef.current = (e: ClipboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+
+    const text = e.clipboardData?.getData('text/plain');
+    if (text) {
+      e.preventDefault();
+      handlePasteData(text);
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => keyDownHandlerRef.current(e);
+    const onCopy = (e: ClipboardEvent) => copyHandlerRef.current(e);
+    const onPaste = (e: ClipboardEvent) => pasteHandlerRef.current(e);
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('copy', onCopy);
+    window.addEventListener('paste', onPaste);
     return () => {
-      window.removeEventListener('copy', handleNativeCopy);
-      window.removeEventListener('paste', handleNativePaste);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('copy', onCopy);
+      window.removeEventListener('paste', onPaste);
     };
-  }, [selectionRange, allSelectionRanges, columns, visualRows, stagedChanges, tableName, primaryKeys, copyFormat, driver]);
+  }, []);
+
   const currentOffset = (currentPage - 1) * localPageSize;
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
   const endRow = currentOffset + displayedRows.length;
@@ -3325,11 +2191,6 @@ ${setClauses};`;
     }
   };
 
-  // Determine effective total rows:
-  // 1. If explicit totalCount is provided and >= endRow, use it.
-  // 2. If client-side multi-page in memory, use rows.length.
-  // 3. If !hasMore (we reached the end of the dataset), total is EXACTLY endRow!
-  // 4. Otherwise, total is at least endRow + 1.
   const effectiveTotal =
     totalCount !== undefined && totalCount >= endRow
       ? totalCount
@@ -3344,14 +2205,12 @@ ${setClauses};`;
 
   const totalPages = Math.max(1, Math.ceil(effectiveTotal / localPageSize));
 
-  // Reset page when pageSize changes (only for client-side pagination)
   useEffect(() => {
     if (!onPageChange) {
       setCurrentPage(1);
     }
   }, [localPageSize, onPageChange]);
 
-  // Scroll listener for horizontal sticky separator, workspace scroll tracking, and bidirectional infinite scroll
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const sl = e.currentTarget.scrollLeft;
     if (sl > 0 !== isScrolledX) {
@@ -3359,22 +2218,15 @@ ${setClauses};`;
     }
     const { scrollTop } = e.currentTarget;
 
-    // Track scroll position and approximate visible database row for workspace auto-save
     const rowHeight = 28;
     const visibleRowOffset = Math.max(0, Math.floor(scrollTop / rowHeight));
     const approxRowIndex = (startOffset || 0) + visibleRowOffset;
     const topRowOffsetPx = scrollTop % rowHeight;
 
-    latestScrollStateRef.current = {
-      scrollTop,
-      scrollLeft: sl,
-      rowIndex: approxRowIndex,
-    };
+    latestScrollStateRef.current = { scrollTop, scrollLeft: sl, rowIndex: approxRowIndex };
 
     if (onScrollChangeRef.current) {
-      if (debouncedScrollTimerRef.current) {
-        clearTimeout(debouncedScrollTimerRef.current);
-      }
+      if (debouncedScrollTimerRef.current) clearTimeout(debouncedScrollTimerRef.current);
       debouncedScrollTimerRef.current = setTimeout(() => {
         onScrollChangeRef.current?.(scrollTop, sl, approxRowIndex, topRowOffsetPx);
       }, 200);
@@ -3385,9 +2237,7 @@ ${setClauses};`;
     const maxPage = isExactTotalKnown ? totalPages : Math.max(totalPages, targetPage);
     const clamped = Math.max(1, Math.min(targetPage, maxPage));
     setCurrentPage(clamped);
-    if (onPageChange) {
-      onPageChange(clamped);
-    }
+    onPageChange?.(clamped);
   };
 
   const handlePageSizeChange = (newSize: number) => {
@@ -3396,8 +2246,6 @@ ${setClauses};`;
     onPageSizeChange?.(newSize);
   };
 
-  // Only borders are tinted by environment; backgrounds stay neutral.
-  // Thick frame around the whole grid + tinted toolbars; grid body stays neutral.
   const gridContainerBg =
     envType === 'prod'
       ? 'bg-[#191a20] border-[3px] border-[#7a3b3f]'
@@ -3414,387 +2262,68 @@ ${setClauses};`;
   const gridCellBorder = 'border-[#272932]';
   const gridRowClass = 'border-b border-[#22242c] bg-[#14151a] hover:bg-[#20222a] transition-colors';
 
-
   return (
     <div
       data-grid-container="true"
       onContextMenu={(e) => e.preventDefault()}
       className={`flex h-full flex-col ${gridContainerBg} text-xs select-text transition-colors`}
     >
-      {/* Table Toolbar */}
-      <div className={`flex h-10 items-center justify-between border-b px-3 ${gridBarBg}`}>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {isReadOnly && (
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 font-bold font-mono text-[10px] tracking-wider uppercase mr-1 select-none shadow-xs"
-              title="This connection is configured as READ-ONLY. Modifying data or schema is disabled."
-            >
-              <Ban className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-              <span>READ-ONLY</span>
-            </div>
-          )}
+      <GridToolbar
+        gridBarBg={gridBarBg}
+        isReadOnly={isReadOnly}
+        isRedis={isRedis}
+        rawSql={rawSql}
+        copiedRawSql={copiedRawSql}
+        stagedCount={stagedCount}
+        isTableTab={isTableTab}
+        hasApplyWhere={Boolean(onApplyWhere)}
+        whereContainerRef={whereContainerRef}
+        whereInputRef={whereInputRef}
+        suggestionListRef={suggestionListRef}
+        whereInput={whereInput}
+        showWhereSuggestions={showWhereSuggestions}
+        whereSuggestions={whereSuggestions}
+        selectedSuggestionIndex={selectedSuggestionIndex}
+        localSortConfigs={localSortConfigs}
+        frozenColumns={frozenColumns}
+        onOpenRedisAddKey={() => setRedisAddKeyOpen(true)}
+        onAddRow={handleAddRow}
+        onDuplicateRow={handleDuplicateRow}
+        onDeleteActiveRow={handleDeleteActiveRow}
+        onCopyRawSql={handleCopyRawSql}
+        onPreviewChanges={onPreviewChanges}
+        onApplyChanges={handleApplyChanges}
+        onRequestCancelConfirm={() => setShowCancelConfirm(true)}
+        onWhereInputChange={(val, pos) => {
+          setWhereInput(val);
+          setWhereCursorPos(pos);
+          setShowWhereSuggestions(true);
+        }}
+        onWhereFocus={() => setShowWhereSuggestions(true)}
+        onWhereCursorChange={(pos) => setWhereCursorPos(pos)}
+        onWhereKeyDown={handleWhereKeyDown}
+        onClearWhere={() => {
+          setWhereInput('');
+          setShowWhereSuggestions(false);
+          onApplyWhere?.('');
+        }}
+        onApplyWhereClick={applyWhereValue}
+        onApplyWhereSuggestion={applyWhereSuggestion}
+        onRemoveSortColumn={(colName) => {
+          const next = localSortConfigs.filter((s) => s.column !== colName);
+          setLocalSortConfigs(next);
+          onSortChange?.(next);
+        }}
+        onShowAllSorts={() => setShowAllSortsModal(true)}
+        onClearAllSort={handleClearAllSort}
+        onToggleFreeze={handleToggleFreeze}
+        onShowAllFrozen={() => setShowAllFrozenModal(true)}
+        onClearAllFrozen={() => {
+          setFrozenColumns([]);
+          onFrozenColumnsChange?.([]);
+        }}
+      />
 
-          {!isReadOnly && (
-            <>
-              {isRedis ? (
-                <button
-                  type="button"
-                  onClick={() => setRedisAddKeyOpen(true)}
-                  className="flex h-7 items-center gap-1.5 px-2.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-colors cursor-pointer"
-                  title="Add New Redis Key"
-                >
-                  <Plus className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>Add Key</span>
-                </button>
-              ) : (
-                <button
-                  onClick={handleAddRow}
-                  className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-                  title={`Add New Row (${modKey}+I)`}
-                >
-                  <Plus className="h-4 w-4 text-emerald-400" />
-                </button>
-              )}
-
-              <button
-                onClick={handleDuplicateRow}
-                className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-                title={`Duplicate Selected Row (${modKey}+D)`}
-              >
-                <Copy className="h-3.5 w-3.5 text-sky-400" />
-              </button>
-
-              <button
-                onClick={handleDeleteActiveRow}
-                className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-                title={`Delete Active Row (${isMac ? 'Cmd+Backspace' : 'Delete'})`}
-              >
-                <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-              </button>
-            </>
-          )}
-
-          {rawSql && (
-            <button
-              type="button"
-              onClick={handleCopyRawSql}
-              className={`flex items-center gap-1.5 h-7 px-2.5 rounded font-sans text-xs transition-colors cursor-pointer select-none ${
-                copiedRawSql
-                  ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                  : 'bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 hover:text-white border border-[#272932]'
-              }`}
-              title={`Copy Raw Query to clipboard:\n${rawSql}`}
-            >
-              {copiedRawSql ? (
-                <>
-                  <Check className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="text-[11px] font-semibold text-emerald-300">Copied SQL!</span>
-                </>
-              ) : (
-                <>
-                  <Code className="h-3.5 w-3.5 text-blue-400" />
-                  <span className="text-[11px] font-medium">Copy Query</span>
-                </>
-              )}
-            </button>
-          )}
-
-          {stagedCount > 0 && (
-            <>
-              <button
-                onClick={onPreviewChanges}
-                className="flex h-7 w-7 items-center justify-center rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 transition-colors cursor-pointer"
-                title="Preview SQL DML"
-              >
-                <Eye className="h-4 w-4" />
-              </button>
-
-              <button
-                onClick={handleApplyChanges}
-                className="relative flex h-7 w-7 items-center justify-center rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer shadow-sm"
-                title={`Apply Changes (${stagedCount}) (${modKey}+S)`}
-              >
-                <Check className="h-4 w-4 stroke-[2.5]" />
-                {stagedCount > 1 && (
-                  <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-emerald-400 text-[9px] font-bold text-zinc-950 px-0.5 pointer-events-none">
-                    {stagedCount}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setShowCancelConfirm(true)}
-                className="flex h-7 w-7 items-center justify-center rounded bg-rose-950/40 border border-rose-800/60 hover:bg-rose-900/60 text-rose-400 hover:text-white transition-colors cursor-pointer"
-                title="Revert Staged Changes (Esc)"
-              >
-                <X className="h-4 w-4 text-rose-400" />
-              </button>
-            </>
-          )}
-        </div>
-
-        {/* Toolbar Center & Right: SQL WHERE Filter (Full width) + Chips */}
-        <div className="flex items-center gap-2.5 flex-1 min-w-0 ml-2.5">
-          {/* SQL WHERE Filter Bar (Only for Table Tabs - Takes full available space) */}
-          {(isTableTab || onApplyWhere) && (
-            <div
-              ref={whereContainerRef}
-              className="relative flex-1 min-w-[200px]"
-            >
-              <div className="relative flex items-center">
-                <div className="absolute left-2.5 flex items-center gap-1 pointer-events-none select-none">
-                  {isRedis ? (
-                    <>
-                      <Search className="h-3 w-3 text-amber-400" />
-                      <span className="text-[10px] font-mono font-bold text-amber-400 uppercase tracking-wider">
-                        MATCH
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <Filter className="h-3 w-3 text-blue-400" />
-                      <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-wider">
-                        WHERE
-                      </span>
-                    </>
-                  )}
-                </div>
-                <input
-                  ref={whereInputRef}
-                  type="text"
-                  data-where-input="true"
-                  placeholder={
-                    isRedis
-                      ? "Redis pattern, e.g. user:* or *session* (Enter to scan)"
-                      : "condition, e.g. status = 'active' AND id > 10 (Enter to filter)"
-                  }
-                  value={whereInput}
-                  onChange={(e) => {
-                    setWhereInput(e.target.value);
-                    setWhereCursorPos(e.target.selectionStart ?? e.target.value.length);
-                    setShowWhereSuggestions(true);
-                  }}
-                  onFocus={() => {
-                    setShowWhereSuggestions(true);
-                  }}
-                  onClick={(e) => {
-                    setWhereCursorPos((e.target as HTMLInputElement).selectionStart ?? whereInput.length);
-                  }}
-                  onKeyUp={(e) => {
-                    setWhereCursorPos((e.target as HTMLInputElement).selectionStart ?? whereInput.length);
-                  }}
-                  onKeyDown={handleWhereKeyDown}
-                  className="h-7 w-full rounded bg-[#121317] pl-[68px] pr-14 text-[11px] text-zinc-100 font-mono border border-[#272932] focus:border-blue-500 focus:bg-[#16171d] focus:outline-none placeholder:text-zinc-600 shadow-inner"
-                />
-
-                <div className="absolute right-1.5 flex items-center gap-1">
-                  {whereInput && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setWhereInput('');
-                        setShowWhereSuggestions(false);
-                        onApplyWhere?.('');
-                      }}
-                      className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] cursor-pointer"
-                      title="Clear filter"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowWhereSuggestions(false);
-                      let finalVal = whereInput.trim();
-                      if (isRedis && finalVal && !finalVal.toLowerCase().includes('key') && !finalVal.toLowerCase().includes('like') && !finalVal.toLowerCase().includes('=')) {
-                        finalVal = `key LIKE '${finalVal}'`;
-                      }
-                      onApplyWhere?.(finalVal);
-                    }}
-                    className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-medium font-sans cursor-pointer transition-colors shadow-xs"
-                    title={isRedis ? "Scan keys matching pattern (Enter)" : "Apply WHERE condition (Enter)"}
-                  >
-                    {isRedis ? 'Scan' : 'Filter'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Autocomplete Suggestion Popup */}
-              {showWhereSuggestions && whereSuggestions.length > 0 && (
-                <div
-                  ref={suggestionListRef}
-                  className="absolute left-0 top-full mt-1 w-full max-h-56 overflow-y-auto rounded-md bg-[#16171d] border border-[#2b2e3a] shadow-2xl z-50 p-1 font-mono text-[11px]"
-                >
-                  <div className="px-2 py-1 text-[9px] uppercase font-bold text-zinc-500 font-sans tracking-wider border-b border-[#22242c] mb-1 flex items-center justify-between">
-                    <span>Suggestions (Tab / Enter to select, Esc to close)</span>
-                    <span className="text-zinc-600">Ctrl+Space</span>
-                  </div>
-                  {whereSuggestions.map((item, sIdx) => {
-                    const isSelected = sIdx === selectedSuggestionIndex;
-                    return (
-                      <div
-                        key={item.id}
-                        data-suggestion-index={sIdx}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          applyWhereSuggestion(item);
-                        }}
-                        className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer transition-colors ${
-                          isSelected
-                            ? 'bg-blue-600 text-white font-medium'
-                            : 'text-zinc-300 hover:bg-[#22242c]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          {item.type === 'column' ? (
-                            item.isPK ? (
-                              <Key className="h-3 w-3 text-amber-400 shrink-0" />
-                            ) : item.iconType === 'number' ? (
-                              <Hash className="h-3 w-3 text-emerald-400 shrink-0" />
-                            ) : item.iconType === 'date' ? (
-                              <Clock className="h-3 w-3 text-cyan-400 shrink-0" />
-                            ) : (
-                              <FileText className="h-3 w-3 text-blue-400 shrink-0" />
-                            )
-                          ) : (
-                            <span className="px-1 rounded bg-[#2b2e3a] text-[9px] font-bold text-amber-400">
-                              SQL
-                            </span>
-                          )}
-                          <span className="truncate">{item.name}</span>
-                        </div>
-                        {item.dataType && (
-                          <span
-                            className={`text-[10px] ml-2 shrink-0 ${
-                              isSelected ? 'text-blue-100' : 'text-zinc-500'
-                            }`}
-                          >
-                            {item.dataType}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Right Chips: Multi-Sort & Frozen Columns */}
-          {(localSortConfigs.length > 0 || frozenColumns.length > 0) && (
-            <div className="flex items-center gap-2 shrink-0">
-              {localSortConfigs.length > 0 && (
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-[#2b2e3a] text-[11px] font-mono select-none">
-                  <div className="flex items-center gap-1">
-                    {localSortConfigs.slice(0, 2).map((sc, idx) => (
-                      <span
-                        key={sc.column}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1e2029] border border-blue-500/30 text-[10px] text-zinc-200"
-                        title={`#${idx + 1} priority: ${sc.column} (${sc.direction.toUpperCase()})`}
-                      >
-                        <span className="flex items-center justify-center h-3 w-3 rounded-full bg-blue-600 text-white text-[8px] font-bold">
-                          {idx + 1}
-                        </span>
-                        <span className="text-zinc-100 font-medium">{sc.column}</span>
-                        {sc.direction === 'asc' ? (
-                          <ArrowDownAZ className="h-3.5 w-3.5 text-blue-400 stroke-[2]" />
-                        ) : (
-                          <ArrowDownZA className="h-3.5 w-3.5 text-amber-400 stroke-[2]" />
-                        )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const next = localSortConfigs.filter((s) => s.column !== sc.column);
-                            setLocalSortConfigs(next);
-                            onSortChange?.(next);
-                          }}
-                          className="text-zinc-500 hover:text-rose-400 cursor-pointer ml-0.5"
-                          title={`Remove ${sc.column} from sort`}
-                        >
-                          <X className="h-2.5 w-2.5" />
-                        </button>
-                      </span>
-                    ))}
-                    {localSortConfigs.length > 2 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowAllSortsModal(true)}
-                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#1e2029] hover:bg-[#282b37] border border-blue-500/40 text-[10px] text-blue-300 font-mono font-bold cursor-pointer transition-colors"
-                        title={`View all ${localSortConfigs.length} sorted columns (${localSortConfigs.length - 2} more)`}
-                      >
-                        ...
-                      </button>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleClearAllSort}
-                    className="p-0.5 rounded hover:bg-rose-950/40 text-rose-500 hover:text-rose-400 transition-colors cursor-pointer ml-0.5"
-                    title="Clear all column sorting"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              )}
-
-              {/* Frozen Columns Chips */}
-              {frozenColumns.length > 0 && (
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-cyan-800/40 text-[11px] font-mono select-none">
-                  <div className="flex items-center gap-1">
-                    {frozenColumns.slice(0, 2).map((colName) => (
-                      <span
-                        key={colName}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0d222b] border border-cyan-500/30 text-[10px] text-cyan-200"
-                        title={`Frozen column: ${colName}`}
-                      >
-                        <span className="text-zinc-100 font-medium">{colName}</span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleFreeze(colName);
-                          }}
-                          className="text-zinc-400 hover:text-rose-400 cursor-pointer ml-0.5"
-                          title={`Unfreeze ${colName}`}
-                        >
-                          <X className="h-2.5 w-2.5" />
-                        </button>
-                      </span>
-                    ))}
-                    {frozenColumns.length > 2 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowAllFrozenModal(true)}
-                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#0d222b] hover:bg-[#13303d] border border-cyan-500/40 text-[10px] text-cyan-300 font-mono font-bold cursor-pointer transition-colors"
-                        title={`View all ${frozenColumns.length} frozen columns (${frozenColumns.length - 2} more)`}
-                      >
-                        ...
-                      </button>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFrozenColumns([]);
-                      onFrozenColumnsChange?.([]);
-                    }}
-                    className="p-0.5 rounded hover:bg-rose-950/40 text-rose-500 hover:text-rose-400 transition-colors cursor-pointer ml-0.5"
-                    title="Clear all column freezing"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-
-
-      {/* Error Banner when query or WHERE filter fails */}
       {errorMessage && (
         <div className="flex items-center justify-between px-3.5 py-2 bg-rose-950/40 border-b border-rose-900/60 text-xs font-mono text-rose-300 select-text">
           <div className="flex items-center gap-2 min-w-0">
@@ -3816,1389 +2345,641 @@ ${setClauses};`;
         </div>
       )}
 
-      {/* Grid Table & Side Value Panel Container */}
       <div className="flex-1 flex min-h-0 relative overflow-hidden">
-        {/* Grid Table Container */}
         <div
           ref={containerRef}
           tabIndex={0}
           onScroll={handleScroll}
           className="flex-1 overflow-auto min-h-0 relative outline-none focus:ring-1 focus:ring-blue-500/20 pb-12"
         >
-        <table
-          className="border-collapse font-mono text-[12px] text-zinc-300 min-w-full"
-          style={{ tableLayout: 'fixed', width: 'max-content' }}
-        >
-          <colgroup>
-            <col style={{ width: `${ROW_NUM_COL_WIDTH}px`, minWidth: `${ROW_NUM_COL_WIDTH}px` }} />
-            {columns.map((col) => {
-              const w = colWidths[col.name] || 120;
-              return <col key={col.name} style={{ width: `${w}px`, minWidth: `${w}px` }} />;
-            })}
-            <col style={{ width: 'auto' }} />
-          </colgroup>
-          <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-30`}>
-            <tr className={`border-b ${gridCellBorder}`}>
-              <th
-                onClick={() => {
-                  if (visualRows.length > 0 && columns.length > 0) {
-                    setAdditionalSelections([]);
-                    setSelectionAnchor({ r: 0, c: 0 });
-                    setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
-                    containerRef.current?.focus({ preventScroll: true });
-                  }
-                }}
-                className={`sticky left-0 z-40 px-2 py-1.5 text-center font-semibold border-r ${gridCellBorder} ${gridTheadBg} text-zinc-500 hover:text-zinc-300 select-none cursor-pointer transition-colors ${
-                  frozenColumns.length === 0 && isScrolledX
-                    ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
-                    : ''
-                }`}
-                style={{
-                  width: `${ROW_NUM_COL_WIDTH}px`,
-                  minWidth: `${ROW_NUM_COL_WIDTH}px`,
-                  maxWidth: `${ROW_NUM_COL_WIDTH}px`,
-                }}
-                title="Click to select all visible rows"
-              >
-                #
-              </th>
-              {columns.map((col, cIdx) => {
-                const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
-                const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
-                const isSorted = sortIndex !== -1;
-                const sortItem = isSorted ? localSortConfigs[sortIndex] : null;
-                const isFrozen = frozenColumns.includes(col.name);
-                const isLastFrozen = col.name === lastFrozenColName;
-                const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+          <table
+            className="border-collapse font-mono text-[12px] text-zinc-300 min-w-full"
+            style={{ tableLayout: 'fixed', width: 'max-content' }}
+          >
+            <colgroup>
+              <col style={{ width: `${ROW_NUM_COL_WIDTH}px`, minWidth: `${ROW_NUM_COL_WIDTH}px` }} />
+              {columns.map((col) => {
                 const w = colWidths[col.name] || 120;
+                return <col key={col.name} style={{ width: `${w}px`, minWidth: `${w}px` }} />;
+              })}
+              <col style={{ width: 'auto' }} />
+            </colgroup>
+            <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-30`}>
+              <tr className={`border-b ${gridCellBorder}`}>
+                <th
+                  onClick={() => {
+                    if (visualRows.length > 0 && columns.length > 0) {
+                      setAdditionalSelections([]);
+                      setSelectionAnchor({ r: 0, c: 0 });
+                      setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
+                      containerRef.current?.focus({ preventScroll: true });
+                    }
+                  }}
+                  className={`sticky left-0 z-40 px-2 py-1.5 text-center font-semibold border-r ${gridCellBorder} ${gridTheadBg} text-zinc-500 hover:text-zinc-300 select-none cursor-pointer transition-colors ${
+                    frozenColumns.length === 0 && isScrolledX
+                      ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
+                      : ''
+                  }`}
+                  style={{
+                    width: `${ROW_NUM_COL_WIDTH}px`,
+                    minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                    maxWidth: `${ROW_NUM_COL_WIDTH}px`,
+                  }}
+                  title="Click to select all visible rows"
+                >
+                  #
+                </th>
+                {columns.map((col, cIdx) => {
+                  const isPK = Boolean(col.isPrimaryKey || primaryKeySet.has(col.name));
+                  const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
+                  const isSorted = sortIndex !== -1;
+                  const sortItem = isSorted ? localSortConfigs[sortIndex] : null;
+                  const isFrozen = frozenColumnSet.has(col.name);
+                  const isLastFrozen = col.name === lastFrozenColName;
+                  const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                  const w = colWidths[col.name] || 120;
 
-              
-  return (
-                  <th
-                    key={col.name}
-                    ref={(el) => {
-                      thRefs.current[col.name] = el;
-                    }}
-                    onClick={(e) => {
-                      if (isResizingRef.current) return;
-                      if (e.altKey) {
-                        handleToggleFreeze(col.name);
-                        return;
-                      }
-                      handleToggleSort(col.name, e);
-                    }}
-                    onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
-                    onMouseLeave={handleColMouseLeave}
-                    className={`relative px-3 py-1.5 text-left font-semibold border-r ${gridCellBorder} text-zinc-200 group/th select-none ${
-                      isFrozen ? `sticky z-40 ${gridTheadBg}` : ''
-                    } ${
-                      isLastFrozen && isScrolledX
-                        ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
-                        : ''
-                    } ${
-                      envType === 'prod'
-                        ? 'hover:bg-rose-950/60'
-                        : envType === 'dev'
-                        ? 'hover:bg-emerald-950/60'
-                        : 'hover:bg-[#1c1d28]'
-                    } transition-colors cursor-pointer`}
-                    style={{
-                      width: `${w}px`,
-                      minWidth: `${w}px`,
-                      maxWidth: `${w}px`,
-                      ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-1.5 min-w-0">
-                      <div className="flex items-center gap-1.5 truncate min-w-0 flex-1">
-                        {isPK && (
-                          <Key className="h-3 w-3 text-amber-400 fill-amber-400/30 shrink-0" />
-                        )}
-                        {isRedis && !isColumnEditable(col.name) && (
-                          <span title="Read-only column">
-                            <Lock className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
+                  return (
+                    <th
+                      key={col.name}
+                      ref={(el) => {
+                        thRefs.current[col.name] = el;
+                      }}
+                      onClick={(e) => {
+                        if (isResizingRef.current) return;
+                        if (e.altKey) {
+                          handleToggleFreeze(col.name);
+                          return;
+                        }
+                        handleToggleSort(col.name, e);
+                      }}
+                      onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
+                      onMouseLeave={handleColMouseLeave}
+                      className={`relative px-3 py-1.5 text-left font-semibold border-r ${gridCellBorder} text-zinc-200 group/th select-none ${
+                        isFrozen ? `sticky z-40 ${gridTheadBg}` : ''
+                      } ${
+                        isLastFrozen && isScrolledX
+                          ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                          : ''
+                      } ${
+                        envType === 'prod'
+                          ? 'hover:bg-rose-950/60'
+                          : envType === 'dev'
+                          ? 'hover:bg-emerald-950/60'
+                          : 'hover:bg-[#1c1d28]'
+                      } transition-colors cursor-pointer`}
+                      style={{
+                        width: `${w}px`,
+                        minWidth: `${w}px`,
+                        maxWidth: `${w}px`,
+                        ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-1.5 min-w-0">
+                        <div className="flex items-center gap-1.5 truncate min-w-0 flex-1">
+                          {isPK && <Key className="h-3 w-3 text-amber-400 fill-amber-400/30 shrink-0" />}
+                          {isRedis && !isColumnEditable(col.name) && (
+                            <span title="Read-only column">
+                              <Lock className="h-2.5 w-2.5 text-zinc-500 shrink-0" />
+                            </span>
+                          )}
+                          <span
+                            className={`truncate font-semibold transition-colors ${
+                              isRedis && !isColumnEditable(col.name)
+                                ? 'text-zinc-400 group-hover/th:text-zinc-200'
+                                : 'text-zinc-200 group-hover/th:text-white'
+                            }`}
+                          >
+                            {col.name}
                           </span>
-                        )}
-                        <span className={`truncate font-semibold transition-colors ${
-                          isRedis && !isColumnEditable(col.name)
-                            ? 'text-zinc-400 group-hover/th:text-zinc-200'
-                            : 'text-zinc-200 group-hover/th:text-white'
-                        }`}>
-                          {col.name}
-                        </span>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleFreeze(col.name);
+                            }}
+                            className={`flex items-center p-1 rounded transition-all cursor-pointer ${
+                              isFrozen
+                                ? 'text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 shadow-xs'
+                                : 'text-zinc-500 opacity-0 group-hover/th:opacity-100 hover:text-cyan-300 hover:bg-zinc-800'
+                            }`}
+                            title={
+                              isFrozen
+                                ? `Unfreeze column "${col.name}"`
+                                : `Freeze column "${col.name}" (Alt+Click header)`
+                            }
+                          >
+                            <Snowflake className={`h-3 w-3 ${isFrozen ? 'text-cyan-400' : ''}`} />
+                          </button>
+
+                          {isSorted && sortItem ? (
+                            <span
+                              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
+                              title={`Sorted ${sortItem.direction === 'asc' ? 'A → Z (ASC)' : 'Z → A (DESC)'}${
+                                localSortConfigs.length > 1 ? ` (priority #${sortIndex + 1})` : ''
+                              }`}
+                            >
+                              {sortItem.direction === 'asc' ? (
+                                <ArrowDownAZ className="h-3.5 w-3.5 stroke-[2]" />
+                              ) : (
+                                <ArrowDownZA className="h-3.5 w-3.5 stroke-[2] text-amber-400" />
+                              )}
+                              {localSortConfigs.length > 1 && (
+                                <span className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-blue-500 text-white text-[9px] font-bold font-mono ml-0.5">
+                                  {sortIndex + 1}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <ArrowUpDown className="h-3 w-3 text-zinc-500 opacity-0 group-hover/th:opacity-75 transition-opacity" />
+                          )}
+                        </div>
                       </div>
 
-                      {/* Header Actions: Freeze & Sort */}
-                      <div className="flex items-center gap-1 shrink-0">
-                        {/* Freeze Indicator / Button */}
+                      <div
+                        onMouseDown={(e) => handleResizeStart(e, col.name)}
+                        onDoubleClick={(e) => handleResizeDoubleClick(e, col.name, cIdx)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
+                        className={`absolute right-0 top-0 bottom-0 w-3 -mr-1.5 cursor-col-resize z-20 flex justify-center items-center group/resizer select-none ${
+                          resizingCol === col.name ? 'bg-blue-500/20' : ''
+                        }`}
+                        title={`Resize column "${col.name}" (Double-click to auto-fit)`}
+                      >
+                        <div
+                          className={`w-[2px] h-full transition-colors ${
+                            resizingCol === col.name
+                              ? 'bg-blue-400'
+                              : 'bg-transparent group-hover/resizer:bg-blue-400/80 group-active/resizer:bg-blue-400'
+                          }`}
+                        />
+                      </div>
+                    </th>
+                  );
+                })}
+                <th className={`p-0 border-none ${gridTheadBg}`} />
+              </tr>
+            </thead>
+            <tbody>
+              {displayedRows.length === 0 && insertedChanges.length === 0 ? null : (
+                <>
+                  {hasPrevious && (
+                    <tr className="bg-[#121318] border-b border-[#22242c] hover:bg-[#181a22] transition-colors">
+                      <td
+                        colSpan={columns.length + 2}
+                        className="py-1 px-3 text-center"
+                        style={{ position: 'sticky', left: 0 }}
+                      >
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleFreeze(col.name);
+                          onClick={() => {
+                            if (containerRef.current) {
+                              scrollAdjustRef.current = {
+                                prevScrollHeight: containerRef.current.scrollHeight,
+                                prevScrollTop: containerRef.current.scrollTop,
+                              };
+                            }
+                            onLoadPrevious?.();
                           }}
-                          className={`flex items-center p-1 rounded transition-all cursor-pointer ${
-                            isFrozen
-                              ? 'text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 shadow-xs'
-                              : 'text-zinc-500 opacity-0 group-hover/th:opacity-100 hover:text-cyan-300 hover:bg-zinc-800'
-                          }`}
-                          title={
-                            isFrozen
-                              ? `Unfreeze column "${col.name}"`
-                              : `Freeze column "${col.name}" (Alt+Click header)`
-                          }
+                          disabled={isLoadingPrevious}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 text-[11px] font-medium border border-blue-500/30 cursor-pointer transition-colors shadow-xs"
+                          title="Load previous batch of rows"
                         >
-                          <Snowflake className={`h-3 w-3 ${isFrozen ? 'text-cyan-400' : ''}`} />
-                        </button>
-
-                        {/* Sort Indicator / Button */}
-                        {isSorted && sortItem ? (
-                          <span
-                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
-                            title={`Sorted ${sortItem.direction === 'asc' ? 'A → Z (ASC)' : 'Z → A (DESC)'}${localSortConfigs.length > 1 ? ` (priority #${sortIndex + 1})` : ''}`}
-                          >
-                            {sortItem.direction === 'asc' ? (
-                              <ArrowDownAZ className="h-3.5 w-3.5 stroke-[2]" />
-                            ) : (
-                              <ArrowDownZA className="h-3.5 w-3.5 stroke-[2] text-amber-400" />
-                            )}
-                            {localSortConfigs.length > 1 && (
-                              <span
-                                className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-blue-500 text-white text-[9px] font-bold font-mono ml-0.5"
-                              >
-                                {sortIndex + 1}
-                              </span>
-                            )}
+                          {isLoadingPrevious ? (
+                            <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
+                          ) : (
+                            <ArrowUpCircle className="h-3 w-3" />
+                          )}
+                          <span>
+                            {isLoadingPrevious
+                              ? 'Loading previous rows...'
+                              : `Load previous rows (${Math.min(localPageSize, startOffset || 0)} rows above)`}
                           </span>
-                        ) : (
-                          <ArrowUpDown className="h-3 w-3 text-zinc-500 opacity-0 group-hover/th:opacity-75 transition-opacity" />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Column Resizer Divider */}
-                    <div
-                      onMouseDown={(e) => handleResizeStart(e, col.name)}
-                      onDoubleClick={(e) => handleResizeDoubleClick(e, col.name, cIdx)}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                      }}
-                      className={`absolute right-0 top-0 bottom-0 w-3 -mr-1.5 cursor-col-resize z-20 flex justify-center items-center group/resizer select-none ${
-                        resizingCol === col.name ? 'bg-blue-500/20' : ''
-                      }`}
-                      title={`Resize column "${col.name}" (Double-click to auto-fit)`}
-                    >
-                      <div
-                        className={`w-[2px] h-full transition-colors ${
-                          resizingCol === col.name
-                            ? 'bg-blue-400'
-                            : 'bg-transparent group-hover/resizer:bg-blue-400/80 group-active/resizer:bg-blue-400'
-                        }`}
-                      />
-                    </div>
-                  </th>
-                );
-              })}
-              {/* Dummy header cell for remaining horizontal space */}
-              <th className={`p-0 border-none ${gridTheadBg}`} />
-            </tr>
-          </thead>
-          <tbody>
-            {displayedRows.length === 0 && insertedChanges.length === 0 ? null : (
-              <>
-                {/* 0. Top Load Previous Rows Banner */}
-                {hasPrevious && (
-                  <tr className="bg-[#121318] border-b border-[#22242c] hover:bg-[#181a22] transition-colors">
-                    <td
-                      colSpan={columns.length + 2}
-                      className="py-1 px-3 text-center"
-                      style={{ position: 'sticky', left: 0 }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (containerRef.current) {
-                            scrollAdjustRef.current = {
-                              prevScrollHeight: containerRef.current.scrollHeight,
-                              prevScrollTop: containerRef.current.scrollTop,
-                            };
-                          }
-                          onLoadPrevious?.();
-                        }}
-                        disabled={isLoadingPrevious}
-                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 text-[11px] font-medium border border-blue-500/30 cursor-pointer transition-colors shadow-xs"
-                        title="Load previous batch of rows"
-                      >
-                        {isLoadingPrevious ? (
-                          <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
-                        ) : (
-                          <ArrowUpCircle className="h-3 w-3" />
-                        )}
-                        <span>
-                          {isLoadingPrevious
-                            ? 'Loading previous rows...'
-                            : `Load previous rows (${Math.min(localPageSize, startOffset || 0)} rows above)`}
-                        </span>
-                      </button>
-                    </td>
-                  </tr>
-                )}
-
-                {/* 1. Existing Database Rows */}
-                {displayedRows.map((row, rIdx) => {
-                  const globalRowIndex = (currentPage - 1) * localPageSize + rIdx;
-                  const vIdx = rIdx;
-                  const staged = stagedChanges[globalRowIndex];
-                  const isDeleted = staged?.type === 'delete';
-
-                  let rowClass = gridRowClass;
-                  if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
-
-                  const isRowInSelection = allSelectionRanges.some(
-                    (rng) => vIdx >= rng.startR && vIdx <= rng.endR
-                  );
-                  const isFullRowSelected = isRowFullySelected(vIdx);
-
-                  return (
-                    <tr
-                      key={globalRowIndex}
-                      className={`${rowClass} group/row`}
-                    >
-                      <td
-                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                        className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r ${gridCellBorder} select-none cursor-pointer transition-colors ${
-                          isFullRowSelected
-                            ? 'bg-[#1b4ea3] text-white font-semibold'
-                            : isRowInSelection
-                            ? 'bg-[#1e293b] text-blue-300 font-medium'
-                            : isDeleted
-                            ? 'bg-rose-950/40 text-rose-400/70 line-through'
-                            : 'bg-[#14151a] text-zinc-500 group-hover/row:bg-[#20222a] group-hover/row:text-zinc-300'
-                        } ${
-                          frozenColumns.length === 0 && isScrolledX
-                            ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
-                            : ''
-                        }`}
-                        style={{
-                          width: `${ROW_NUM_COL_WIDTH}px`,
-                          minWidth: `${ROW_NUM_COL_WIDTH}px`,
-                          maxWidth: `${ROW_NUM_COL_WIDTH}px`,
-                        }}
-                        title={`Row ${globalRowIndex + 1} (Click to select entire row)`}
-                      >
-                        {globalRowIndex + 1}
+                        </button>
                       </td>
-                      {columns.map((col, cIdx) => {
-                        const isSelected = isCellSelected(vIdx, cIdx);
-                        const isEditing = editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
-                        const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
-                        const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
-                        const colInputType = getColumnInputType(col.dataType);
-                        const isFrozen = frozenColumns.includes(col.name);
-                        const isLastFrozen = col.name === lastFrozenColName;
-                        const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
-                        const w = colWidths[col.name] || 120;
-                        const isEditable = isCellEditable(globalRowIndex, cIdx);
-
-                      
-  return (
-                          <td
-                            key={col.name}
-                            data-vidx={vIdx}
-                            data-cidx={cIdx}
-                            onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
-                            onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
-                            onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                            onDoubleClick={() => {
-                              if (isEditable) {
-                                if (isRedis && col.name.toLowerCase() === 'ttl') {
-                                  handleOpenTtlModal(globalRowIndex, displayVal, false);
-                                  return;
-                                }
-                                handleStartEdit(globalRowIndex, cIdx, displayVal);
-                              }
-                            }}
-                            className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
-                              isFrozen
-                                ? `sticky z-10 ${
-                                    isSelected
-                                      ? 'bg-[#1b4ea3] text-white font-medium'
-                                      : hasColChange
-                                      ? 'bg-blue-900/40 text-blue-200 font-medium'
-                                      : isDeleted
-                                      ? 'bg-rose-950/40 text-zinc-500 line-through'
-                                      : !isEditable
-                                      ? 'bg-[#121318]/70 text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
-                                      : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
-                                  }`
-                                : isSelected
-                                ? 'bg-[#1b4ea3] text-white font-medium'
-                                : hasColChange
-                                ? 'bg-blue-900/30 text-blue-200 font-medium'
-                                : !isEditable
-                                ? 'bg-[#111216]/50 text-zinc-400/80 group-hover/row:bg-[#181920]'
-                                : ''
-                            } ${
-                              !isEditable ? 'cursor-default' : 'cursor-text'
-                            } ${
-                              isLastFrozen && isScrolledX
-                                ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
-                                : ''
-                            }`}
-                            style={{
-                              width: `${w}px`,
-                              minWidth: `${w}px`,
-                              maxWidth: `${w}px`,
-                              ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
-                            }}
-                            title={
-                              isEditable
-                                ? isRedis && col.name.toLowerCase() === 'ttl'
-                                  ? 'Double-click to update TTL (Time-To-Live)'
-                                  : 'Click to select, type or double-click to edit'
-                                : 'Read-only: this column cannot be edited in Redis'
-                            }
-                          >
-                            {isEditing ? (
-                              <input
-                                type={colInputType === 'text' ? 'text' : colInputType}
-                                step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
-                                autoFocus
-                                ref={(el) => {
-                                  if (el) {
-                                    if (colInputType !== 'text') {
-                                      try { el?.showPicker?.(); } catch {}
-                                    } else if (isFirstEditRenderRef.current) {
-                                      isFirstEditRenderRef.current = false;
-                                      try {
-                                        const len = el.value.length;
-                                        el.setSelectionRange(len, len);
-                                      } catch {}
-                                    }
-                                  }
-                                }}
-                                value={editVal}
-                                onChange={(e) => setEditVal(e.target.value)}
-                                onBlur={handleFinishEdit}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleFinishEdit();
-                                  if (e.key === 'Escape') {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setEditingCell(null);
-                                    if (stagedCount > 0) {
-                                      setShowCancelConfirm(true);
-                                    }
-                                  }
-                                  if (e.key === 'Tab') {
-                                    e.preventDefault();
-                                    handleFinishEdit();
-                                    let nextCol = (cIdx + 1) % columns.length;
-                                    let nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
-                                    let attempts = 0;
-                                    while (attempts < columns.length * 2) {
-                                      const targetVr = visualRows[nextVIdx];
-                                      if (targetVr && isCellEditable(targetVr.rowId, nextCol)) {
-                                        break;
-                                      }
-                                      nextCol = (nextCol + 1) % columns.length;
-                                      if (nextCol === 0) {
-                                        nextVIdx = Math.min(visualRows.length - 1, nextVIdx + 1);
-                                      }
-                                      attempts++;
-                                    }
-                                    const nextVr = visualRows[nextVIdx];
-                                    setAdditionalSelections([]);
-                                    setSelectionAnchor({ r: nextVIdx, c: nextCol });
-                                    setSelectionFocus({ r: nextVIdx, c: nextCol });
-                                    scrollToCell(nextVIdx, nextCol);
-                                    setTimeout(() => {
-                                      if (nextVr) {
-                                        const nextColMeta = columns[nextCol];
-                                        const stagedNext = stagedChanges[nextVr.globalRowIndex!];
-                                        const nextVal =
-                                          stagedNext?.type === 'update' && stagedNext.changes[nextColMeta.name] !== undefined
-                                            ? stagedNext.changes[nextColMeta.name]
-                                            : nextVr.rowData?.[nextCol];
-                                        handleStartEdit(nextVr.rowId, nextCol, nextVal ?? '');
-                                      }
-                                    }, 10);
-                                  }
-                                }}
-                                className={`[color-scheme:dark] w-full bg-[#121317] border border-blue-500 px-1 py-0.5 text-white outline-none rounded ${
-                                  colInputType !== 'text' ? 'cursor-pointer' : ''
-                                }`}
-                              />
-                            ) : displayVal === null || displayVal === undefined ? (
-                              <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>NULL</span>
-                            ) : (
-                              colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="p-0 border-none pointer-events-none" />
                     </tr>
-                  );
-                })}
+                  )}
 
-                {/* 2. Staged Inserted Rows (at bottom of grid) */}
-                {insertedChanges.map((change, insIdx) => {
-                  const vIdx = displayedRows.length + insIdx;
-                  const rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
+                  {displayedRows.map((row, rIdx) => {
+                    const globalRowIndex = (currentPage - 1) * localPageSize + rIdx;
+                    const vIdx = rIdx;
+                    const staged = stagedChanges[globalRowIndex];
+                    const isDeleted = staged?.type === 'delete';
 
-                  const isRowInSelection = allSelectionRanges.some(
-                    (rng) => vIdx >= rng.startR && vIdx <= rng.endR
-                  );
-                  const isFullRowSelected = isRowFullySelected(vIdx);
+                    let rowClass = gridRowClass;
+                    if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
 
-                  return (
-                    <tr
-                      key={change.rowIndex}
-                      className={rowClass}
-                    >
-                      <td
-                        onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                        onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                        onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                        className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-[#22242c] select-none cursor-pointer transition-colors ${
-                          isFullRowSelected
-                            ? 'bg-[#1b4ea3] text-white'
-                            : isRowInSelection
-                            ? 'bg-[#1e293b] text-blue-300'
-                            : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-emerald-400'
-                        } ${
-                          frozenColumns.length === 0 && isScrolledX
-                            ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
-                            : ''
-                        }`}
-                        style={{
-                          width: `${ROW_NUM_COL_WIDTH}px`,
-                          minWidth: `${ROW_NUM_COL_WIDTH}px`,
-                          maxWidth: `${ROW_NUM_COL_WIDTH}px`,
-                        }}
-                        title="New row (Click to select entire row)"
-                      >
-                        +
-                      </td>
-                      {columns.map((col, cIdx) => {
-                        const isSelected = isCellSelected(vIdx, cIdx);
-                        const isEditing = editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
-                        const colVal = change.changes[col.name];
-                        const isSet = colVal !== undefined;
-                        const displayVal = isSet ? colVal : (col.defaultValue || null);
-                        const colInputType = getColumnInputType(col.dataType);
-                        const isFrozen = frozenColumns.includes(col.name);
-                        const isLastFrozen = col.name === lastFrozenColName;
-                        const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
-                        const w = colWidths[col.name] || 120;
-                        const isInsEditable = isCellEditable(change.rowIndex, cIdx);
+                    const isRowInSelection = allSelectionRanges.some(
+                      (rng) => vIdx >= rng.startR && vIdx <= rng.endR
+                    );
+                    const isFullRowSelected = isRowFullySelected(vIdx);
 
-                      
-  return (
-                          <td
-                            key={col.name}
-                            data-vidx={vIdx}
-                            data-cidx={cIdx}
-                            onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
-                            onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
-                            onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                            onDoubleClick={() => {
-                              if (!isEditing && isInsEditable) {
-                                if (isRedis && col.name.toLowerCase() === 'ttl') {
-                                  handleOpenTtlModal(change.rowIndex, displayVal ?? '', true);
-                                  return;
+                    return (
+                      <tr key={globalRowIndex} className={`${rowClass} group/row`}>
+                        <td
+                          onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                          onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                          onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                          className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r ${gridCellBorder} select-none cursor-pointer transition-colors ${
+                            isFullRowSelected
+                              ? 'bg-[#1b4ea3] text-white font-semibold'
+                              : isRowInSelection
+                              ? 'bg-[#1e293b] text-blue-300 font-medium'
+                              : isDeleted
+                              ? 'bg-rose-950/40 text-rose-400/70 line-through'
+                              : 'bg-[#14151a] text-zinc-500 group-hover/row:bg-[#20222a] group-hover/row:text-zinc-300'
+                          } ${
+                            frozenColumns.length === 0 && isScrolledX
+                              ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
+                              : ''
+                          }`}
+                          style={{
+                            width: `${ROW_NUM_COL_WIDTH}px`,
+                            minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                            maxWidth: `${ROW_NUM_COL_WIDTH}px`,
+                          }}
+                          title={`Row ${globalRowIndex + 1} (Click to select entire row)`}
+                        >
+                          {globalRowIndex + 1}
+                        </td>
+                        {columns.map((col, cIdx) => {
+                          const isSelected = isCellSelected(vIdx, cIdx);
+                          const isEditing =
+                            editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
+                          const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
+                          const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
+                          const colInputType = getColumnInputType(col.dataType);
+                          const isFrozen = frozenColumnSet.has(col.name);
+                          const isLastFrozen = col.name === lastFrozenColName;
+                          const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                          const w = colWidths[col.name] || 120;
+                          const isEditable = isCellEditable(globalRowIndex, cIdx);
+
+                          return (
+                            <td
+                              key={col.name}
+                              data-vidx={vIdx}
+                              data-cidx={cIdx}
+                              onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
+                              onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
+                              onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
+                              onDoubleClick={() => {
+                                if (isEditable) {
+                                  if (isRedis && col.name.toLowerCase() === 'ttl') {
+                                    handleOpenTtlModal(globalRowIndex, displayVal, false);
+                                    return;
+                                  }
+                                  handleStartEdit(globalRowIndex, cIdx, displayVal);
                                 }
-                                handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
+                              }}
+                              className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
+                                isFrozen
+                                  ? `sticky z-10 ${
+                                      isSelected
+                                        ? 'bg-[#1b4ea3] text-white font-medium'
+                                        : hasColChange
+                                        ? 'bg-blue-900/40 text-blue-200 font-medium'
+                                        : isDeleted
+                                        ? 'bg-rose-950/40 text-zinc-500 line-through'
+                                        : !isEditable
+                                        ? 'bg-[#121318]/70 text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
+                                        : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
+                                    }`
+                                  : isSelected
+                                  ? 'bg-[#1b4ea3] text-white font-medium'
+                                  : hasColChange
+                                  ? 'bg-blue-900/30 text-blue-200 font-medium'
+                                  : !isEditable
+                                  ? 'bg-[#111216]/50 text-zinc-400/80 group-hover/row:bg-[#181920]'
+                                  : ''
+                              } ${!isEditable ? 'cursor-default' : 'cursor-text'} ${
+                                isLastFrozen && isScrolledX
+                                  ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                                  : ''
+                              }`}
+                              style={{
+                                width: `${w}px`,
+                                minWidth: `${w}px`,
+                                maxWidth: `${w}px`,
+                                ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                              }}
+                              title={
+                                isEditable
+                                  ? isRedis && col.name.toLowerCase() === 'ttl'
+                                    ? 'Double-click to update TTL (Time-To-Live)'
+                                    : 'Click to select, type or double-click to edit'
+                                  : 'Read-only: this column cannot be edited in Redis'
                               }
-                            }}
-                            className={`px-3 py-1 border-r border-[#22242c] truncate select-none transition-colors ${
-                              isFrozen
-                                ? `sticky z-10 ${
-                                    isSelected
-                                      ? 'bg-[#1b4ea3] text-white font-medium'
-                                      : isSet
-                                      ? 'bg-emerald-900/50 text-emerald-100 font-medium'
-                                      : !isInsEditable
-                                      ? 'bg-[#0a1611]/80 text-zinc-500'
-                                      : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-400'
-                                  }`
-                                : isSelected
-                                ? 'bg-[#1b4ea3] text-white font-medium'
-                                : isSet
-                                ? 'bg-emerald-900/40 text-emerald-100 font-medium'
-                                : !isInsEditable
-                                ? 'bg-[#08120e]/60 text-zinc-500'
-                                : 'text-zinc-400'
-                            } ${
-                              !isInsEditable ? 'cursor-default' : 'cursor-text'
-                            } ${
-                              isLastFrozen && isScrolledX
-                                ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
-                                : ''
-                            }`}
-                            style={{
-                              width: `${w}px`,
-                              minWidth: `${w}px`,
-                              maxWidth: `${w}px`,
-                              ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
-                            }}
-                            title={
-                              isInsEditable
-                                ? 'Click to select, type or double-click to edit'
-                                : 'Read-only: generated or calculated metadata'
-                            }
-                          >
-                            {isEditing ? (
-                              <input
-                                type={colInputType === 'text' ? 'text' : colInputType}
-                                step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
-                                autoFocus
-                                ref={(el) => {
-                                  if (el) {
-                                    if (colInputType !== 'text') {
-                                      try { el?.showPicker?.(); } catch {}
-                                    } else if (isFirstEditRenderRef.current) {
-                                      isFirstEditRenderRef.current = false;
-                                      try {
-                                        const len = el.value.length;
-                                        el.setSelectionRange(len, len);
-                                      } catch {}
-                                    }
-                                  }
-                                }}
-                                value={editVal}
-                                onChange={(e) => setEditVal(e.target.value)}
-                                onBlur={handleFinishEdit}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleFinishEdit();
-                                  if (e.key === 'Escape') {
-                                    e.preventDefault();
-                                    e.stopPropagation();
+                            >
+                              {isEditing ? (
+                                <GridCellEditor
+                                  colInputType={colInputType}
+                                  editVal={editVal}
+                                  variant="update"
+                                  isFirstEditRenderRef={isFirstEditRenderRef}
+                                  onChange={setEditVal}
+                                  onFinishEdit={handleFinishEdit}
+                                  onCancelEdit={() => {
                                     setEditingCell(null);
-                                    if (stagedCount > 0) {
-                                      setShowCancelConfirm(true);
-                                    }
+                                    if (stagedCount > 0) setShowCancelConfirm(true);
+                                  }}
+                                  onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
+                                />
+                              ) : displayVal === null || displayVal === undefined ? (
+                                <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
+                                  NULL
+                                </span>
+                              ) : colInputType !== 'text' ? (
+                                String(displayVal).replace('T', ' ').replace(/Z$/, '')
+                              ) : (
+                                String(displayVal)
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="p-0 border-none pointer-events-none" />
+                      </tr>
+                    );
+                  })}
+
+                  {insertedChanges.map((change, insIdx) => {
+                    const vIdx = displayedRows.length + insIdx;
+                    const rowClass =
+                      'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
+
+                    const isRowInSelection = allSelectionRanges.some(
+                      (rng) => vIdx >= rng.startR && vIdx <= rng.endR
+                    );
+                    const isFullRowSelected = isRowFullySelected(vIdx);
+
+                    return (
+                      <tr key={change.rowIndex} className={rowClass}>
+                        <td
+                          onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
+                          onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
+                          onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
+                          className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-[#22242c] select-none cursor-pointer transition-colors ${
+                            isFullRowSelected
+                              ? 'bg-[#1b4ea3] text-white'
+                              : isRowInSelection
+                              ? 'bg-[#1e293b] text-blue-300'
+                              : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-emerald-400'
+                          } ${
+                            frozenColumns.length === 0 && isScrolledX
+                              ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
+                              : ''
+                          }`}
+                          style={{
+                            width: `${ROW_NUM_COL_WIDTH}px`,
+                            minWidth: `${ROW_NUM_COL_WIDTH}px`,
+                            maxWidth: `${ROW_NUM_COL_WIDTH}px`,
+                          }}
+                          title="New row (Click to select entire row)"
+                        >
+                          +
+                        </td>
+                        {columns.map((col, cIdx) => {
+                          const isSelected = isCellSelected(vIdx, cIdx);
+                          const isEditing =
+                            editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
+                          const colVal = change.changes[col.name];
+                          const isSet = colVal !== undefined;
+                          const displayVal = isSet ? colVal : col.defaultValue || null;
+                          const colInputType = getColumnInputType(col.dataType);
+                          const isFrozen = frozenColumnSet.has(col.name);
+                          const isLastFrozen = col.name === lastFrozenColName;
+                          const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
+                          const w = colWidths[col.name] || 120;
+                          const isInsEditable = isCellEditable(change.rowIndex, cIdx);
+
+                          return (
+                            <td
+                              key={col.name}
+                              data-vidx={vIdx}
+                              data-cidx={cIdx}
+                              onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
+                              onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
+                              onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
+                              onDoubleClick={() => {
+                                if (!isEditing && isInsEditable) {
+                                  if (isRedis && col.name.toLowerCase() === 'ttl') {
+                                    handleOpenTtlModal(change.rowIndex, displayVal ?? '', true);
+                                    return;
                                   }
-                                  if (e.key === 'Tab') {
-                                    e.preventDefault();
-                                    handleFinishEdit();
-                                    let nextCol = (cIdx + 1) % columns.length;
-                                    let nextVIdx = nextCol === 0 ? Math.min(visualRows.length - 1, vIdx + 1) : vIdx;
-                                    let attempts = 0;
-                                    while (attempts < columns.length * 2) {
-                                      const targetVr = visualRows[nextVIdx];
-                                      if (targetVr && isCellEditable(targetVr.rowId, nextCol)) {
-                                        break;
-                                      }
-                                      nextCol = (nextCol + 1) % columns.length;
-                                      if (nextCol === 0) {
-                                        nextVIdx = Math.min(visualRows.length - 1, nextVIdx + 1);
-                                      }
-                                      attempts++;
-                                    }
-                                    const nextVr = visualRows[nextVIdx];
-                                    setAdditionalSelections([]);
-                                    setSelectionAnchor({ r: nextVIdx, c: nextCol });
-                                    setSelectionFocus({ r: nextVIdx, c: nextCol });
-                                    scrollToCell(nextVIdx, nextCol);
-                                    setTimeout(() => {
-                                      if (nextVr) {
-                                        const nextColMeta = columns[nextCol];
-                                        let nextVal: any;
-                                        if (nextVr.isInsert) {
-                                          nextVal = nextVr.insertChange?.changes[nextColMeta.name] ?? (nextColMeta.defaultValue ?? '');
-                                        } else {
-                                          const stagedNext = stagedChanges[nextVr.globalRowIndex!];
-                                          nextVal =
-                                            stagedNext?.type === 'update' && stagedNext.changes[nextColMeta.name] !== undefined
-                                              ? stagedNext.changes[nextColMeta.name]
-                                              : nextVr.rowData?.[nextCol];
-                                        }
-                                        handleStartEdit(nextVr.rowId, nextCol, nextVal ?? '');
-                                      }
-                                    }, 10);
-                                  }
-                                }}
-                                className={`[color-scheme:dark] w-full bg-[#101115] border border-emerald-500 px-1 py-0.5 text-white outline-none rounded font-mono text-xs shadow-inner ${
-                                  colInputType !== 'text' ? 'cursor-pointer' : ''
-                                }`}
-                              />
-                            ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
-                              <span className={isSelected ? "text-blue-200/80 italic" : "text-zinc-600 italic"}>
-                                {col.isAutoIncrement ? '(Auto)' : 'NULL'}
-                              </span>
-                            ) : (
-                              colInputType !== 'text' ? String(displayVal).replace('T', ' ').replace(/Z$/, '') : String(displayVal)
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="p-0 border-none pointer-events-none" />
-                    </tr>
-                  );
-                })}
-              </>
-            )}          </tbody>
-        </table>
-        {displayedRows.length === 0 && insertedChanges.length === 0 && (
-          <div className="sticky left-0 w-full py-12 px-4 text-center text-zinc-500 font-sans">
-            {errorMessage ? (
-              <div className="max-w-lg mx-auto flex flex-col items-center gap-2.5 text-rose-400/90 font-mono text-xs select-text">
-                <div className="flex items-center gap-2 font-semibold text-rose-300">
-                  <AlertCircle className="h-4 w-4 text-rose-400" />
-                  <span>Query Execution Error</span>
+                                  handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
+                                }
+                              }}
+                              className={`px-3 py-1 border-r border-[#22242c] truncate select-none transition-colors ${
+                                isFrozen
+                                  ? `sticky z-10 ${
+                                      isSelected
+                                        ? 'bg-[#1b4ea3] text-white font-medium'
+                                        : isSet
+                                        ? 'bg-emerald-900/50 text-emerald-100 font-medium'
+                                        : !isInsEditable
+                                        ? 'bg-[#0a1611]/80 text-zinc-500'
+                                        : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-400'
+                                    }`
+                                  : isSelected
+                                  ? 'bg-[#1b4ea3] text-white font-medium'
+                                  : isSet
+                                  ? 'bg-emerald-900/40 text-emerald-100 font-medium'
+                                  : !isInsEditable
+                                  ? 'bg-[#08120e]/60 text-zinc-500'
+                                  : 'text-zinc-400'
+                              } ${!isInsEditable ? 'cursor-default' : 'cursor-text'} ${
+                                isLastFrozen && isScrolledX
+                                  ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
+                                  : ''
+                              }`}
+                              style={{
+                                width: `${w}px`,
+                                minWidth: `${w}px`,
+                                maxWidth: `${w}px`,
+                                ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
+                              }}
+                              title={
+                                isInsEditable
+                                  ? 'Click to select, type or double-click to edit'
+                                  : 'Read-only: generated or calculated metadata'
+                              }
+                            >
+                              {isEditing ? (
+                                <GridCellEditor
+                                  colInputType={colInputType}
+                                  editVal={editVal}
+                                  variant="insert"
+                                  isFirstEditRenderRef={isFirstEditRenderRef}
+                                  onChange={setEditVal}
+                                  onFinishEdit={handleFinishEdit}
+                                  onCancelEdit={() => {
+                                    setEditingCell(null);
+                                    if (stagedCount > 0) setShowCancelConfirm(true);
+                                  }}
+                                  onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
+                                />
+                              ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
+                                <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
+                                  {col.isAutoIncrement ? '(Auto)' : 'NULL'}
+                                </span>
+                              ) : colInputType !== 'text' ? (
+                                String(displayVal).replace('T', ' ').replace(/Z$/, '')
+                              ) : (
+                                String(displayVal)
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="p-0 border-none pointer-events-none" />
+                      </tr>
+                    );
+                  })}
+                </>
+              )}
+            </tbody>
+          </table>
+          {displayedRows.length === 0 && insertedChanges.length === 0 && (
+            <div className="sticky left-0 w-full py-12 px-4 text-center text-zinc-500 font-sans">
+              {errorMessage ? (
+                <div className="max-w-lg mx-auto flex flex-col items-center gap-2.5 text-rose-400/90 font-mono text-xs select-text">
+                  <div className="flex items-center gap-2 font-semibold text-rose-300">
+                    <AlertCircle className="h-4 w-4 text-rose-400" />
+                    <span>Query Execution Error</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 leading-relaxed max-w-md">{errorMessage}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWhereInput('');
+                      onApplyWhere?.('');
+                    }}
+                    className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-sans font-medium transition-colors cursor-pointer shadow-sm"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Reset WHERE Filter</span>
+                  </button>
                 </div>
-                <p className="text-[11px] text-zinc-400 leading-relaxed max-w-md">
-                  {errorMessage}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWhereInput('');
-                    onApplyWhere?.('');
-                  }}
-                  className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-sans font-medium transition-colors cursor-pointer shadow-sm"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  <span>Reset WHERE Filter</span>
-                </button>
-              </div>
-            ) : (
-              'No data to display'
-            )}
-          </div>
+              ) : (
+                'No data to display'
+              )}
+            </div>
+          )}
+        </div>
+
+        {(displayedRows.length > 0 || currentPage > 1) && (
+          <GridPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            startRow={startRow}
+            endRow={endRow}
+            effectiveTotal={effectiveTotal}
+            isExactTotalKnown={isExactTotalKnown}
+            hasMore={hasMore}
+            isLoadingMore={isLoadingMore}
+            isLoadingPrevious={isLoadingPrevious}
+            isCountingTotal={isCountingTotal}
+            hasCountRows={Boolean(onCountRows)}
+            localPageSize={localPageSize}
+            globalDefaultPageSize={globalDefaultPageSize}
+            isPageSizeOpen={isPageSizeOpen}
+            pageSizeMenuRef={pageSizeMenuRef}
+            onTogglePageSizeMenu={() => setIsPageSizeOpen((prev) => !prev)}
+            onClosePageSizeMenu={() => setIsPageSizeOpen(false)}
+            onNavigatePage={handleNavigatePage}
+            onPageSizeChange={handlePageSizeChange}
+            onCountRows={handleCountRows}
+          />
         )}
       </div>
 
-      {/* Floating Pagination Pill */}
-      {(displayedRows.length > 0 || currentPage > 1) && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 rounded-lg border border-[#3b3e4f] bg-[#23252c]/95 backdrop-blur-md px-2 py-1 shadow-[0_8px_24px_rgba(0,0,0,0.55)] text-xs text-zinc-300 select-none">
-          <button
-            type="button"
-            onClick={() => handleNavigatePage(1)}
-            disabled={currentPage <= 1 || isLoadingMore}
-            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
-            title="First Page"
-          >
-            <ChevronsLeft className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavigatePage(currentPage - 1)}
-            disabled={currentPage <= 1 || isLoadingMore}
-            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
-            title="Previous Page"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
-
-          <div className="flex items-center gap-1.5 px-1.5 text-[11px] font-mono tabular-nums">
-            <div className="relative" ref={pageSizeMenuRef}>
-              <button
-                type="button"
-                onClick={() => setIsPageSizeOpen((prev) => !prev)}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-[#323541] text-zinc-100 font-medium transition-colors cursor-pointer"
-                title="Select rows per page"
-              >
-                <span>{startRow}-{endRow}</span>
-                <ChevronDown
-                  className={`h-3 w-3 text-zinc-400 transition-transform duration-150 ${
-                    isPageSizeOpen ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
-
-              {isPageSizeOpen && (
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 min-w-[120px] rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-2 py-1 text-[10px] font-sans font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1">
-                    Rows per page
-                  </div>
-                  {Array.from(new Set([25, 50, 100, 250, 500, 1000, globalDefaultPageSize, localPageSize]))
-                    .sort((a, b) => a - b)
-                    .map((size) => {
-                      const isSelected = size === localPageSize;
-                      return (
-                        <button
-                          key={size}
-                          type="button"
-                          onClick={() => {
-                            handlePageSizeChange(size);
-                            setIsPageSizeOpen(false);
-                          }}
-                          className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded cursor-pointer text-xs font-mono transition-colors ${
-                            isSelected
-                              ? 'bg-blue-600 text-white font-bold'
-                              : 'text-zinc-200 hover:bg-[#2c303c] hover:text-white'
-                          }`}
-                        >
-                          <span>{size}</span>
-                          {isSelected && <Check className="h-3.5 w-3.5 text-white shrink-0 ml-2" />}
-                        </button>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-
-            <span className="font-sans text-zinc-400">of</span>
-            {isExactTotalKnown ? (
-              <span className="text-zinc-200 font-medium">{effectiveTotal}</span>
-            ) : (
-              <button
-                type="button"
-                onClick={handleCountRows}
-                disabled={isCountingTotal || !onCountRows}
-                className={`font-medium transition-colors ${
-                  onCountRows
-                    ? 'text-zinc-200 hover:text-blue-400 underline decoration-dotted decoration-zinc-500 hover:decoration-blue-400 underline-offset-2 cursor-pointer'
-                    : 'text-zinc-200 cursor-default'
-                }`}
-                title={onCountRows ? 'Click to count total rows' : undefined}
-              >
-                {isCountingTotal ? (
-                  <span className="inline-flex items-center gap-1 text-blue-400">
-                    <RefreshCw className="h-3 w-3 animate-spin" />
-                    <span>{endRow + 1}+</span>
-                  </span>
-                ) : (
-                  `${endRow + 1}+`
-                )}
-              </button>
-            )}
-            {(isLoadingMore || isLoadingPrevious) && (
-              <RefreshCw className="h-3 w-3 animate-spin text-blue-400 ml-0.5" />
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => handleNavigatePage(currentPage + 1)}
-            disabled={(isExactTotalKnown ? currentPage >= totalPages : !hasMore) || isLoadingMore}
-            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
-            title="Next Page"
-          >
-            <ChevronRight className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavigatePage(totalPages)}
-            disabled={!isExactTotalKnown || currentPage >= totalPages || isLoadingMore}
-            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
-            title={isExactTotalKnown ? `Last Page (${totalPages})` : 'Click total count first to jump to last page'}
-          >
-            <ChevronsRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-    </div>
-
-      {/* Column Hover Metadata Popover Card */}
       {hoveredCol && (
-        <div
-          className="fixed z-50 pointer-events-none rounded-lg border border-[#3b3e4f] bg-[#16171f]/95 backdrop-blur-md shadow-2xl p-3 text-xs font-sans min-w-[220px] max-w-[320px] animate-in fade-in zoom-in-95 duration-100"
-          style={{ top: hoveredCol.y, left: hoveredCol.x }}
-        >
-          {/* Header: Name + PK Badge */}
-          <div className="flex items-center justify-between gap-2 border-b border-[#272932] pb-2 mb-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              {hoveredCol.isPK ? (
-                <Key className="h-3.5 w-3.5 text-amber-400 fill-amber-400/30 shrink-0" />
-              ) : (
-                <Hash className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
-              )}
-              <span className="font-bold text-zinc-100 truncate text-[13px]">{hoveredCol.col.name}</span>
-            </div>
-            {hoveredCol.isPK && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono shrink-0">
-                PRIMARY KEY
-              </span>
-            )}
-            {isRedis && !isColumnEditable(hoveredCol.col.name) && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 border border-zinc-700/60 text-zinc-400 font-mono shrink-0">
-                READ ONLY
-              </span>
-            )}
-            {isRedis && isColumnEditable(hoveredCol.col.name) && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono shrink-0">
-                EDITABLE
-              </span>
-            )}
-          </div>
-
-          {/* Metadata Rows */}
-          <div className="space-y-1.5 text-[11px]">
-            {/* Data Type */}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-zinc-500">Data Type:</span>
-              <span className="font-mono font-medium text-blue-400 uppercase bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-900/40">
-                {hoveredCol.col.dataType || 'UNKNOWN'}
-              </span>
-            </div>
-
-            {/* Size / Length if extracted */}
-            {hoveredCol.details.size && (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-zinc-500">Length / Size:</span>
-                <span className="font-mono text-zinc-300">{hoveredCol.details.size}</span>
-              </div>
-            )}
-
-            {/* Nullable */}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-zinc-500">Nullable:</span>
-              <span
-                className={`font-mono text-[10px] ${
-                  hoveredCol.col.isNullable ? 'text-zinc-400' : 'text-amber-400/90 font-semibold'
-                }`}
-              >
-                {hoveredCol.col.isNullable ? 'YES (NULL)' : 'NO (NOT NULL)'}
-              </span>
-            </div>
-
-            {/* Editable Status */}
-            {isRedis && (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-zinc-500">Editable:</span>
-                <span
-                  className={`font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                    isColumnEditable(hoveredCol.col.name)
-                      ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40'
-                      : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/50'
-                  }`}
-                >
-                  {isColumnEditable(hoveredCol.col.name)
-                    ? hoveredCol.col.name.toLowerCase() === 'ttl'
-                      ? 'YES (DOUBLE-CLICK TO UPDATE TTL)'
-                      : 'YES'
-                    : 'NO (DISABLED)'}
-                </span>
-              </div>
-            )}
-
-            {/* Auto Increment */}
-            {hoveredCol.col.isAutoIncrement && (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-zinc-500">Extra:</span>
-                <span className="font-mono text-emerald-400 text-[10px]">auto_increment</span>
-              </div>
-            )}
-
-            {/* Default Value */}
-            {hoveredCol.col.defaultValue !== undefined && hoveredCol.col.defaultValue !== '' && (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-zinc-500">Default:</span>
-                <span className="font-mono text-zinc-400 truncate max-w-[150px]">
-                  {hoveredCol.col.defaultValue}
-                </span>
-              </div>
-            )}
-
-            {/* Comment / Description */}
-            {hoveredCol.col.comment && (
-              <div className="mt-2 pt-2 border-t border-[#272932]">
-                <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-0.5">
-                  Description
-                </div>
-                <div className="text-zinc-300 text-[11px] leading-relaxed italic">
-                  {hoveredCol.col.comment}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <ColumnHoverPopover
+          hoveredCol={hoveredCol}
+          isRedis={isRedis}
+          isColumnEditable={isColumnEditable}
+        />
       )}
 
-      {/* Cancel Changes Confirmation Modal */}
       {showCancelConfirm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-          onClick={() => setShowCancelConfirm(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#14151a] p-5 shadow-2xl animate-in zoom-in-95 duration-150 flex flex-col gap-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-500/10 border border-rose-500/25 text-rose-400">
-                <AlertCircle className="h-5 w-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-semibold text-zinc-100">
-                  Discard Staged Changes?
-                </h3>
-                <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
-                  There are <span className="font-semibold text-rose-300 font-mono">{stagedCount}</span> unsaved change(s). All pending row additions, edits, or deletions will be reverted to database values.
-                </p>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Are you sure you want to discard these changes?
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530]">
-              <button
-                type="button"
-                onClick={() => setShowCancelConfirm(false)}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#20222a] hover:bg-[#2b2d38] border border-[#2d303f] text-zinc-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
-              >
-                <span>Keep Changes</span>
-                <kbd className="text-[10px] text-zinc-500 font-mono bg-[#14151a] px-1 rounded border border-[#2d303f]">Esc</kbd>
-              </button>
-              <button
-                type="button"
-                autoFocus
-                onClick={() => {
-                  revertTabChanges(tabId);
-                  setEditingCell(null);
-                  if (selectedRowIndex !== null && selectedRowIndex < 0) {
-                    setAdditionalSelections([]);
-                    setSelectionAnchor(null);
-                    setSelectionFocus(null);
-                  }
-                  setShowCancelConfirm(false);
-                }}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors cursor-pointer shadow-sm"
-              >
-                <span>Discard Changes</span>
-                <kbd className="text-[10px] text-rose-200 font-mono bg-rose-700/60 px-1 rounded">↵ Enter</kbd>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Floating Context Menu */}
-      {contextMenu.isOpen && (
-        <div
-          className="fixed z-50 min-w-[210px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 truncate flex items-center justify-between">
-            <span>Grid Actions</span>
-            {selectionSummary && (
-              <span className="text-zinc-600 font-mono text-[9px]">
-                {selectionSummary}
-              </span>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              const text = getFormattedCopyText();
-              if (text) navigator.clipboard.writeText(text);
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Copy</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px] font-mono">
-              <span className="text-sky-400 font-semibold uppercase">{COPY_FORMAT_LABELS[copyFormat] || 'CSV'}</span>
-              <kbd className="text-zinc-500 group-hover:text-white/80">{modKey}+C</kbd>
-            </div>
-          </button>
-
-          <div
-            className="relative"
-            onMouseEnter={() => setIsCopyAsSubmenuOpen(true)}
-            onMouseLeave={() => setIsCopyAsSubmenuOpen(false)}
-          >
-            <button
-              type="button"
-              onClick={() => setIsCopyAsSubmenuOpen((prev) => !prev)}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md transition-colors text-left cursor-pointer group ${
-                isCopyAsSubmenuOpen
-                  ? 'bg-blue-600 text-white'
-                  : 'hover:bg-blue-600 hover:text-white text-zinc-300'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Copy className={`h-3.5 w-3.5 ${isCopyAsSubmenuOpen ? 'text-white' : 'text-zinc-400 group-hover:text-white'}`} />
-                <span>Copy As</span>
-              </div>
-              <ChevronRight className={`h-3.5 w-3.5 ${isCopyAsSubmenuOpen ? 'text-white' : 'text-zinc-400 group-hover:text-white'}`} />
-            </button>
-
-            {isCopyAsSubmenuOpen && (() => {
-              const flipLeft = typeof window !== 'undefined' && contextMenu.x + 450 > window.innerWidth;
-              return (
-                <div
-                  className={`absolute top-0 z-50 ${flipLeft ? 'right-full pr-1' : 'left-full pl-1'}`}
-                >
-                  <div className="min-w-[230px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCopyAsSubmenuOpen(false);
-                        setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                        setIsCopyAsOpen(true);
-                      }}
-                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                    >
-                      <span>Copy As ...</span>
-                      <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono ml-3">
-                        {modKey}+Shift+C
-                      </kbd>
-                    </button>
-
-                    <div className="my-1 border-t border-[#272932]" />
-
-                    {COPY_FORMAT_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => {
-                          const text = getFormattedCopyText(opt.id);
-                          if (text) navigator.clipboard.writeText(text);
-                          setIsCopyAsSubmenuOpen(false);
-                          setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                          <span>Copy as {opt.label}</span>
-                        </div>
-                        {opt.id === copyFormat && (
-                          <Check className="h-3 w-3 text-sky-400 group-hover:text-white ml-2" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-              navigator.clipboard
-                ?.readText?.()
-                .then((text) => {
-                  if (text) handlePasteData(text);
-                })
-                .catch(() => {});
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <ClipboardPaste className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Paste</span>
-            </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+V</kbd>
-          </button>          <div className="my-1 border-t border-[#272932]" />
-
-          <button
-            type="button"
-            onClick={() => {
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-              handleDuplicateRow();
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Copy className="h-3.5 w-3.5 text-sky-400 group-hover:text-white" />
-              <span>Duplicate Row(s)</span>
-            </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+D</kbd>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-              handleAddRow();
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Plus className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
-              <span>Add New Row</span>
-            </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+I</kbd>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-              handleDeleteActiveRow();
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-              <span>Delete Row(s)</span>
-            </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{isMac ? 'Cmd+⌫' : 'Del'}</kbd>
-          </button>
-
-          <div className="my-1 border-t border-[#272932]" />
-
-          {contextMenu.vIdx !== null && contextMenu.cIdx !== null && (() => {
-            const vr = visualRows[contextMenu.vIdx];
-            const isTargetEditable = vr ? isCellEditable(vr.rowId, contextMenu.cIdx) : false;
-
-            return (
-              <>
-                {isTargetEditable && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const { vIdx, cIdx } = contextMenu;
-                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                      if (vIdx !== null && cIdx !== null) {
-                        const targetVr = visualRows[vIdx];
-                        if (targetVr) {
-                          const col = columns[cIdx];
-                          let displayVal: any;
-                          if (targetVr.isInsert) {
-                            const staged = targetVr.insertChange;
-                            displayVal = staged?.changes[col.name] !== undefined ? staged.changes[col.name] : (col.defaultValue ?? '');
-                          } else {
-                            const staged = stagedChanges[targetVr.globalRowIndex!];
-                            displayVal = staged?.type === 'update' && staged.changes[col.name] !== undefined ? staged.changes[col.name] : targetVr.rowData?.[cIdx];
-                          }
-                          if (isRedis && col.name.toLowerCase() === 'ttl') {
-                            handleOpenTtlModal(targetVr.rowId, displayVal, targetVr.isInsert);
-                            return;
-                          }
-                          handleStartEdit(targetVr.rowId, cIdx, displayVal);
-                        }
-                      }
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-2">
-                      {isRedis && contextMenu.cIdx !== null && columns[contextMenu.cIdx]?.name.toLowerCase() === 'ttl' ? (
-                        <>
-                          <Clock className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-                          <span>Update Key TTL...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Edit3 className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                          <span>Edit Cell</span>
-                        </>
-                      )}
-                    </div>
-                    <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Double-Click</kbd>
-                  </button>
-                )}
-
-                {isRedis && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const { vIdx } = contextMenu;
-                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                      if (vIdx !== null) {
-                        const targetVr = visualRows[vIdx];
-                        if (targetVr) {
-                          const keyColIdx = columns.findIndex((c) => c.name.toLowerCase() === 'key');
-                          const kName = targetVr.isInsert
-                            ? String(targetVr.insertChange?.changes['key'] ?? '')
-                            : keyColIdx !== -1 ? String(targetVr.rowData?.[keyColIdx] ?? '') : '';
-                          if (kName) {
-                            setRedisRenameModal({
-                              isOpen: true,
-                              oldKeyName: kName,
-                            });
-                          }
-                        }
-                      }
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Pencil className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                      <span>Rename Key...</span>
-                    </div>
-                  </button>
-                )}
-
-                {!isRedis && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const { vIdx, cIdx } = contextMenu;
-                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                      if (vIdx !== null && cIdx !== null) {
-                        const targetVr = visualRows[vIdx];
-                        if (targetVr && targetVr.globalRowIndex !== undefined) {
-                          const col = columns[cIdx];
-                          const currentVal = targetVr.rowData?.[cIdx];
-                          openUpdateQueryInTab(targetVr.globalRowIndex, col.name, currentVal);
-                        }
-                      }
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-                      <span>Open UPDATE in Tab</span>
-                    </div>
-                  </button>
-                )}
-
-                {isTargetEditable && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const { vIdx, cIdx } = contextMenu;
-                      setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                      handleSetSelectedToNull(vIdx, cIdx);
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Ban className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                      <span>Set to NULL</span>
-                    </div>
-                  </button>
-                )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  const { cIdx } = contextMenu;
-                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  if (cIdx !== null && columns[cIdx]) {
-                    handleToggleFreeze(columns[cIdx].name);
-                  }
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <Snowflake
-                    className={`h-3.5 w-3.5 ${
-                      contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
-                        ? 'text-cyan-400'
-                        : 'text-zinc-400'
-                    } group-hover:text-white`}
-                  />
-                  <span>
-                    {contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
-                      ? `Unfreeze Column (${columns[contextMenu.cIdx]?.name})`
-                      : `Freeze Column (${columns[contextMenu.cIdx]?.name})`}
-                  </span>
-                </div>
-                <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Alt+Click</kbd>
-              </button>
-
-              {frozenColumns.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                    setFrozenColumns([]);
-                  }}
-                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                >
-                  <div className="flex items-center gap-2">
-                    <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                    <span>Unfreeze All Columns ({frozenColumns.length})</span>
-                  </div>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  const { cIdx } = contextMenu;
-                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  if (cIdx !== null && columns[cIdx]) {
-                    const colName = columns[cIdx].name;
-                    const autoW = getInitialColumnWidth(columns[cIdx], rows, cIdx);
-                    setColWidths((prev) => {
-                      const next = { ...prev, [colName]: autoW };
-                      currentWidthsRef.current = next;
-                      saveColWidths(storageKey, next);
-                      return next;
-                    });
-                  }
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <ArrowUpDown className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white rotate-90" />
-                  <span>Auto-fit Column Width</span>
-                </div>
-                <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">2x Click</kbd>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  const resetWidths: Record<string, number> = {};
-                  columns.forEach((c, idx) => {
-                    resetWidths[c.name] = getInitialColumnWidth(c, rows, idx);
-                  });
-                  setColWidths(resetWidths);
-                  currentWidthsRef.current = resetWidths;
-                  saveColWidths(storageKey, resetWidths);
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <RotateCcw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                  <span>Reset All Column Widths</span>
-                </div>
-              </button>
-              <div className="my-1 border-t border-[#272932]" />
-            </>
-          );
-        })()}
-
-          <button
-            type="button"
-            onClick={() => {
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-              handleToggleValuePanel();
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <PanelRight className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-              <span>View As</span>
-            </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+T</kbd>
-          </button>
-
-          <div className="my-1 border-t border-[#272932]" />
-
-          <button
-            type="button"
-            onClick={() => {
-              setContextMenu((prev) => ({ ...prev, isOpen: false }));
-              if (visualRows.length > 0 && columns.length > 0) {
-                setAdditionalSelections([]);
-                setSelectionAnchor({ r: 0, c: 0 });
-                setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
-              }
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <CheckSquare className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Select All</span>
-            </div>
-            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+A</kbd>
-          </button>
-        </div>
+        <CancelChangesModal
+          stagedCount={stagedCount}
+          onKeep={() => setShowCancelConfirm(false)}
+          onDiscard={() => {
+            revertTabChanges(tabId);
+            setEditingCell(null);
+            if (selectedRowIndex !== null && selectedRowIndex < 0) {
+              setAdditionalSelections([]);
+              setSelectionAnchor(null);
+              setSelectionFocus(null);
+            }
+            setShowCancelConfirm(false);
+          }}
+        />
       )}
 
-      {/* Export Modal */}
+      <GridContextMenu
+        contextMenu={contextMenu}
+        selectionSummary={selectionSummary}
+        copyFormat={copyFormat}
+        isCopyAsSubmenuOpen={isCopyAsSubmenuOpen}
+        isRedis={isRedis}
+        columns={columns}
+        visualRows={visualRows}
+        stagedChanges={stagedChanges}
+        frozenColumns={frozenColumns}
+        isCellEditable={isCellEditable}
+        onSetCopyAsSubmenuOpen={setIsCopyAsSubmenuOpen}
+        onClose={() => setContextMenu((prev) => ({ ...prev, isOpen: false }))}
+        onCopy={(fmt) => {
+          const text = getFormattedCopyText(fmt);
+          if (text) navigator.clipboard.writeText(text);
+        }}
+        onOpenCopyAsModal={() => setIsCopyAsOpen(true)}
+        onPaste={handlePasteData}
+        onDuplicateRow={handleDuplicateRow}
+        onAddRow={handleAddRow}
+        onDeleteActiveRow={handleDeleteActiveRow}
+        onOpenTtlModal={handleOpenTtlModal}
+        onStartEdit={handleStartEdit}
+        onOpenRedisRenameModal={(oldKeyName) => setRedisRenameModal({ isOpen: true, oldKeyName })}
+        onOpenUpdateQueryInTab={openUpdateQueryInTab}
+        onSetSelectedToNull={handleSetSelectedToNull}
+        onToggleFreeze={handleToggleFreeze}
+        onUnfreezeAll={() => setFrozenColumns([])}
+        onAutoFitColumn={(cIdx) => {
+          const colName = columns[cIdx].name;
+          const autoW = getInitialColumnWidth(columns[cIdx], rows, cIdx);
+          setColWidths((prev) => {
+            const next = { ...prev, [colName]: autoW };
+            currentWidthsRef.current = next;
+            saveColWidths(storageKey, next);
+            return next;
+          });
+        }}
+        onResetAllColumnWidths={() => {
+          const resetWidths: Record<string, number> = {};
+          columns.forEach((c, idx) => {
+            resetWidths[c.name] = getInitialColumnWidth(c, rows, idx);
+          });
+          setColWidths(resetWidths);
+          currentWidthsRef.current = resetWidths;
+          saveColWidths(storageKey, resetWidths);
+        }}
+        onToggleValuePanel={handleToggleValuePanel}
+        onSelectAll={() => {
+          if (visualRows.length > 0 && columns.length > 0) {
+            setAdditionalSelections([]);
+            setSelectionAnchor({ r: 0, c: 0 });
+            setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
+          }
+        }}
+      />
+
       <ExportModal
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
@@ -5209,7 +2990,6 @@ ${setClauses};`;
         sql={rawSql}
       />
 
-      {/* Import Modal */}
       {tableName && (
         <ImportModal
           isOpen={isImportOpen}
@@ -5222,504 +3002,43 @@ ${setClauses};`;
         />
       )}
 
-      {/* All Sorted Columns Modal */}
       {showAllSortsModal && (
-        <div
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowAllSortsModal(false);
+        <AllSortsModal
+          localSortConfigs={localSortConfigs}
+          onClose={() => setShowAllSortsModal(false)}
+          onUpdateSorts={(next) => {
+            setLocalSortConfigs(next);
+            onSortChange?.(next);
           }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-        >
-          <div className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#191a20] shadow-2xl flex flex-col overflow-hidden text-zinc-100">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-[#272932] px-4 py-3 bg-[#1e2029]">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
-                  <ArrowUpDown className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
-                    <span>Order By Columns</span>
-                    <span className="px-1.5 py-0.2 rounded-full bg-blue-600/20 text-blue-400 text-[10px] font-mono font-bold">
-                      {localSortConfigs.length}
-                    </span>
-                  </h3>
-                  <p className="text-[11px] text-zinc-400">Adjust sorting priority and direction</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAllSortsModal(false)}
-                className="rounded-lg p-1 text-zinc-400 hover:bg-[#272932] hover:text-zinc-200 transition-colors cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* List */}
-            <div className="max-h-72 overflow-y-auto p-3 space-y-2">
-              {localSortConfigs.length === 0 ? (
-                <div className="py-8 text-center text-xs text-zinc-500">
-                  No active sorting
-                </div>
-              ) : (
-                localSortConfigs.map((sc, idx) => (
-                  <div
-                    key={sc.column}
-                    className="flex items-center justify-between p-2 rounded-lg bg-[#14151a] border border-[#272932] text-xs"
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="flex items-center justify-center h-5 w-5 rounded-full bg-blue-600/20 border border-blue-500/40 text-blue-400 font-mono text-[10px] font-bold shrink-0">
-                        #{idx + 1}
-                      </span>
-                      <span className="font-mono text-zinc-100 font-medium truncate" title={sc.column}>
-                        {sc.column}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0 ml-2">
-                      {/* Direction Toggle */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const nextDir: 'asc' | 'desc' = sc.direction === 'asc' ? 'desc' : 'asc';
-                          const next: SortConfig[] = localSortConfigs.map((s, i) =>
-                            i === idx ? { ...s, direction: nextDir } : s
-                          );
-                          setLocalSortConfigs(next);
-                          onSortChange?.(next);
-                        }}
-                        className={`flex items-center justify-center h-6 w-6 rounded font-mono text-[10px] font-bold transition-colors cursor-pointer border ${
-                          sc.direction === 'asc'
-                            ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30'
-                            : 'bg-amber-600/20 text-amber-300 border-amber-500/40 hover:bg-amber-600/30'
-                        }`}
-                        title={`Click to toggle (${sc.direction === 'asc' ? 'A → Z (ASC) to Z → A (DESC)' : 'Z → A (DESC) to A → Z (ASC)'})`}
-                      >
-                        {sc.direction === 'asc' ? (
-                          <ArrowDownAZ className="h-4 w-4 stroke-[2]" />
-                        ) : (
-                          <ArrowDownZA className="h-4 w-4 stroke-[2]" />
-                        )}
-                      </button>
-
-                      {/* Move Up */}
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        onClick={() => {
-                          if (idx === 0) return;
-                          const next = [...localSortConfigs];
-                          const temp = next[idx - 1];
-                          next[idx - 1] = next[idx];
-                          next[idx] = temp;
-                          setLocalSortConfigs(next);
-                          onSortChange?.(next);
-                        }}
-                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
-                        title="Increase priority"
-                      >
-                        <ChevronUp className="h-3.5 w-3.5" />
-                      </button>
-
-                      {/* Move Down */}
-                      <button
-                        type="button"
-                        disabled={idx === localSortConfigs.length - 1}
-                        onClick={() => {
-                          if (idx === localSortConfigs.length - 1) return;
-                          const next = [...localSortConfigs];
-                          const temp = next[idx + 1];
-                          next[idx + 1] = next[idx];
-                          next[idx] = temp;
-                          setLocalSortConfigs(next);
-                          onSortChange?.(next);
-                        }}
-                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
-                        title="Decrease priority"
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      </button>
-
-                      {/* Remove */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = localSortConfigs.filter((_, i) => i !== idx);
-                          setLocalSortConfigs(next);
-                          onSortChange?.(next);
-                          if (next.length === 0) setShowAllSortsModal(false);
-                        }}
-                        className="p-1 rounded text-rose-500 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer ml-0.5"
-                        title={`Remove ${sc.column} from sort`}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-between border-t border-[#272932] px-4 py-2.5 bg-[#14151a]">
-              <button
-                type="button"
-                onClick={() => {
-                  handleClearAllSort();
-                  setShowAllSortsModal(false);
-                }}
-                className="px-2.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-200 text-xs font-medium cursor-pointer transition-colors"
-              >
-                Clear All Sorts
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowAllSortsModal(false)}
-                className="px-3 py-1 rounded bg-[#272932] hover:bg-[#323541] text-zinc-200 text-xs font-medium cursor-pointer transition-colors"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
+          onClearAllSort={handleClearAllSort}
+        />
       )}
 
-      {/* All Frozen Columns Modal */}
       {showAllFrozenModal && (
-        <div
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowAllFrozenModal(false);
+        <AllFrozenModal
+          frozenColumns={frozenColumns}
+          onClose={() => setShowAllFrozenModal(false)}
+          onUpdateFrozen={(next) => {
+            setFrozenColumns(next);
+            onFrozenColumnsChange?.(next);
           }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-        >
-          <div className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#191a20] shadow-2xl flex flex-col overflow-hidden text-zinc-100">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-[#272932] px-4 py-3 bg-[#1e2029]">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400">
-                  <Snowflake className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
-                    <span>Frozen Columns</span>
-                    <span className="px-1.5 py-0.2 rounded-full bg-cyan-600/20 text-cyan-400 text-[10px] font-mono font-bold">
-                      {frozenColumns.length}
-                    </span>
-                  </h3>
-                  <p className="text-[11px] text-zinc-400">Manage columns pinned to the left table edge</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAllFrozenModal(false)}
-                className="rounded-lg p-1 text-zinc-400 hover:bg-[#272932] hover:text-zinc-200 transition-colors cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* List */}
-            <div className="max-h-72 overflow-y-auto p-3 space-y-2">
-              {frozenColumns.length === 0 ? (
-                <div className="py-8 text-center text-xs text-zinc-500">
-                  No frozen columns
-                </div>
-              ) : (
-                frozenColumns.map((colName, idx) => (
-                  <div
-                    key={colName}
-                    className="flex items-center justify-between p-2 rounded-lg bg-[#14151a] border border-[#272932] text-xs"
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="flex items-center justify-center h-5 w-5 rounded-full bg-cyan-600/20 border border-cyan-500/40 text-cyan-400 font-mono text-[10px] font-bold shrink-0">
-                        #{idx + 1}
-                      </span>
-                      <span className="font-mono text-zinc-100 font-medium truncate" title={colName}>
-                        {colName}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0 ml-2">
-                      {/* Move Up */}
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        onClick={() => {
-                          if (idx === 0) return;
-                          const next = [...frozenColumns];
-                          const temp = next[idx - 1];
-                          next[idx - 1] = next[idx];
-                          next[idx] = temp;
-                          setFrozenColumns(next);
-                          onFrozenColumnsChange?.(next);
-                        }}
-                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
-                        title="Move left in freeze order"
-                      >
-                        <ChevronUp className="h-3.5 w-3.5" />
-                      </button>
-
-                      {/* Move Down */}
-                      <button
-                        type="button"
-                        disabled={idx === frozenColumns.length - 1}
-                        onClick={() => {
-                          if (idx === frozenColumns.length - 1) return;
-                          const next = [...frozenColumns];
-                          const temp = next[idx + 1];
-                          next[idx + 1] = next[idx];
-                          next[idx] = temp;
-                          setFrozenColumns(next);
-                          onFrozenColumnsChange?.(next);
-                        }}
-                        className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-20 disabled:pointer-events-none cursor-pointer"
-                        title="Move right in freeze order"
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      </button>
-
-                      {/* Unfreeze */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = frozenColumns.filter((c) => c !== colName);
-                          setFrozenColumns(next);
-                          onFrozenColumnsChange?.(next);
-                          if (next.length === 0) setShowAllFrozenModal(false);
-                        }}
-                        className="p-1 rounded text-rose-500 hover:text-rose-400 hover:bg-rose-950/40 cursor-pointer ml-0.5"
-                        title={`Unfreeze ${colName}`}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-between border-t border-[#272932] px-4 py-2.5 bg-[#14151a]">
-              <button
-                type="button"
-                onClick={() => {
-                  setFrozenColumns([]);
-                  onFrozenColumnsChange?.([]);
-                  setShowAllFrozenModal(false);
-                }}
-                className="px-2.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-400 hover:bg-rose-900/50 hover:text-rose-200 text-xs font-medium cursor-pointer transition-colors"
-              >
-                Unfreeze All
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowAllFrozenModal(false)}
-                className="px-3 py-1 rounded bg-[#272932] hover:bg-[#323541] text-zinc-200 text-xs font-medium cursor-pointer transition-colors"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
+        />
       )}
 
-      {/* Redis TTL Modal */}
       {ttlModal && (
-        <div
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setTtlModal(null);
-          }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-        >
-          <div className="w-full max-w-md rounded-xl border border-[#2b2e3a] bg-[#191a20] shadow-2xl flex flex-col overflow-hidden text-zinc-100">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-[#272932] px-4 py-3 bg-[#1e2029]">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
-                  <Clock className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
-                    <span>Update Redis TTL (Time-To-Live)</span>
-                  </h3>
-                  <p className="text-[11px] text-zinc-400">Set key expiration time or make it persist</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setTtlModal(null)}
-                className="rounded-lg p-1 text-zinc-400 hover:bg-[#272932] hover:text-zinc-200 transition-colors"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-4 space-y-4">
-              {/* Key metadata banner */}
-              <div className="bg-[#121318] border border-[#252833] rounded-lg p-3 flex flex-col gap-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">Target Key</span>
-                  <span className="text-[10px] text-zinc-500 font-mono">Current: <span className="text-zinc-300 font-medium">{ttlModal.currentTtl}</span></span>
-                </div>
-                <div className="font-mono text-xs font-semibold text-amber-300 truncate">
-                  {ttlModal.keyName || '(Active Key)'}
-                </div>
-              </div>
-
-              {/* Mode Options */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Expiration Mode</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setTtlMode('persist')}
-                    className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
-                      ttlMode === 'persist'
-                        ? 'border-emerald-500 bg-emerald-950/20 text-white shadow-xs'
-                        : 'border-[#272932] bg-[#14151b] hover:bg-[#1a1c24] text-zinc-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${ttlMode === 'persist' ? 'bg-emerald-400 ring-2 ring-emerald-400/30' : 'bg-zinc-600'}`} />
-                      <span className="text-xs font-semibold text-zinc-200">Persist</span>
-                    </div>
-                    <span className="text-[10px] text-zinc-500 mt-1">No TTL, never expires</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setTtlMode('custom')}
-                    className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
-                      ttlMode === 'custom'
-                        ? 'border-amber-500 bg-amber-950/20 text-white shadow-xs'
-                        : 'border-[#272932] bg-[#14151b] hover:bg-[#1a1c24] text-zinc-400'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${ttlMode === 'custom' ? 'bg-amber-400 ring-2 ring-amber-400/30' : 'bg-zinc-600'}`} />
-                      <span className="text-xs font-semibold text-zinc-200">Set Expiration</span>
-                    </div>
-                    <span className="text-[10px] text-zinc-500 mt-1">Expire after duration</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Custom TTL Input */}
-              {ttlMode === 'custom' && (
-                <div className="space-y-2 animate-in fade-in duration-100">
-                  <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Duration</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      autoFocus
-                      value={ttlAmount}
-                      onChange={(e) => setTtlAmount(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveTtl(false);
-                      }}
-                      placeholder="e.g. 3600"
-                      className="flex-1 bg-[#101115] border border-[#2b2e3a] focus:border-amber-500 px-3 py-1.5 text-xs text-white outline-none rounded-lg font-mono"
-                    />
-                    <select
-                      value={ttlUnit}
-                      onChange={(e) => setTtlUnit(e.target.value as any)}
-                      className="bg-[#101115] border border-[#2b2e3a] focus:border-amber-500 px-2 py-1.5 text-xs text-white outline-none rounded-lg font-medium cursor-pointer"
-                    >
-                      <option value="s">Seconds (s)</option>
-                      <option value="m">Minutes (m)</option>
-                      <option value="h">Hours (h)</option>
-                      <option value="d">Days (d)</option>
-                    </select>
-                  </div>
-
-                  {/* Quick Presets */}
-                  <div className="pt-1">
-                    <span className="text-[10px] text-zinc-500 mb-1.5 block">Quick Presets:</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[
-                        { label: '10s', amount: '10', unit: 's' as const },
-                        { label: '1m', amount: '1', unit: 'm' as const },
-                        { label: '10m', amount: '10', unit: 'm' as const },
-                        { label: '1h', amount: '1', unit: 'h' as const },
-                        { label: '1d', amount: '1', unit: 'd' as const },
-                        { label: '7d', amount: '7', unit: 'd' as const },
-                        { label: '30d', amount: '30', unit: 'd' as const },
-                      ].map((preset) => (
-                        <button
-                          key={preset.label}
-                          type="button"
-                          onClick={() => {
-                            setTtlMode('custom');
-                            setTtlAmount(preset.amount);
-                            setTtlUnit(preset.unit);
-                          }}
-                          className={`px-2 py-1 rounded text-[11px] font-mono border transition-colors cursor-pointer ${
-                            ttlAmount === preset.amount && ttlUnit === preset.unit
-                              ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-semibold'
-                              : 'bg-[#121318] border-[#272932] text-zinc-400 hover:text-zinc-200 hover:bg-[#1a1c24]'
-                          }`}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Command Preview banner */}
-              <div className="bg-[#101116] border border-[#232530] rounded-lg px-3 py-2 flex items-center justify-between text-[11px] font-mono text-zinc-400">
-                <span className="text-zinc-500 text-[10px] uppercase font-sans font-semibold">Command:</span>
-                <span className="text-amber-400 font-bold truncate">
-                  {ttlMode === 'persist'
-                    ? `PERSIST "${ttlModal.keyName || 'key'}"`
-                    : `EXPIRE "${ttlModal.keyName || 'key'}" ${
-                        ttlUnit === 'd'
-                          ? Number(ttlAmount || 1) * 86400
-                          : ttlUnit === 'h'
-                          ? Number(ttlAmount || 1) * 3600
-                          : ttlUnit === 'm'
-                          ? Number(ttlAmount || 1) * 60
-                          : Number(ttlAmount || 1)
-                      }s`}
-                </span>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-between border-t border-[#272932] px-4 py-3 bg-[#1e2029]">
-              <span className="text-[10px] text-zinc-500">Staged until applied</span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTtlModal(null)}
-                  className="px-3 py-1.5 rounded-lg border border-[#2b2e3a] bg-[#14151b] hover:bg-[#20222a] text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSaveTtl(false)}
-                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-xs"
-                >
-                  Stage Changes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSaveTtl(true)}
-                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-                >
-                  Apply Now
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RedisTtlModal
+          ttlModal={ttlModal}
+          ttlMode={ttlMode}
+          ttlAmount={ttlAmount}
+          ttlUnit={ttlUnit}
+          onClose={() => setTtlModal(null)}
+          onChangeMode={setTtlMode}
+          onChangeAmount={setTtlAmount}
+          onChangeUnit={setTtlUnit}
+          onSave={handleSaveTtl}
+        />
       )}
-      {/* Redis Add Key Modal */}
+
       <RedisAddKeyModal
         isOpen={redisAddKeyOpen}
         onClose={() => setRedisAddKeyOpen(false)}
@@ -5728,7 +3047,6 @@ ${setClauses};`;
         onSuccess={() => onRefresh?.()}
       />
 
-      {/* Redis Rename Key Modal */}
       <RedisRenameKeyModal
         isOpen={redisRenameModal.isOpen}
         onClose={() => setRedisRenameModal({ isOpen: false, oldKeyName: '' })}
@@ -5738,7 +3056,6 @@ ${setClauses};`;
         onSuccess={() => onRefresh?.()}
       />
 
-      {/* Copy As Modal */}
       <CopyAsModal
         isOpen={isCopyAsOpen}
         defaultFormat={copyFormat}
@@ -5746,9 +3063,7 @@ ${setClauses};`;
         onClose={() => setIsCopyAsOpen(false)}
         onCopy={(fmt) => {
           const text = getFormattedCopyText(fmt);
-          if (text) {
-            navigator.clipboard.writeText(text);
-          }
+          if (text) navigator.clipboard.writeText(text);
           setIsCopyAsOpen(false);
         }}
       />
