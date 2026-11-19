@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { X, Wand2, Play } from 'lucide-react';
 import { SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
-import { ColumnMeta } from '../../types/domain';
+import { ColumnMeta, resolveConnectionEnv } from '../../types/domain';
+import { useConnectionStore } from '../../stores/useConnectionStore';
 import { alertError, alertSuccess } from '../../stores/useAlertStore';
 import { createIdentityGenerator, generateMockValue } from '../../utils/mockData';
+
+const MAX_MOCK_ROWS = 10000;
+const MOCK_INSERT_BATCH_SIZE = 500;
 
 interface MockDataModalProps {
   isOpen: boolean;
@@ -29,6 +33,10 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
   const [rowCount, setRowCount] = useState(25);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const connections = useConnectionStore((s) => s.connections);
+  const activeConn = connections.find((c) => c.id === connectionId);
+  const isProd = resolveConnectionEnv(activeConn) === 'prod';
+
   useEffect(() => {
     if (!isOpen || !connectionId || !tableName) return;
     SchemaService.GetTableStructure(connectionId, database, schema, tableName)
@@ -44,15 +52,19 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
       .catch((err) => alertError(err?.message || 'Failed to load table structure'));
   }, [isOpen, connectionId, database, schema, tableName]);
 
-  if (!isOpen) return null;
+  if (!isOpen || isProd) return null;
 
   const handleGenerate = async () => {
+    if (isProd) {
+      alertError('Generate Mock Data is disabled on PROD connections.');
+      return;
+    }
     const activeCols = columns.filter((c) => selectedCols[c.name]);
     if (activeCols.length === 0) {
       alertError('Select at least one column to populate.');
       return;
     }
-    const count = Math.max(1, Math.min(1000, rowCount));
+    const count = Math.max(1, Math.min(MAX_MOCK_ROWS, rowCount));
     setIsGenerating(true);
     try {
       const nextIdentity = createIdentityGenerator();
@@ -69,14 +81,20 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
         };
       });
 
-      const affected = await QueryService.SubmitChanges(
-        connectionId,
-        database,
-        schema,
-        tableName,
-        changes as any
-      );
-      alertSuccess(`Inserted ${affected || count} mock rows into "${tableName}".`);
+      let totalAffected = 0;
+      for (let offset = 0; offset < changes.length; offset += MOCK_INSERT_BATCH_SIZE) {
+        const batch = changes.slice(offset, offset + MOCK_INSERT_BATCH_SIZE);
+        const affected = await QueryService.SubmitChanges(
+          connectionId,
+          database,
+          schema,
+          tableName,
+          batch as any
+        );
+        totalAffected += Number(affected) || batch.length;
+      }
+
+      alertSuccess(`Inserted ${totalAffected || count} mock rows into "${tableName}".`);
       onSuccess?.();
       onClose();
     } catch (err: any) {
@@ -101,13 +119,15 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
 
         <div className="p-4 space-y-4">
           <div>
-            <label className="block text-[11px] text-zinc-400 mb-1">Number of Rows (1–1000)</label>
+            <label className="block text-[11px] text-zinc-400 mb-1">
+              Number of Rows (1–{MAX_MOCK_ROWS})
+            </label>
             <input
               type="number"
               min={1}
-              max={1000}
+              max={MAX_MOCK_ROWS}
               value={rowCount}
-              onChange={(e) => setRowCount(Number(e.target.value))}
+              onChange={(e) => setRowCount(Math.min(MAX_MOCK_ROWS, Math.max(0, Number(e.target.value))))}
               className="w-36 rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
             />
           </div>

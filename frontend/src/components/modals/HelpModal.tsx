@@ -1063,8 +1063,8 @@ export const HelpModal: React.FC = () => {
                     <div className="rounded-xl border border-[#272932] bg-[#14151a] p-4 text-[11px] text-zinc-300 leading-relaxed">
                       <strong className="text-zinc-100">Export, Import &amp; Mock Data:</strong>{' '}
                       Use the table toolbar icons to export table rows to CSV/JSON/SQL, import CSV
-                      files with interactive column mapping, or generate up to 1000 realistic mock
-                      rows based on column names and data types.
+                      files with interactive column mapping, or generate up to 10,000 realistic mock
+                      rows based on column names and data types (disabled on PROD connections).
                     </div>
                   </div>
                 )}

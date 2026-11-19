@@ -120,6 +120,7 @@ import {
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 import { parseSingleTableSelect } from './utils/querySource';
+import { quoteSqlIdentifier, buildQualifiedTablePath } from './utils/sqlIdentifier';
 
 interface ChangeTarget {
   stagedKey: string;
@@ -528,21 +529,16 @@ export function App() {
     if (!ok) return;
 
     let sql = '';
-    if (driver === 'mysql' || driver === 'mariadb' || driver === 'clickhouse') {
-      const dbPrefix = targetDb && targetDb !== 'main' ? `\`${targetDb}\`.` : '';
-      sql = `TRUNCATE TABLE ${dbPrefix}\`${tableName}\`;`;
-    } else if (driver === 'postgres') {
-      const sch = targetSchema || 'public';
-      sql = `TRUNCATE TABLE "${sch}"."${tableName}" RESTART IDENTITY;`;
-    } else if (driver === 'mssql') {
-      const sch = targetSchema || 'dbo';
-      sql = `TRUNCATE TABLE [${sch}].[${tableName}];`;
+    const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tableName);
+    if (driver === 'postgres') {
+      sql = `TRUNCATE TABLE ${fullTablePath} RESTART IDENTITY;`;
     } else if (driver === 'sqlite') {
-      sql = `DELETE FROM "${tableName}"; DELETE FROM sqlite_sequence WHERE name = '${tableName}';`;
+      const escapedLiteral = tableName.replace(/'/g, "''");
+      sql = `DELETE FROM ${quoteSqlIdentifier(driver, tableName)}; DELETE FROM sqlite_sequence WHERE name = '${escapedLiteral}';`;
     } else if (driver === 'mongodb') {
       sql = `db.${tableName}.deleteMany({});`;
     } else {
-      sql = `TRUNCATE TABLE "${tableName}";`;
+      sql = `TRUNCATE TABLE ${fullTablePath};`;
     }
 
     try {
@@ -592,16 +588,11 @@ export function App() {
     if (!ok) return;
 
     let sql = '';
-    if (driver === 'mysql' || driver === 'mariadb' || driver === 'clickhouse') {
-      sql = `DROP ${keyword} \`${tableName}\`;`;
-    } else if (driver === 'mssql') {
-      sql = `DROP ${keyword} [${targetSchema}].[${tableName}];`;
-    } else if (driver === 'mongodb') {
+    if (driver === 'mongodb') {
       sql = `db.${tableName}.drop();`;
-    } else if (driver === 'postgres') {
-      sql = `DROP ${keyword} "${targetSchema}"."${tableName}";`;
     } else {
-      sql = `DROP ${keyword} "${tableName}";`;
+      const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tableName);
+      sql = `DROP ${keyword} ${fullTablePath};`;
     }
 
     try {
@@ -863,7 +854,7 @@ export function App() {
   const [resultSourceByKey, setResultSourceByKey] = useState<Record<string, ResultSource | null>>({});
   const activeResultRes: any =
     queryResult?.results && queryResult.results.length > 0
-      ? queryResult.results[queryResult.results.length - 1]
+      ? (queryResult.results[activeResultIndex] ?? queryResult.results[queryResult.results.length - 1])
       : queryResult;
   const activeResultSql: string =
     activeResultRes?.sql || queryResult?.sql || queryPagination.lastSql || '';
@@ -1357,10 +1348,10 @@ export function App() {
         } catch {}
       }
       const conn = connList.find((c) => c.id === connId);
-      const isMySQL = (conn?.driver || tab.driver) === 'mysql' || (conn?.driver || tab.driver) === 'mariadb';
-      const isMSSQL = (conn?.driver || tab.driver) === 'mssql';
+      const effectiveDriver = conn?.driver || tab.driver;
+      const isMSSQL = effectiveDriver === 'mssql';
       const targetDb = tab.database || conn?.databaseName || 'main';
-      const targetSchema = tab.schema || ((conn?.driver || tab.driver) === 'postgres' ? 'public' : isMSSQL ? 'dbo' : (conn?.driver || tab.driver) === 'oracle' ? '' : targetDb);
+      const targetSchema = tab.schema || (effectiveDriver === 'postgres' ? 'public' : isMSSQL ? 'dbo' : effectiveDriver === 'oracle' ? '' : targetDb);
 
       // 1. Fetch table structure for primary keys & detailed column definitions (size, nullability, comment, etc.)
       if (primaryKeys.length === 0 || structureColumns.length === 0 || !structureColumns[0]?.dataType?.includes('(')) {
@@ -1384,15 +1375,8 @@ export function App() {
         }
       }
 
-      const quoteIdent = (name: string) =>
-        isMySQL ? '`' + name.replace(/`/g, '``') + '`' : '"' + name.replace(/"/g, '""') + '"';
-      const quotedTable = quoteIdent(tab.table);
-      const fullTablePath =
-        isMySQL && targetDb && targetDb !== 'main'
-          ? `${quoteIdent(targetDb)}.${quotedTable}`
-          : (conn?.driver || tab.driver) === 'postgres' && targetSchema
-          ? `${quoteIdent(targetSchema)}.${quotedTable}`
-          : quotedTable;
+      const quoteIdent = (name: string) => quoteSqlIdentifier(effectiveDriver, name);
+      const fullTablePath = buildQualifiedTablePath(effectiveDriver, targetDb, targetSchema, tab.table);
 
       // 2. Build SQL WHERE clause
       const trimmedCustom = (whereClause || '').trim();
@@ -1750,12 +1734,12 @@ export function App() {
     }
   };
 
-  // For multi-statement runs, page/reload only the last statement
+  // For multi-statement runs, page/reload the currently selected statement
   const getPagingSql = () => {
     const results = queryResult?.results;
     if (results && results.length > 0) {
-      const last = results[results.length - 1] as any;
-      if (last?.sql) return last.sql;
+      const active = (results[activeResultIndex] ?? results[results.length - 1]) as any;
+      if (active?.sql) return active.sql;
     }
     return queryPagination.lastSql;
   };
@@ -1766,20 +1750,11 @@ export function App() {
     const driver = conn?.driver || tab.driver;
     if (driver === 'redis' || driver === 'mongodb') return;
 
-    const isMySQL = driver === 'mysql' || driver === 'mariadb';
     const isMSSQL = driver === 'mssql';
     const targetDb = tab.database || conn?.databaseName || 'main';
     const targetSchema =
       tab.schema || (driver === 'postgres' ? 'public' : isMSSQL ? 'dbo' : driver === 'oracle' ? '' : targetDb);
-    const quoteIdent = (name: string) =>
-      isMySQL ? '`' + name.replace(/`/g, '``') + '`' : '"' + name.replace(/"/g, '""') + '"';
-    const quotedTable = quoteIdent(tab.table);
-    const fullTablePath =
-      isMySQL && targetDb && targetDb !== 'main'
-        ? `${quoteIdent(targetDb)}.${quotedTable}`
-        : driver === 'postgres' && targetSchema
-        ? `${quoteIdent(targetSchema)}.${quotedTable}`
-        : quotedTable;
+    const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tab.table);
 
     const whereClause = tableDataByTab[tab.id]?.whereClause ?? tab.tableViewState?.whereClause ?? '';
     const cleanCustom = whereClause.trim().replace(/^where\s+/i, '').trim();
@@ -1842,7 +1817,7 @@ export function App() {
     if (queryPagination.isLoadingMore || !queryResult || !queryPagination.lastSql) return;
     const currentRes =
       queryResult.results && queryResult.results.length > 0
-        ? queryResult.results[queryResult.results.length - 1]
+        ? (queryResult.results[activeResultIndex] ?? queryResult.results[queryResult.results.length - 1])
         : queryResult;
     const currentRows = currentRes?.rows || [];
     const limit = queryPagination.pageSize || useSettingsStore.getState().defaultPageSize || 100;
@@ -2882,11 +2857,24 @@ export function App() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setIsMockDataOpen(true)}
-                          className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
-                          title="Generate Mock Data"
+                          disabled={tableEnv === 'prod'}
+                          onClick={() => {
+                            if (tableEnv !== 'prod') {
+                              setIsMockDataOpen(true);
+                            }
+                          }}
+                          className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+                            tableEnv === 'prod'
+                              ? 'text-zinc-600 opacity-40 cursor-not-allowed'
+                              : 'text-zinc-400 hover:text-white hover:bg-[#22242c] cursor-pointer'
+                          }`}
+                          title={
+                            tableEnv === 'prod'
+                              ? 'Generate Mock Data (Disabled on PROD connections)'
+                              : 'Generate Mock Data'
+                          }
                         >
-                          <Wand2 className="h-3.5 w-3.5 text-purple-400" />
+                          <Wand2 className={`h-3.5 w-3.5 ${tableEnv === 'prod' ? 'text-zinc-600' : 'text-purple-400'}`} />
                         </button>
                       </>
                     )}
@@ -3121,7 +3109,7 @@ export function App() {
                     />
                   )}
 
-                  {isMockDataOpen && activeTab.table && (
+                  {isMockDataOpen && activeTab.table && tableEnv !== 'prod' && (
                     <MockDataModal
                       isOpen={isMockDataOpen}
                       onClose={() => setIsMockDataOpen(false)}
@@ -3251,7 +3239,7 @@ export function App() {
                 {(() => {
                   const currentActiveRes =
                     queryResult?.results && queryResult.results.length > 0
-                      ? queryResult.results[queryResult.results.length - 1]
+                      ? (queryResult.results[activeResultIndex] ?? queryResult.results[queryResult.results.length - 1])
                       : queryResult;
                   const currentRawSql =
                     (currentActiveRes as any)?.sql ||
@@ -3363,25 +3351,76 @@ export function App() {
                         {queryResult.error}
                       </div>
                     ) : (() => {
-                      const currentRes =
-                        queryResult?.results && queryResult.results.length > 0
-                          ? queryResult.results[queryResult.results.length - 1]
-                          : queryResult;
+                      const resultsList = queryResult?.results || [];
+                      const hasMultiResults = resultsList.length > 1;
+                      const safeResultIdx =
+                        hasMultiResults && activeResultIndex >= 0 && activeResultIndex < resultsList.length
+                          ? activeResultIndex
+                          : Math.max(0, resultsList.length - 1);
+                      const currentRes: any = hasMultiResults ? resultsList[safeResultIdx] : queryResult;
                       const hasCols = currentRes?.columns && currentRes.columns.length > 0;
+
+                      const multiResultTabsBar = hasMultiResults ? (
+                        <div className="flex items-center gap-1 px-2 py-1 bg-[#14151a] border-b border-[#272932] overflow-x-auto shrink-0">
+                          {resultsList.map((r: any, idx: number) => {
+                            const isSelected = idx === safeResultIdx;
+                            const hasErr = Boolean(r?.error);
+                            const rowCountLabel = r?.columns?.length > 0
+                              ? `${r.rows?.length || 0}r`
+                              : `${r?.rowsAffected ?? 0} aff`;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setActiveResultIndex(idx)}
+                                title={r?.sql || `Result #${idx + 1}`}
+                                className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer shrink-0 border ${
+                                  isSelected
+                                    ? hasErr
+                                      ? 'bg-rose-950/60 border-rose-500/50 text-rose-200 font-semibold'
+                                      : 'bg-blue-600/20 border-blue-500/50 text-blue-200 font-semibold'
+                                    : hasErr
+                                    ? 'bg-transparent border-transparent text-rose-400/80 hover:bg-rose-950/30'
+                                    : 'bg-transparent border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#1e2029]'
+                                }`}
+                              >
+                                <span>Result #{idx + 1}</span>
+                                <span className="text-[10px] opacity-75">
+                                  ({hasErr ? 'err' : rowCountLabel})
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null;
+
+                      if (currentRes?.error) {
+                        return (
+                          <div className="flex flex-1 flex-col min-h-0">
+                            {multiResultTabsBar}
+                            <div className="p-4 m-2 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40 whitespace-pre-wrap overflow-auto">
+                              {currentRes.error}
+                            </div>
+                          </div>
+                        );
+                      }
 
                       if (!hasCols) {
                         return (
-                          <div className="flex flex-1 flex-col items-center justify-center p-6 text-zinc-400 font-mono text-xs select-none">
-                            <CheckCircle className="h-6 w-6 text-emerald-400 mb-2" />
-                            <span className="font-semibold text-zinc-200">Statement executed successfully</span>
-                            <span className="text-zinc-500 mt-1">
-                              {currentRes?.rowsAffected ?? 0} rows affected ({currentRes?.elapsedMs ?? 0}ms)
-                            </span>
-                            {(currentRes as any)?.sql && (
-                              <div className="mt-3 px-3 py-1.5 rounded bg-[#121317] border border-[#272932] text-zinc-400 text-[11px] max-w-xl truncate">
-                                {(currentRes as any).sql}
-                              </div>
-                            )}
+                          <div className="flex flex-1 flex-col min-h-0">
+                            {multiResultTabsBar}
+                            <div className="flex flex-1 flex-col items-center justify-center p-6 text-zinc-400 font-mono text-xs select-none">
+                              <CheckCircle className="h-6 w-6 text-emerald-400 mb-2" />
+                              <span className="font-semibold text-zinc-200">Statement executed successfully</span>
+                              <span className="text-zinc-500 mt-1">
+                                {currentRes?.rowsAffected ?? 0} rows affected ({currentRes?.elapsedMs ?? 0}ms)
+                              </span>
+                              {(currentRes as any)?.sql && (
+                                <div className="mt-3 px-3 py-1.5 rounded bg-[#121317] border border-[#272932] text-zinc-400 text-[11px] max-w-xl truncate">
+                                  {(currentRes as any).sql}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       }
@@ -3393,9 +3432,11 @@ export function App() {
                         '';
 
                       return (
-                        <div className="flex-1 min-h-0">
-                          <DataGrid
-                            key={`result-grid-${queryResult?.executionId || ''}`}
+                        <div className="flex flex-1 flex-col min-h-0">
+                          {multiResultTabsBar}
+                          <div className="flex-1 min-h-0">
+                            <DataGrid
+                              key={`result-grid-${queryResult?.executionId || ''}-${safeResultIdx}`}
                             tabId={resultGridTabId}
                             connectionId={activeTab?.connectionId || activeConnectionId || undefined}
                             database={resultSource?.database ?? activeTab?.database}
@@ -3420,12 +3461,13 @@ export function App() {
                             onSubmitChanges={(skip) => handleSubmitChanges(skip === true, buildResultTarget() || undefined)}
                             onPreviewChanges={() => handlePreviewChanges(buildResultTarget() || undefined)}
                             rawSql={currentResSql}
-                            isReadOnly={
-                              Boolean(
-                                connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.isReadOnly
-                              ) || !resultSource
-                            }
-                          />
+                              isReadOnly={
+                                Boolean(
+                                  connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.isReadOnly
+                                ) || !resultSource
+                              }
+                            />
+                          </div>
                         </div>
                       );
                     })()

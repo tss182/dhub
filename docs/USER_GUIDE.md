@@ -210,7 +210,7 @@ When viewing a table with a Primary Key on a non-read-only connection:
 ### Export, Import & Mock Data
 - **Export (`Download` icon):** Export table rows to CSV, JSON, or SQL `INSERT` statements.
 - **Import (`Upload` icon):** Import CSV files with interactive column mapping.
-- **Mock Data Generator (`Wand` icon):** Generate up to `1000` sample rows based on column names and types (UUIDs, emails, timestamps, numbers, booleans, JSON, etc.).
+- **Mock Data Generator (`Wand` icon):** Generate up to `10000` sample rows based on column names and types (UUIDs, emails, timestamps, numbers, booleans, JSON, etc.). Disabled on `PROD` connections for safety.
 
 ---
 
