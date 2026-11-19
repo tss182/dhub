@@ -72,10 +72,14 @@ export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 h-6 px-2 rounded bg-[#1e2029] hover:bg-[#282a36] text-[11px] font-mono text-zinc-300 hover:text-white border border-[#2d303e] transition-colors cursor-pointer select-none"
+        className={`flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-sans font-medium transition-colors cursor-pointer select-none ${
+          isOpen
+            ? 'bg-[#2b2d38] text-white'
+            : 'bg-transparent hover:bg-[#2b2d38] text-zinc-300 hover:text-white'
+        }`}
         title="Format yang disalin saat melakukan Copy (Ctrl+C)"
       >
-        <span className="font-semibold text-sky-400">{COPY_FORMAT_LABELS[copyFormat] || 'CSV'}</span>
+        <span>{COPY_FORMAT_LABELS[copyFormat] || 'CSV'}</span>
         <ChevronDown className="h-3 w-3 text-zinc-400" />
       </button>
 

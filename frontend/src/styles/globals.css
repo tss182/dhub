@@ -3,16 +3,16 @@
 
 @layer base {
   :root {
-    --bg-canvas: #121317;
-    --bg-island: #191a20;
-    --bg-island-hover: #22242c;
-    --border-island: #272932;
+    --bg-canvas: #1e1f22;
+    --bg-island: #1e1f22;
+    --bg-island-hover: #2b2d30;
+    --border-island: #2b2d30;
     --accent-blue: #3574f0;
     --accent-emerald: #10b981;
     --accent-rose: #f43f5e;
     --accent-amber: #f59e0b;
-    --text-primary: #e4e4e7;
-    --text-muted: #9ca3af;
+    --text-primary: #dfe1e5;
+    --text-muted: #868a91;
   }
 
   html, body, #root {
@@ -42,11 +42,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2b2d37;
+  background: #393b40;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3c3f4e;
+  background: #4e5157;
 }
 
 /* Select & Options dark defaults */
@@ -54,26 +54,120 @@ select {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  background-color: #101115;
-  color: #ffffff;
+  background-color: #191a1c;
+  color: #dfe1e5;
 }
 select option,
 select optgroup {
-  background-color: #181920;
-  color: #ffffff;
+  background-color: #2b2d30;
+  color: #dfe1e5;
 }
 
-/* Light Theme CSS Variables & Overrides */
+/* JetBrains New UI Dark Palette Overrides */
+html:not(.light):not([data-theme="light"]) {
+  .bg-\[\#121317\],
+  .bg-\[\#101115\],
+  .bg-\[\#0e0f14\] {
+    background-color: #191a1c !important;
+  }
+
+  .bg-\[\#14151a\],
+  .bg-\[\#16171d\],
+  .bg-\[\#16171f\],
+  .bg-\[\#181920\],
+  .bg-\[\#191a20\] {
+    background-color: #1e1f22 !important;
+  }
+
+  .bg-\[\#1c1d28\],
+  .bg-\[\#1e2027\],
+  .bg-\[\#1e2029\],
+  .bg-\[\#1f2129\],
+  .bg-\[\#20222a\],
+  .bg-\[\#20222b\],
+  .bg-\[\#22242c\],
+  .bg-\[\#23252c\],
+  .bg-\[\#252834\],
+  .bg-\[\#272932\],
+  .bg-\[\#282a35\],
+  .bg-\[\#2a2d37\],
+  .bg-\[\#2a2d38\],
+  .bg-\[\#2b2d37\],
+  .bg-\[\#2b2d38\],
+  .bg-\[\#2b2e3b\],
+  .bg-\[\#2c303c\],
+  .bg-\[\#2d303b\],
+  .bg-\[\#2e3242\],
+  .bg-\[\#303342\],
+  .bg-\[\#323541\] {
+    background-color: #2b2d30 !important;
+  }
+
+  .bg-\[\#23252c\]\/95 {
+    background-color: rgba(43, 45, 48, 0.96) !important;
+  }
+
+  .bg-\[\#181920\]\/95,
+  .bg-\[\#16171f\]\/95 {
+    background-color: rgba(30, 31, 34, 0.96) !important;
+  }
+
+  .bg-\[\#14151a\]\/60 {
+    background-color: rgba(30, 31, 34, 0.75) !important;
+  }
+
+  .hover\:bg-\[\#1c1d28\]:hover,
+  .hover\:bg-\[\#20222a\]:hover,
+  .hover\:bg-\[\#20222b\]:hover,
+  .hover\:bg-\[\#22242c\]:hover,
+  .hover\:bg-\[\#252834\]:hover,
+  .hover\:bg-\[\#2a2d38\]:hover,
+  .hover\:bg-\[\#2b2d37\]:hover,
+  .hover\:bg-\[\#2b2d38\]:hover,
+  .hover\:bg-\[\#2c2f3a\]:hover,
+  .hover\:bg-\[\#2c303c\]:hover,
+  .hover\:bg-\[\#2e3242\]:hover,
+  .hover\:bg-\[\#323541\]:hover {
+    background-color: #2e3035 !important;
+  }
+
+  .border-\[\#22242c\],
+  .border-\[\#232530\],
+  .border-\[\#272932\],
+  .border-\[\#2b2e3a\],
+  .border-\[\#2d303d\],
+  .border-\[\#2d303e\],
+  .border-\[\#2d303f\],
+  .border-\[\#2e313d\],
+  .border-\[\#2e313f\] {
+    border-color: #2b2d30 !important;
+  }
+
+  .border-\[\#3b3e4f\],
+  .border-\[\#3b3f52\] {
+    border-color: #393b40 !important;
+  }
+
+  .bg-\[\#1b4ea3\] {
+    background-color: #214283 !important;
+  }
+
+  .bg-\[\#1e293b\] {
+    background-color: #2b2d30 !important;
+  }
+}
+
+/* Light Theme CSS Variables & Overrides (JetBrains New UI Light) */
 html[data-theme="light"],
 html.light,
 [data-theme="light"],
 .light {
-  --bg-canvas: #f8fafc;
+  --bg-canvas: #f7f8fa;
   --bg-island: #ffffff;
-  --bg-island-hover: #f1f5f9;
-  --border-island: #e2e8f0;
-  --text-primary: #0f172a;
-  --text-muted: #64748b;
+  --bg-island-hover: #ebecf0;
+  --border-island: #ebecf0;
+  --text-primary: #1e1f22;
+  --text-muted: #6c707e;
   color-scheme: light;
 }
 
@@ -81,15 +175,16 @@ html[data-theme="light"],
 html.light,
 [data-theme="light"],
 .light {
-  /* Canvas & Darkest Backgrounds */
+  /* Canvas & Recessed Backgrounds */
   .bg-\[\#121317\],
   .bg-\[\#101115\],
   .bg-\[\#0e0f14\] {
-    background-color: #f8fafc !important;
+    background-color: #f7f8fa !important;
   }
 
-  /* Header, Modals & Island Base */
+  /* Header, Grid Body, Modals & Island Base */
   .bg-\[\#14151a\],
+  .bg-\[\#16171d\],
   .bg-\[\#16171f\] {
     background-color: #ffffff !important;
   }
@@ -103,39 +198,42 @@ html.light,
   .bg-\[\#1f2129\],
   .bg-\[\#20222a\],
   .bg-\[\#20222b\] {
-    background-color: #f1f5f9 !important;
+    background-color: #f7f8fa !important;
   }
 
-  .bg-\[\#181920\]\/95 {
-    background-color: rgba(255, 255, 255, 0.98) !important;
+  .bg-\[\#181920\]\/95,
+  .bg-\[\#16171f\]\/95,
+  .bg-\[\#23252c\]\/95 {
+    background-color: rgba(255, 255, 255, 0.96) !important;
   }
   .bg-\[\#14151a\]\/60 {
-    background-color: rgba(241, 245, 249, 0.8) !important;
+    background-color: rgba(247, 248, 250, 0.85) !important;
   }
 
   /* Active Tab in Light Mode */
   div[class*="border-zinc-400"].bg-\[\#191a20\],
   div[class*="border-blue-500"].bg-\[\#191a20\] {
     background-color: #ffffff !important;
-    color: #0f172a !important;
+    color: #1e1f22 !important;
   }
 
   /* Inputs, Selects, and Textareas */
   input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea {
-    color: #0f172a !important;
+    color: #1e1f22 !important;
     background-color: #ffffff !important;
   }
 
   select option,
   select optgroup {
-    color: #0f172a !important;
+    color: #1e1f22 !important;
     background-color: #ffffff !important;
   }
 
   /* Upper Surfaces, Hover Buttons, Badges */
   .bg-\[\#22242c\],
+  .bg-\[\#23252c\],
   .bg-\[\#252834\],
   .bg-\[\#272932\],
   .bg-\[\#282a35\],
@@ -147,8 +245,9 @@ html.light,
   .bg-\[\#2c303c\],
   .bg-\[\#2d303b\],
   .bg-\[\#2e3242\],
-  .bg-\[\#303342\] {
-    background-color: #e2e8f0 !important;
+  .bg-\[\#303342\],
+  .bg-\[\#323541\] {
+    background-color: #ebecf0 !important;
   }
 
   /* Hover overrides */
@@ -160,9 +259,11 @@ html.light,
   .hover\:bg-\[\#2b2d37\]:hover,
   .hover\:bg-\[\#2b2d38\]:hover,
   .hover\:bg-\[\#2c2f3a\]:hover,
+  .hover\:bg-\[\#2c303c\]:hover,
   .hover\:bg-\[\#2e3242\]:hover,
+  .hover\:bg-\[\#323541\]:hover,
   .hover\:bg-\[\#1c1d28\]:hover {
-    background-color: #e2e8f0 !important;
+    background-color: #ebecf0 !important;
   }
 
   /* Borders */
@@ -174,42 +275,55 @@ html.light,
   .border-\[\#2d303e\],
   .border-\[\#2d303f\],
   .border-\[\#2e313d\],
-  .border-\[\#2e313f\],
+  .border-\[\#2e313f\] {
+    border-color: #ebecf0 !important;
+  }
+
   .border-\[\#3b3e4f\],
   .border-\[\#3b3f52\] {
-    border-color: #cbd5e1 !important;
+    border-color: #dfe1e5 !important;
   }
 
   /* Text Colors */
   .text-zinc-100 {
-    color: #0f172a !important;
+    color: #1e1f22 !important;
   }
   .text-zinc-200 {
-    color: #1e293b !important;
+    color: #26282e !important;
   }
   .text-zinc-300 {
-    color: #334155 !important;
+    color: #393b40 !important;
   }
   .text-zinc-400 {
-    color: #475569 !important;
+    color: #6c707e !important;
   }
   .text-zinc-500 {
-    color: #64748b !important;
+    color: #818594 !important;
   }
   .text-zinc-600 {
-    color: #94a3b8 !important;
+    color: #a8adbd !important;
   }
 
   /* Hover text colors for non-accent buttons */
   .hover\:text-white:hover {
-    color: #0f172a !important;
+    color: #1e1f22 !important;
   }
   .group-hover\:text-white:hover,
   .group:hover .group-hover\:text-white {
-    color: #0f172a !important;
+    color: #1e1f22 !important;
   }
   .hover\:text-zinc-200:hover {
-    color: #0f172a !important;
+    color: #1e1f22 !important;
+  }
+
+  /* Data Grid Cell Selection (JetBrains Light Selection Blue) */
+  .bg-\[\#1b4ea3\] {
+    background-color: #a6d2ff !important;
+    color: #000000 !important;
+  }
+  .bg-\[\#1e293b\] {
+    background-color: #dfe1e5 !important;
+    color: #1e1f22 !important;
   }
 
   /* Active blue/emerald/rose states should preserve their readable text */
@@ -249,12 +363,12 @@ html.light,
 
   /* Custom Light Scrollbars */
   ::-webkit-scrollbar-track {
-    background: #f1f5f9;
+    background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: #d3d5db;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
+    background: #b8bbc4;
   }
 }
