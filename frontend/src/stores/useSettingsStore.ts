@@ -41,7 +41,7 @@ const SETTINGS_STORAGE_KEY = 'dhub_settings_v1';
 
 const DEFAULT_SETTINGS: SettingsValues = {
   theme: 'dark',
-  defaultPageSize: 100,     // Default batch size 100
+  defaultPageSize: 500,     // Default batch size 500
   editorFontSize: 13,
   wordWrap: false,
   showMinimap: false,

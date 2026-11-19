@@ -106,7 +106,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   startOffset = 0,
   page,
   onPageChange,
-  pageSize = 100,
+  pageSize = 500,
   onPageSizeChange,
   onRefresh,
   whereClause = '',
@@ -766,7 +766,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const copyFormat = useSettingsStore((state) => state.copyFormat);
 
   const [currentPage, setCurrentPage] = useState(page || 1);
-  const [localPageSize, setLocalPageSize] = useState(pageSize || globalDefaultPageSize || 100);
+  const [localPageSize, setLocalPageSize] = useState(pageSize || globalDefaultPageSize || 500);
   const [isCountingTotal, setIsCountingTotal] = useState(false);
   const [isPageSizeOpen, setIsPageSizeOpen] = useState(false);
 
