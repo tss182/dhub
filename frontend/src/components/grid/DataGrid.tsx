@@ -13,9 +13,8 @@ import {
   RefreshCw,
   RotateCcw,
   Key,
-  ArrowDownAZ,
-  ArrowDownZA,
-  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
   AlertCircle,
   Lock,
   ArrowUpCircle,
@@ -2737,9 +2736,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                         if (isResizingRef.current) return;
                         if (e.altKey) {
                           handleToggleFreeze(col.name);
-                          return;
                         }
-                        handleToggleSort(col.name, e);
                       }}
                       onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
                       onMouseLeave={handleColMouseLeave}
@@ -2763,7 +2760,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                           : envType === 'dev'
                           ? 'hover:bg-emerald-950'
                           : 'hover:bg-[#1c1d28]'
-                      } transition-colors cursor-pointer`}
+                      } transition-colors`}
                       style={{
                         width: `${w}px`,
                         minWidth: `${w}px`,
@@ -2811,27 +2808,49 @@ export const DataGrid: React.FC<DataGridProps> = ({
                             <Snowflake className={`h-3 w-3 ${isFrozen ? 'text-cyan-400' : ''}`} />
                           </button>
 
-                          {isSorted && sortItem ? (
-                            <span
-                              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-600/25 text-blue-400 text-[10px] font-mono border border-blue-500/30 shadow-xs"
-                              title={`Sorted ${sortItem.direction === 'asc' ? 'A → Z (ASC)' : 'Z → A (DESC)'}${
-                                localSortConfigs.length > 1 ? ` (priority #${sortIndex + 1})` : ''
-                              }`}
-                            >
-                              {sortItem.direction === 'asc' ? (
-                                <ArrowDownAZ className="h-3.5 w-3.5 stroke-[2]" />
-                              ) : (
-                                <ArrowDownZA className="h-3.5 w-3.5 stroke-[2] text-amber-400" />
-                              )}
-                              {localSortConfigs.length > 1 && (
-                                <span className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-blue-500 text-white text-[9px] font-bold font-mono ml-0.5">
-                                  {sortIndex + 1}
-                                </span>
-                              )}
-                            </span>
-                          ) : (
-                            <ArrowUpDown className="h-3 w-3 text-zinc-500 opacity-0 group-hover/th:opacity-75 transition-opacity" />
-                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleSort(col.name, e);
+                            }}
+                            className={`flex items-center gap-1 rounded transition-all cursor-pointer ${
+                              isSorted && sortItem
+                                ? 'px-1 py-0.5 bg-blue-600/25 text-blue-400 border border-blue-500/30 shadow-xs'
+                                : 'p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'
+                            }`}
+                            title={
+                              isSorted && sortItem
+                                ? `Sorted ${sortItem.direction === 'asc' ? 'A → Z (ASC)' : 'Z → A (DESC)'}${
+                                    localSortConfigs.length > 1 ? ` (priority #${sortIndex + 1})` : ''
+                                  }`
+                                : `Sort by "${col.name}" (Shift+Click for multi-sort)`
+                            }
+                          >
+                            {isSorted && sortItem ? (
+                              <>
+                                {sortItem.direction === 'asc' ? (
+                                  <ChevronUp className="h-3.5 w-3.5 stroke-[2.2]" />
+                                ) : (
+                                  <ChevronDown className="h-3.5 w-3.5 stroke-[2.2]" />
+                                )}
+                                {localSortConfigs.length > 1 && (
+                                  <span className="flex items-center justify-center h-3.5 w-3.5 rounded-full bg-blue-500 text-white text-[9px] font-bold font-mono ml-0.5">
+                                    {sortIndex + 1}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <svg
+                                viewBox="0 0 12 12"
+                                className="h-3 w-3 fill-current"
+                                aria-hidden="true"
+                              >
+                                <path d="M6 2L9 5H3L6 2Z" />
+                                <path d="M6 10L3 7H9L6 10Z" />
+                              </svg>
+                            )}
+                          </button>
                         </div>
                       </div>
 
