@@ -124,15 +124,17 @@ jobs:
           app-name: dhub
           version: ${{ needs.prepare-version.outputs.version }}
           pre-build-command: make update-asset
+          universal: "true"
+          zip-app: "false"
+          dmg-fail-on-error: "true"
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-artifacts
           path: |
-            bin/dhub-${{ needs.prepare-version.outputs.version }}-macos.app.zip
             bin/dhub-${{ needs.prepare-version.outputs.version }}-macos.dmg
-          if-no-files-found: warn
+          if-no-files-found: error
 
   publish-release:
     needs:
