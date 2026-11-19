@@ -5,6 +5,92 @@ import { SchemaService } from '../../../bindings/dhub/internal/services';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { alertError, alertSuccess } from '../../stores/useAlertStore';
 
+function stripTableOptionsFromDdl(rawDdl: string): string {
+  // Remove MySQL/MariaDB trailing table options like ENGINE=InnoDB AUTO_INCREMENT=123 DEFAULT CHARSET=utf8mb4 COLLATE=...
+  return rawDdl
+    .replace(
+      /\)\s*(?:ENGINE\s*=\s*\S+|AUTO_INCREMENT\s*=\s*\d+|DEFAULT\s+CHARSET\s*=\s*\S+|CHARSET\s*=\s*\S+|COLLATE\s*=\s*\S+|ROW_FORMAT\s*=\s*\S+|STATS_PERSISTENT\s*=\s*\S+|COMMENT\s*=\s*'[^']*')+\s*;?/gi,
+      ');'
+    )
+    .replace(/\s+(?:CHARACTER\s+SET|CHARSET)\s+\S+/gi, '')
+    .replace(/\s+COLLATE\s+\S+/gi, '')
+    .trim();
+}
+
+function formatCleanTableDdl(tableName: string, struct: any): string {
+  const cols: any[] = struct?.columns || [];
+  if (cols.length === 0) {
+    const raw = (struct?.ddl || '').trim();
+    return raw ? stripTableOptionsFromDdl(raw) : '';
+  }
+
+  const rawDdl = (struct?.ddl || '').trim();
+  if (/^\s*create\s+(?:or\s+replace\s+)?view\b/i.test(rawDdl)) {
+    return rawDdl.endsWith(';') ? rawDdl : `${rawDdl};`;
+  }
+
+  const pks: string[] =
+    struct?.primaryKeys && struct.primaryKeys.length > 0
+      ? struct.primaryKeys
+      : cols.filter((c) => c.isPrimaryKey).map((c) => c.name);
+  const singlePk = pks.length === 1 ? pks[0] : null;
+
+  const cleanType = (c: any) =>
+    String(c.rawType || c.dataType || 'text')
+      .replace(/\s+(?:CHARACTER\s+SET|CHARSET)\s+\S+/gi, '')
+      .replace(/\s+COLLATE\s+\S+/gi, '')
+      .trim()
+      .toLowerCase();
+
+  const maxNameLen = Math.max(...cols.map((c) => String(c.name || '').length), 1);
+  const typesList = cols.map((c) => {
+    const t = cleanType(c);
+    return c.isAutoIncrement && !t.includes('auto_increment') ? `${t} auto_increment` : t;
+  });
+  const maxTypeLen = Math.max(...typesList.map((t) => t.length), 1);
+
+  const lines: string[] = [];
+
+  cols.forEach((c, idx) => {
+    const name = String(c.name || '');
+    const paddedName = name.padEnd(maxNameLen, ' ');
+    const typeWithAuto = typesList[idx];
+    const isSinglePk = singlePk !== null && name === singlePk;
+
+    if (isSinglePk) {
+      const def =
+        c.defaultValue && !c.isAutoIncrement && !String(c.defaultValue).toLowerCase().includes('nextval')
+          ? ` default ${c.defaultValue}`
+          : '';
+      const notNull = !c.isNullable && !c.isAutoIncrement ? ' not null' : '';
+      lines.push(`    ${paddedName} ${typeWithAuto}${def}${notNull}\n        primary key`);
+    } else {
+      const paddedType = typeWithAuto.padEnd(maxTypeLen, ' ');
+      const def =
+        c.defaultValue !== undefined && c.defaultValue !== null && String(c.defaultValue).trim() !== ''
+          ? `default ${c.defaultValue} `
+          : '';
+      const nullability = c.isNullable ? 'null' : 'not null';
+      lines.push(`    ${paddedName} ${paddedType} ${def}${nullability}`);
+    }
+  });
+
+  if (pks.length > 1) {
+    lines.push(`    primary key (${pks.join(', ')})`);
+  }
+
+  const fks: any[] = struct?.foreignKeys || [];
+  fks.forEach((fk) => {
+    if (!fk?.columnName || !fk?.refTable || !fk?.refColumn) return;
+    const cName = fk.constraintName ? `constraint ${fk.constraintName} ` : '';
+    const onDel = fk.onDelete && fk.onDelete !== 'NO ACTION' ? ` on delete ${String(fk.onDelete).toLowerCase()}` : '';
+    const onUpd = fk.onUpdate && fk.onUpdate !== 'NO ACTION' ? ` on update ${String(fk.onUpdate).toLowerCase()}` : '';
+    lines.push(`    ${cName}foreign key (${fk.columnName}) references ${fk.refTable} (${fk.refColumn})${onDel}${onUpd}`);
+  });
+
+  return `-- auto-generated definition\ncreate table ${tableName}\n(\n${lines.join(',\n')}\n);`;
+}
+
 export interface ViewDdlModalProps {
   isOpen: boolean;
   scope: 'table' | 'database' | 'schema';
@@ -60,7 +146,7 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
           targetSchema,
           tableName
         );
-        const resultDdl = struct?.ddl?.trim() || '';
+        const resultDdl = formatCleanTableDdl(tableName, struct);
         if (!resultDdl) {
           setError(`No DDL available for "${tableName}".`);
         } else {
@@ -73,7 +159,7 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
           targetDb,
           schemaArg
         );
-        setDdl(resultDdl || '');
+        setDdl(resultDdl ? stripTableOptionsFromDdl(resultDdl) : '');
       }
     } catch (err: any) {
       setError(err?.message || String(err) || 'Failed to load DDL');
