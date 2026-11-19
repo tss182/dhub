@@ -27,6 +27,7 @@ export const WorkspaceSelector: React.FC = () => {
   }, [hasLoaded, isLoading, loadWorkspaces]);
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
+  const displayName = activeWorkspace?.name || 'Default Workspace';
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -90,18 +91,24 @@ export const WorkspaceSelector: React.FC = () => {
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex items-center gap-1.5 rounded bg-[#1e2027] px-2.5 py-1 text-xs text-zinc-300 border border-[#272932] hover:border-zinc-500 hover:text-white cursor-pointer shadow-xs transition-colors group max-w-[200px]"
-        title="Active Workspace - Click to switch or create new"
+        className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-200 hover:bg-white/[0.06] hover:text-white cursor-pointer transition-colors group max-w-[220px] ${
+          isOpen ? 'bg-white/[0.08] text-white' : ''
+        }`}
+        title="Active Workspace — Click to switch or create new"
       >
         <Briefcase className="h-3.5 w-3.5 text-zinc-400 group-hover:text-blue-400 transition-colors shrink-0" />
-        <span className="truncate font-medium text-xs">
-          {activeWorkspace?.name || 'Default Workspace'}
+        <span className="truncate font-medium text-xs text-zinc-200 group-hover:text-white">
+          {displayName}
         </span>
-        <ChevronDown className={`h-3 w-3 text-zinc-500 transition-transform duration-150 shrink-0 ${isOpen ? 'rotate-180 text-zinc-300' : ''}`} />
+        <ChevronDown
+          className={`h-3 w-3 text-zinc-400 group-hover:text-zinc-200 transition-transform duration-150 shrink-0 ${
+            isOpen ? 'rotate-180 text-zinc-200' : ''
+          }`}
+        />
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-[#373946] bg-[#1a1b22] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+        <div className="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-[#373946] bg-[#1a1b22] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
           <div className="px-3 py-1.5 border-b border-[#292b36] flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase tracking-wider bg-[#14151a]">
             <span>Workspaces</span>
             <span className="text-[10px] text-zinc-500 font-normal lowercase">
@@ -127,7 +134,11 @@ export const WorkspaceSelector: React.FC = () => {
                   }`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <Briefcase className={`h-3.5 w-3.5 shrink-0 ${isActive ? 'text-blue-400' : 'text-zinc-500 group-hover:text-zinc-300'}`} />
+                    <Briefcase
+                      className={`h-3.5 w-3.5 shrink-0 ${
+                        isActive ? 'text-blue-400' : 'text-zinc-500 group-hover:text-zinc-300'
+                      }`}
+                    />
                     <div className="min-w-0">
                       <div className="text-xs font-medium truncate group-hover:text-white">
                         {ws.name}
@@ -195,4 +206,3 @@ export const WorkspaceSelector: React.FC = () => {
     </div>
   );
 };
-
