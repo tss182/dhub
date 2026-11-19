@@ -6,6 +6,10 @@ export interface BackupToolStatus {
     "toolName": string;
     "installed": boolean;
     "resolvedPath": string;
+
+    /**
+     * "custom" | "system" | "downloaded" | "missing"
+     */
     "source": string;
     "canDownload": boolean;
     "downloadLabel": string;

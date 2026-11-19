@@ -9,6 +9,16 @@ import type {} from "../github.com/wailsapp/wails/v3/internal/eventdata.js";
 import "../github.com/wailsapp/wails/v3/internal/eventcreate.js";
 
 /**
+ * Name of the custom event "backup:progress".
+ */
+export const BackupProgress = "backup:progress";
+
+/**
+ * Name of the custom event "backup:tool-download".
+ */
+export const BackupToolDownload = "backup:tool-download";
+
+/**
  * Name of the custom event "connection:state".
  */
 export const ConnectionState = "connection:state";
@@ -17,6 +27,11 @@ export const ConnectionState = "connection:state";
  * Name of the custom event "query:status".
  */
 export const QueryStatus = "query:status";
+
+/**
+ * Name of the custom event "restore:progress".
+ */
+export const RestoreProgress = "restore:progress";
 
 /**
  * Name of the custom event "schema:sync".

@@ -12,8 +12,11 @@ import type * as app$0 from "../../../../../dhub/internal/app/models.js";
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "backup:progress": app$0.BackupProgressEvent;
+            "backup:tool-download": app$0.ToolDownloadProgressEvent;
             "connection:state": app$0.ConnectionStateEvent;
             "query:status": app$0.QueryStatusEvent;
+            "restore:progress": app$0.BackupProgressEvent;
             "schema:sync": app$0.SchemaSyncEvent;
             "update:progress": app$0.UpdateProgressEvent;
         }
