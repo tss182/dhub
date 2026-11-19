@@ -3,6 +3,7 @@ import { X, Wand2, Play } from 'lucide-react';
 import { SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
 import { ColumnMeta } from '../../types/domain';
 import { alertError, alertSuccess } from '../../stores/useAlertStore';
+import { createIdentityGenerator, generateMockValue } from '../../utils/mockData';
 
 interface MockDataModalProps {
   isOpen: boolean;
@@ -12,37 +13,6 @@ interface MockDataModalProps {
   schema: string;
   tableName: string;
   onSuccess?: () => void;
-}
-
-function generateMockValue(col: ColumnMeta, rowIdx: number): any {
-  const name = col.name.toLowerCase();
-  const t = (col.dataType || col.rawType || '').toLowerCase();
-
-  if (t.includes('bool')) {
-    return rowIdx % 2 === 0;
-  }
-  if (t.includes('uuid')) {
-    return crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(rowIdx).padStart(12, '0')}`;
-  }
-  if (t.includes('int') || t.includes('serial') || t.includes('number') || t.includes('numeric') || t.includes('decimal') || t.includes('float') || t.includes('double')) {
-    if (name.includes('age')) return 18 + (rowIdx % 50);
-    if (name.includes('price') || name.includes('amount')) return Number(((rowIdx + 1) * 12.5).toFixed(2));
-    return Math.floor(Math.random() * 10000) + rowIdx;
-  }
-  if (t.includes('timestamp') || t.includes('datetime')) {
-    return new Date(Date.now() - rowIdx * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
-  }
-  if (t.includes('date')) {
-    return new Date(Date.now() - rowIdx * 86400 * 1000).toISOString().slice(0, 10);
-  }
-  if (t.includes('json')) {
-    return JSON.stringify({ sample: true, index: rowIdx + 1 });
-  }
-  if (name.includes('email')) return `user${rowIdx + 1}_${Math.floor(Math.random() * 900 + 100)}@example.com`;
-  if (name.includes('name')) return `Sample Name ${rowIdx + 1}`;
-  if (name.includes('phone')) return `+62812${String(10000000 + rowIdx).slice(0, 8)}`;
-  if (name.includes('status')) return ['active', 'pending', 'completed'][rowIdx % 3];
-  return `sample_${col.name}_${rowIdx + 1}`;
 }
 
 export const MockDataModal: React.FC<MockDataModalProps> = ({
@@ -85,10 +55,12 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
     const count = Math.max(1, Math.min(1000, rowCount));
     setIsGenerating(true);
     try {
+      const nextIdentity = createIdentityGenerator();
       const changes = Array.from({ length: count }, (_, idx) => {
+        const identity = nextIdentity();
         const row: Record<string, any> = {};
         activeCols.forEach((c) => {
-          row[c.name] = generateMockValue(c, idx);
+          row[c.name] = generateMockValue(c, idx, identity);
         });
         return {
           type: 'insert',
