@@ -6,7 +6,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { alertError, alertSuccess } from '../../stores/useAlertStore';
 import { createIdentityGenerator, generateMockValue } from '../../utils/mockData';
 
-const MAX_MOCK_ROWS = 10000;
+const MAX_MOCK_ROWS = 1000000;
 const MOCK_INSERT_BATCH_SIZE = 500;
 
 interface MockDataModalProps {
@@ -68,22 +68,24 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
     setIsGenerating(true);
     try {
       const nextIdentity = createIdentityGenerator();
-      const changes = Array.from({ length: count }, (_, idx) => {
-        const identity = nextIdentity();
-        const row: Record<string, any> = {};
-        activeCols.forEach((c) => {
-          row[c.name] = generateMockValue(c, idx, identity);
-        });
-        return {
-          type: 'insert',
-          primaryKey: {},
-          changes: row,
-        };
-      });
-
       let totalAffected = 0;
-      for (let offset = 0; offset < changes.length; offset += MOCK_INSERT_BATCH_SIZE) {
-        const batch = changes.slice(offset, offset + MOCK_INSERT_BATCH_SIZE);
+
+      for (let offset = 0; offset < count; offset += MOCK_INSERT_BATCH_SIZE) {
+        const batchLen = Math.min(MOCK_INSERT_BATCH_SIZE, count - offset);
+        const batch = Array.from({ length: batchLen }, (_, bIdx) => {
+          const idx = offset + bIdx;
+          const identity = nextIdentity();
+          const row: Record<string, any> = {};
+          activeCols.forEach((c) => {
+            row[c.name] = generateMockValue(c, idx, identity);
+          });
+          return {
+            type: 'insert',
+            primaryKey: {},
+            changes: row,
+          };
+        });
+
         const affected = await QueryService.SubmitChanges(
           connectionId,
           database,
