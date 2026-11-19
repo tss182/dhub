@@ -2490,6 +2490,13 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     }
   };
 
+  const availableTables = useMemo(() => {
+    if (!connection) return [] as string[];
+    const schemaKey = `${connection.id}:${database}:${targetSchema}`;
+    const objs = useConnectionStore.getState().treeObjects[schemaKey] || [];
+    return objs.filter((o) => o.type === 'table').map((o) => o.name);
+  }, [connection, database, targetSchema, isOpen]);
+
   if (!isOpen) return null;
 
   const pkCols = columns.filter((c) => c.isPrimaryKey && c.name.trim());
@@ -2513,13 +2520,6 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     selectedNode.type === 'trigger'
       ? triggers.find((t) => t.id === selectedNode.id) || triggers[0]
       : triggers[0];
-
-  const availableTables = useMemo(() => {
-    if (!connection) return [] as string[];
-    const schemaKey = `${connection.id}:${database}:${targetSchema}`;
-    const objs = useConnectionStore.getState().treeObjects[schemaKey] || [];
-    return objs.filter((o) => o.type === 'table').map((o) => o.name);
-  }, [connection, database, targetSchema, isOpen]);
 
   return (
     <div className="fixed inset-0 z-50 bg-[#1e1f22] text-[#bcbec4] flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-100">
