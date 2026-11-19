@@ -126,6 +126,13 @@ export interface CheckConstraintMeta {
   clause: string;
 }
 
+export interface TriggerMeta {
+  name: string;
+  timing: string;
+  event: string;
+  statement: string;
+}
+
 export interface TableStructure {
   schema: string;
   name: string;
@@ -134,6 +141,7 @@ export interface TableStructure {
   foreignKeys: ForeignKeyMeta[];
   indexes: IndexMeta[];
   checkConstraints?: CheckConstraintMeta[];
+  triggers?: TriggerMeta[];
   ddl: string;
 }
 

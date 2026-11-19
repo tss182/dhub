@@ -65,6 +65,13 @@ type CheckConstraintMeta struct {
 	Clause string `json:"clause"`
 }
 
+type TriggerMeta struct {
+	Name      string `json:"name"`
+	Timing    string `json:"timing"`
+	Event     string `json:"event"`
+	Statement string `json:"statement"`
+}
+
 type TableStructure struct {
 	Schema           string                `json:"schema"`
 	Name             string                `json:"name"`
@@ -73,6 +80,7 @@ type TableStructure struct {
 	ForeignKeys      []ForeignKeyMeta      `json:"foreignKeys"`
 	Indexes          []IndexMeta           `json:"indexes"`
 	CheckConstraints []CheckConstraintMeta `json:"checkConstraints,omitempty"`
+	Triggers         []TriggerMeta         `json:"triggers,omitempty"`
 	DDL              string                `json:"ddl"`
 	Engine           string                `json:"engine,omitempty"`
 	Collation        string                `json:"collation,omitempty"`

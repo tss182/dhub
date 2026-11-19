@@ -560,6 +560,28 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		}
 	}
 
+	// 4c. Get Triggers
+	trgQuery := `
+		SELECT trigger_name, action_timing, string_agg(event_manipulation, ' OR '), action_statement
+		FROM information_schema.triggers
+		WHERE event_object_schema = $1 AND event_object_table = $2
+		GROUP BY trigger_name, action_timing, action_statement
+		ORDER BY trigger_name;`
+	if trgRows, trgErr := db.QueryContext(ctx, trgQuery, schema, table); trgErr == nil {
+		defer trgRows.Close()
+		for trgRows.Next() {
+			var tName, timing, event, stmt string
+			if err := trgRows.Scan(&tName, &timing, &event, &stmt); err == nil {
+				structure.Triggers = append(structure.Triggers, driver.TriggerMeta{
+					Name:      tName,
+					Timing:    timing,
+					Event:     event,
+					Statement: stmt,
+				})
+			}
+		}
+	}
+
 	// 5. Generate DDL
 	structure.DDL = generatePostgresDDL(schema, table, structure)
 

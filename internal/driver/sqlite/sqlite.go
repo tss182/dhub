@@ -213,6 +213,23 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 		}
 	}
 
+	// 2d. Get Triggers from sqlite_master
+	if trgRows, trgErr := s.db.QueryContext(ctx, "SELECT name, COALESCE(sql, '') FROM sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name", table); trgErr == nil {
+		defer trgRows.Close()
+		for trgRows.Next() {
+			var tName, tSQL string
+			if err := trgRows.Scan(&tName, &tSQL); err == nil {
+				timing, event, body := parseSQLiteTriggerSQL(tSQL)
+				structure.Triggers = append(structure.Triggers, driver.TriggerMeta{
+					Name:      tName,
+					Timing:    timing,
+					Event:     event,
+					Statement: body,
+				})
+			}
+		}
+	}
+
 	// 3. Get DDL
 	var ddl string
 	_ = s.db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&ddl)
@@ -344,6 +361,34 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table
 		return 0, err
 	}
 	return totalAffected, nil
+}
+
+func parseSQLiteTriggerSQL(sqlStr string) (timing, event, body string) {
+	upper := strings.ToUpper(sqlStr)
+	for _, t := range []string{"INSTEAD OF", "BEFORE", "AFTER"} {
+		if strings.Contains(upper, " "+t+" ") {
+			timing = t
+			break
+		}
+	}
+	if timing == "" {
+		timing = "AFTER"
+	}
+	for _, ev := range []string{"INSERT", "UPDATE", "DELETE"} {
+		if strings.Contains(upper, " "+ev+" ") {
+			event = ev
+			break
+		}
+	}
+	if event == "" {
+		event = "INSERT"
+	}
+	if idx := strings.Index(upper, "BEGIN"); idx != -1 {
+		body = strings.TrimSpace(sqlStr[idx:])
+	} else {
+		body = strings.TrimSpace(sqlStr)
+	}
+	return timing, event, body
 }
 
 // quoteLiteral returns s as a single-quoted SQL string literal with quotes escaped.

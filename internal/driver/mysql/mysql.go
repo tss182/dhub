@@ -373,6 +373,26 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
+	// 3d. Fetch Triggers
+	trgQuery := `SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, ACTION_STATEMENT
+		FROM information_schema.triggers
+		WHERE TRIGGER_SCHEMA = ? AND EVENT_OBJECT_TABLE = ?
+		ORDER BY TRIGGER_NAME`
+	if trgRows, trgErr := m.db.QueryContext(ctx, trgQuery, targetDB, table); trgErr == nil {
+		defer trgRows.Close()
+		for trgRows.Next() {
+			var tName, timing, event, stmt string
+			if err := trgRows.Scan(&tName, &timing, &event, &stmt); err == nil {
+				structure.Triggers = append(structure.Triggers, driver.TriggerMeta{
+					Name:      tName,
+					Timing:    timing,
+					Event:     event,
+					Statement: stmt,
+				})
+			}
+		}
+	}
+
 	// 4. Fetch DDL (handles both 2-column Tables and 4-column Views)
 	showQuery := fmt.Sprintf("SHOW CREATE TABLE %s.%s", quoteIdent(targetDB), quoteIdent(table))
 	if targetDB == "" {

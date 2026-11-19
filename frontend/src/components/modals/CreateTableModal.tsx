@@ -28,8 +28,9 @@ import {
   Hash,
   Server,
   Zap,
+  Link2,
 } from 'lucide-react';
-import { ConnectionConfig, ColumnMeta, CheckConstraintMeta, resolveConnectionEnv } from '../../types/domain';
+import { ConnectionConfig, ColumnMeta, CheckConstraintMeta, ForeignKeyMeta, TriggerMeta, resolveConnectionEnv } from '../../types/domain';
 import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
@@ -72,6 +73,27 @@ export interface CheckConstraintDefinition {
   name: string;
   originalName?: string;
   clause: string;
+}
+
+export interface ForeignKeyDefinition {
+  id: string;
+  name: string;
+  originalName?: string;
+  columnName: string;
+  refSchema: string;
+  refTable: string;
+  refColumn: string;
+  onUpdate: string;
+  onDelete: string;
+}
+
+export interface TriggerDefinition {
+  id: string;
+  name: string;
+  originalName?: string;
+  timing: string;
+  event: string;
+  statement: string;
 }
 
 export interface CreateTableModalProps {
@@ -376,6 +398,51 @@ function parseColumnType(typeStr: string): { baseType: string; lengthOrValues: s
   return { baseType: parts[0].toUpperCase(), lengthOrValues: '' };
 }
 
+function generateTriggerDDL({
+  driver,
+  database,
+  targetSchema,
+  tableName,
+  trigger,
+}: {
+  driver: string;
+  database?: string;
+  targetSchema?: string;
+  tableName: string;
+  trigger: TriggerDefinition;
+}): string {
+  const trgName = trigger.name.trim() || `trg_${tableName}_${trigger.event.toLowerCase().replace(/\s+/g, '_')}`;
+  const timing = (trigger.timing || 'BEFORE').toUpperCase();
+  const event = (trigger.event || 'INSERT').toUpperCase();
+  const body = trigger.statement.trim();
+
+  if (driver === 'mysql' || driver === 'mariadb') {
+    const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
+    const actionBody = body || 'BEGIN\n  -- trigger body\nEND';
+    return `CREATE TRIGGER ${dbPrefix}\`${trgName}\` ${timing} ${event} ON ${dbPrefix}\`${tableName}\`\nFOR EACH ROW\n${actionBody};`;
+  } else if (driver === 'postgres') {
+    const schemaPrefix = targetSchema ? `"${targetSchema}".` : '';
+    const actionBody = body
+      ? /^EXECUTE\s+/i.test(body)
+        ? body
+        : `EXECUTE FUNCTION ${body}`
+      : 'EXECUTE FUNCTION trigger_function()';
+    return `CREATE TRIGGER "${trgName}" ${timing} ${event} ON ${schemaPrefix}"${tableName}"\nFOR EACH ROW\n${actionBody};`;
+  } else if (driver === 'mssql') {
+    const schemaPrefix = targetSchema ? `[${targetSchema}].` : '';
+    const actionBody = body || 'BEGIN\n  SET NOCOUNT ON;\nEND';
+    return `CREATE TRIGGER ${schemaPrefix}[${trgName}] ON ${schemaPrefix}[${tableName}]\n${timing} ${event}\nAS\n${actionBody};`;
+  } else {
+    // SQLite
+    const actionBody = body
+      ? /^BEGIN\b/i.test(body)
+        ? body
+        : `BEGIN\n  ${body};\nEND`
+      : 'BEGIN\n  -- trigger body\nEND';
+    return `CREATE TRIGGER "${trgName}" ${timing} ${event} ON "${tableName}"\nFOR EACH ROW\n${actionBody};`;
+  }
+}
+
 function generateAlterSql({
   driver,
   database,
@@ -388,6 +455,10 @@ function generateAlterSql({
   indexes,
   originalCheckConstraints = [],
   checkConstraints = [],
+  originalForeignKeys = [],
+  foreignKeys = [],
+  originalTriggers = [],
+  triggers = [],
   originalPrimaryKeys,
   originalTableComment,
   tableComment,
@@ -403,6 +474,10 @@ function generateAlterSql({
   indexes: IndexDefinition[];
   originalCheckConstraints?: CheckConstraintMeta[];
   checkConstraints?: CheckConstraintDefinition[];
+  originalForeignKeys?: ForeignKeyMeta[];
+  foreignKeys?: ForeignKeyDefinition[];
+  originalTriggers?: TriggerMeta[];
+  triggers?: TriggerDefinition[];
   originalPrimaryKeys: string[];
   originalTableComment: string;
   tableComment: string;
@@ -621,6 +696,78 @@ function generateAlterSql({
       }
     });
 
+    // F. Foreign Keys
+    originalForeignKeys.forEach((origFk) => {
+      const stillExists = foreignKeys.some(
+        (fk) => fk.originalName === origFk.constraintName || fk.name.trim() === origFk.constraintName
+      );
+      if (!stillExists && origFk.constraintName) {
+        statements.push(`ALTER TABLE ${tableTarget} DROP FOREIGN KEY \`${origFk.constraintName}\`;`);
+      }
+    });
+
+    foreignKeys.forEach((fk) => {
+      if (!fk.columnName.trim() || !fk.refTable.trim() || !fk.refColumn.trim()) return;
+      const fkName = fk.name.trim() || `fk_${cleanTable}_${fk.columnName.trim()}`;
+      const refTbl =
+        fk.refSchema.trim() && fk.refSchema.trim() !== database
+          ? `\`${fk.refSchema.trim()}\`.\`${fk.refTable.trim()}\``
+          : `\`${fk.refTable.trim()}\``;
+      const fkClause = `ADD CONSTRAINT \`${fkName}\` FOREIGN KEY (\`${fk.columnName.trim()}\`) REFERENCES ${refTbl} (\`${fk.refColumn.trim()}\`)${
+        fk.onDelete ? ` ON DELETE ${fk.onDelete}` : ''
+      }${fk.onUpdate ? ` ON UPDATE ${fk.onUpdate}` : ''}`;
+
+      const origMatch = originalForeignKeys.find(
+        (o) => o.constraintName === fk.originalName || o.constraintName === fk.name.trim()
+      );
+      if (!origMatch) {
+        statements.push(`ALTER TABLE ${tableTarget} ${fkClause};`);
+      } else {
+        const changed =
+          origMatch.constraintName !== fkName ||
+          origMatch.columnName !== fk.columnName.trim() ||
+          origMatch.refTable !== fk.refTable.trim() ||
+          origMatch.refColumn !== fk.refColumn.trim() ||
+          (origMatch.onUpdate || 'NO ACTION').toUpperCase() !== (fk.onUpdate || 'NO ACTION').toUpperCase() ||
+          (origMatch.onDelete || 'NO ACTION').toUpperCase() !== (fk.onDelete || 'NO ACTION').toUpperCase();
+        if (changed) {
+          statements.push(`ALTER TABLE ${tableTarget} DROP FOREIGN KEY \`${origMatch.constraintName}\`;`);
+          statements.push(`ALTER TABLE ${tableTarget} ${fkClause};`);
+        }
+      }
+    });
+
+    // G. Triggers
+    originalTriggers.forEach((origTrg) => {
+      const stillExists = triggers.some(
+        (t) => t.originalName === origTrg.name || t.name.trim() === origTrg.name
+      );
+      if (!stillExists && origTrg.name) {
+        statements.push(`DROP TRIGGER IF EXISTS ${dbPrefix}\`${origTrg.name}\`;`);
+      }
+    });
+
+    triggers.forEach((trg) => {
+      if (!trg.name.trim() && !trg.statement.trim()) return;
+      const trgName = trg.name.trim() || `trg_${cleanTable}_${trg.event.toLowerCase()}`;
+      const origMatch = originalTriggers.find(
+        (o) => o.name === trg.originalName || o.name === trg.name.trim()
+      );
+      if (!origMatch) {
+        statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+      } else {
+        const changed =
+          origMatch.name !== trgName ||
+          origMatch.timing.toUpperCase() !== trg.timing.toUpperCase() ||
+          origMatch.event.toUpperCase() !== trg.event.toUpperCase() ||
+          origMatch.statement.trim() !== trg.statement.trim();
+        if (changed) {
+          statements.push(`DROP TRIGGER IF EXISTS ${dbPrefix}\`${origMatch.name}\`;`);
+          statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+        }
+      }
+    });
+
     if (tableComment.trim() !== (originalTableComment || '').trim()) {
       statements.push(`ALTER TABLE ${tableTarget} COMMENT = '${tableComment.trim().replace(/'/g, "\\'")}';`);
     }
@@ -692,6 +839,77 @@ function generateAlterSql({
       }
     });
 
+    // PostgreSQL Foreign Keys
+    originalForeignKeys.forEach((origFk) => {
+      const stillExists = foreignKeys.some(
+        (fk) => fk.originalName === origFk.constraintName || fk.name.trim() === origFk.constraintName
+      );
+      if (!stillExists && origFk.constraintName) {
+        statements.push(`ALTER TABLE ${tableTarget} DROP CONSTRAINT IF EXISTS "${origFk.constraintName}";`);
+      }
+    });
+
+    foreignKeys.forEach((fk) => {
+      if (!fk.columnName.trim() || !fk.refTable.trim() || !fk.refColumn.trim()) return;
+      const fkName = fk.name.trim() || `fk_${cleanTable}_${fk.columnName.trim()}`;
+      const refTbl = fk.refSchema.trim()
+        ? `"${fk.refSchema.trim()}"."${fk.refTable.trim()}"`
+        : `"${fk.refTable.trim()}"`;
+      const fkClause = `ADD CONSTRAINT "${fkName}" FOREIGN KEY ("${fk.columnName.trim()}") REFERENCES ${refTbl} ("${fk.refColumn.trim()}")${
+        fk.onDelete ? ` ON DELETE ${fk.onDelete}` : ''
+      }${fk.onUpdate ? ` ON UPDATE ${fk.onUpdate}` : ''}`;
+
+      const origMatch = originalForeignKeys.find(
+        (o) => o.constraintName === fk.originalName || o.constraintName === fk.name.trim()
+      );
+      if (!origMatch) {
+        statements.push(`ALTER TABLE ${tableTarget} ${fkClause};`);
+      } else {
+        const changed =
+          origMatch.constraintName !== fkName ||
+          origMatch.columnName !== fk.columnName.trim() ||
+          origMatch.refTable !== fk.refTable.trim() ||
+          origMatch.refColumn !== fk.refColumn.trim() ||
+          (origMatch.onUpdate || 'NO ACTION').toUpperCase() !== (fk.onUpdate || 'NO ACTION').toUpperCase() ||
+          (origMatch.onDelete || 'NO ACTION').toUpperCase() !== (fk.onDelete || 'NO ACTION').toUpperCase();
+        if (changed) {
+          statements.push(`ALTER TABLE ${tableTarget} DROP CONSTRAINT IF EXISTS "${origMatch.constraintName}";`);
+          statements.push(`ALTER TABLE ${tableTarget} ${fkClause};`);
+        }
+      }
+    });
+
+    // PostgreSQL Triggers
+    originalTriggers.forEach((origTrg) => {
+      const stillExists = triggers.some(
+        (t) => t.originalName === origTrg.name || t.name.trim() === origTrg.name
+      );
+      if (!stillExists && origTrg.name) {
+        statements.push(`DROP TRIGGER IF EXISTS "${origTrg.name}" ON ${tableTarget};`);
+      }
+    });
+
+    triggers.forEach((trg) => {
+      if (!trg.name.trim() && !trg.statement.trim()) return;
+      const trgName = trg.name.trim() || `trg_${cleanTable}_${trg.event.toLowerCase()}`;
+      const origMatch = originalTriggers.find(
+        (o) => o.name === trg.originalName || o.name === trg.name.trim()
+      );
+      if (!origMatch) {
+        statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+      } else {
+        const changed =
+          origMatch.name !== trgName ||
+          origMatch.timing.toUpperCase() !== trg.timing.toUpperCase() ||
+          origMatch.event.toUpperCase() !== trg.event.toUpperCase() ||
+          origMatch.statement.trim() !== trg.statement.trim();
+        if (changed) {
+          statements.push(`DROP TRIGGER IF EXISTS "${origMatch.name}" ON ${tableTarget};`);
+          statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+        }
+      }
+    });
+
     // PostgreSQL Comments
     if (tableComment.trim() !== originalTableComment.trim()) {
       statements.push(`COMMENT ON TABLE ${tableTarget} IS '${tableComment.trim().replace(/'/g, "''")}';`);
@@ -731,6 +949,47 @@ function generateAlterSql({
       statements.push(`CREATE ${uniqueKw}INDEX IF NOT EXISTS "${idxName}" ON "${cleanTable}" (${cols});`);
     });
 
+    // SQLite Triggers
+    originalTriggers.forEach((origTrg) => {
+      const stillExists = triggers.some(
+        (t) => t.originalName === origTrg.name || t.name.trim() === origTrg.name
+      );
+      if (!stillExists && origTrg.name) {
+        statements.push(`DROP TRIGGER IF EXISTS "${origTrg.name}";`);
+      }
+    });
+
+    triggers.forEach((trg) => {
+      if (!trg.name.trim() && !trg.statement.trim()) return;
+      const trgName = trg.name.trim() || `trg_${cleanTable}_${trg.event.toLowerCase()}`;
+      const origMatch = originalTriggers.find(
+        (o) => o.name === trg.originalName || o.name === trg.name.trim()
+      );
+      if (!origMatch) {
+        statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+      } else {
+        const changed =
+          origMatch.name !== trgName ||
+          origMatch.timing.toUpperCase() !== trg.timing.toUpperCase() ||
+          origMatch.event.toUpperCase() !== trg.event.toUpperCase() ||
+          origMatch.statement.trim() !== trg.statement.trim();
+        if (changed) {
+          statements.push(`DROP TRIGGER IF EXISTS "${origMatch.name}";`);
+          statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+        }
+      }
+    });
+
+    const fksChanged =
+      foreignKeys.length !== originalForeignKeys.length ||
+      foreignKeys.some((fk) => {
+        const orig = originalForeignKeys.find((o) => o.constraintName === fk.originalName || o.constraintName === fk.name);
+        return !orig || orig.columnName !== fk.columnName || orig.refTable !== fk.refTable || orig.refColumn !== fk.refColumn;
+      });
+    if (fksChanged) {
+      statements.push(`-- Note: SQLite does not support ALTER TABLE ADD/DROP FOREIGN KEY directly.`);
+    }
+
     if (cleanTable !== initialTableName) {
       statements.push(`ALTER TABLE "${initialTableName}" RENAME TO "${cleanTable}";`);
     }
@@ -750,6 +1009,8 @@ function generateCreateTableSql({
   columns,
   indexes,
   checkConstraints = [],
+  foreignKeys = [],
+  triggers = [],
   isUnlogged = false,
   engine = 'InnoDB',
   charset = 'utf8mb4',
@@ -763,6 +1024,8 @@ function generateCreateTableSql({
   columns: ColumnDefinition[];
   indexes: IndexDefinition[];
   checkConstraints?: CheckConstraintDefinition[];
+  foreignKeys?: ForeignKeyDefinition[];
+  triggers?: TriggerDefinition[];
   isUnlogged?: boolean;
   engine?: string;
   charset?: string;
@@ -861,11 +1124,29 @@ function generateCreateTableSql({
       lines.push(`  ${namePart}CHECK (${chk.clause.trim()})`);
     });
 
+    foreignKeys.forEach((fk) => {
+      if (!fk.columnName.trim() || !fk.refTable.trim() || !fk.refColumn.trim()) return;
+      const fkName = fk.name.trim() || `fk_${cleanTable}_${fk.columnName.trim()}`;
+      const refTbl =
+        fk.refSchema.trim() && fk.refSchema.trim() !== database
+          ? `\`${fk.refSchema.trim()}\`.\`${fk.refTable.trim()}\``
+          : `\`${fk.refTable.trim()}\``;
+      let fkDef = `  CONSTRAINT \`${fkName}\` FOREIGN KEY (\`${fk.columnName.trim()}\`) REFERENCES ${refTbl} (\`${fk.refColumn.trim()}\`)`;
+      if (fk.onDelete) fkDef += ` ON DELETE ${fk.onDelete}`;
+      if (fk.onUpdate) fkDef += ` ON UPDATE ${fk.onUpdate}`;
+      lines.push(fkDef);
+    });
+
     let ddl = `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE=${engine} DEFAULT CHARSET=${charset} COLLATE=${collation}`;
     if (tableComment.trim()) {
       ddl += ` COMMENT='${tableComment.trim().replace(/'/g, "\\'")}'`;
     }
-    return ddl + ';';
+    const statements: string[] = [ddl + ';'];
+    triggers.forEach((trg) => {
+      if (!trg.name.trim() && !trg.statement.trim()) return;
+      statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+    });
+    return statements.join('\n\n');
   } else if (driver === 'postgres') {
     const schemaPrefix = targetSchema ? `"${targetSchema}".` : '';
     columns.forEach((col) => {
@@ -900,6 +1181,18 @@ function generateCreateTableSql({
       if (!chk.clause.trim()) return;
       const namePart = chk.name.trim() ? `CONSTRAINT "${chk.name.trim()}" ` : '';
       lines.push(`  ${namePart}CHECK (${chk.clause.trim()})`);
+    });
+
+    foreignKeys.forEach((fk) => {
+      if (!fk.columnName.trim() || !fk.refTable.trim() || !fk.refColumn.trim()) return;
+      const fkName = fk.name.trim() || `fk_${cleanTable}_${fk.columnName.trim()}`;
+      const refTbl = fk.refSchema.trim()
+        ? `"${fk.refSchema.trim()}"."${fk.refTable.trim()}"`
+        : `"${fk.refTable.trim()}"`;
+      let fkDef = `  CONSTRAINT "${fkName}" FOREIGN KEY ("${fk.columnName.trim()}") REFERENCES ${refTbl} ("${fk.refColumn.trim()}")`;
+      if (fk.onDelete) fkDef += ` ON DELETE ${fk.onDelete}`;
+      if (fk.onUpdate) fkDef += ` ON UPDATE ${fk.onUpdate}`;
+      lines.push(fkDef);
     });
 
     const statements: string[] = [];
@@ -940,6 +1233,11 @@ function generateCreateTableSql({
       const methodClause = idx.method && ['BTREE', 'HASH', 'GIN', 'GIST'].includes(idx.method) ? ` USING ${idx.method}` : '';
 
       statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON ${schemaPrefix}"${cleanTable}"${methodClause} (${colParts});`);
+    });
+
+    triggers.forEach((trg) => {
+      if (!trg.name.trim() && !trg.statement.trim()) return;
+      statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
     });
 
     return statements.join('\n\n');
@@ -1059,6 +1357,15 @@ function generateCreateTableSql({
       lines.push(`  PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
     }
 
+    foreignKeys.forEach((fk) => {
+      if (!fk.columnName.trim() || !fk.refTable.trim() || !fk.refColumn.trim()) return;
+      const fkName = fk.name.trim() || `fk_${cleanTable}_${fk.columnName.trim()}`;
+      let fkDef = `  CONSTRAINT "${fkName}" FOREIGN KEY ("${fk.columnName.trim()}") REFERENCES "${fk.refTable.trim()}" ("${fk.refColumn.trim()}")`;
+      if (fk.onDelete) fkDef += ` ON DELETE ${fk.onDelete}`;
+      if (fk.onUpdate) fkDef += ` ON UPDATE ${fk.onUpdate}`;
+      lines.push(fkDef);
+    });
+
     const statements: string[] = [];
     statements.push(`CREATE TABLE "${cleanTable}" (\n${lines.join(',\n')}\n);`);
 
@@ -1081,6 +1388,11 @@ function generateCreateTableSql({
       statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON "${cleanTable}" (${colParts});`);
     });
 
+    triggers.forEach((trg) => {
+      if (!trg.name.trim() && !trg.statement.trim()) return;
+      statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
+    });
+
     return statements.join('\n\n');
   }
 }
@@ -1094,9 +1406,11 @@ type SelectedNodeType =
   | { type: 'indexes_folder' }
   | { type: 'index'; id: string }
   | { type: 'foreign_keys_folder' }
+  | { type: 'foreign_key'; id: string }
   | { type: 'checks_folder' }
   | { type: 'check'; id: string }
   | { type: 'triggers_folder' }
+  | { type: 'trigger'; id: string }
   | { type: 'virtual_columns_folder' }
   | { type: 'virtual_foreign_keys_folder' };
 
@@ -1121,6 +1435,9 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [columns, setColumns] = useState<ColumnDefinition[]>([]);
   const [indexes, setIndexes] = useState<IndexDefinition[]>([]);
   const [checkConstraints, setCheckConstraints] = useState<CheckConstraintDefinition[]>([]);
+  const [foreignKeys, setForeignKeys] = useState<ForeignKeyDefinition[]>([]);
+  const [triggers, setTriggers] = useState<TriggerDefinition[]>([]);
+  const [refTableColumnsMap, setRefTableColumnsMap] = useState<Record<string, string[]>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
   const [draggedColIndex, setDraggedColIndex] = useState<number | null>(null);
@@ -1144,6 +1461,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [originalColumns, setOriginalColumns] = useState<ColumnMeta[]>([]);
   const [originalIndexes, setOriginalIndexes] = useState<IndexMeta[]>([]);
   const [originalCheckConstraints, setOriginalCheckConstraints] = useState<CheckConstraintMeta[]>([]);
+  const [originalForeignKeys, setOriginalForeignKeys] = useState<ForeignKeyMeta[]>([]);
+  const [originalTriggers, setOriginalTriggers] = useState<TriggerMeta[]>([]);
   const [originalPrimaryKeys, setOriginalPrimaryKeys] = useState<string[]>([]);
   const [originalTableComment, setOriginalTableComment] = useState('');
   const [isLoadingStructure, setIsLoadingStructure] = useState(false);
@@ -1297,6 +1616,35 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               clause: chk.clause,
             }))
           );
+
+          const fks = structure.foreignKeys || [];
+          setOriginalForeignKeys(fks);
+          setForeignKeys(
+            fks.map((fk, i) => ({
+              id: 'fk-' + i + '-' + fk.constraintName,
+              name: fk.constraintName,
+              originalName: fk.constraintName,
+              columnName: fk.columnName,
+              refSchema: fk.refSchema || '',
+              refTable: fk.refTable,
+              refColumn: fk.refColumn,
+              onUpdate: (fk.onUpdate || 'NO ACTION').toUpperCase(),
+              onDelete: (fk.onDelete || 'NO ACTION').toUpperCase(),
+            }))
+          );
+
+          const trgs = (structure as any).triggers || [];
+          setOriginalTriggers(trgs);
+          setTriggers(
+            trgs.map((t: TriggerMeta, i: number) => ({
+              id: 'trg-' + i + '-' + t.name,
+              name: t.name,
+              originalName: t.name,
+              timing: (t.timing || 'BEFORE').toUpperCase(),
+              event: (t.event || 'INSERT').toUpperCase(),
+              statement: t.statement || '',
+            }))
+          );
         })
         .catch((err) => {
           console.error('Failed to load table structure:', err);
@@ -1317,9 +1665,13 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       setIsUnlogged(false);
       setIndexes([]);
       setCheckConstraints([]);
+      setForeignKeys([]);
+      setTriggers([]);
       setOriginalColumns([]);
       setOriginalIndexes([]);
       setOriginalCheckConstraints([]);
+      setOriginalForeignKeys([]);
+      setOriginalTriggers([]);
       setOriginalPrimaryKeys([]);
       setOriginalTableComment('');
       setIsLoadingStructure(false);
@@ -1520,6 +1872,93 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     }
   };
 
+  const fetchRefTableColumns = async (refTbl: string, refSch?: string) => {
+    const tbl = refTbl.trim();
+    if (!tbl || !connection) return;
+    if (refTableColumnsMap[tbl]) return;
+    try {
+      const struct = await SchemaService.GetTableStructure(
+        connection.id,
+        database || connection.databaseName || 'main',
+        refSch?.trim() || targetSchema,
+        tbl
+      );
+      if (struct?.columns) {
+        setRefTableColumnsMap((prev) => ({
+          ...prev,
+          [tbl]: struct.columns!.map((c) => c.name),
+        }));
+      }
+    } catch {
+      // ignore lookup errors for non-existent / unsaved tables
+    }
+  };
+
+  const handleAddForeignKey = () => {
+    const cleanTbl = tableName.trim() || 'tbl';
+    const firstCol = columns.find((c) => c.name.trim())?.name.trim() || '';
+    const newId = 'fk-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+    const newFk: ForeignKeyDefinition = {
+      id: newId,
+      name: firstCol ? `fk_${cleanTbl}_${firstCol}` : `fk_${cleanTbl}_${foreignKeys.length + 1}`,
+      columnName: firstCol,
+      refSchema: targetSchema || '',
+      refTable: '',
+      refColumn: '',
+      onUpdate: 'NO ACTION',
+      onDelete: 'NO ACTION',
+    };
+    setForeignKeys((prev) => [...prev, newFk]);
+    setSelectedNode({ type: 'foreign_key', id: newId });
+    setExpandedFolders((prev) => ({ ...prev, foreign_keys: true }));
+  };
+
+  const handleUpdateForeignKey = (id: string, updates: Partial<ForeignKeyDefinition>) => {
+    setForeignKeys((prev) => prev.map((fk) => (fk.id === id ? { ...fk, ...updates } : fk)));
+    if (updates.refTable !== undefined) {
+      fetchRefTableColumns(updates.refTable, updates.refSchema);
+    }
+  };
+
+  const handleRemoveForeignKey = (id: string) => {
+    const remaining = foreignKeys.filter((fk) => fk.id !== id);
+    setForeignKeys(remaining);
+    if (selectedNode.type === 'foreign_key' && selectedNode.id === id) {
+      setSelectedNode(remaining.length > 0 ? { type: 'foreign_key', id: remaining[0].id } : { type: 'foreign_keys_folder' });
+    }
+  };
+
+  const handleAddTrigger = () => {
+    const cleanTbl = tableName.trim() || 'tbl';
+    const newId = 'trg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+    const defaultStmt =
+      driver === 'postgres'
+        ? 'EXECUTE FUNCTION my_trigger_fn()'
+        : 'BEGIN\n  -- trigger SQL statements\nEND';
+    const newTrg: TriggerDefinition = {
+      id: newId,
+      name: `trg_${cleanTbl}_before_insert_${triggers.length + 1}`,
+      timing: driver === 'mssql' ? 'AFTER' : 'BEFORE',
+      event: 'INSERT',
+      statement: defaultStmt,
+    };
+    setTriggers((prev) => [...prev, newTrg]);
+    setSelectedNode({ type: 'trigger', id: newId });
+    setExpandedFolders((prev) => ({ ...prev, triggers: true }));
+  };
+
+  const handleUpdateTrigger = (id: string, updates: Partial<TriggerDefinition>) => {
+    setTriggers((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
+  };
+
+  const handleRemoveTrigger = (id: string) => {
+    const remaining = triggers.filter((t) => t.id !== id);
+    setTriggers(remaining);
+    if (selectedNode.type === 'trigger' && selectedNode.id === id) {
+      setSelectedNode(remaining.length > 0 ? { type: 'trigger', id: remaining[0].id } : { type: 'triggers_folder' });
+    }
+  };
+
   const generatedSql = useMemo(() => {
     if (isEditMode) {
       return generateAlterSql({
@@ -1534,6 +1973,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         indexes,
         originalCheckConstraints,
         checkConstraints,
+        originalForeignKeys,
+        foreignKeys,
+        originalTriggers,
+        triggers,
         originalPrimaryKeys,
         originalTableComment,
         tableComment,
@@ -1548,6 +1991,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
       columns,
       indexes,
       checkConstraints,
+      foreignKeys,
+      triggers,
       isUnlogged,
       engine,
       charset,
@@ -1559,6 +2004,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     columns,
     indexes,
     checkConstraints,
+    foreignKeys,
+    triggers,
     isUnlogged,
     database,
     targetSchema,
@@ -1572,6 +2019,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     originalColumns,
     originalIndexes,
     originalCheckConstraints,
+    originalForeignKeys,
+    originalTriggers,
     originalPrimaryKeys,
     originalTableComment,
   ]);
@@ -1769,6 +2218,21 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     selectedNode.type === 'check'
       ? checkConstraints.find((c) => c.id === selectedNode.id) || checkConstraints[0]
       : checkConstraints[0];
+  const activeFk =
+    selectedNode.type === 'foreign_key'
+      ? foreignKeys.find((f) => f.id === selectedNode.id) || foreignKeys[0]
+      : foreignKeys[0];
+  const activeTrg =
+    selectedNode.type === 'trigger'
+      ? triggers.find((t) => t.id === selectedNode.id) || triggers[0]
+      : triggers[0];
+
+  const availableTables = useMemo(() => {
+    if (!connection) return [] as string[];
+    const schemaKey = `${connection.id}:${database}:${targetSchema}`;
+    const objs = useConnectionStore.getState().treeObjects[schemaKey] || [];
+    return objs.filter((o) => o.type === 'table').map((o) => o.name);
+  }, [connection, database, targetSchema, isOpen]);
 
   return (
     <div className="fixed inset-0 z-50 bg-[#1e1f22] text-[#bcbec4] flex flex-col font-sans select-none overflow-hidden animate-in fade-in duration-100">
@@ -2100,14 +2564,56 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         toggleFolder('foreign_keys');
                         setSelectedNode({ type: 'foreign_keys_folder' });
                       }}
-                      className="flex items-center justify-between px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#dfe1e5]"
+                      className={`flex items-center justify-between px-3 py-1 cursor-pointer transition-colors ${
+                        selectedNode.type === 'foreign_keys_folder'
+                          ? 'bg-[#2e436e] text-white font-medium'
+                          : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                      }`}
                     >
                       <div className="flex items-center gap-1.5">
-                        <ChevronRight className="w-3.5 h-3.5 text-[#999ca3] shrink-0" />
-                        <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 text-[#999ca3] shrink-0 transition-transform ${
+                            expandedFolders.foreign_keys ? '' : '-rotate-90'
+                          }`}
+                        />
+                        {expandedFolders.foreign_keys ? (
+                          <FolderOpen className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        ) : (
+                          <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        )}
                         <span className="text-[11px]">foreign keys</span>
                       </div>
+                      <span className="text-[10px] text-[#999ca3] pr-2 font-mono">
+                        {foreignKeys.length}
+                      </span>
                     </div>
+
+                    {expandedFolders.foreign_keys && (
+                      <div className="pl-6 space-y-0.5 py-0.5">
+                        {foreignKeys.map((fk) => {
+                          const isSelected = selectedNode.type === 'foreign_key' && selectedNode.id === fk.id;
+                          return (
+                            <div
+                              key={fk.id}
+                              onClick={() => {
+                                setSelectedNode({ type: 'foreign_key', id: fk.id });
+                                if (fk.refTable) fetchRefTableColumns(fk.refTable, fk.refSchema);
+                              }}
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded-sm cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-[#2e436e] text-white font-medium'
+                                  : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                              }`}
+                            >
+                              <Link2 className="w-3 h-3 text-sky-400 shrink-0" />
+                              <span className="text-[11px] font-mono truncate">
+                                {fk.name} ({fk.columnName || '?'}{fk.refTable ? ` -> ${fk.refTable}` : ''})
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {/* 5. Indexes Folder */}
@@ -2227,10 +2733,63 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                     )}
                   </div>
 
-                  <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
-                    <ChevronRight className="w-3.5 h-3.5 shrink-0" />
-                    <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
-                    <span className="text-[11px]">triggers</span>
+                  {/* 7. Triggers Folder */}
+                  <div>
+                    <div
+                      onClick={() => {
+                        toggleFolder('triggers');
+                        setSelectedNode({ type: 'triggers_folder' });
+                      }}
+                      className={`flex items-center justify-between px-3 py-1 cursor-pointer transition-colors ${
+                        selectedNode.type === 'triggers_folder'
+                          ? 'bg-[#2e436e] text-white font-medium'
+                          : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 text-[#999ca3] shrink-0 transition-transform ${
+                            expandedFolders.triggers ? '' : '-rotate-90'
+                          }`}
+                        />
+                        {expandedFolders.triggers ? (
+                          <FolderOpen className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        ) : (
+                          <Folder className="w-3.5 h-3.5 text-[#e5a065] shrink-0" />
+                        )}
+                        <span className="text-[11px]">triggers</span>
+                      </div>
+                      <span className="text-[10px] text-[#999ca3] pr-2 font-mono">
+                        {triggers.length}
+                      </span>
+                    </div>
+
+                    {expandedFolders.triggers && (
+                      <div className="pl-6 space-y-0.5 py-0.5">
+                        {triggers.map((trg) => {
+                          const isSelected = selectedNode.type === 'trigger' && selectedNode.id === trg.id;
+                          return (
+                            <div
+                              key={trg.id}
+                              onClick={() => setSelectedNode({ type: 'trigger', id: trg.id })}
+                              className={`flex items-center gap-1.5 px-2 py-1 rounded-sm cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-[#2e436e] text-white font-medium'
+                                  : 'text-[#dfe1e5] hover:bg-[#2b2d30]'
+                              }`}
+                            >
+                              <Zap className="w-3 h-3 text-purple-400 shrink-0" />
+                              <span className="text-[11px] font-mono truncate">
+                                {trg.name}
+                              </span>
+                              <span className="text-[9px] text-[#999ca3] font-normal uppercase shrink-0">
+                                {trg.timing} {trg.event}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5 px-3 py-1 cursor-pointer hover:bg-[#2b2d30] text-[#999ca3]">
@@ -2942,6 +3501,333 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         />
                         <p className="text-[10px] text-[#999ca3]">
                           Enter the boolean expression evaluated on INSERT and UPDATE.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Case 9: Foreign Keys Folder */}
+              {selectedNode.type === 'foreign_keys_folder' && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-[#e5a065]" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        Foreign Keys ({foreignKeys.length})
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleAddForeignKey}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#3574f0] hover:bg-[#3068d9] text-white text-xs font-medium cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Foreign Key</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    {foreignKeys.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-[#999ca3] border border-dashed border-[#393b40] rounded">
+                        No foreign keys defined. Click &ldquo;Add Foreign Key&rdquo; to create one.
+                      </div>
+                    ) : (
+                      foreignKeys.map((fk) => (
+                        <div
+                          key={fk.id}
+                          onClick={() => {
+                            setSelectedNode({ type: 'foreign_key', id: fk.id });
+                            if (fk.refTable) fetchRefTableColumns(fk.refTable, fk.refSchema);
+                          }}
+                          className="flex items-center justify-between p-2 rounded hover:bg-[#2b2d30] border border-[#393b40]/50 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2 font-mono text-xs">
+                            <Link2 className="w-3 h-3 text-sky-400" />
+                            <span className="font-semibold text-[#dfe1e5]">{fk.name}</span>
+                            <span className="text-[#999ca3]">
+                              ({fk.columnName || '?'} → {fk.refTable || '?'}.{fk.refColumn || '?'})
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-[#999ca3] font-mono">
+                            ON DELETE {fk.onDelete}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Case 10: Foreign Key Properties */}
+              {selectedNode.type === 'foreign_key' && activeFk && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <Link2 className="w-4 h-4 text-sky-400" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        {activeFk.name || 'unnamed_foreign_key'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveForeignKey(activeFk.id)}
+                      className="p-1 rounded text-[#999ca3] hover:text-rose-400 hover:bg-[#35373c] transition-colors cursor-pointer"
+                      title="Delete Foreign Key"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Constraint Name</label>
+                      <input
+                        type="text"
+                        value={activeFk.name}
+                        onChange={(e) => handleUpdateForeignKey(activeFk.id, { name: e.target.value })}
+                        placeholder="e.g. fk_orders_user_id"
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Column *</label>
+                      <select
+                        value={activeFk.columnName}
+                        onChange={(e) => handleUpdateForeignKey(activeFk.id, { columnName: e.target.value })}
+                        className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      >
+                        <option value="">-- Select column --</option>
+                        {columns
+                          .filter((c) => c.name.trim())
+                          .map((c) => (
+                            <option key={c.id} value={c.name.trim()}>
+                              {c.name.trim()} ({c.dataType.toLowerCase()})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    {(driver === 'postgres' || driver === 'mssql' || driver === 'mysql' || driver === 'mariadb') && (
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                        <label className="text-[#999ca3] font-medium">Reference Schema</label>
+                        <input
+                          type="text"
+                          value={activeFk.refSchema}
+                          onChange={(e) => handleUpdateForeignKey(activeFk.id, { refSchema: e.target.value })}
+                          placeholder={targetSchema || database || 'public'}
+                          className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Reference Table *</label>
+                      <div className="w-full">
+                        <input
+                          type="text"
+                          list={`fk-ref-tables-${activeFk.id}`}
+                          value={activeFk.refTable}
+                          onChange={(e) => handleUpdateForeignKey(activeFk.id, { refTable: e.target.value })}
+                          placeholder="e.g. users"
+                          className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                        />
+                        <datalist id={`fk-ref-tables-${activeFk.id}`}>
+                          {availableTables.map((t) => (
+                            <option key={t} value={t} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Reference Column *</label>
+                      <div className="w-full">
+                        <input
+                          type="text"
+                          list={`fk-ref-cols-${activeFk.id}`}
+                          value={activeFk.refColumn}
+                          onChange={(e) => handleUpdateForeignKey(activeFk.id, { refColumn: e.target.value })}
+                          placeholder="e.g. id"
+                          className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                        />
+                        <datalist id={`fk-ref-cols-${activeFk.id}`}>
+                          {(refTableColumnsMap[activeFk.refTable.trim()] || []).map((col) => (
+                            <option key={col} value={col} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">On Delete</label>
+                      <select
+                        value={activeFk.onDelete}
+                        onChange={(e) => handleUpdateForeignKey(activeFk.id, { onDelete: e.target.value })}
+                        className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      >
+                        <option value="NO ACTION">NO ACTION</option>
+                        <option value="RESTRICT">RESTRICT</option>
+                        <option value="CASCADE">CASCADE</option>
+                        <option value="SET NULL">SET NULL</option>
+                        <option value="SET DEFAULT">SET DEFAULT</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">On Update</label>
+                      <select
+                        value={activeFk.onUpdate}
+                        onChange={(e) => handleUpdateForeignKey(activeFk.id, { onUpdate: e.target.value })}
+                        className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      >
+                        <option value="NO ACTION">NO ACTION</option>
+                        <option value="RESTRICT">RESTRICT</option>
+                        <option value="CASCADE">CASCADE</option>
+                        <option value="SET NULL">SET NULL</option>
+                        <option value="SET DEFAULT">SET DEFAULT</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Case 11: Triggers Folder */}
+              {selectedNode.type === 'triggers_folder' && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-[#e5a065]" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        Triggers ({triggers.length})
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleAddTrigger}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#3574f0] hover:bg-[#3068d9] text-white text-xs font-medium cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Trigger</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    {triggers.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-[#999ca3] border border-dashed border-[#393b40] rounded">
+                        No triggers defined. Click &ldquo;Add Trigger&rdquo; to create one.
+                      </div>
+                    ) : (
+                      triggers.map((trg) => (
+                        <div
+                          key={trg.id}
+                          onClick={() => setSelectedNode({ type: 'trigger', id: trg.id })}
+                          className="flex items-center justify-between p-2 rounded hover:bg-[#2b2d30] border border-[#393b40]/50 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2 font-mono text-xs">
+                            <Zap className="w-3 h-3 text-purple-400" />
+                            <span className="font-semibold text-[#dfe1e5]">{trg.name}</span>
+                          </div>
+                          <span className="text-[11px] text-purple-400 font-mono">
+                            {trg.timing} {trg.event}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Case 12: Trigger Properties */}
+              {selectedNode.type === 'trigger' && activeTrg && (
+                <div className="p-6 max-w-3xl space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#393b40]/60">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-purple-400" />
+                      <span className="font-mono text-sm text-[#dfe1e5] font-semibold">
+                        {activeTrg.name || 'unnamed_trigger'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTrigger(activeTrg.id)}
+                      className="p-1 rounded text-[#999ca3] hover:text-rose-400 hover:bg-[#35373c] transition-colors cursor-pointer"
+                      title="Delete Trigger"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Trigger Name</label>
+                      <input
+                        type="text"
+                        value={activeTrg.name}
+                        onChange={(e) => handleUpdateTrigger(activeTrg.id, { name: e.target.value })}
+                        placeholder="e.g. trg_orders_before_insert"
+                        className="w-full h-7 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Timing</label>
+                      <select
+                        value={activeTrg.timing}
+                        onChange={(e) => handleUpdateTrigger(activeTrg.id, { timing: e.target.value })}
+                        className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      >
+                        <option value="BEFORE">BEFORE</option>
+                        <option value="AFTER">AFTER</option>
+                        {(driver === 'postgres' || driver === 'sqlite' || driver === 'mssql') && (
+                          <option value="INSTEAD OF">INSTEAD OF</option>
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                      <label className="text-[#999ca3] font-medium">Event</label>
+                      <select
+                        value={activeTrg.event}
+                        onChange={(e) => handleUpdateTrigger(activeTrg.id, { event: e.target.value })}
+                        className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono"
+                      >
+                        <option value="INSERT">INSERT</option>
+                        <option value="UPDATE">UPDATE</option>
+                        <option value="DELETE">DELETE</option>
+                        {driver === 'postgres' && (
+                          <>
+                            <option value="INSERT OR UPDATE">INSERT OR UPDATE</option>
+                            <option value="INSERT OR UPDATE OR DELETE">INSERT OR UPDATE OR DELETE</option>
+                          </>
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-[140px_1fr] items-start gap-4">
+                      <label className="text-[#999ca3] font-medium pt-1">
+                        {driver === 'postgres' ? 'Action (EXECUTE FUNCTION)' : 'Trigger Body *'}
+                      </label>
+                      <div className="space-y-1">
+                        <textarea
+                          rows={6}
+                          value={activeTrg.statement}
+                          onChange={(e) => handleUpdateTrigger(activeTrg.id, { statement: e.target.value })}
+                          placeholder={
+                            driver === 'postgres'
+                              ? 'EXECUTE FUNCTION set_updated_at()'
+                              : 'BEGIN\n  SET NEW.updated_at = NOW();\nEND'
+                          }
+                          className="w-full p-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-xs leading-relaxed"
+                        />
+                        <p className="text-[10px] text-[#999ca3]">
+                          {driver === 'postgres'
+                            ? 'PostgreSQL triggers invoke a trigger function via EXECUTE FUNCTION func_name().'
+                            : 'Enter the SQL block executed for each affected row (e.g., BEGIN ... END).'}
                         </p>
                       </div>
                     </div>
