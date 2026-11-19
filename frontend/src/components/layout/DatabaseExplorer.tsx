@@ -279,6 +279,18 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     });
   };
 
+  const handleOpenActivityMonitor = (conn: ConnectionConfig) => {
+    openTab({
+      id: `activity-${conn.id}`,
+      type: 'activity',
+      title: `${conn.name} - Activity`,
+      connectionId: conn.id,
+      driver: conn.driver,
+      database: conn.databaseName || 'main',
+      schema: conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : 'main',
+    });
+  };
+
   // Hover Tooltip state for long folder, connection, database, table, and view names
   const [hoveredItem, setHoveredItem] = useState<{
     kind: 'folder' | 'connection' | 'database' | 'schema' | 'table' | 'view';
@@ -2121,12 +2133,27 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
-  const handleEventClick = (
+  const handleEventClick = async (
     conn: ConnectionConfig,
     db: string,
     eventName: string
   ) => {
-    const content = `-- Scheduled Event: ${eventName}\n-- Connection: ${conn.name} | Database: ${db}\n\n-- 1. View event definition:\nSHOW CREATE EVENT \`${db}\`.\`${eventName}\`;\n\n-- 2. Alter event status:\n-- ALTER EVENT \`${db}\`.\`${eventName}\` DISABLE;\n-- ALTER EVENT \`${db}\`.\`${eventName}\` ENABLE;\n`;
+    let content = `-- Scheduled Event: ${eventName}\n-- Connection: ${conn.name} | Database: ${db}\n\n`;
+    try {
+      const ddl = await Call.ByName(
+        'dhub/internal/services.SchemaService.GetObjectDDL',
+        conn.id,
+        db,
+        db,
+        'event',
+        eventName
+      );
+      if (ddl && typeof ddl === 'string') {
+        content += `${ddl.trim().replace(/;$/, '')};\n`;
+      }
+    } catch {
+      content += `-- 1. View event definition:\nSHOW CREATE EVENT \`${db}\`.\`${eventName}\`;\n\n-- 2. Alter event status:\n-- ALTER EVENT \`${db}\`.\`${eventName}\` DISABLE;\n-- ALTER EVENT \`${db}\`.\`${eventName}\` ENABLE;\n`;
+    }
 
     openTab({
       id: `event-${conn.id}-${db}-${eventName}`,
@@ -2177,21 +2204,35 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
-  const handleSequenceClick = (
+  const handleSequenceClick = async (
     conn: ConnectionConfig,
     db: string,
     schema: string,
     seqName: string
   ) => {
     let content = `-- Sequence: ${seqName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
-    if (conn.driver === 'mariadb') {
-      content += `-- 1. View sequence definition:\nSHOW CREATE SEQUENCE \`${db}\`.\`${seqName}\`;\n\n-- 2. Get next value / last value:\n-- SELECT NEXT VALUE FOR \`${db}\`.\`${seqName}\`;\n-- SELECT LASTVAL(\`${db}\`.\`${seqName}\`);\n`;
-    } else if (conn.driver === 'postgres') {
-      content += `-- 1. View sequence state:\nSELECT * FROM "${schema}"."${seqName}";\n\n-- 2. Get next value:\n-- SELECT nextval('"${schema}"."${seqName}"');\n`;
-    } else if (conn.driver === 'mssql') {
-      content += `-- 1. View sequence metadata:\nSELECT * FROM sys.sequences WHERE name = '${seqName}';\n\n-- 2. Get next value:\n-- SELECT NEXT VALUE FOR [${schema}].[${seqName}];\n`;
-    } else {
-      content += `-- Sequence inspection for ${conn.driver}\nSELECT '${seqName}';\n`;
+    try {
+      const ddl = await Call.ByName(
+        'dhub/internal/services.SchemaService.GetObjectDDL',
+        conn.id,
+        db,
+        schema,
+        'sequence',
+        seqName
+      );
+      if (ddl && typeof ddl === 'string') {
+        content += `${ddl.trim()}\n`;
+      }
+    } catch {
+      if (conn.driver === 'mariadb') {
+        content += `-- 1. View sequence definition:\nSHOW CREATE SEQUENCE \`${db}\`.\`${seqName}\`;\n\n-- 2. Get next value / last value:\n-- SELECT NEXT VALUE FOR \`${db}\`.\`${seqName}\`;\n-- SELECT LASTVAL(\`${db}\`.\`${seqName}\`);\n`;
+      } else if (conn.driver === 'postgres') {
+        content += `-- 1. View sequence state:\nSELECT * FROM "${schema}"."${seqName}";\n\n-- 2. Get next value:\n-- SELECT nextval('"${schema}"."${seqName}"');\n`;
+      } else if (conn.driver === 'mssql') {
+        content += `-- 1. View sequence metadata:\nSELECT * FROM sys.sequences WHERE name = '${seqName}';\n\n-- 2. Get next value:\n-- SELECT NEXT VALUE FOR [${schema}].[${seqName}];\n`;
+      } else {
+        content += `-- Sequence inspection for ${conn.driver}\nSELECT '${seqName}';\n`;
+      }
     }
 
     openTab({
@@ -2261,7 +2302,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
-  const handleRoutineClick = (
+  const handleRoutineClick = async (
     conn: ConnectionConfig,
     db: string,
     schema: string,
@@ -2271,20 +2312,35 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const isFunction = (routineComment || '').toUpperCase().startsWith('[FUNCTION]');
     const isProcedure = (routineComment || '').toUpperCase().startsWith('[PROCEDURE]');
     let content = `-- Routine${isFunction ? ' (FUNCTION)' : isProcedure ? ' (PROCEDURE)' : ''}: ${routineName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
-    if (conn.driver === 'postgres') {
-      content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
-    } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-      if (isFunction) {
-        content += `-- 1. View function definition:\nSHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call function:\n-- SELECT \`${db}\`.\`${routineName}\`();\n`;
-      } else if (isProcedure) {
-        content += `-- 1. View procedure definition:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
-      } else {
-        content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+
+    try {
+      const ddl = await Call.ByName(
+        'dhub/internal/services.SchemaService.GetObjectDDL',
+        conn.id,
+        db,
+        schema,
+        'routine',
+        routineName
+      );
+      if (ddl && typeof ddl === 'string') {
+        content += `${ddl.trim()}\n`;
       }
-    } else if (conn.driver === 'mssql') {
-      content += `-- 1. View definition source:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${routineName}]'));\n\n-- 2. Execute routine:\n-- EXEC [${schema}].[${routineName}];\n`;
-    } else {
-      content += `-- SQLite does not support stored procedures or routines.\n`;
+    } catch {
+      if (conn.driver === 'postgres') {
+        content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
+      } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
+        if (isFunction) {
+          content += `-- 1. View function definition:\nSHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call function:\n-- SELECT \`${db}\`.\`${routineName}\`();\n`;
+        } else if (isProcedure) {
+          content += `-- 1. View procedure definition:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+        } else {
+          content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+        }
+      } else if (conn.driver === 'mssql') {
+        content += `-- 1. View definition source:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${routineName}]'));\n\n-- 2. Execute routine:\n-- EXEC [${schema}].[${routineName}];\n`;
+      } else {
+        content += `-- SQLite does not support stored procedures or routines.\n`;
+      }
     }
 
     openTab({
@@ -2298,21 +2354,35 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     });
   };
 
-  const handleTriggerClick = (
+  const handleTriggerClick = async (
     conn: ConnectionConfig,
     db: string,
     schema: string,
     triggerName: string
   ) => {
     let content = `-- Trigger: ${triggerName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
-    if (conn.driver === 'postgres') {
-      content += `-- 1. View trigger definition:\nSELECT pg_get_triggerdef(t.oid)\nFROM pg_trigger t\nJOIN pg_class c ON c.oid = t.tgrelid\nJOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE n.nspname = '${schema}' AND t.tgname = '${triggerName}';\n`;
-    } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-      content += `-- 1. View trigger definition:\nSHOW CREATE TRIGGER \`${db}\`.\`${triggerName}\`;\n`;
-    } else if (conn.driver === 'mssql') {
-      content += `-- 1. View trigger definition:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${triggerName}]'));\n`;
-    } else {
-      content += `-- 1. View trigger definition in SQLite:\nSELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '${triggerName}';\n`;
+    try {
+      const ddl = await Call.ByName(
+        'dhub/internal/services.SchemaService.GetObjectDDL',
+        conn.id,
+        db,
+        schema,
+        'trigger',
+        triggerName
+      );
+      if (ddl && typeof ddl === 'string') {
+        content += `${ddl.trim()}\n`;
+      }
+    } catch {
+      if (conn.driver === 'postgres') {
+        content += `-- 1. View trigger definition:\nSELECT pg_get_triggerdef(t.oid)\nFROM pg_trigger t\nJOIN pg_class c ON c.oid = t.tgrelid\nJOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE n.nspname = '${schema}' AND t.tgname = '${triggerName}';\n`;
+      } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
+        content += `-- 1. View trigger definition:\nSHOW CREATE TRIGGER \`${db}\`.\`${triggerName}\`;\n`;
+      } else if (conn.driver === 'mssql') {
+        content += `-- 1. View trigger definition:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${triggerName}]'));\n`;
+      } else {
+        content += `-- 1. View trigger definition in SQLite:\nSELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '${triggerName}';\n`;
+      }
     }
 
     openTab({
@@ -4802,6 +4872,21 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 >
                   <User className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
                   <span>Manage Users & Permissions...</span>
+                </button>
+              )}
+
+              {contextMenu.connection.driver !== 'sqlite' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const conn = contextMenu.connection!;
+                    closeContextMenu();
+                    handleOpenActivityMonitor(conn);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-cyan-600 hover:text-white text-cyan-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Activity className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                  <span>Server Activity / Process Monitor...</span>
                 </button>
               )}
 

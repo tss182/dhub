@@ -74,6 +74,9 @@ const MockDataModal = lazy(() =>
 const UserManager = lazy(() =>
   import('./components/users/UserManager').then((m) => ({ default: m.UserManager }))
 );
+const ActivityMonitor = lazy(() =>
+  import('./components/monitor/ActivityMonitor').then((m) => ({ default: m.ActivityMonitor }))
+);
 import { useAlertStore, alertSuccess, alertError, alertWarning, confirmDialog } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useUpdateStore } from './stores/useUpdateStore';
@@ -3104,6 +3107,13 @@ export function App() {
                   <UserManager tab={activeTab} connection={usersConn} />
                 </div>
               );
+            })() : activeTab?.type === 'activity' ? (() => {
+              const actConn = connections.find((c) => c.id === activeTab.connectionId) || null;
+              return (
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <ActivityMonitor tab={activeTab} connection={actConn} />
+                </div>
+              );
             })() : activeTab?.type === 'er_diagram' ? (() => {
               return (
                 <div className="flex-1 min-h-0 flex flex-col">
@@ -3615,6 +3625,11 @@ export function App() {
                   />
                 ) : splitTab.type === 'users' ? (
                   <UserManager
+                    tab={splitTab}
+                    connection={connections.find((c) => c.id === splitTab.connectionId) || null}
+                  />
+                ) : splitTab.type === 'activity' ? (
+                  <ActivityMonitor
                     tab={splitTab}
                     connection={connections.find((c) => c.id === splitTab.connectionId) || null}
                   />

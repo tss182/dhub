@@ -246,7 +246,7 @@ export interface QueryHistoryEntry {
   executedAt: string;
 }
 
-export type WorkbenchTabType = 'worksheet' | 'table_data' | 'ddl' | 'users' | 'er_diagram';
+export type WorkbenchTabType = 'worksheet' | 'table_data' | 'ddl' | 'users' | 'er_diagram' | 'activity';
 
 export interface TableViewState {
   whereClause?: string;

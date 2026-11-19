@@ -1,5 +1,6 @@
 import React from 'react';
-import { ColumnMeta } from '../../types/domain';
+import { ExternalLink } from 'lucide-react';
+import { ColumnMeta, ForeignKeyMeta } from '../../types/domain';
 import { StagedRowChange } from '../../stores/useGridEditStore';
 import { GridCellEditor } from './GridCellEditor';
 import { ROW_NUM_COL_WIDTH, VisualRow } from './gridTypes';
@@ -42,6 +43,8 @@ export interface DataGridRowProps {
   onFinishEdit: () => void;
   onCancelEdit: () => void;
   onTabNextFromEditor: (vIdx: number, cIdx: number) => void;
+  fkMapByCol?: Record<string, ForeignKeyMeta>;
+  onForeignKeyJump?: (fk: ForeignKeyMeta, val: any) => void;
 }
 
 const DataGridRowInner: React.FC<DataGridRowProps> = ({
@@ -80,6 +83,8 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
   onFinishEdit,
   onCancelEdit,
   onTabNextFromEditor,
+  fkMapByCol,
+  onForeignKeyJump,
 }) => {
   const vIdx = vr.vIdx;
   const colIndicesToRender = visibleColIndices ?? columns.map((_, idx) => idx);
@@ -157,7 +162,7 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
                   onStartEdit(globalRowIndex, cIdx, displayVal);
                 }
               }}
-              className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
+              className={`group/cell relative px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
                 isFrozen
                   ? `sticky z-10 ${
                       isSelected
@@ -216,6 +221,24 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
               ) : (
                 String(displayVal)
               )}
+              {!isEditing &&
+                fkMapByCol?.[col.name] &&
+                onForeignKeyJump &&
+                displayVal !== null &&
+                displayVal !== undefined && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onForeignKeyJump(fkMapByCol[col.name], displayVal);
+                    }}
+                    className="opacity-0 group-hover/cell:opacity-100 absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded bg-[#1e2029]/90 hover:bg-blue-600 text-blue-400 hover:text-white border border-[#2f3342] transition-all cursor-pointer"
+                    title={`Jump to ${fkMapByCol[col.name].refTable}.${fkMapByCol[col.name].refColumn} = ${String(displayVal)}`}
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </button>
+                )}
             </td>
           );
         })}
@@ -384,7 +407,8 @@ export const DataGridRow = React.memo(DataGridRowInner, (prev, next) => {
     prev.visibleColIndices !== next.visibleColIndices ||
     prev.leftColSpacerWidth !== next.leftColSpacerWidth ||
     prev.rightColSpacerWidth !== next.rightColSpacerWidth ||
-    prev.gridRowClass !== next.gridRowClass
+    prev.gridRowClass !== next.gridRowClass ||
+    prev.fkMapByCol !== next.fkMapByCol
   ) {
     return false;
   }

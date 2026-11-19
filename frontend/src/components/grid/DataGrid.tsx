@@ -5,6 +5,9 @@ import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useAlertStore, alertWarning } from '../../stores/useAlertStore';
+import { SchemaService } from '../../../bindings/dhub/internal/services';
+import { ForeignKeyMeta } from '../../types/domain';
+import { quoteSqlIdentifier } from '../../utils/sqlIdentifier';
 import {
   RefreshCw,
   RotateCcw,
@@ -172,6 +175,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [showAllFrozenModal, setShowAllFrozenModal] = useState(false);
   const [isCopyAsOpen, setIsCopyAsOpen] = useState(false);
   const [isCopyAsSubmenuOpen, setIsCopyAsSubmenuOpen] = useState(false);
+  const [fkMapByCol, setFkMapByCol] = useState<Record<string, ForeignKeyMeta>>({});
 
   const [ttlModal, setTtlModal] = useState<TtlModalState | null>(null);
   const [ttlMode, setTtlMode] = useState<'persist' | 'custom'>('custom');
@@ -209,6 +213,55 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
     return false;
   }, [driver, connectionId]);
+
+  useEffect(() => {
+    if (!isTableTab || !connectionId || !database || !tableName || isRedis) {
+      setFkMapByCol({});
+      return;
+    }
+    let cancelled = false;
+    const targetSchema = schema || (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : database);
+    SchemaService.GetTableStructure(connectionId, database, targetSchema, tableName)
+      .then((st) => {
+        if (cancelled || !st?.foreignKeys) return;
+        const next: Record<string, ForeignKeyMeta> = {};
+        for (const fk of st.foreignKeys) {
+          if (fk.columnName && fk.refTable && fk.refColumn) {
+            next[fk.columnName] = fk as ForeignKeyMeta;
+          }
+        }
+        setFkMapByCol(next);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isTableTab, connectionId, database, schema, tableName, driver, isRedis]);
+
+  const handleForeignKeyJump = useCallback(
+    (fk: ForeignKeyMeta, val: any) => {
+      if (!connectionId || !database || val === null || val === undefined) return;
+      const targetSchema = fk.refSchema || schema || database;
+      const quotedCol = quoteSqlIdentifier(driver || '', fk.refColumn);
+      const literal = formatSqlLiteral(val);
+      const whereStr = `${quotedCol} = ${literal}`;
+      const targetTabId = `table-${connectionId}-${database}-${fk.refTable}`;
+      useWorkbenchStore.getState().openTab({
+        id: targetTabId,
+        type: 'table_data',
+        title: fk.refTable,
+        connectionId,
+        driver,
+        database,
+        schema: targetSchema,
+        table: fk.refTable,
+        tableViewState: {
+          whereClause: whereStr,
+        },
+      });
+    },
+    [connectionId, database, schema, driver]
+  );
 
   const isColumnEditable = useCallback(
     (colName: string, isInsert: boolean = false): boolean => {
@@ -2826,6 +2879,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
                           onFinishEdit={stableFinishEdit}
                           onCancelEdit={stableCancelEdit}
                           onTabNextFromEditor={stableTabNextFromEditor}
+                          fkMapByCol={fkMapByCol}
+                          onForeignKeyJump={handleForeignKeyJump}
                         />
                       );
                     })}
