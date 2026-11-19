@@ -340,15 +340,23 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                     <span
                       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
                         isInstalled
-                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                          ? (toolStatus as any).isPortable
+                            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300'
+                            : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
                           : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
                       }`}
                     >
                       {isInstalled ? (
                         <>
-                          <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                          <CheckCircle2
+                            className={`h-3 w-3 ${
+                              (toolStatus as any).isPortable ? 'text-cyan-400' : 'text-emerald-400'
+                            }`}
+                          />
                           <span>
-                            {toolStatus.source === 'downloaded'
+                            {(toolStatus as any).isPortable
+                              ? 'DHub Portable SQL Engine'
+                              : toolStatus.source === 'downloaded'
                               ? 'Downloaded (DHub Tools)'
                               : toolStatus.source === 'custom'
                               ? 'Custom Path Ready'
@@ -407,6 +415,12 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                     Browse...
                   </button>
                 </div>
+
+                {(toolStatus as any)?.isPortable && (
+                  <p className="text-[11px] text-cyan-300/80 bg-cyan-950/30 border border-cyan-500/20 rounded-lg px-2.5 py-1.5">
+                    Using <strong>DHub Portable SQL Engine</strong> (supports Schema, Data, Views, Triggers, and <code>.sql.gz</code>). For Stored Routines/Events, select a native <code>{activeTool}</code> binary.
+                  </p>
+                )}
 
                 {!isInstalled && canDownload && (
                   <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">

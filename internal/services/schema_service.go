@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -634,7 +635,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 	}
 
 	lowerPath := strings.ToLower(filePath)
-	if !strings.HasSuffix(lowerPath, ".sql") && !strings.HasSuffix(lowerPath, ".dump") && !strings.HasSuffix(lowerPath, ".backup") && !strings.HasSuffix(lowerPath, ".tar") {
+	if !strings.HasSuffix(lowerPath, ".sql") && !strings.HasSuffix(lowerPath, ".sql.gz") && !strings.HasSuffix(lowerPath, ".gz") && !strings.HasSuffix(lowerPath, ".dump") && !strings.HasSuffix(lowerPath, ".backup") && !strings.HasSuffix(lowerPath, ".tar") {
 		if opts.Format == "custom" {
 			filePath += ".dump"
 		} else if opts.Format == "tar" {
@@ -1240,6 +1241,16 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 		defer sqlFile.Close()
 
+		var sqlInput io.Reader = sqlFile
+		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
+			gzReader, gzErr := gzip.NewReader(sqlFile)
+			if gzErr != nil {
+				return "", emitErr(fmt.Errorf("failed to decompress .gz SQL file: %w", gzErr))
+			}
+			defer gzReader.Close()
+			sqlInput = gzReader
+		}
+
 		args := []string{
 			"--protocol=TCP",
 			"-h", host,
@@ -1250,7 +1261,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 
 		cmd := exec.CommandContext(ctx, binPath, args...)
-		cmd.Stdin = newRestoreProgressReader(sqlFile, func(bytesRead int64, currentTable string) {
+		cmd.Stdin = newRestoreProgressReader(sqlInput, func(bytesRead int64, currentTable string) {
 			pct := 5.0
 			if totalBytes > 0 {
 				pct = (float64(bytesRead) / float64(totalBytes)) * 99.0
@@ -1736,7 +1747,7 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						TargetType: dc.DataType,
 						Detail:     fmt.Sprintf("Type: %s -> %s, Nullable: %v -> %v", dc.DataType, sc.DataType, dc.IsNullable, sc.IsNullable),
 					})
-					alterStmts = append(alterStmts, fmt.Sprintf("-- Column %s.%s differs: target=%s (nullable=%v), source=%s (nullable=%v)", tblName, sc.Name, dc.DataType, dc.IsNullable, sc.DataType, sc.IsNullable))
+					alterStmts = append(alterStmts, buildModifyColumnSQL(dstDriverType, qTable, sc, dc))
 				}
 			}
 
@@ -1749,6 +1760,111 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						Detail:     fmt.Sprintf("Extra in target (%s)", dc.DataType),
 					})
 					alterStmts = append(alterStmts, fmt.Sprintf("-- Extra column in target: ALTER TABLE %s DROP COLUMN %s;", qTable, quoteIdentifier(dstDriverType, dc.Name)))
+				}
+			}
+
+			// Compare Indexes (excluding primary keys)
+			srcIdxs := make(map[string]driver.IndexMeta)
+			for _, ix := range srcStruct.Indexes {
+				if !ix.IsPrimary && !strings.EqualFold(ix.Name, "PRIMARY") {
+					srcIdxs[strings.ToLower(ix.Name)] = ix
+				}
+			}
+			dstIdxs := make(map[string]driver.IndexMeta)
+			for _, ix := range dstStruct.Indexes {
+				if !ix.IsPrimary && !strings.EqualFold(ix.Name, "PRIMARY") {
+					dstIdxs[strings.ToLower(ix.Name)] = ix
+				}
+			}
+			for key, sIdx := range srcIdxs {
+				dIdx, exists := dstIdxs[key]
+				sColsStr := strings.Join(sIdx.Columns, ", ")
+				if !exists {
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "INDEX " + sIdx.Name,
+						Status:     "added",
+						SourceType: sColsStr,
+						Detail:     fmt.Sprintf("Missing index in target (%s)", sColsStr),
+					})
+					qIdxCols := make([]string, len(sIdx.Columns))
+					for k, col := range sIdx.Columns {
+						qIdxCols[k] = quoteIdentifier(dstDriverType, col)
+					}
+					uniqueKw := ""
+					if sIdx.IsUnique {
+						uniqueKw = "UNIQUE "
+					}
+					alterStmts = append(alterStmts, fmt.Sprintf("CREATE %sINDEX %s ON %s (%s);", uniqueKw, quoteIdentifier(dstDriverType, sIdx.Name), qTable, strings.Join(qIdxCols, ", ")))
+				} else if strings.Join(sIdx.Columns, ",") != strings.Join(dIdx.Columns, ",") || sIdx.IsUnique != dIdx.IsUnique {
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "INDEX " + sIdx.Name,
+						Status:     "modified",
+						SourceType: sColsStr,
+						TargetType: strings.Join(dIdx.Columns, ", "),
+						Detail:     fmt.Sprintf("Index differs: (%s) -> (%s)", strings.Join(dIdx.Columns, ", "), sColsStr),
+					})
+					alterStmts = append(alterStmts, fmt.Sprintf("-- Index %s.%s differs: target=(%s), source=(%s)", tblName, sIdx.Name, strings.Join(dIdx.Columns, ", "), sColsStr))
+				}
+			}
+			for key, dIdx := range dstIdxs {
+				if _, exists := srcIdxs[key]; !exists {
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "INDEX " + dIdx.Name,
+						Status:     "removed",
+						TargetType: strings.Join(dIdx.Columns, ", "),
+						Detail:     fmt.Sprintf("Extra index in target (%s)", strings.Join(dIdx.Columns, ", ")),
+					})
+					alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: DROP INDEX %s;", quoteIdentifier(dstDriverType, dIdx.Name)))
+				}
+			}
+
+			// Compare Foreign Keys
+			srcFKs := make(map[string]driver.ForeignKeyMeta)
+			for _, fk := range srcStruct.ForeignKeys {
+				fkKey := strings.ToLower(fk.ColumnName + "->" + fk.RefTable + "." + fk.RefColumn)
+				srcFKs[fkKey] = fk
+			}
+			dstFKs := make(map[string]driver.ForeignKeyMeta)
+			for _, fk := range dstStruct.ForeignKeys {
+				fkKey := strings.ToLower(fk.ColumnName + "->" + fk.RefTable + "." + fk.RefColumn)
+				dstFKs[fkKey] = fk
+			}
+			for key, sFk := range srcFKs {
+				if _, exists := dstFKs[key]; !exists {
+					fkName := sFk.ConstraintName
+					if fkName == "" {
+						fkName = fmt.Sprintf("fk_%s_%s", tblName, sFk.ColumnName)
+					}
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "FK " + fkName,
+						Status:     "added",
+						SourceType: fmt.Sprintf("%s -> %s.%s", sFk.ColumnName, sFk.RefTable, sFk.RefColumn),
+						Detail:     fmt.Sprintf("Missing FK in target (%s -> %s.%s)", sFk.ColumnName, sFk.RefTable, sFk.RefColumn),
+					})
+					fkStmt := fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+						qTable, quoteIdentifier(dstDriverType, fkName), quoteIdentifier(dstDriverType, sFk.ColumnName), quoteIdentifier(dstDriverType, sFk.RefTable), quoteIdentifier(dstDriverType, sFk.RefColumn))
+					if sFk.OnDelete != "" && !strings.EqualFold(sFk.OnDelete, "NO ACTION") {
+						fkStmt += " ON DELETE " + sFk.OnDelete
+					}
+					if sFk.OnUpdate != "" && !strings.EqualFold(sFk.OnUpdate, "NO ACTION") {
+						fkStmt += " ON UPDATE " + sFk.OnUpdate
+					}
+					alterStmts = append(alterStmts, fkStmt+";")
+				}
+			}
+			for key, dFk := range dstFKs {
+				if _, exists := srcFKs[key]; !exists {
+					fkName := dFk.ConstraintName
+					if fkName == "" {
+						fkName = fmt.Sprintf("fk_%s_%s", tblName, dFk.ColumnName)
+					}
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "FK " + fkName,
+						Status:     "removed",
+						TargetType: fmt.Sprintf("%s -> %s.%s", dFk.ColumnName, dFk.RefTable, dFk.RefColumn),
+						Detail:     fmt.Sprintf("Extra FK in target (%s -> %s.%s)", dFk.ColumnName, dFk.RefTable, dFk.RefColumn),
+					})
+					alterStmts = append(alterStmts, fmt.Sprintf("-- Extra FK in target: ALTER TABLE %s DROP CONSTRAINT %s;", qTable, quoteIdentifier(dstDriverType, fkName)))
 				}
 			}
 
@@ -1799,6 +1915,45 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 
 	res.MigrationSQL = strings.Join(migrationParts, "\n\n")
 	return res, nil
+}
+
+func buildModifyColumnSQL(driverType, qTable string, sc, dc driver.ColumnMeta) string {
+	drv := strings.ToLower(strings.TrimSpace(driverType))
+	qCol := quoteIdentifier(drv, sc.Name)
+	nullStr := "NULL"
+	if !sc.IsNullable {
+		nullStr = "NOT NULL"
+	}
+
+	switch drv {
+	case "mysql", "mariadb":
+		return fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s %s %s;", qTable, qCol, sc.DataType, nullStr)
+	case "postgres":
+		var parts []string
+		if !strings.EqualFold(sc.DataType, dc.DataType) {
+			parts = append(parts, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s;", qTable, qCol, sc.DataType))
+		}
+		if sc.IsNullable != dc.IsNullable {
+			action := "DROP NOT NULL"
+			if !sc.IsNullable {
+				action = "SET NOT NULL"
+			}
+			parts = append(parts, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s;", qTable, qCol, action))
+		}
+		return strings.Join(parts, "\n")
+	case "mssql", "sqlserver":
+		return fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s %s;", qTable, qCol, sc.DataType, nullStr)
+	case "oracle":
+		nullClause := ""
+		if sc.IsNullable != dc.IsNullable {
+			nullClause = " " + nullStr
+		}
+		return fmt.Sprintf("ALTER TABLE %s MODIFY (%s %s%s);", qTable, qCol, sc.DataType, nullClause)
+	case "clickhouse":
+		return fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s %s;", qTable, qCol, sc.DataType)
+	default:
+		return fmt.Sprintf("-- Column %s differs: target=%s (nullable=%v), source=%s (nullable=%v)", sc.Name, dc.DataType, dc.IsNullable, sc.DataType, sc.IsNullable)
+	}
 }
 
 // GetDatabaseDDL returns the combined DDL statements (schema only, no data) for a database or specific schema.

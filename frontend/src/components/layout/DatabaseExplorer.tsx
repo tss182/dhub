@@ -938,8 +938,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         CanCreateDirectories: true,
         Filters: [
           {
-            DisplayName: 'SQL Backup File (*.sql)',
-            Pattern: '*.sql',
+            DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
+            Pattern: '*.sql;*.sql.gz;*.gz',
           },
         ],
       });
@@ -962,8 +962,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         AllowsMultipleSelection: false,
         Filters: [
           {
-            DisplayName: 'SQL Backup File (*.sql)',
-            Pattern: '*.sql',
+            DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
+            Pattern: '*.sql;*.sql.gz;*.gz',
           },
         ],
       });
@@ -1010,8 +1010,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         AllowsMultipleSelection: false,
         Filters: [
           {
-            DisplayName: 'SQL Backup File (*.sql)',
-            Pattern: '*.sql',
+            DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
+            Pattern: '*.sql;*.sql.gz;*.gz',
           },
         ],
       });

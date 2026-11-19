@@ -197,6 +197,67 @@ const SQLITE_TYPE_GROUPS: TypeGroup[] = [
   },
 ];
 
+const MSSQL_TYPE_GROUPS: TypeGroup[] = [
+  {
+    group: 'Numeric',
+    types: ['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'NUMERIC', 'FLOAT', 'REAL', 'MONEY'],
+  },
+  {
+    group: 'String / Unicode',
+    types: ['NVARCHAR', 'VARCHAR', 'NCHAR', 'CHAR', 'TEXT', 'NTEXT'],
+  },
+  {
+    group: 'Date / Time',
+    types: ['DATETIME2', 'DATETIME', 'DATETIMEOFFSET', 'DATE', 'TIME'],
+  },
+  {
+    group: 'Boolean / UUID / Binary',
+    types: ['BIT', 'UNIQUEIDENTIFIER', 'VARBINARY', 'BINARY'],
+  },
+];
+
+const ORACLE_TYPE_GROUPS: TypeGroup[] = [
+  {
+    group: 'Numeric',
+    types: ['NUMBER', 'INTEGER', 'FLOAT', 'BINARY_FLOAT', 'BINARY_DOUBLE'],
+  },
+  {
+    group: 'String / Text',
+    types: ['VARCHAR2', 'NVARCHAR2', 'CHAR', 'NCHAR', 'CLOB', 'NCLOB'],
+  },
+  {
+    group: 'Date / Time',
+    types: ['DATE', 'TIMESTAMP', 'TIMESTAMP WITH TIME ZONE'],
+  },
+  {
+    group: 'Binary / RAW',
+    types: ['RAW', 'BLOB'],
+  },
+];
+
+const CLICKHOUSE_TYPE_GROUPS: TypeGroup[] = [
+  {
+    group: 'Integer',
+    types: ['Int8', 'Int16', 'Int32', 'Int64', 'UInt8', 'UInt16', 'UInt32', 'UInt64'],
+  },
+  {
+    group: 'Float / Decimal',
+    types: ['Float32', 'Float64', 'Decimal'],
+  },
+  {
+    group: 'String / UUID / Enum',
+    types: ['String', 'FixedString', 'UUID', 'LowCardinality(String)'],
+  },
+  {
+    group: 'Date / Time',
+    types: ['Date', 'Date32', 'DateTime', 'DateTime64'],
+  },
+  {
+    group: 'Boolean / Complex',
+    types: ['Bool', 'JSON', 'Array(String)'],
+  },
+];
+
 interface CustomSelectOption {
   value: string;
   label: string;
@@ -925,6 +986,163 @@ function generateAlterSql({
     if (cleanTable !== initialTableName) {
       statements.push(`ALTER TABLE ${tableTarget} RENAME TO "${cleanTable}";`);
     }
+  } else if (driver === 'mssql') {
+    const schemaPrefix = targetSchema ? `[${targetSchema}].` : '';
+    const mssqlTarget = `${schemaPrefix}[${initialTableName}]`;
+
+    originalColumns.forEach((orig) => {
+      const stillExists = validNewCols.some(
+        (c) => c.originalName === orig.name || c.name.trim().toLowerCase() === orig.name.toLowerCase()
+      );
+      if (!stillExists) {
+        statements.push(`ALTER TABLE ${mssqlTarget} DROP COLUMN [${orig.name}];`);
+      }
+    });
+
+    validNewCols.forEach((col) => {
+      const colName = col.name.trim();
+      const origMatch = originalColumns.find(
+        (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
+      );
+      let colType = col.dataType.toUpperCase();
+      if (col.lengthOrValues.trim()) colType += `(${col.lengthOrValues.trim()})`;
+      const nullClause = col.isNotNull || col.isPrimaryKey ? 'NOT NULL' : 'NULL';
+
+      if (!origMatch) {
+        let defClause = `[${colName}] ${colType} ${nullClause}`;
+        if (col.defaultValue.trim()) defClause += ` DEFAULT ${col.defaultValue.trim()}`;
+        statements.push(`ALTER TABLE ${mssqlTarget} ADD ${defClause};`);
+      } else {
+        if (origMatch.name !== colName) {
+          const objPath = targetSchema ? `${targetSchema}.${initialTableName}.${origMatch.name}` : `${initialTableName}.${origMatch.name}`;
+          statements.push(`EXEC sp_rename '${objPath.replace(/'/g, "''")}', '${colName.replace(/'/g, "''")}', 'COLUMN';`);
+        }
+        const origParsed = parseColumnType(origMatch.dataType);
+        const typeChanged =
+          origParsed.baseType !== col.dataType.toUpperCase() ||
+          origParsed.lengthOrValues !== col.lengthOrValues.trim();
+        const nullChanged = origMatch.isNullable === col.isNotNull;
+        if (typeChanged || nullChanged) {
+          statements.push(`ALTER TABLE ${mssqlTarget} ALTER COLUMN [${colName}] ${colType} ${nullClause};`);
+        }
+      }
+    });
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validNewCols.some((nc) => nc.name.trim() === c.name.trim()));
+      if (validCols.length === 0) return;
+      const origIdxMatch = originalIndexes.find((o) => o.name === idx.originalName || o.name === idx.name.trim());
+      if (!origIdxMatch) {
+        const idxName = idx.name.trim() || `idx_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+        const uniqueKw = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+        const cols = validCols.map((c) => `[${c.name.trim()}] ${c.order}`).join(', ');
+        statements.push(`CREATE ${uniqueKw}INDEX [${idxName}] ON ${mssqlTarget} (${cols});`);
+      }
+    });
+
+    if (cleanTable !== initialTableName) {
+      const oldPath = targetSchema ? `${targetSchema}.${initialTableName}` : initialTableName;
+      statements.push(`EXEC sp_rename '${oldPath.replace(/'/g, "''")}', '${cleanTable.replace(/'/g, "''")}';`);
+    }
+  } else if (driver === 'oracle') {
+    const schemaPrefix = targetSchema ? `"${targetSchema}".` : '';
+    const oracleTarget = `${schemaPrefix}"${initialTableName}"`;
+
+    originalColumns.forEach((orig) => {
+      const stillExists = validNewCols.some(
+        (c) => c.originalName === orig.name || c.name.trim().toLowerCase() === orig.name.toLowerCase()
+      );
+      if (!stillExists) {
+        statements.push(`ALTER TABLE ${oracleTarget} DROP COLUMN "${orig.name}";`);
+      }
+    });
+
+    validNewCols.forEach((col) => {
+      const colName = col.name.trim();
+      const origMatch = originalColumns.find(
+        (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
+      );
+      let colType = col.dataType.toUpperCase();
+      if (col.lengthOrValues.trim()) colType += `(${col.lengthOrValues.trim()})`;
+      const nullClause = col.isNotNull || col.isPrimaryKey ? ' NOT NULL' : ' NULL';
+
+      if (!origMatch) {
+        let defClause = `"${colName}" ${colType}`;
+        if (col.defaultValue.trim()) defClause += ` DEFAULT ${col.defaultValue.trim()}`;
+        if (col.isNotNull || col.isPrimaryKey) defClause += ' NOT NULL';
+        statements.push(`ALTER TABLE ${oracleTarget} ADD (${defClause});`);
+      } else {
+        if (origMatch.name !== colName) {
+          statements.push(`ALTER TABLE ${oracleTarget} RENAME COLUMN "${origMatch.name}" TO "${colName}";`);
+        }
+        const origParsed = parseColumnType(origMatch.dataType);
+        const typeChanged =
+          origParsed.baseType !== col.dataType.toUpperCase() ||
+          origParsed.lengthOrValues !== col.lengthOrValues.trim();
+        const nullChanged = origMatch.isNullable === col.isNotNull;
+        if (typeChanged || nullChanged) {
+          statements.push(`ALTER TABLE ${oracleTarget} MODIFY ("${colName}" ${colType}${nullChanged ? nullClause : ''});`);
+        }
+      }
+    });
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validNewCols.some((nc) => nc.name.trim() === c.name.trim()));
+      if (validCols.length === 0) return;
+      const origIdxMatch = originalIndexes.find((o) => o.name === idx.originalName || o.name === idx.name.trim());
+      if (!origIdxMatch) {
+        const idxName = idx.name.trim() || `idx_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+        const uniqueKw = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+        const cols = validCols.map((c) => `"${c.name.trim()}" ${c.order}`).join(', ');
+        statements.push(`CREATE ${uniqueKw}INDEX "${idxName}" ON ${oracleTarget} (${cols});`);
+      }
+    });
+
+    if (cleanTable !== initialTableName) {
+      statements.push(`ALTER TABLE ${oracleTarget} RENAME TO "${cleanTable}";`);
+    }
+  } else if (driver === 'clickhouse') {
+    const chPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
+    const chTarget = `${chPrefix}\`${initialTableName}\``;
+
+    originalColumns.forEach((orig) => {
+      const stillExists = validNewCols.some(
+        (c) => c.originalName === orig.name || c.name.trim().toLowerCase() === orig.name.toLowerCase()
+      );
+      if (!stillExists) {
+        statements.push(`ALTER TABLE ${chTarget} DROP COLUMN \`${orig.name}\`;`);
+      }
+    });
+
+    validNewCols.forEach((col) => {
+      const colName = col.name.trim();
+      const origMatch = originalColumns.find(
+        (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
+      );
+      let colType = col.dataType;
+      if (col.lengthOrValues.trim()) colType += `(${col.lengthOrValues.trim()})`;
+
+      if (!origMatch) {
+        let def = `\`${colName}\` ${colType}`;
+        if (col.defaultValue.trim()) def += ` DEFAULT ${col.defaultValue.trim()}`;
+        statements.push(`ALTER TABLE ${chTarget} ADD COLUMN ${def};`);
+      } else {
+        if (origMatch.name !== colName) {
+          statements.push(`ALTER TABLE ${chTarget} RENAME COLUMN \`${origMatch.name}\` TO \`${colName}\`;`);
+        }
+        const origParsed = parseColumnType(origMatch.dataType);
+        if (
+          origParsed.baseType !== col.dataType.toUpperCase() ||
+          origParsed.lengthOrValues !== col.lengthOrValues.trim()
+        ) {
+          statements.push(`ALTER TABLE ${chTarget} MODIFY COLUMN \`${colName}\` ${colType};`);
+        }
+      }
+    });
+
+    if (cleanTable !== initialTableName) {
+      statements.push(`RENAME TABLE ${chTarget} TO ${chPrefix}\`${cleanTable}\`;`);
+    }
   } else {
     validNewCols.forEach((col) => {
       const colName = col.name.trim();
@@ -1299,6 +1517,72 @@ function generateCreateTableSql({
     });
 
     return statements.join('\n\n');
+  } else if (driver === 'oracle') {
+    const schemaPrefix = targetSchema ? `"${targetSchema}".` : '';
+    columns.forEach((col) => {
+      const cName = col.name.trim();
+      if (!cName) return;
+
+      let colDef = `  "${cName}" ${col.dataType.toUpperCase()}`;
+      if (col.lengthOrValues.trim()) {
+        colDef += `(${col.lengthOrValues.trim()})`;
+      }
+      if (col.isAutoIncrement) {
+        colDef += ' GENERATED ALWAYS AS IDENTITY';
+      }
+      if (col.defaultValue.trim() && !col.isAutoIncrement) {
+        const val = col.defaultValue.trim();
+        if (val.toUpperCase() === 'CURRENT_TIMESTAMP' || val.toUpperCase() === 'NULL' || !isNaN(Number(val))) {
+          colDef += ` DEFAULT ${val}`;
+        } else if (val.startsWith("'") && val.endsWith("'")) {
+          colDef += ` DEFAULT ${val}`;
+        } else {
+          colDef += ` DEFAULT '${val}'`;
+        }
+      }
+      if (col.isNotNull || col.isPrimaryKey) {
+        colDef += ' NOT NULL';
+      }
+      lines.push(colDef);
+    });
+
+    if (pkCols.length > 0) {
+      lines.push(`  CONSTRAINT "PK_${cleanTable}" PRIMARY KEY (${pkCols.map((c) => `"${c.name.trim()}"`).join(', ')})`);
+    }
+
+    checkConstraints.forEach((chk) => {
+      if (!chk.clause.trim()) return;
+      const namePart = chk.name.trim() ? `CONSTRAINT "${chk.name.trim()}" ` : '';
+      lines.push(`  ${namePart}CHECK (${chk.clause.trim()})`);
+    });
+
+    foreignKeys.forEach((fk) => {
+      if (!fk.columnName.trim() || !fk.refTable.trim() || !fk.refColumn.trim()) return;
+      const fkName = fk.name.trim() || `FK_${cleanTable}_${fk.columnName.trim()}`;
+      const refTbl = fk.refSchema.trim()
+        ? `"${fk.refSchema.trim()}"."${fk.refTable.trim()}"`
+        : `"${fk.refTable.trim()}"`;
+      let fkDef = `  CONSTRAINT "${fkName}" FOREIGN KEY ("${fk.columnName.trim()}") REFERENCES ${refTbl} ("${fk.refColumn.trim()}")`;
+      if (fk.onDelete) fkDef += ` ON DELETE ${fk.onDelete}`;
+      lines.push(fkDef);
+    });
+
+    const statements: string[] = [];
+    statements.push(`CREATE TABLE ${schemaPrefix}"${cleanTable}" (\n${lines.join(',\n')}\n);`);
+
+    indexes.forEach((idx) => {
+      const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
+      if (validCols.length === 0) return;
+      const colParts = validCols
+        .map((c) => `"${c.name.trim()}"${c.order === 'DESC' ? ' DESC' : ''}`)
+        .join(', ');
+      const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
+      const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
+      const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
+      statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON ${schemaPrefix}"${cleanTable}" (${colParts});`);
+    });
+
+    return statements.join('\n\n');
   } else if (driver === 'mongodb') {
     return `db.createCollection("${cleanTable}");`;
   } else if (driver === 'clickhouse') {
@@ -1474,6 +1758,9 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     if (driver === 'postgres') return POSTGRES_TYPE_GROUPS;
     if (driver === 'sqlite') return SQLITE_TYPE_GROUPS;
     if (driver === 'mariadb') return MARIADB_TYPE_GROUPS;
+    if (driver === 'mssql') return MSSQL_TYPE_GROUPS;
+    if (driver === 'oracle') return ORACLE_TYPE_GROUPS;
+    if (driver === 'clickhouse') return CLICKHOUSE_TYPE_GROUPS;
     return MYSQL_TYPE_GROUPS;
   }, [driver]);
 

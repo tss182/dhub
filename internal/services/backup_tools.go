@@ -33,6 +33,7 @@ type BackupToolStatus struct {
 	Installed     bool   `json:"installed"`
 	ResolvedPath  string `json:"resolvedPath"`
 	Source        string `json:"source"` // "custom" | "system" | "downloaded" | "missing"
+	IsPortable    bool   `json:"isPortable"`
 	CanDownload   bool   `json:"canDownload"`
 	DownloadLabel string `json:"downloadLabel"`
 	Description   string `json:"description"`
@@ -183,6 +184,7 @@ func (s *SchemaService) CheckBackupToolStatus(driverName, mode, filePath, custom
 		status.Installed = true
 		status.ResolvedPath = resolved
 		status.Source = source
+		status.IsPortable = isDHubPortableTool(resolved)
 		return status, nil
 	}
 
@@ -262,6 +264,7 @@ func (s *SchemaService) DownloadBackupTool(driverName, mode string) (*BackupTool
 		Installed:     true,
 		ResolvedPath:  resolved,
 		Source:        "downloaded",
+		IsPortable:    isDHubPortableTool(resolved),
 		CanDownload:   true,
 		DownloadLabel: fmt.Sprintf("Download %s", primary),
 		Description:   label,
@@ -734,7 +737,14 @@ func (s *SchemaService) backupDatabaseNativeSQL(
 	}
 	defer outFile.Close()
 
-	bw := bufio.NewWriterSize(outFile, 64*1024)
+	var gzWriter *gzip.Writer
+	var destWriter io.Writer = outFile
+	if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
+		gzWriter = gzip.NewWriter(outFile)
+		destWriter = gzWriter
+	}
+
+	bw := bufio.NewWriterSize(destWriter, 64*1024)
 	var bytesWritten int64
 	writeStr := func(str string) error {
 		n, wErr := bw.WriteString(str)
@@ -930,6 +940,27 @@ func (s *SchemaService) backupDatabaseNativeSQL(
 			}
 			_ = writeStr("\n")
 		}
+
+		if opts.IncludeTriggers && opts.Mode != "data_only" && tStruct != nil && len(tStruct.Triggers) > 0 {
+			for _, trg := range tStruct.Triggers {
+				qTrg := quoteIdentifier(driverLower, trg.Name)
+				stmtBody := strings.TrimSpace(trg.Statement)
+				if stmtBody == "" {
+					continue
+				}
+				switch driverLower {
+				case "mysql", "mariadb":
+					_ = writeStr(fmt.Sprintf("-- Trigger %s on %s\nDELIMITER ;;\nCREATE TRIGGER %s %s %s ON %s FOR EACH ROW\n%s;;\nDELIMITER ;\n\n",
+						qTrg, quotedTable, qTrg, trg.Timing, trg.Event, qualifiedTable, strings.TrimSuffix(stmtBody, ";")))
+				case "sqlite":
+					_ = writeStr(fmt.Sprintf("-- Trigger %s on %s\nCREATE TRIGGER IF NOT EXISTS %s %s %s ON %s\n%s;\n\n",
+						qTrg, quotedTable, qTrg, trg.Timing, trg.Event, qualifiedTable, strings.TrimSuffix(stmtBody, ";")))
+				case "postgres":
+					_ = writeStr(fmt.Sprintf("-- Trigger %s on %s\nCREATE TRIGGER %s %s %s ON %s FOR EACH ROW %s;\n\n",
+						qTrg, quotedTable, qTrg, trg.Timing, trg.Event, qualifiedTable, strings.TrimSuffix(stmtBody, ";")))
+				}
+			}
+		}
 	}
 
 	// 3. Export Views if mode != "data_only"
@@ -954,7 +985,13 @@ func (s *SchemaService) backupDatabaseNativeSQL(
 		_ = writeStr("SET FOREIGN_KEY_CHECKS = 1;\n")
 	}
 
-	return bw.Flush()
+	if err := bw.Flush(); err != nil {
+		return err
+	}
+	if gzWriter != nil {
+		return gzWriter.Close()
+	}
+	return nil
 }
 
 // restoreDatabaseNativeSQL streams a .sql file and executes statements sequentially via DHub's database driver
@@ -975,6 +1012,16 @@ func (s *SchemaService) restoreDatabaseNativeSQL(
 	}
 	defer f.Close()
 
+	var sqlReader io.Reader = f
+	if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
+		gzReader, gzErr := gzip.NewReader(f)
+		if gzErr != nil {
+			return fmt.Errorf("failed to decompress .gz SQL file: %w", gzErr)
+		}
+		defer gzReader.Close()
+		sqlReader = gzReader
+	}
+
 	driverLower := strings.ToLower(strings.TrimSpace(driverType))
 	targetSchema := database
 	if driverLower == "postgres" {
@@ -989,7 +1036,7 @@ func (s *SchemaService) restoreDatabaseNativeSQL(
 	var stmtCount int
 	lastEmit := time.Now()
 
-	err = streamSQLStatements(f, driverType, func(stmt string, bytesProcessed int64) error {
+	err = streamSQLStatements(sqlReader, driverType, func(stmt string, bytesProcessed int64) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
