@@ -3041,7 +3041,29 @@ export function App() {
                       database={activeTab.database || ''}
                       schema={activeTab.schema || ''}
                       tableName={activeTab.table}
-                      onSuccess={() => loadTableData(activeTab)}
+                      onSuccess={async () => {
+                        const tabSnapshot = activeTab;
+                        setTableDataByTab((prev) => {
+                          const existing = prev[tabSnapshot.id];
+                          if (!existing) return prev;
+                          return {
+                            ...prev,
+                            [tabSnapshot.id]: {
+                              ...existing,
+                              totalCount: undefined,
+                            },
+                          };
+                        });
+                        await loadTableData(tabSnapshot);
+                        await handleCountTableRows(tabSnapshot);
+
+                        const { targetDb, targetSchema, schemaKey } = resolveTableTabMeta(tabSnapshot);
+                        SchemaService.GetObjects(tabSnapshot.connectionId, targetDb, targetSchema)
+                          .then((objs) => {
+                            if (objs) setTreeObjects(schemaKey, objs as any);
+                          })
+                          .catch(() => {});
+                      }}
                     />
                   )}
                 </div>
