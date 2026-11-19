@@ -78,6 +78,10 @@ import { useSettingsStore } from './stores/useSettingsStore';
 import { useUpdateStore } from './stores/useUpdateStore';
 import { useWorkspaceSessionStore } from './stores/useWorkspaceSessionStore';
 import { WorkspaceSelector } from './components/layout/WorkspaceSelector';
+import { WorkbenchHeader } from './components/layout/WorkbenchHeader';
+import { WorkbenchStatusBar } from './components/layout/WorkbenchStatusBar';
+import { EmptyWorkbenchState } from './components/layout/EmptyWorkbenchState';
+import { TabContextMenu } from './components/layout/TabContextMenu';
 import { DHubLogo } from './components/common/DHubLogo';
 import { APP_VERSION } from './version';
 import {
@@ -2098,131 +2102,19 @@ export function App() {
     <Suspense fallback={null}>
     <div className="flex h-screen w-screen flex-col bg-[#121317] text-zinc-300 font-sans select-none overflow-hidden">
       {/* Top Titlebar / Islands Header */}
-      <header className="flex h-11 items-center justify-between border-b border-[#272932] px-4 bg-[#14151a]">
-        <div className="flex items-center gap-2">
-          <DHubLogo variant="full" size={26} />
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Workspace Combobox Selector */}
-          <WorkspaceSelector />
-
-          {/* Update Shortcut Button (shown when update is detected & modal is dismissed/closed) */}
-          {updateInfo?.hasUpdate && !isUpdateModalOpen && (
-            <button
-              type="button"
-              onClick={openUpdateModal}
-              className="flex items-center gap-1.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:text-emerald-200 transition-colors cursor-pointer shadow-xs"
-              title={`Update ${updateInfo.latestVersion} available — Click to open update menu`}
-              aria-label={`Update ${updateInfo.latestVersion} available`}
-            >
-              <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Update</span>
-              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200 font-mono leading-none">
-                {updateInfo.latestVersion}
-              </span>
-            </button>
-          )}
-
-          {/* Settings & Tools Dropdown */}
-          <div className="relative" ref={settingsMenuRef}>
-            <button
-              type="button"
-              onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
-              className={`relative flex items-center justify-center rounded bg-[#1e2027] p-1.5 text-xs border cursor-pointer shadow-xs transition-colors ${
-                updateInfo?.hasUpdate
-                  ? 'text-emerald-300 border-emerald-500/40 hover:border-emerald-400 hover:text-emerald-200'
-                  : isSettingsMenuOpen
-                  ? 'text-zinc-100 border-zinc-500 bg-[#252834]'
-                  : 'text-zinc-400 border-[#272932] hover:border-zinc-500 hover:text-zinc-200'
-              }`}
-              title={
-                updateInfo?.hasUpdate
-                  ? `Settings & Tools — Update ${updateInfo.latestVersion} available`
-                  : 'Settings & Tools'
-              }
-              aria-label="Settings & Tools"
-              aria-expanded={isSettingsMenuOpen}
-            >
-              <SettingsIcon className="h-3.5 w-3.5" />
-              {updateInfo?.hasUpdate && (
-                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              )}
-            </button>
-
-            {isSettingsMenuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-md border border-[#373946] bg-[#1a1b22] py-1 shadow-2xl">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSettingsMenuOpen(false);
-                    useSettingsStore.getState().openSettings();
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <SettingsIcon className="h-3.5 w-3.5 text-zinc-400" />
-                    <span>Setting</span>
-                  </span>
-                  {updateInfo?.hasUpdate ? (
-                    <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.2 text-[9px] font-semibold text-emerald-300">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      {updateInfo.latestVersion}
-                    </span>
-                  ) : (
-                    <kbd className="text-[10px] text-zinc-500 font-mono">
-                      {isMac ? '⌘I' : 'Ctrl+I'}
-                    </kbd>
-                  )}
-                </button>
-
-                <div className="my-1 border-t border-[#292b36]" />
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSettingsMenuOpen(false);
-                    setIsSnippetsOpen(true);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
-                >
-                  <Bookmark className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Snippets</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSettingsMenuOpen(false);
-                    setIsSchemaDiffOpen(true);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
-                >
-                  <GitCompare className="h-3.5 w-3.5 text-blue-400" />
-                  <span>Schema Diff</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSettingsMenuOpen(false);
-                    openHelpModal('quickstart');
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
-                    <span>Help</span>
-                  </span>
-                  <kbd className="text-[10px] text-zinc-500 font-mono">
-                    {isMac ? '⌘H' : 'Ctrl+H'}
-                  </kbd>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+      <WorkbenchHeader
+        isMac={isMac}
+        updateInfo={updateInfo}
+        isUpdateModalOpen={isUpdateModalOpen}
+        isSettingsMenuOpen={isSettingsMenuOpen}
+        settingsMenuRef={settingsMenuRef}
+        onToggleSettingsMenu={() => setIsSettingsMenuOpen((prev) => !prev)}
+        onCloseSettingsMenu={() => setIsSettingsMenuOpen(false)}
+        onOpenUpdateModal={openUpdateModal}
+        onOpenSnippets={() => setIsSnippetsOpen(true)}
+        onOpenSchemaDiff={() => setIsSchemaDiffOpen(true)}
+        onOpenHelp={openHelpModal}
+      />
 
       {/* Main Workspace Body */}
       <div className="flex flex-1 min-h-0">
@@ -3154,57 +3046,13 @@ export function App() {
                 </div>
               );
             })() : (
-              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-zinc-500 select-none">
-                <Terminal className="h-10 w-10 text-zinc-600 mb-3 stroke-[1.5]" />
-                <h3 className="text-sm font-semibold text-zinc-300">No Open Tabs</h3>
-                <p className="text-xs text-zinc-500 mt-1 max-w-md">
-                  Select a table from Database Explorer, right-click a connection to open a Query Console, or explore the User Guide to get started.
-                </p>
-
-                <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setConnectionDialogOpen(true)}
-                    className="flex items-center gap-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors cursor-pointer shadow-xs"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>New Connection</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSearchEverywhereOpen(true)}
-                    className="flex items-center gap-2 rounded-lg bg-[#1e2027] hover:bg-[#252834] border border-[#2b2e3a] px-3 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <Search className="h-3.5 w-3.5 text-emerald-400" />
-                    <span>Search Everywhere</span>
-                    <kbd className="rounded bg-[#14151a] border border-[#2d303d] px-1.5 py-0.5 text-[10px] font-mono text-zinc-400">
-                      {searchShortcutLabel}
-                    </kbd>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => openHelpModal('quickstart')}
-                    className="flex items-center gap-2 rounded-lg bg-[#1e2027] hover:bg-[#252834] border border-[#2b2e3a] px-3 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <BookOpen className="h-3.5 w-3.5 text-blue-400" />
-                    <span>User Guide &amp; Help</span>
-                    <kbd className="rounded bg-[#14151a] border border-[#2d303d] px-1.5 py-0.5 text-[10px] font-mono text-zinc-400">
-                      {isMac ? '⌘H' : 'Ctrl+H'}
-                    </kbd>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => openHelpModal('databases')}
-                    className="flex items-center gap-1.5 rounded-lg bg-[#1e2027] hover:bg-[#252834] border border-[#2b2e3a] px-3 py-1.5 text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <Database className="h-3.5 w-3.5 text-amber-400" />
-                    <span>Database Query Guide</span>
-                  </button>
-                </div>
-              </div>
+              <EmptyWorkbenchState
+                isMac={isMac}
+                searchShortcutLabel={searchShortcutLabel}
+                onNewConnection={() => setConnectionDialogOpen(true)}
+                onOpenSearchEverywhere={() => setSearchEverywhereOpen(true)}
+                onOpenHelp={openHelpModal}
+              />
             )}
 
             {/* Splitter & Bottom Services Panel: Only shown on Query Console / SQL Worksheet */}
@@ -3687,157 +3535,22 @@ export function App() {
       )}
 
       {/* Floating Tab Context Menu */}
-      {tabContextMenu.isOpen && tabContextMenu.tab && (
-        <div
-          className="fixed z-50 min-w-[190px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
-          style={{ top: tabContextMenu.y, left: tabContextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 truncate flex items-center gap-1.5">
-            {tabContextMenu.tab.type === 'worksheet' ? (
-              <FileCode className="h-3 w-3 text-blue-400" />
-            ) : tabContextMenu.tab.type === 'users' ? (
-              <Users className="h-3 w-3 text-amber-400" />
-            ) : (
-              <Table className="h-3 w-3 text-emerald-400" />
-            )}
-            <span className="truncate">{tabContextMenu.tab.title}</span>
-          </div>
-
-          {tabContextMenu.tab.type === 'worksheet' && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  const tab = tabContextMenu.tab!;
-                  setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  handleOpenRename(tab.id, tab.title);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Rename Tab...</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const tab = tabContextMenu.tab!;
-                  setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  duplicateTab(tab.id);
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Duplicate Console</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const content = tabContextMenu.tab!.content || '';
-                  setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-                  navigator.clipboard.writeText(content).catch(() => {});
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Copy SQL</span>
-              </button>
-            </>
-          )}
-
-          {tabContextMenu.tab.type === 'table_data' && (() => {
-            const tab = tabContextMenu.tab!;
-            const { conn, driver, objectType } = resolveTableTabMeta(tab);
-            const canMutateTable = !!tab.table && !conn?.isReadOnly && driver !== 'redis';
-            const isView = objectType === 'view' || objectType === 'materialized_view';
-            return (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-                    loadTableData(tab);
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                >
-                  <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                  <span>Reload Data</span>
-                </button>
-                {canMutateTable && (
-                  <>
-                    <div className="my-1 border-t border-[#272932]" />
-                    {!isView && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-                          handleTruncateTableFromTab(tab);
-                        }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
-                      >
-                        <Eraser className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                        <span>Truncate Table...</span>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-                        handleDropTableFromTab(tab);
-                      }}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                      <span>Drop {objectType === 'view' ? 'View' : 'Table'}...</span>
-                    </button>
-                  </>
-                )}
-              </>
-            );
-          })()}
-
-          <div className="my-1 border-t border-[#272932]" />
-
-          <button
-            type="button"
-            onClick={() => {
-              const tabId = tabContextMenu.tab!.id;
-              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-              closeTab(tabId);
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
-          >
-            <X className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-            <span>Close Tab</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              const tabId = tabContextMenu.tab!.id;
-              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-              closeTabsMatching((t) => t.id !== tabId);
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#22242c] hover:text-zinc-200 text-zinc-400 transition-colors text-left cursor-pointer group"
-          >
-            <X className="h-3.5 w-3.5 text-zinc-500 group-hover:text-white" />
-            <span>Close Other Tabs</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-              closeTabsMatching(() => false);
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#22242c] hover:text-zinc-200 text-zinc-400 transition-colors text-left cursor-pointer group"
-          >
-            <X className="h-3.5 w-3.5 text-zinc-500 group-hover:text-white" />
-            <span>Close All Tabs</span>
-          </button>
-        </div>
-      )}
+      <TabContextMenu
+        isOpen={tabContextMenu.isOpen}
+        x={tabContextMenu.x}
+        y={tabContextMenu.y}
+        tab={tabContextMenu.tab}
+        resolveTableTabMeta={resolveTableTabMeta}
+        onCloseMenu={() => setTabContextMenu((prev) => ({ ...prev, isOpen: false }))}
+        onOpenRename={handleOpenRename}
+        onDuplicateTab={duplicateTab}
+        onReloadTableData={loadTableData}
+        onTruncateTable={handleTruncateTableFromTab}
+        onDropTable={handleDropTableFromTab}
+        onCloseTab={closeTab}
+        onCloseOtherTabs={(id) => closeTabsMatching((t) => t.id !== id)}
+        onCloseAllTabs={() => closeTabsMatching(() => false)}
+      />
 
       {/* Rename Modal Dialog */}
       <RenameTabModal
@@ -3948,56 +3661,14 @@ export function App() {
       />
 
       {/* Status Bar */}
-      <footer className="flex h-6 items-center justify-between border-t border-[#272932] px-3 text-[11px] bg-[#121317] text-zinc-500 font-mono">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1 text-zinc-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            {statusMessage}
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          {(() => {
-            const currentTab = tabs.find((t) => t.id === activeTabId);
-            const currentTx = currentTab ? txStatusByTab[currentTab.id] : undefined;
-            if (currentTx?.mode === 'manual') {
-              if (currentTx.isOpen) {
-                return (
-                  <span
-                    className="text-amber-400 font-semibold flex items-center gap-1.5"
-                    title="Active transaction with uncommitted statements"
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-                    <span>Tx: MANUAL (ACTIVE: {currentTx.count})</span>
-                  </span>
-                );
-              }
-              return <span className="text-zinc-400">Tx: MANUAL (IDLE)</span>;
-            }
-            return <span>Tx: AUTO</span>;
-          })()}
-          {updateInfo?.hasUpdate && (
-            <button
-              type="button"
-              onClick={openUpdateModal}
-              className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer animate-pulse transition-colors"
-              title="New version available! Click to view details and install"
-            >
-              <Sparkles className="h-3 w-3" />
-              <span>Update ({updateInfo.latestVersion})</span>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => openHelpModal('quickstart')}
-            className="flex items-center gap-1 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-            title={`Open Help & User Guide (${isMac ? '⌘H' : 'Ctrl+H'})`}
-          >
-            <HelpCircle className="h-3 w-3 text-blue-400" />
-            <span>Help ({isMac ? '⌘H' : 'Ctrl+H'})</span>
-          </button>
-          <span>DHub Desktop v{APP_VERSION}</span>
-        </div>
-      </footer>
+      <WorkbenchStatusBar
+        isMac={isMac}
+        statusMessage={statusMessage}
+        currentTx={activeTabId ? txStatusByTab[activeTabId] : undefined}
+        updateInfo={updateInfo}
+        onOpenUpdateModal={openUpdateModal}
+        onOpenHelp={openHelpModal}
+      />
     </div>
     </Suspense>
   );

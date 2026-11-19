@@ -68,6 +68,7 @@ import { GridToolbar } from './GridToolbar';
 import { GridPagination } from './GridPagination';
 import { GridContextMenu } from './GridContextMenu';
 import { GridCellEditor } from './GridCellEditor';
+import { DataGridRow } from './DataGridRow';
 import {
   ColumnHoverPopover,
   CancelChangesModal,
@@ -985,6 +986,55 @@ export const DataGrid: React.FC<DataGridProps> = ({
     overscan: 10,
   });
   rowVirtualizerRef.current = rowVirtualizer;
+
+  const { frozenColIndices, scrollableColIndices } = useMemo(() => {
+    const frozen: number[] = [];
+    const scrollable: number[] = [];
+    columns.forEach((col, idx) => {
+      if (frozenColumnSet.has(col.name)) {
+        frozen.push(idx);
+      } else {
+        scrollable.push(idx);
+      }
+    });
+    return { frozenColIndices: frozen, scrollableColIndices: scrollable };
+  }, [columns, frozenColumnSet]);
+
+  const isColVirtualized = scrollableColIndices.length > 30;
+  const colVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: isColVirtualized ? scrollableColIndices.length : 0,
+    getScrollElement: () => containerRef.current,
+    estimateSize: (i) => {
+      const cIdx = scrollableColIndices[i];
+      const col = columns[cIdx];
+      return (col && colWidths[col.name]) || 120;
+    },
+    overscan: 6,
+  });
+
+  useEffect(() => {
+    if (isColVirtualized) {
+      colVirtualizer.measure();
+    }
+  }, [isColVirtualized, colWidths, colVirtualizer]);
+
+  const virtualCols = isColVirtualized ? colVirtualizer.getVirtualItems() : null;
+  const firstVColIdx = virtualCols && virtualCols.length > 0 ? virtualCols[0].index : -1;
+  const lastVColIdx = virtualCols && virtualCols.length > 0 ? virtualCols[virtualCols.length - 1].index : -1;
+  const leftColSpacerWidth = virtualCols && virtualCols.length > 0 ? virtualCols[0].start : 0;
+  const rightColSpacerWidth =
+    virtualCols && virtualCols.length > 0
+      ? Math.max(0, colVirtualizer.getTotalSize() - virtualCols[virtualCols.length - 1].end)
+      : 0;
+
+  const visibleColIndices = useMemo(() => {
+    if (!isColVirtualized || !virtualCols) {
+      return undefined as number[] | undefined;
+    }
+    const visibleScrollable = virtualCols.map((vc) => scrollableColIndices[vc.index]);
+    return [...frozenColIndices, ...visibleScrollable];
+  }, [isColVirtualized, firstVColIdx, lastVColIdx, frozenColIndices, scrollableColIndices]);
 
   const colInputTypes = useMemo(
     () => columns.map((col) => getColumnInputType(col.dataType)),
@@ -2210,9 +2260,22 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => keyDownHandlerRef.current(e);
-    const onCopy = (e: ClipboardEvent) => copyHandlerRef.current(e);
-    const onPaste = (e: ClipboardEvent) => pasteHandlerRef.current(e);
+    const isGridActive = () => {
+      const el = containerRef.current;
+      return Boolean(el && el.offsetParent !== null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isGridActive()) return;
+      keyDownHandlerRef.current(e);
+    };
+    const onCopy = (e: ClipboardEvent) => {
+      if (!isGridActive()) return;
+      copyHandlerRef.current(e);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (!isGridActive()) return;
+      pasteHandlerRef.current(e);
+    };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('copy', onCopy);
@@ -2405,10 +2468,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
           >
             <colgroup>
               <col style={{ width: `${ROW_NUM_COL_WIDTH}px`, minWidth: `${ROW_NUM_COL_WIDTH}px` }} />
-              {columns.map((col) => {
+              {leftColSpacerWidth > 0 && (
+                <col style={{ width: `${leftColSpacerWidth}px`, minWidth: `${leftColSpacerWidth}px` }} />
+              )}
+              {(visibleColIndices ?? columns.map((_, i) => i)).map((cIdx) => {
+                const col = columns[cIdx];
+                if (!col) return null;
                 const w = colWidths[col.name] || 120;
                 return <col key={col.name} style={{ width: `${w}px`, minWidth: `${w}px` }} />;
               })}
+              {rightColSpacerWidth > 0 && (
+                <col style={{ width: `${rightColSpacerWidth}px`, minWidth: `${rightColSpacerWidth}px` }} />
+              )}
               <col style={{ width: 'auto' }} />
             </colgroup>
             <thead className={`sticky top-0 ${gridTheadBg} shadow-sm z-30`}>
@@ -2436,7 +2507,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 >
                   #
                 </th>
-                {columns.map((col, cIdx) => {
+                {leftColSpacerWidth > 0 && (
+                  <th
+                    aria-hidden="true"
+                    className={`p-0 border-none ${gridTheadBg}`}
+                    style={{ width: `${leftColSpacerWidth}px`, minWidth: `${leftColSpacerWidth}px` }}
+                  />
+                )}
+                {(visibleColIndices ?? columns.map((_, i) => i)).map((cIdx) => {
+                  const col = columns[cIdx];
+                  if (!col) return null;
                   const isPK = Boolean(col.isPrimaryKey || primaryKeySet.has(col.name));
                   const sortEntry = sortMap.get(col.name);
                   const isSorted = sortEntry !== undefined;
@@ -2570,6 +2650,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
                     </th>
                   );
                 })}
+                {rightColSpacerWidth > 0 && (
+                  <th
+                    aria-hidden="true"
+                    className={`p-0 border-none ${gridTheadBg}`}
+                    style={{ width: `${rightColSpacerWidth}px`, minWidth: `${rightColSpacerWidth}px` }}
+                  />
+                )}
                 <th className={`p-0 border-none ${gridTheadBg}`} />
               </tr>
             </thead>
@@ -2581,295 +2668,95 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   virtualItems.length > 0
                     ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
                     : 0;
+                const colSpanTotal =
+                  (visibleColIndices ? visibleColIndices.length : columns.length) +
+                  (leftColSpacerWidth > 0 ? 1 : 0) +
+                  (rightColSpacerWidth > 0 ? 1 : 0) +
+                  2;
 
                 return (
                   <>
                     {paddingTop > 0 && (
                       <tr aria-hidden="true">
-                        <td colSpan={columns.length + 2} style={{ height: `${paddingTop}px`, padding: 0, border: 0 }} />
+                        <td colSpan={colSpanTotal} style={{ height: `${paddingTop}px`, padding: 0, border: 0 }} />
                       </tr>
                     )}
                     {virtualItems.map((virtualRow) => {
                       const vr = visualRows[virtualRow.index];
                       if (!vr) return null;
                       const vIdx = vr.vIdx;
+                      const staged = !vr.isInsert ? stagedChanges[vr.globalRowIndex!] : undefined;
 
-                      if (!vr.isInsert) {
-                        const row = vr.rowData!;
-                        const globalRowIndex = vr.globalRowIndex!;
-                        const staged = stagedChanges[globalRowIndex];
-                        const isDeleted = staged?.type === 'delete';
+                      let isRowInSelection = false;
+                      let isFullRowSelected = false;
+                      const selectedColSet = new Set<number>();
+                      const sigParts: string[] = [];
 
-                        let rowClass = gridRowClass;
-                        if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
-
-                        const isRowInSelection = allSelectionRanges.some(
-                          (rng) => vIdx >= rng.startR && vIdx <= rng.endR
-                        );
-                        const isFullRowSelected = isRowFullySelected(vIdx);
-
-                        return (
-                          <tr key={globalRowIndex} style={{ height: '28px' }} className={`${rowClass} group/row`}>
-                            <td
-                              onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                              onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                              onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                              className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r ${gridCellBorder} select-none cursor-pointer transition-colors ${
-                                isFullRowSelected
-                                  ? 'bg-[#1b4ea3] text-white font-semibold'
-                                  : isRowInSelection
-                                  ? 'bg-[#1e293b] text-blue-300 font-medium'
-                                  : isDeleted
-                                  ? 'bg-rose-950/40 text-rose-400/70 line-through'
-                                  : 'bg-[#14151a] text-zinc-500 group-hover/row:bg-[#20222a] group-hover/row:text-zinc-300'
-                              } ${
-                                frozenColumns.length === 0 && isScrolledX
-                                  ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
-                                  : ''
-                              }`}
-                              style={{
-                                width: `${ROW_NUM_COL_WIDTH}px`,
-                                minWidth: `${ROW_NUM_COL_WIDTH}px`,
-                                maxWidth: `${ROW_NUM_COL_WIDTH}px`,
-                              }}
-                              title={`Row ${globalRowIndex + 1} (Click to select entire row)`}
-                            >
-                              {globalRowIndex + 1}
-                            </td>
-                            {columns.map((col, cIdx) => {
-                              const isSelected = isCellSelected(vIdx, cIdx);
-                              const isEditing =
-                                editingCell?.rowIndex === globalRowIndex && editingCell?.colIndex === cIdx;
-                              const hasColChange = staged?.type === 'update' && staged.changes[col.name] !== undefined;
-                              const displayVal = hasColChange ? staged.changes[col.name] : row[cIdx];
-                              const colInputType = colInputTypes[cIdx];
-                              const isFrozen = frozenColumnSet.has(col.name);
-                              const isLastFrozen = col.name === lastFrozenColName;
-                              const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
-                              const w = colWidths[col.name] || 120;
-                              const isEditable = colEditableUpdate[cIdx];
-
-                              return (
-                                <td
-                                  key={col.name}
-                                  data-vidx={vIdx}
-                                  data-cidx={cIdx}
-                                  onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
-                                  onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
-                                  onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                                  onDoubleClick={() => {
-                                    if (isEditable) {
-                                      if (isRedis && col.name.toLowerCase() === 'ttl') {
-                                        handleOpenTtlModal(globalRowIndex, displayVal, false);
-                                        return;
-                                      }
-                                      handleStartEdit(globalRowIndex, cIdx, displayVal);
-                                    }
-                                  }}
-                                  className={`px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
-                                    isFrozen
-                                      ? `sticky z-10 ${
-                                          isSelected
-                                            ? 'bg-[#1b4ea3] text-white font-medium'
-                                            : hasColChange
-                                            ? 'bg-blue-900/40 text-blue-200 font-medium'
-                                            : isDeleted
-                                            ? 'bg-rose-950/40 text-zinc-500 line-through'
-                                            : !isEditable
-                                            ? 'bg-[#121318]/70 text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
-                                            : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
-                                        }`
-                                      : isSelected
-                                      ? 'bg-[#1b4ea3] text-white font-medium'
-                                      : hasColChange
-                                      ? 'bg-blue-900/30 text-blue-200 font-medium'
-                                      : !isEditable
-                                      ? 'bg-[#111216]/50 text-zinc-400/80 group-hover/row:bg-[#181920]'
-                                      : ''
-                                  } ${!isEditable ? 'cursor-default' : 'cursor-text'} ${
-                                    isLastFrozen && isScrolledX
-                                      ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
-                                      : ''
-                                  }`}
-                                  style={{
-                                    width: `${w}px`,
-                                    minWidth: `${w}px`,
-                                    maxWidth: `${w}px`,
-                                    ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
-                                  }}
-                                  title={
-                                    isEditable
-                                      ? isRedis && col.name.toLowerCase() === 'ttl'
-                                        ? 'Double-click to update TTL (Time-To-Live)'
-                                        : 'Click to select, type or double-click to edit'
-                                      : 'Read-only: this column cannot be edited in Redis'
-                                  }
-                                >
-                                  {isEditing ? (
-                                    <GridCellEditor
-                                      colInputType={colInputType}
-                                      editVal={editVal}
-                                      variant="update"
-                                      isFirstEditRenderRef={isFirstEditRenderRef}
-                                      onChange={setEditVal}
-                                      onFinishEdit={handleFinishEdit}
-                                      onCancelEdit={() => {
-                                        setEditingCell(null);
-                                        if (stagedCount > 0) setShowCancelConfirm(true);
-                                      }}
-                                      onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
-                                    />
-                                  ) : displayVal === null || displayVal === undefined ? (
-                                    <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
-                                      NULL
-                                    </span>
-                                  ) : colInputType !== 'text' ? (
-                                    String(displayVal).replace('T', ' ').replace(/Z$/, '')
-                                  ) : (
-                                    String(displayVal)
-                                  )}
-                                </td>
-                              );
-                            })}
-                            <td className="p-0 border-none pointer-events-none" />
-                          </tr>
-                        );
+                      for (const rng of allSelectionRanges) {
+                        if (vIdx >= rng.startR && vIdx <= rng.endR) {
+                          isRowInSelection = true;
+                          if (rng.startC === 0 && rng.endC === columns.length - 1) {
+                            isFullRowSelected = true;
+                          }
+                          sigParts.push(`${rng.startC}:${rng.endC}`);
+                          for (let c = rng.startC; c <= rng.endC; c++) {
+                            selectedColSet.add(c);
+                          }
+                        }
                       }
 
-                      const change = vr.insertChange!;
-                      const rowClass =
-                        'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
-
-                      const isRowInSelection = allSelectionRanges.some(
-                        (rng) => vIdx >= rng.startR && vIdx <= rng.endR
-                      );
-                      const isFullRowSelected = isRowFullySelected(vIdx);
+                      const rowSelectionSig = sigParts.join(',');
+                      const editingColIndex =
+                        editingCell?.rowIndex === vr.rowId ? editingCell.colIndex : null;
 
                       return (
-                        <tr key={change.rowIndex} style={{ height: '28px' }} className={rowClass}>
-                          <td
-                            onMouseDown={(e) => handleRowHeaderMouseDown(e, vIdx)}
-                            onMouseEnter={() => handleRowHeaderMouseEnter(vIdx)}
-                            onContextMenu={(e) => handleRowHeaderContextMenu(e, vIdx)}
-                            className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-[#22242c] select-none cursor-pointer transition-colors ${
-                              isFullRowSelected
-                                ? 'bg-[#1b4ea3] text-white'
-                                : isRowInSelection
-                                ? 'bg-[#1e293b] text-blue-300'
-                                : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-emerald-400'
-                            } ${
-                              frozenColumns.length === 0 && isScrolledX
-                                ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
-                                : ''
-                            }`}
-                            style={{
-                              width: `${ROW_NUM_COL_WIDTH}px`,
-                              minWidth: `${ROW_NUM_COL_WIDTH}px`,
-                              maxWidth: `${ROW_NUM_COL_WIDTH}px`,
-                            }}
-                            title="New row (Click to select entire row)"
-                          >
-                            +
-                          </td>
-                          {columns.map((col, cIdx) => {
-                            const isSelected = isCellSelected(vIdx, cIdx);
-                            const isEditing =
-                              editingCell?.rowIndex === change.rowIndex && editingCell?.colIndex === cIdx;
-                            const colVal = change.changes[col.name];
-                            const isSet = colVal !== undefined;
-                            const displayVal = isSet ? colVal : col.defaultValue || null;
-                            const colInputType = colInputTypes[cIdx];
-                            const isFrozen = frozenColumnSet.has(col.name);
-                            const isLastFrozen = col.name === lastFrozenColName;
-                            const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
-                            const w = colWidths[col.name] || 120;
-                            const isInsEditable = colEditableInsert[cIdx];
-
-                            return (
-                              <td
-                                key={col.name}
-                                data-vidx={vIdx}
-                                data-cidx={cIdx}
-                                onMouseDown={(e) => handleCellMouseDown(e, vIdx, cIdx)}
-                                onMouseEnter={() => handleCellMouseEnter(vIdx, cIdx)}
-                                onContextMenu={(e) => handleCellContextMenu(e, vIdx, cIdx)}
-                                onDoubleClick={() => {
-                                  if (!isEditing && isInsEditable) {
-                                    if (isRedis && col.name.toLowerCase() === 'ttl') {
-                                      handleOpenTtlModal(change.rowIndex, displayVal ?? '', true);
-                                      return;
-                                    }
-                                    handleStartEdit(change.rowIndex, cIdx, displayVal ?? '');
-                                  }
-                                }}
-                                className={`px-3 py-1 border-r border-[#22242c] truncate select-none transition-colors ${
-                                  isFrozen
-                                    ? `sticky z-10 ${
-                                        isSelected
-                                          ? 'bg-[#1b4ea3] text-white font-medium'
-                                          : isSet
-                                          ? 'bg-emerald-900/50 text-emerald-100 font-medium'
-                                          : !isInsEditable
-                                          ? 'bg-[#0a1611]/80 text-zinc-500'
-                                          : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-400'
-                                      }`
-                                    : isSelected
-                                    ? 'bg-[#1b4ea3] text-white font-medium'
-                                    : isSet
-                                    ? 'bg-emerald-900/40 text-emerald-100 font-medium'
-                                    : !isInsEditable
-                                    ? 'bg-[#08120e]/60 text-zinc-500'
-                                    : 'text-zinc-400'
-                                } ${!isInsEditable ? 'cursor-default' : 'cursor-text'} ${
-                                  isLastFrozen && isScrolledX
-                                    ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
-                                    : ''
-                                }`}
-                                style={{
-                                  width: `${w}px`,
-                                  minWidth: `${w}px`,
-                                  maxWidth: `${w}px`,
-                                  ...(isFrozen && stickyLeft !== undefined ? { left: stickyLeft } : {}),
-                                }}
-                                title={
-                                  isInsEditable
-                                    ? 'Click to select, type or double-click to edit'
-                                    : 'Read-only: generated or calculated metadata'
-                                }
-                              >
-                                {isEditing ? (
-                                  <GridCellEditor
-                                    colInputType={colInputType}
-                                    editVal={editVal}
-                                    variant="insert"
-                                    isFirstEditRenderRef={isFirstEditRenderRef}
-                                    onChange={setEditVal}
-                                    onFinishEdit={handleFinishEdit}
-                                    onCancelEdit={() => {
-                                      setEditingCell(null);
-                                      if (stagedCount > 0) setShowCancelConfirm(true);
-                                    }}
-                                    onTabNext={() => handleTabNextFromEditor(vIdx, cIdx)}
-                                  />
-                                ) : displayVal === null || displayVal === undefined || displayVal === '' ? (
-                                  <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
-                                    {col.isAutoIncrement ? '(Auto)' : 'NULL'}
-                                  </span>
-                                ) : colInputType !== 'text' ? (
-                                  String(displayVal).replace('T', ' ').replace(/Z$/, '')
-                                ) : (
-                                  String(displayVal)
-                                )}
-                              </td>
-                            );
-                          })}
-                          <td className="p-0 border-none pointer-events-none" />
-                        </tr>
+                        <DataGridRow
+                          key={vr.isInsert ? vr.rowId : vr.globalRowIndex!}
+                          vr={vr}
+                          columns={columns}
+                          visibleColIndices={visibleColIndices}
+                          leftColSpacerWidth={leftColSpacerWidth}
+                          rightColSpacerWidth={rightColSpacerWidth}
+                          colWidths={colWidths}
+                          colInputTypes={colInputTypes}
+                          colEditableUpdate={colEditableUpdate}
+                          colEditableInsert={colEditableInsert}
+                          frozenColumnSet={frozenColumnSet}
+                          lastFrozenColName={lastFrozenColName}
+                          frozenOffsets={frozenOffsets}
+                          isScrolledX={isScrolledX}
+                          staged={staged}
+                          isRowInSelection={isRowInSelection}
+                          isFullRowSelected={isFullRowSelected}
+                          rowSelectionSig={rowSelectionSig}
+                          selectedColSet={selectedColSet}
+                          editingColIndex={editingColIndex}
+                          editVal={editingColIndex !== null ? editVal : ''}
+                          isFirstEditRenderRef={isFirstEditRenderRef}
+                          isRedis={isRedis}
+                          gridCellBorder={gridCellBorder}
+                          gridRowClass={gridRowClass}
+                          onRowHeaderMouseDown={handleRowHeaderMouseDown}
+                          onRowHeaderMouseEnter={handleRowHeaderMouseEnter}
+                          onRowHeaderContextMenu={handleRowHeaderContextMenu}
+                          onCellMouseDown={handleCellMouseDown}
+                          onCellMouseEnter={handleCellMouseEnter}
+                          onCellContextMenu={handleCellContextMenu}
+                          onStartEdit={handleStartEdit}
+                          onOpenTtlModal={handleOpenTtlModal}
+                          onEditValChange={setEditVal}
+                          onFinishEdit={handleFinishEdit}
+                          onCancelEdit={() => {
+                            setEditingCell(null);
+                            if (stagedCount > 0) setShowCancelConfirm(true);
+                          }}
+                          onTabNextFromEditor={handleTabNextFromEditor}
+                        />
                       );
                     })}
                     {paddingBottom > 0 && (
                       <tr aria-hidden="true">
-                        <td colSpan={columns.length + 2} style={{ height: `${paddingBottom}px`, padding: 0, border: 0 }} />
+                        <td colSpan={colSpanTotal} style={{ height: `${paddingBottom}px`, padding: 0, border: 0 }} />
                       </tr>
                     )}
                   </>
