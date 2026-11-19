@@ -3792,11 +3792,20 @@ export function App() {
         tab={tabContextMenu.tab}
         activeTabId={activeTabId}
         splitTabId={splitTabId}
+        tabCount={tabs.length}
         resolveTableTabMeta={resolveTableTabMeta}
         onCloseMenu={() => setTabContextMenu((prev) => ({ ...prev, isOpen: false }))}
         onOpenRename={handleOpenRename}
         onDuplicateTab={duplicateTab}
-        onOpenSplitView={(id) => setSplitTabId(id)}
+        onOpenSplitView={(id) => {
+          if (id === activeTabId) {
+            const fallback = tabs.find((t) => t.id !== id);
+            if (fallback) {
+              setActiveTabId(fallback.id);
+            }
+          }
+          setSplitTabId(id);
+        }}
         onCloseSplitView={() => setSplitTabId(null)}
         onReloadTableData={loadTableData}
         onTruncateTable={handleTruncateTableFromTab}

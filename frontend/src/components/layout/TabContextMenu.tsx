@@ -9,6 +9,7 @@ export interface TabContextMenuProps {
   tab?: WorkbenchTab;
   activeTabId?: string | null;
   splitTabId?: string | null;
+  tabCount?: number;
   resolveTableTabMeta: (tab: WorkbenchTab) => {
     conn?: ConnectionConfig;
     driver: string;
@@ -34,6 +35,7 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
   tab,
   activeTabId,
   splitTabId,
+  tabCount = 0,
   resolveTableTabMeta,
   onCloseMenu,
   onOpenRename,
@@ -158,7 +160,7 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
 
       <div className="my-1 border-t border-[#272932]" />
 
-      {onOpenSplitView && tab.id !== activeTabId && splitTabId !== tab.id && (
+      {onOpenSplitView && splitTabId !== tab.id && (tab.id !== activeTabId || tabCount > 1) && (
         <button
           type="button"
           onClick={() => {
@@ -168,7 +170,7 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
         >
           <Columns className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
-          <span>Open in Split View (Right)</span>
+          <span>Open in Right Sidebar (Split)</span>
         </button>
       )}
 
@@ -182,7 +184,7 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#22242c] hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
         >
           <Columns className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-          <span>Close Split View</span>
+          <span>Close Right Sidebar (Split)</span>
         </button>
       )}
 
