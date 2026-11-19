@@ -29,3 +29,16 @@ func GetDBPath() (string, error) {
 	return filepath.Join(dir, "dhub_meta.db"), nil
 }
 
+func GetToolsDir() (string, error) {
+	dir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	toolsDir := filepath.Join(dir, "tools")
+	if err := os.MkdirAll(toolsDir, 0755); err != nil {
+		return "", err
+	}
+	return toolsDir, nil
+}
+
+

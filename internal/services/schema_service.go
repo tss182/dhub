@@ -353,22 +353,8 @@ func (r *restoreProgressReader) Read(p []byte) (int, error) {
 }
 
 func resolveBackupToolPath(customPath string, installHint string, candidates ...string) (string, error) {
-	custom := strings.TrimSpace(customPath)
-	if custom != "" {
-		if info, err := os.Stat(custom); err == nil && !info.IsDir() {
-			return custom, nil
-		}
-		if found, err := exec.LookPath(custom); err == nil {
-			return found, nil
-		}
-		return "", fmt.Errorf("custom backup executable not found at: %s", custom)
-	}
-	for _, bin := range candidates {
-		if found, err := exec.LookPath(bin); err == nil {
-			return found, nil
-		}
-	}
-	return "", fmt.Errorf("%s executable not found in PATH; %s", strings.Join(candidates, " or "), installHint)
+	resolved, _, err := resolveBackupToolPathWithDriver("", customPath, installHint, candidates...)
+	return resolved, err
 }
 
 type backupProgressWriter struct {
@@ -650,9 +636,17 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			firstBin = "mariadb-dump"
 			secondBin = "mysqldump"
 		}
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install mysql-client or mariadb-client or set a custom path", firstBin, secondBin)
+		binPath, _, err := resolveBackupToolPathWithDriver(conn.Driver, opts.ToolPath, "please install mysql-client or mariadb-client, or click 'Download Tool' in the Backup modal", firstBin, secondBin)
 		if err != nil {
 			return "", emitErr(err)
+		}
+
+		if isDHubPortableTool(binPath) {
+			if err := s.backupDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, opts); err != nil {
+				_ = os.Remove(filePath)
+				return "", emitErr(err)
+			}
+			break
 		}
 
 		totalTables, estimatedBytes := s.estimateMySQLBackupMetadata(ctx, connectionID, database, opts)
@@ -805,9 +799,16 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	case "postgres":
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install postgresql-client or set a custom path", "pg_dump")
+		binPath, _, err := resolveBackupToolPathWithDriver("postgres", opts.ToolPath, "please install postgresql-client, or click 'Download Tool' in the Backup modal", "pg_dump")
 		if err != nil {
 			return "", emitErr(err)
+		}
+		if isDHubPortableTool(binPath) {
+			if err := s.backupDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, opts); err != nil {
+				_ = os.Remove(filePath)
+				return "", emitErr(err)
+			}
+			break
 		}
 		s.emitBackupProgress(app.BackupProgressEvent{
 			ConnectionID: connectionID,
@@ -887,7 +888,14 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	case "sqlite":
-		if binPath, err := resolveBackupToolPath(opts.ToolPath, "", "sqlite3"); err == nil && conn.FilePath != "" {
+		if binPath, _, err := resolveBackupToolPathWithDriver("sqlite", opts.ToolPath, "", "sqlite3"); err == nil && conn.FilePath != "" {
+			if isDHubPortableTool(binPath) {
+				if err := s.backupDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, opts); err != nil {
+					_ = os.Remove(filePath)
+					return "", emitErr(err)
+				}
+				break
+			}
 			outFile, err := os.Create(filePath)
 			if err != nil {
 				return "", emitErr(fmt.Errorf("failed to create backup file: %w", err))
@@ -914,24 +922,14 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			if strings.TrimSpace(opts.ToolPath) != "" {
 				return "", emitErr(fmt.Errorf("custom backup executable not found at: %s", opts.ToolPath))
 			}
-			src, err := os.Open(conn.FilePath)
-			if err != nil {
-				return "", emitErr(fmt.Errorf("failed to open sqlite file: %w", err))
+			if err := s.backupDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, opts); err != nil {
+				_ = os.Remove(filePath)
+				return "", emitErr(err)
 			}
-			defer src.Close()
-			dst, err := os.Create(filePath)
-			if err != nil {
-				return "", emitErr(fmt.Errorf("failed to create backup file: %w", err))
-			}
-			if _, err := io.Copy(dst, src); err != nil {
-				_ = dst.Close()
-				return "", emitErr(fmt.Errorf("failed to copy sqlite database: %w", err))
-			}
-			_ = dst.Close()
 		}
 
 	case "mongodb":
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install MongoDB Database Tools or set a custom path", "mongodump")
+		binPath, _, err := resolveBackupToolPathWithDriver("mongodb", opts.ToolPath, "please install MongoDB Database Tools, or click 'Download Tool' in the Backup modal", "mongodump")
 		if err != nil {
 			return "", emitErr(err)
 		}
@@ -976,7 +974,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	case "redis":
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install redis-tools or set a custom path", "redis-cli")
+		binPath, _, err := resolveBackupToolPathWithDriver("redis", opts.ToolPath, "please install redis-tools or set a custom path", "redis-cli")
 		if err != nil {
 			return "", emitErr(err)
 		}
@@ -1003,9 +1001,16 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	case "mssql":
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install Microsoft SQL Server Command Line Utilities or set a custom path", "sqlcmd")
+		binPath, _, err := resolveBackupToolPathWithDriver("mssql", opts.ToolPath, "please install SQL Server Command Line Utilities (sqlcmd), or click 'Download Tool' in the Backup modal", "sqlcmd")
 		if err != nil {
 			return "", emitErr(err)
+		}
+		if isDHubPortableTool(binPath) || strings.HasSuffix(strings.ToLower(filePath), ".sql") {
+			if err := s.backupDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, opts); err != nil {
+				_ = os.Remove(filePath)
+				return "", emitErr(err)
+			}
+			break
 		}
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
@@ -1038,70 +1043,18 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		}
 
 	case "clickhouse":
-		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
-		if err != nil {
-			return "", err
-		}
-		objs, err := drv.ListObjects(ctx, database, database)
-		if err != nil {
-			return "", fmt.Errorf("failed to list clickhouse objects: %w", err)
-		}
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("-- ClickHouse SQL Backup for database `%s`\n\n", strings.ReplaceAll(database, "`", "``")))
-		for _, obj := range objs {
-			if opts.TableSelection == "include" && len(opts.Tables) > 0 {
-				matched := false
-				for _, t := range opts.Tables {
-					if t == obj.Name {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					continue
-				}
-			}
-			if tStruct, sErr := drv.GetTableStructure(ctx, database, database, obj.Name); sErr == nil && tStruct.DDL != "" {
-				sb.WriteString(strings.TrimSpace(tStruct.DDL) + ";\n\n")
-			}
-		}
-		if err := os.WriteFile(filePath, []byte(sb.String()), 0o644); err != nil {
-			return "", fmt.Errorf("failed to write clickhouse backup: %w", err)
+		if err := s.backupDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, opts); err != nil {
+			_ = os.Remove(filePath)
+			return "", emitErr(err)
 		}
 
 	case "oracle":
-		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
-		if err != nil {
-			return "", err
+		if _, _, err := resolveBackupToolPathWithDriver("oracle", opts.ToolPath, "please install Oracle Client (sqlplus), or click 'Download Tool' in the Backup modal", "sqlplus"); err != nil {
+			return "", emitErr(err)
 		}
-		targetSchema := strings.TrimSpace(opts.Schema)
-		objs, err := drv.ListObjects(ctx, database, targetSchema)
-		if err != nil {
-			return "", fmt.Errorf("failed to list oracle objects: %w", err)
-		}
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("-- Oracle SQL Backup for database %s\n\n", database))
-		for _, obj := range objs {
-			if opts.TableSelection == "include" && len(opts.Tables) > 0 {
-				found := false
-				for _, t := range opts.Tables {
-					if t == obj.Name || t == obj.Schema+"."+obj.Name {
-						found = true
-						break
-					}
-				}
-				if !found {
-					continue
-				}
-			}
-			if obj.Type == "table" {
-				if tStruct, sErr := drv.GetTableStructure(ctx, database, obj.Schema, obj.Name); sErr == nil && tStruct.DDL != "" {
-					sb.WriteString(strings.TrimSpace(tStruct.DDL) + "\n\n")
-				}
-			}
-		}
-		if err := os.WriteFile(filePath, []byte(sb.String()), 0o644); err != nil {
-			return "", fmt.Errorf("failed to write oracle backup: %w", err)
+		if err := s.backupDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, opts); err != nil {
+			_ = os.Remove(filePath)
+			return "", emitErr(err)
 		}
 
 	default:
@@ -1201,9 +1154,15 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			firstBin = "mariadb"
 			secondBin = "mysql"
 		}
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install mysql-client or mariadb-client or set a custom path", firstBin, secondBin)
+		binPath, _, err := resolveBackupToolPathWithDriver(conn.Driver, opts.ToolPath, "please install mysql-client or mariadb-client, or click 'Download Tool' in the Restore modal", firstBin, secondBin)
 		if err != nil {
 			return "", emitErr(err)
+		}
+		if isDHubPortableTool(binPath) {
+			if err := s.restoreDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, totalBytes); err != nil {
+				return "", emitErr(err)
+			}
+			break
 		}
 
 		host := strings.TrimSpace(conn.Host)
@@ -1303,7 +1262,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 
 		if isCustomFormat {
-			binPath, err := resolveBackupToolPath(opts.ToolPath, "please install postgresql-client or set a custom path", "pg_restore")
+			binPath, _, err := resolveBackupToolPathWithDriver("postgres", opts.ToolPath, "please install postgresql-client, or click 'Download Tool' in the Restore modal", "pg_restore")
 			if err != nil {
 				return "", emitErr(err)
 			}
@@ -1340,9 +1299,15 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 				return "", emitErr(fmt.Errorf("pg_restore failed: %s", msg))
 			}
 		} else {
-			binPath, err := resolveBackupToolPath(opts.ToolPath, "please install postgresql-client or set a custom path", "psql")
+			binPath, _, err := resolveBackupToolPathWithDriver("postgres", opts.ToolPath, "please install postgresql-client, or click 'Download Tool' in the Restore modal", "psql")
 			if err != nil {
 				return "", emitErr(err)
+			}
+			if isDHubPortableTool(binPath) {
+				if err := s.restoreDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, totalBytes); err != nil {
+					return "", emitErr(err)
+				}
+				break
 			}
 			s.emitRestoreProgress(app.BackupProgressEvent{
 				ConnectionID: connectionID,
@@ -1377,26 +1342,12 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 
 	case "sqlite":
-		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
-		if err != nil {
-			return "", err
-		}
-		sqlBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			return "", fmt.Errorf("failed to read SQL file: %w", err)
-		}
-		_, err = drv.Execute(ctx, driver.QueryRequest{
-			ConnectionID: connectionID,
-			Database:     database,
-			Schema:       database,
-			SQL:          string(sqlBytes),
-		})
-		if err != nil {
-			return "", fmt.Errorf("sqlite restore failed: %w", err)
+		if err := s.restoreDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, totalBytes); err != nil {
+			return "", emitErr(fmt.Errorf("sqlite restore failed: %w", err))
 		}
 
 	case "mongodb":
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install MongoDB Database Tools or set a custom path", "mongorestore")
+		binPath, _, err := resolveBackupToolPathWithDriver("mongodb", opts.ToolPath, "please install MongoDB Database Tools, or click 'Download Tool' in the Restore modal", "mongorestore")
 		if err != nil {
 			return "", emitErr(err)
 		}
@@ -1442,9 +1393,15 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 
 	case "mssql":
-		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install Microsoft SQL Server Command Line Utilities or set a custom path", "sqlcmd")
+		binPath, _, err := resolveBackupToolPathWithDriver("mssql", opts.ToolPath, "please install SQL Server Command Line Utilities (sqlcmd), or click 'Download Tool' in the Restore modal", "sqlcmd")
 		if err != nil {
 			return "", emitErr(err)
+		}
+		if isDHubPortableTool(binPath) && !strings.HasSuffix(strings.ToLower(filePath), ".bak") {
+			if err := s.restoreDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, totalBytes); err != nil {
+				return "", emitErr(err)
+			}
+			break
 		}
 		s.emitRestoreProgress(app.BackupProgressEvent{
 			ConnectionID: connectionID,
@@ -1490,40 +1447,16 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 
 	case "clickhouse":
-		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
-		if err != nil {
-			return "", err
-		}
-		sqlBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			return "", fmt.Errorf("failed to read SQL file: %w", err)
-		}
-		_, err = drv.Execute(ctx, driver.QueryRequest{
-			ConnectionID: connectionID,
-			Database:     database,
-			Schema:       database,
-			SQL:          string(sqlBytes),
-		})
-		if err != nil {
-			return "", fmt.Errorf("clickhouse restore failed: %w", err)
+		if err := s.restoreDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, totalBytes); err != nil {
+			return "", emitErr(fmt.Errorf("clickhouse restore failed: %w", err))
 		}
 
 	case "oracle":
-		drv, err := s.sessions.GetOrConnect(ctx, connectionID)
-		if err != nil {
-			return "", err
+		if _, _, err := resolveBackupToolPathWithDriver("oracle", opts.ToolPath, "please install Oracle Client (sqlplus), or click 'Download Tool' in the Restore modal", "sqlplus"); err != nil {
+			return "", emitErr(err)
 		}
-		sqlBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			return "", fmt.Errorf("failed to read restore file: %w", err)
-		}
-		_, err = drv.Execute(ctx, driver.QueryRequest{
-			ConnectionID: connectionID,
-			Database:     database,
-			SQL:          string(sqlBytes),
-		})
-		if err != nil {
-			return "", fmt.Errorf("oracle restore failed: %w", err)
+		if err := s.restoreDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, totalBytes); err != nil {
+			return "", emitErr(fmt.Errorf("oracle restore failed: %w", err))
 		}
 
 	default:

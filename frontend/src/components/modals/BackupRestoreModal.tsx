@@ -1,7 +1,10 @@
-import React from 'react';
-import { Download, Upload, RefreshCw, Search, Table, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { CheckCircle2, AlertTriangle, Download, Upload, RefreshCw, Search, Table, X } from 'lucide-react';
+import { Events } from '@wailsio/runtime';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { SchemaService, BackupToolStatus } from '../../../bindings/dhub/internal/services';
+import { alertSuccess, alertError } from '../../stores/useAlertStore';
 
 export interface BackupRestoreModalState {
   isOpen: boolean;
@@ -53,26 +56,114 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
   onBrowseRestoreFile: handleBrowseRestoreFile,
   onBrowseBackupToolPath: handleBrowseBackupToolPath,
 }) => {
+  const [toolStatus, setToolStatus] = useState<BackupToolStatus | null>(null);
+  const [isDownloadingTool, setIsDownloadingTool] = useState<boolean>(false);
+  const [toolDownloadProgress, setToolDownloadProgress] = useState<{
+    percent: number;
+    message: string;
+  } | null>(null);
+
+  const isBackup = backupRestoreModal.mode === 'backup';
+  const drv = backupRestoreModal.connection?.driver || 'mysql';
+  const activeTool = isBackup
+    ? getBackupCliTool(drv)
+    : getRestoreCliTool(drv, backupRestoreModal.filePath);
+
+  useEffect(() => {
+    if (!backupRestoreModal.isOpen || !drv || drv === 'clickhouse') {
+      setToolStatus(null);
+      return;
+    }
+    let cancelled = false;
+    SchemaService.CheckBackupToolStatus(
+      drv,
+      backupRestoreModal.mode,
+      backupRestoreModal.filePath || '',
+      backupRestoreModal.toolPath || ''
+    )
+      .then((res) => {
+        if (cancelled || !res) return;
+        setToolStatus(res);
+        if (
+          res.installed &&
+          res.source === 'downloaded' &&
+          res.resolvedPath &&
+          !backupRestoreModal.toolPath
+        ) {
+          setBackupRestoreModal((prev) => ({
+            ...prev,
+            toolPath: res.resolvedPath,
+          }));
+          if (activeTool) {
+            useSettingsStore.getState().setBackupToolPath(activeTool, res.resolvedPath);
+          }
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    backupRestoreModal.isOpen,
+    drv,
+    backupRestoreModal.mode,
+    backupRestoreModal.filePath,
+    backupRestoreModal.toolPath,
+    activeTool,
+    setBackupRestoreModal,
+  ]);
+
+  useEffect(() => {
+    if (!backupRestoreModal.isOpen) return;
+    const unsubscribe = Events.On('backup:tool-download', (event: any) => {
+      const payload = event?.data ?? event;
+      if (!payload || payload.driver !== drv) return;
+      setToolDownloadProgress({
+        percent: typeof payload.percent === 'number' ? payload.percent : 0,
+        message: payload.message || `Downloading ${payload.toolName || activeTool}...`,
+      });
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [backupRestoreModal.isOpen, drv, activeTool]);
+
+  const handleDownloadTool = async () => {
+    if (!drv || isDownloadingTool) return;
+    setIsDownloadingTool(true);
+    setToolDownloadProgress({
+      percent: 5,
+      message: `Preparing download for ${activeTool}...`,
+    });
+    try {
+      const res = await SchemaService.DownloadBackupTool(drv, backupRestoreModal.mode);
+      if (res && res.installed && res.resolvedPath) {
+        setToolStatus(res);
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          toolPath: res.resolvedPath,
+        }));
+        if (activeTool) {
+          useSettingsStore.getState().setBackupToolPath(activeTool, res.resolvedPath);
+        }
+        alertSuccess(
+          `${res.toolName} has been downloaded and configured at ${res.resolvedPath}`,
+          'Client Tool Ready'
+        );
+      }
+    } catch (err: any) {
+      alertError(err?.message || String(err), `Failed to Download ${activeTool}`);
+    } finally {
+      setIsDownloadingTool(false);
+      setToolDownloadProgress(null);
+    }
+  };
+
   if (!backupRestoreModal.isOpen) return null;
 
   const brEnv = resolveConnectionEnv(backupRestoreModal.connection);
-  const isBackup = backupRestoreModal.mode === 'backup';
-  const drv = backupRestoreModal.connection?.driver || 'mysql';
-  const cliTool = isBackup
-    ? drv === 'postgres'
-      ? 'pg_dump'
-      : drv === 'sqlite'
-      ? 'sqlite3 .dump'
-      : drv === 'mariadb'
-      ? 'mariadb-dump'
-      : 'mysqldump'
-    : drv === 'postgres'
-    ? 'psql'
-    : drv === 'sqlite'
-    ? 'sqlite3'
-    : drv === 'mariadb'
-    ? 'mariadb'
-    : 'mysql';
+  const cliTool = activeTool || drv;
 
   const filteredTables = backupRestoreModal.availableTables.filter((tbl) =>
     tbl.toLowerCase().includes(backupRestoreModal.tableSearch.toLowerCase().trim())
@@ -234,26 +325,53 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
             </p>
           </div>
 
-          {drv !== 'clickhouse' && drv !== 'oracle' && (isBackup || drv !== 'sqlite') && (() => {
-            const activeTool = isBackup
-              ? getBackupCliTool(drv)
-              : getRestoreCliTool(drv, backupRestoreModal.filePath);
-            if (!activeTool) return null;
+          {drv !== 'clickhouse' && activeTool && (() => {
+            const isInstalled = Boolean(toolStatus?.installed);
+            const canDownload = Boolean(toolStatus?.canDownload);
             return (
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
                   <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
                     Path to {activeTool}
                   </label>
-                  <span className="text-[10px] text-zinc-500 font-mono">
-                    Optional (auto-detect in PATH)
-                  </span>
+                  {toolStatus && (
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                        isInstalled
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                          : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                      }`}
+                    >
+                      {isInstalled ? (
+                        <>
+                          <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                          <span>
+                            {toolStatus.source === 'downloaded'
+                              ? 'Downloaded (DHub Tools)'
+                              : toolStatus.source === 'custom'
+                              ? 'Custom Path Ready'
+                              : 'Detected in PATH'}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="h-3 w-3 text-amber-400" />
+                          <span>Not Installed</span>
+                        </>
+                      )}
+                    </span>
+                  )}
                 </div>
+
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
-                    disabled={backupRestoreModal.isProcessing}
-                    placeholder={`Auto-detect (${activeTool} in PATH)`}
+                    disabled={backupRestoreModal.isProcessing || isDownloadingTool}
+                    placeholder={
+                      toolStatus?.installed && toolStatus?.resolvedPath
+                        ? toolStatus.resolvedPath
+                        : `Auto-detect (${activeTool} in PATH)`
+                    }
                     value={backupRestoreModal.toolPath}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -267,7 +385,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                   {backupRestoreModal.toolPath && (
                     <button
                       type="button"
-                      disabled={backupRestoreModal.isProcessing}
+                      disabled={backupRestoreModal.isProcessing || isDownloadingTool}
                       title="Reset to auto-detect"
                       onClick={() => {
                         setBackupRestoreModal((prev) => ({ ...prev, toolPath: '' }));
@@ -280,13 +398,67 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                   )}
                   <button
                     type="button"
-                    disabled={backupRestoreModal.isProcessing}
+                    disabled={backupRestoreModal.isProcessing || isDownloadingTool}
                     onClick={handleBrowseBackupToolPath}
                     className="px-3 py-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-xs font-medium text-zinc-200 hover:text-white transition-colors cursor-pointer shrink-0 disabled:opacity-40"
                   >
                     Browse...
                   </button>
                 </div>
+
+                {!isInstalled && canDownload && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                        <div className="text-[11px] text-amber-100/90 leading-relaxed">
+                          <div className="font-semibold text-amber-200">
+                            {activeTool} is not installed on this computer
+                          </div>
+                          <div className="text-zinc-400 mt-0.5">
+                            Download the portable client tool directly into DHub to run{' '}
+                            {isBackup ? 'backup' : 'restore'} without installing the full database server.
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isDownloadingTool || backupRestoreModal.isProcessing}
+                        onClick={handleDownloadTool}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors cursor-pointer shrink-0 disabled:opacity-50 shadow-xs"
+                      >
+                        {isDownloadingTool ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <span>Downloading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3.5 w-3.5" />
+                            <span>Download {activeTool}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {isDownloadingTool && toolDownloadProgress && (
+                      <div className="space-y-1 pt-1">
+                        <div className="flex items-center justify-between text-[10px] font-mono text-zinc-300">
+                          <span className="truncate pr-2">{toolDownloadProgress.message}</span>
+                          <span className="text-blue-400 font-bold">
+                            {Math.round(toolDownloadProgress.percent)}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-[#191b24] overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-blue-500 transition-all duration-150"
+                            style={{ width: `${Math.min(100, Math.max(2, toolDownloadProgress.percent))}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })()}

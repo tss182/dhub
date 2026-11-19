@@ -26,6 +26,9 @@ func init() {
 	application.RegisterEvent[app.SchemaSyncEvent]("schema:sync")
 	application.RegisterEvent[app.ConnectionStateEvent]("connection:state")
 	application.RegisterEvent[app.UpdateProgressEvent]("update:progress")
+	application.RegisterEvent[app.BackupProgressEvent]("backup:progress")
+	application.RegisterEvent[app.BackupProgressEvent]("restore:progress")
+	application.RegisterEvent[app.ToolDownloadProgressEvent]("backup:tool-download")
 }
 
 func main() {

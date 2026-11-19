@@ -42,4 +42,16 @@ type BackupProgressEvent struct {
 	Message      string  `json:"message,omitempty"`
 }
 
+type ToolDownloadProgressEvent struct {
+	Driver       string  `json:"driver"`
+	ToolName     string  `json:"toolName"`
+	Status       string  `json:"status"` // "downloading" | "extracting" | "completed" | "error"
+	Percent      float64 `json:"percent"`
+	Downloaded   int64   `json:"downloaded"`
+	Total        int64   `json:"total"`
+	ResolvedPath string  `json:"resolvedPath,omitempty"`
+	Message      string  `json:"message,omitempty"`
+}
+
+
 

@@ -20,6 +20,14 @@ export function BackupDatabase(connectionID: string, database: string, filePath:
     return $Call.ByID(2971308220, connectionID, database, filePath, optionsJSON);
 }
 
+export function CheckBackupToolStatus(driverName: string, mode: string, filePath: string, customPath: string): $CancellablePromise<$models.BackupToolStatus | null> {
+    return $Call.ByName("dhub/internal/services.SchemaService.CheckBackupToolStatus", driverName, mode, filePath, customPath);
+}
+
+export function DownloadBackupTool(driverName: string, mode: string): $CancellablePromise<$models.BackupToolStatus | null> {
+    return $Call.ByName("dhub/internal/services.SchemaService.DownloadBackupTool", driverName, mode);
+}
+
 export function CompareSchemas(srcConnID: string, srcDB: string, srcSchema: string, dstConnID: string, dstDB: string, dstSchema: string): $CancellablePromise<$models.SchemaDiffResult | null> {
     return $Call.ByID(372679082, srcConnID, srcDB, srcSchema, dstConnID, dstDB, dstSchema);
 }

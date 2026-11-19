@@ -17,6 +17,7 @@ export {
 };
 
 export type {
+    BackupToolStatus,
     ColumnDiff,
     ColumnMapping,
     ConfigImportOptions,

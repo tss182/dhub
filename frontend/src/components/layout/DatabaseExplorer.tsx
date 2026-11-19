@@ -780,8 +780,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         return 'redis-cli';
       case 'mssql':
         return 'sqlcmd';
-      case 'clickhouse':
       case 'oracle':
+        return 'sqlplus';
+      case 'clickhouse':
         return drv;
       default:
         return 'mysqldump';
@@ -802,9 +803,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         return 'mongorestore';
       case 'mssql':
         return 'sqlcmd';
-      case 'sqlite':
-      case 'clickhouse':
       case 'oracle':
+        return 'sqlplus';
+      case 'sqlite':
+        return 'sqlite3';
+      case 'clickhouse':
         return '';
       default:
         return 'mysql';
