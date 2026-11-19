@@ -134,14 +134,21 @@ func (s *SchemaService) RefreshSchema(connectionID, database, schema string) (st
 	s.emitSync(connectionID, database, schema, "syncing", "Crawling schema metadata...")
 
 	go func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
 		objs, err := drv.ListObjects(ctx, database, schema)
 		if err != nil {
 			s.emitSync(connectionID, database, schema, "error", err.Error())
 			return
 		}
 
+		const batchSize = 50
+		batch := make([]store.CachedObject, 0, batchSize)
 		for _, obj := range objs {
+			if ctx.Err() != nil {
+				break
+			}
 			if obj.Type == "table" {
 				if tStruct, err := drv.GetTableStructure(ctx, database, schema, obj.Name); err == nil {
 					canonicalSchema := obj.Schema
@@ -154,7 +161,7 @@ func (s *SchemaService) RefreshSchema(connectionID, database, schema string) (st
 					if canonicalSchema == "" {
 						canonicalSchema = database
 					}
-					_ = s.store.SaveSchemaCache(ctx, store.CachedObject{
+					batch = append(batch, store.CachedObject{
 						ConnectionID: connectionID,
 						DatabaseName: database,
 						SchemaName:   canonicalSchema,
@@ -164,8 +171,15 @@ func (s *SchemaService) RefreshSchema(connectionID, database, schema string) (st
 						Indexes:      tStruct.Indexes,
 						ForeignKeys:  tStruct.ForeignKeys,
 					})
+					if len(batch) >= batchSize {
+						_ = s.store.SaveSchemaCacheBatch(ctx, batch)
+						batch = batch[:0]
+					}
 				}
 			}
+		}
+		if len(batch) > 0 {
+			_ = s.store.SaveSchemaCacheBatch(ctx, batch)
 		}
 
 		s.emitSync(connectionID, database, schema, "ready", fmt.Sprintf("Synced %d objects", len(objs)))

@@ -124,7 +124,11 @@ func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req Q
 				valuePtrs[vIdx] = &values[vIdx]
 			}
 
-			var resultRows [][]any
+			capHint := limit
+			if capHint > 256 {
+				capHint = 256
+			}
+			resultRows := make([][]any, 0, capHint)
 			skipped := 0
 			hasMore := false
 

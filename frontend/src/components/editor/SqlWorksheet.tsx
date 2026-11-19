@@ -16,7 +16,6 @@ import {
   HelpCircle,
   BookOpen,
 } from 'lucide-react';
-import { format } from 'sql-formatter';
 import { ConnectionConfig, ColumnMeta, ForeignKeyMeta, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
@@ -1164,7 +1163,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     [proceedExecution]
   );
 
-  const handleFormatSql = () => {
+  const handleFormatSql = async () => {
     try {
       const drv = connection?.driver || 'sqlite';
       if (drv === 'redis' || drv === 'mongodb') return;
@@ -1177,6 +1176,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       else if (drv === 'clickhouse') lang = 'sql';
       else if (drv === 'oracle') lang = 'plsql';
 
+      const { format } = await import('sql-formatter');
       const formatted = format(sql, {
         language: lang,
         tabWidth: 2,

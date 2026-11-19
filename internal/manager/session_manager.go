@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dhub/internal/driver"
@@ -30,10 +31,13 @@ import (
 )
 
 type Session struct {
-	Config store.ConnectionConfig
-	Driver driver.DatabaseDriver
-	Tunnel *tunnel.Tunnel
+	Config         store.ConnectionConfig
+	Driver         driver.DatabaseDriver
+	Tunnel         *tunnel.Tunnel
+	lastPingUnixMs atomic.Int64
 }
+
+const sessionPingIntervalMs = 15_000
 
 type SessionManager struct {
 	store    *store.LocalStore
@@ -54,7 +58,12 @@ func (m *SessionManager) GetOrConnect(ctx context.Context, connectionID string) 
 	m.mu.RUnlock()
 
 	if exists {
+		nowMs := time.Now().UnixMilli()
+		if nowMs-s.lastPingUnixMs.Load() <= sessionPingIntervalMs {
+			return s.Driver, nil
+		}
 		if err := s.Driver.Ping(ctx); err == nil {
+			s.lastPingUnixMs.Store(nowMs)
 			return s.Driver, nil
 		}
 		// Stale session, close and reconnect
@@ -172,11 +181,13 @@ func (m *SessionManager) connect(ctx context.Context, cfg store.ConnectionConfig
 		return nil, fmt.Errorf("ping failed: %w", err)
 	}
 
-	m.sessions[cfg.ID] = &Session{
+	sess := &Session{
 		Config: cfg,
 		Driver: drv,
 		Tunnel: tun,
 	}
+	sess.lastPingUnixMs.Store(time.Now().UnixMilli())
+	m.sessions[cfg.ID] = sess
 
 	return drv, nil
 }

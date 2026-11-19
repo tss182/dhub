@@ -365,20 +365,51 @@ func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, r
 			{Name: "value", DataType: "string", RawType: "string"},
 		}
 		pks = []string{"field"}
-		fields, err := conn.HGetAll(ctx, key).Result()
-		if err == nil {
-			var sortedKeys []string
-			for f := range fields {
-				sortedKeys = append(sortedKeys, f)
+		const maxFullScanThreshold = 1000
+		hLen, hLenErr := conn.HLen(ctx, key).Result()
+		if hLenErr == nil && hLen > maxFullScanThreshold {
+			var cursor uint64
+			needed := offset + limit
+			type kv struct{ k, v string }
+			var collected []kv
+			for {
+				keysVals, nextCursor, scanErr := conn.HScan(ctx, key, cursor, "*", 250).Result()
+				if scanErr != nil {
+					break
+				}
+				for i := 0; i+1 < len(keysVals); i += 2 {
+					collected = append(collected, kv{k: keysVals[i], v: keysVals[i+1]})
+				}
+				cursor = nextCursor
+				if cursor == 0 || len(collected) >= needed {
+					break
+				}
 			}
-			sort.Strings(sortedKeys)
 			end := offset + limit
-			if end > len(sortedKeys) {
-				end = len(sortedKeys)
+			if end > len(collected) {
+				end = len(collected)
 			}
-			if offset < len(sortedKeys) {
-				for _, f := range sortedKeys[offset:end] {
-					rows = append(rows, []any{f, fields[f]})
+			if offset < len(collected) {
+				for _, item := range collected[offset:end] {
+					rows = append(rows, []any{item.k, item.v})
+				}
+			}
+		} else {
+			fields, err := conn.HGetAll(ctx, key).Result()
+			if err == nil {
+				sortedKeys := make([]string, 0, len(fields))
+				for f := range fields {
+					sortedKeys = append(sortedKeys, f)
+				}
+				sort.Strings(sortedKeys)
+				end := offset + limit
+				if end > len(sortedKeys) {
+					end = len(sortedKeys)
+				}
+				if offset < len(sortedKeys) {
+					for _, f := range sortedKeys[offset:end] {
+						rows = append(rows, []any{f, fields[f]})
+					}
 				}
 			}
 		}
@@ -402,16 +433,44 @@ func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, r
 			{Name: "member", DataType: "string", RawType: "string", IsPrimaryKey: true},
 		}
 		pks = []string{"member"}
-		members, err := conn.SMembers(ctx, key).Result()
-		if err == nil {
-			sort.Strings(members)
-			end := offset + limit
-			if end > len(members) {
-				end = len(members)
+		const maxFullSetThreshold = 1000
+		sCard, sCardErr := conn.SCard(ctx, key).Result()
+		if sCardErr == nil && sCard > maxFullSetThreshold {
+			var cursor uint64
+			needed := offset + limit
+			var collected []string
+			for {
+				batch, nextCursor, scanErr := conn.SScan(ctx, key, cursor, "*", 250).Result()
+				if scanErr != nil {
+					break
+				}
+				collected = append(collected, batch...)
+				cursor = nextCursor
+				if cursor == 0 || len(collected) >= needed {
+					break
+				}
 			}
-			if offset < len(members) {
-				for _, m := range members[offset:end] {
+			end := offset + limit
+			if end > len(collected) {
+				end = len(collected)
+			}
+			if offset < len(collected) {
+				for _, m := range collected[offset:end] {
 					rows = append(rows, []any{m})
+				}
+			}
+		} else {
+			members, err := conn.SMembers(ctx, key).Result()
+			if err == nil {
+				sort.Strings(members)
+				end := offset + limit
+				if end > len(members) {
+					end = len(members)
+				}
+				if offset < len(members) {
+					for _, m := range members[offset:end] {
+						rows = append(rows, []any{m})
+					}
 				}
 			}
 		}
@@ -462,11 +521,16 @@ func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, r
 	}, nil
 }
 
+var (
+	scanWherePatternRegex  = regexp.MustCompile(`(?i)(?:MATCH|LIKE|=)\s*['"]([^'"]+)['"]`)
+	keysFilterPatternRegex = regexp.MustCompile(`(?i)(?:['"]%?([^'"%]+)%?['"]|WHERE\s*\(\s*([^\s)]+)\s*\))`)
+)
+
 func extractScanPattern(rawSQL string) string {
 	if !strings.Contains(strings.ToUpper(rawSQL), "WHERE") {
 		return "*"
 	}
-	m := regexp.MustCompile(`(?i)(?:MATCH|LIKE|=)\s*['"]([^'"]+)['"]`).FindStringSubmatch(rawSQL)
+	m := scanWherePatternRegex.FindStringSubmatch(rawSQL)
 	if len(m) > 1 && m[1] != "" {
 		p := m[1]
 		p = strings.ReplaceAll(p, "%", "*")
@@ -518,7 +582,7 @@ func (r *RedisDriver) executeKeysListQuery(ctx context.Context, conn *redis.Conn
 	rawSQL := req.SQL
 	if strings.Contains(strings.ToUpper(rawSQL), "WHERE") {
 		filterPattern := ""
-		m := regexp.MustCompile(`(?i)(?:['"]%?([^'"%]+)%?['"]|WHERE\s*\(\s*([^\s)]+)\s*\))`).FindStringSubmatch(rawSQL)
+		m := keysFilterPatternRegex.FindStringSubmatch(rawSQL)
 		if len(m) > 1 {
 			for _, sub := range m[1:] {
 				if sub != "" && !strings.EqualFold(sub, "key") && !strings.EqualFold(sub, "keys") {

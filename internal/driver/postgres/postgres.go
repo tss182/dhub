@@ -402,6 +402,8 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 	defer rows.Close()
 
 	colIndex := make(map[string]int)
+	var enumMap map[string]string
+	enumLoaded := false
 	for rows.Next() {
 		var name, dataType, udtName, isNullable string
 		var dflt, isIdentity *string
@@ -417,16 +419,28 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 			effectiveType := dataType
 			if strings.EqualFold(dataType, "USER-DEFINED") {
 				effectiveType = udtName
-				// Try to get enum labels if this is an enum
-				enumQuery := `
-					SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
-					FROM pg_enum e
-					JOIN pg_type t ON t.oid = e.enumtypid
-					JOIN pg_namespace n ON n.oid = t.typnamespace
-					WHERE t.typname = $1 AND (n.nspname = $2 OR n.nspname = 'public');`
-				var enumLabels *string
-				if err := db.QueryRowContext(ctx, enumQuery, udtName, schema).Scan(&enumLabels); err == nil && enumLabels != nil && *enumLabels != "" {
-					effectiveType = fmt.Sprintf("%s (%s)", udtName, *enumLabels)
+				if !enumLoaded {
+					enumLoaded = true
+					enumMap = make(map[string]string)
+					enumQuery := `
+						SELECT t.typname, string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
+						FROM pg_enum e
+						JOIN pg_type t ON t.oid = e.enumtypid
+						JOIN pg_namespace n ON n.oid = t.typnamespace
+						WHERE n.nspname = $1 OR n.nspname = 'public'
+						GROUP BY t.typname;`
+					if eRows, eErr := db.QueryContext(ctx, enumQuery, schema); eErr == nil {
+						for eRows.Next() {
+							var tName, labels string
+							if sErr := eRows.Scan(&tName, &labels); sErr == nil && labels != "" {
+								enumMap[tName] = labels
+							}
+						}
+						eRows.Close()
+					}
+				}
+				if labels, ok := enumMap[udtName]; ok && labels != "" {
+					effectiveType = fmt.Sprintf("%s (%s)", udtName, labels)
 				}
 			}
 

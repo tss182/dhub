@@ -993,6 +993,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
     [columns, isColumnEditable]
   );
 
+  const sortMap = useMemo(() => {
+    const map = new Map<string, { index: number; direction: 'asc' | 'desc' }>();
+    localSortConfigs.forEach((s, idx) => map.set(s.column, { index: idx, direction: s.direction }));
+    return map;
+  }, [localSortConfigs]);
+
   const handleAddRow = () => {
     if (isReadOnly) return;
     const newRowId = -Date.now();
@@ -2422,9 +2428,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 </th>
                 {columns.map((col, cIdx) => {
                   const isPK = Boolean(col.isPrimaryKey || primaryKeySet.has(col.name));
-                  const sortIndex = localSortConfigs.findIndex((s) => s.column === col.name);
-                  const isSorted = sortIndex !== -1;
-                  const sortItem = isSorted ? localSortConfigs[sortIndex] : null;
+                  const sortEntry = sortMap.get(col.name);
+                  const isSorted = sortEntry !== undefined;
+                  const sortIndex = sortEntry ? sortEntry.index : -1;
+                  const sortItem = sortEntry ?? null;
                   const isFrozen = frozenColumnSet.has(col.name);
                   const isLastFrozen = col.name === lastFrozenColName;
                   const stickyLeft = isFrozen ? frozenOffsets[col.name] : undefined;
