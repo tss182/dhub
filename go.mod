@@ -10,6 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/microsoft/go-mssqldb v1.11.2
 	github.com/redis/go-redis/v9 v9.23.0
+	github.com/sijms/go-ora/v2 v2.9.0
 	github.com/wailsapp/wails/v3 v3.1.0
 	github.com/zalando/go-keyring v0.2.8
 	go.mongodb.org/mongo-driver v1.17.10
@@ -45,7 +46,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.6.0 // indirect
-	github.com/sijms/go-ora/v2 v2.9.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/xdg-go/scram v1.4.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect

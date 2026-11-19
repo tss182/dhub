@@ -24,7 +24,7 @@ export interface ConnectionConfig {
     "name": string;
 
     /**
-     * "postgres", "mysql", "sqlite", "mariadb", "redis", "mssql", "mongodb", "clickhouse"
+     * "postgres", "mysql", "sqlite", "mariadb", "redis", "mssql", "mongodb", "clickhouse", "oracle"
      */
     "driver": string;
 
