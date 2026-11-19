@@ -103,13 +103,13 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
           onMouseDown={(e) => onRowHeaderMouseDown(e, vIdx)}
           onMouseEnter={() => onRowHeaderMouseEnter(vIdx)}
           onContextMenu={(e) => onRowHeaderContextMenu(e, vIdx)}
-          className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r ${gridCellBorder} select-none cursor-pointer transition-colors ${
+          className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] tabular-nums border-r border-b border-b-[#22242c] ${gridCellBorder} select-none cursor-pointer transition-colors ${
             isFullRowSelected
               ? 'bg-[#1b4ea3] text-white font-semibold'
               : isRowInSelection
               ? 'bg-[#1e293b] text-blue-300 font-medium'
               : isDeleted
-              ? 'bg-rose-950/40 text-rose-400/70 line-through'
+              ? 'bg-[#2a1219] text-rose-400/70 line-through'
               : 'bg-[#14151a] text-zinc-500 group-hover/row:bg-[#20222a] group-hover/row:text-zinc-300'
           } ${
             frozenColumnSet.size === 0 && isScrolledX
@@ -162,17 +162,17 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
                   onStartEdit(globalRowIndex, cIdx, displayVal);
                 }
               }}
-              className={`group/cell relative px-3 py-1 border-r ${gridCellBorder} truncate select-none transition-colors ${
+              className={`group/cell relative px-3 py-1 border-r border-b border-b-[#22242c] ${gridCellBorder} truncate select-none transition-colors ${
                 isFrozen
                   ? `sticky z-10 ${
                       isSelected
                         ? 'bg-[#1b4ea3] text-white font-medium'
                         : hasColChange
-                        ? 'bg-blue-900/40 text-blue-200 font-medium'
+                        ? 'bg-[#17284a] text-blue-200 font-medium'
                         : isDeleted
-                        ? 'bg-rose-950/40 text-zinc-500 line-through'
+                        ? 'bg-[#2a1219] text-zinc-500 line-through'
                         : !isEditable
-                        ? 'bg-[#121318]/70 text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
+                        ? 'bg-[#121318] text-zinc-400/80 group-hover/row:bg-[#1a1c23]'
                         : 'bg-[#14151a] group-hover/row:bg-[#20222a]'
                     }`
                   : isSelected
@@ -263,7 +263,7 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
         onMouseDown={(e) => onRowHeaderMouseDown(e, vIdx)}
         onMouseEnter={() => onRowHeaderMouseEnter(vIdx)}
         onContextMenu={(e) => onRowHeaderContextMenu(e, vIdx)}
-        className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-[#22242c] select-none cursor-pointer transition-colors ${
+        className={`sticky left-0 z-10 px-2 py-1 text-center text-[11px] font-bold border-r border-b border-b-emerald-800/40 border-[#22242c] select-none cursor-pointer transition-colors ${
           isFullRowSelected
             ? 'bg-[#1b4ea3] text-white'
             : isRowInSelection
@@ -321,15 +321,15 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
                 onStartEdit(change.rowIndex, cIdx, displayVal ?? '');
               }
             }}
-            className={`px-3 py-1 border-r border-[#22242c] truncate select-none transition-colors ${
+            className={`px-3 py-1 border-r border-b border-b-emerald-800/40 border-[#22242c] truncate select-none transition-colors ${
               isFrozen
                 ? `sticky z-10 ${
                     isSelected
                       ? 'bg-[#1b4ea3] text-white font-medium'
                       : isSet
-                      ? 'bg-emerald-900/50 text-emerald-100 font-medium'
+                      ? 'bg-[#0c3b2a] text-emerald-100 font-medium'
                       : !isInsEditable
-                      ? 'bg-[#0a1611]/80 text-zinc-500'
+                      ? 'bg-[#0a1611] text-zinc-500'
                       : 'bg-[#0d1e17] group-hover/insert:bg-[#132b21] text-zinc-400'
                   }`
                 : isSelected

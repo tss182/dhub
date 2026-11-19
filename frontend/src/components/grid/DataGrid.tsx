@@ -704,14 +704,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const frozenOffsets = useMemo(() => {
     const offsets: Record<string, number> = {};
     let currentLeft = ROW_NUM_COL_WIDTH;
-    for (const col of columns) {
+    for (let idx = 0; idx < columns.length; idx++) {
+      const col = columns[idx];
       if (frozenColumnSet.has(col.name)) {
         offsets[col.name] = currentLeft;
-        currentLeft += colWidths[col.name] || 120;
+        const isPK = Boolean(col.isPrimaryKey || primaryKeySet.has(col.name));
+        const w = colWidths[col.name] || getMinimumColumnWidth(col, isPK);
+        currentLeft += w;
       }
     }
     return offsets;
-  }, [columns, frozenColumnSet, colWidths]);
+  }, [columns, frozenColumnSet, colWidths, primaryKeySet]);
 
   const lastFrozenColName = useMemo(() => {
     for (let i = columns.length - 1; i >= 0; i--) {
@@ -2594,7 +2597,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
           className="flex-1 overflow-auto min-h-0 relative outline-none focus:ring-1 focus:ring-blue-500/20 pb-12"
         >
           <table
-            className="border-collapse font-mono text-[12px] text-zinc-300 min-w-full"
+            className="border-separate border-spacing-0 font-mono text-[12px] text-zinc-300 min-w-full"
             style={{ tableLayout: 'fixed', width: 'max-content' }}
           >
             <colgroup>
@@ -2624,7 +2627,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       containerRef.current?.focus({ preventScroll: true });
                     }
                   }}
-                  className={`sticky left-0 z-40 px-2 py-1.5 text-center font-semibold border-r ${gridCellBorder} ${gridTheadBg} text-zinc-500 hover:text-zinc-300 select-none cursor-pointer transition-colors ${
+                  className={`sticky left-0 z-40 px-2 py-1.5 text-center font-semibold border-r border-b ${gridCellBorder} ${gridTheadBg} text-zinc-500 hover:text-zinc-300 select-none cursor-pointer transition-colors ${
                     frozenColumns.length === 0 && isScrolledX
                       ? 'border-r-2 border-r-zinc-600/60 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.45)]'
                       : ''
@@ -2641,7 +2644,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 {leftColSpacerWidth > 0 && (
                   <th
                     aria-hidden="true"
-                    className={`p-0 border-none ${gridTheadBg}`}
+                    className={`p-0 border-b ${gridCellBorder} ${gridTheadBg}`}
                     style={{ width: `${leftColSpacerWidth}px`, minWidth: `${leftColSpacerWidth}px` }}
                   />
                 )}
@@ -2674,17 +2677,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       }}
                       onMouseEnter={(e) => handleColMouseEnter(e, col, isPK)}
                       onMouseLeave={handleColMouseLeave}
-                      className={`relative px-3 py-1.5 text-left font-semibold border-r ${gridCellBorder} text-zinc-200 group/th select-none ${
-                        isFrozen ? `sticky z-40 ${gridTheadBg}` : ''
+                      className={`relative px-3 py-1.5 text-left font-semibold border-r border-b ${gridCellBorder} text-zinc-200 group/th select-none ${
+                        isFrozen ? `sticky z-40 ${gridTheadBg}` : gridTheadBg
                       } ${
                         isLastFrozen && isScrolledX
                           ? 'border-r-2 border-r-cyan-500/50 shadow-[4px_0_8px_-2px_rgba(0,0,0,0.5)]'
                           : ''
                       } ${
                         envType === 'prod'
-                          ? 'hover:bg-rose-950/60'
+                          ? 'hover:bg-rose-950'
                           : envType === 'dev'
-                          ? 'hover:bg-emerald-950/60'
+                          ? 'hover:bg-emerald-950'
                           : 'hover:bg-[#1c1d28]'
                       } transition-colors cursor-pointer`}
                       style={{
@@ -2784,11 +2787,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 {rightColSpacerWidth > 0 && (
                   <th
                     aria-hidden="true"
-                    className={`p-0 border-none ${gridTheadBg}`}
+                    className={`p-0 border-b ${gridCellBorder} ${gridTheadBg}`}
                     style={{ width: `${rightColSpacerWidth}px`, minWidth: `${rightColSpacerWidth}px` }}
                   />
                 )}
-                <th className={`p-0 border-none ${gridTheadBg}`} />
+                <th className={`p-0 border-b ${gridCellBorder} ${gridTheadBg}`} />
               </tr>
             </thead>
             <tbody>
