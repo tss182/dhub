@@ -2321,6 +2321,84 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   }, [localPageSize, onPageChange]);
 
+  // Keep latest row/cell handlers in a ref so memoized DataGridRow instances
+  // never invoke stale closures over selectionRange / allSelectionRanges / editing state.
+  const latestRowHandlersRef = useRef({
+    handleRowHeaderMouseDown,
+    handleRowHeaderMouseEnter,
+    handleRowHeaderContextMenu,
+    handleCellMouseDown,
+    handleCellMouseEnter,
+    handleCellContextMenu,
+    handleStartEdit,
+    handleOpenTtlModal,
+    handleFinishEdit,
+    handleTabNextFromEditor,
+    handleCancelEdit: () => {
+      setEditingCell(null);
+      if (stagedCount > 0) setShowCancelConfirm(true);
+    },
+  });
+  latestRowHandlersRef.current = {
+    handleRowHeaderMouseDown,
+    handleRowHeaderMouseEnter,
+    handleRowHeaderContextMenu,
+    handleCellMouseDown,
+    handleCellMouseEnter,
+    handleCellContextMenu,
+    handleStartEdit,
+    handleOpenTtlModal,
+    handleFinishEdit,
+    handleTabNextFromEditor,
+    handleCancelEdit: () => {
+      setEditingCell(null);
+      if (stagedCount > 0) setShowCancelConfirm(true);
+    },
+  };
+
+  const stableRowHeaderMouseDown = useCallback(
+    (e: React.MouseEvent, vIdx: number) => latestRowHandlersRef.current.handleRowHeaderMouseDown(e, vIdx),
+    []
+  );
+  const stableRowHeaderMouseEnter = useCallback(
+    (vIdx: number) => latestRowHandlersRef.current.handleRowHeaderMouseEnter(vIdx),
+    []
+  );
+  const stableRowHeaderContextMenu = useCallback(
+    (e: React.MouseEvent, vIdx: number) => latestRowHandlersRef.current.handleRowHeaderContextMenu(e, vIdx),
+    []
+  );
+  const stableCellMouseDown = useCallback(
+    (e: React.MouseEvent, vIdx: number, cIdx: number) =>
+      latestRowHandlersRef.current.handleCellMouseDown(e, vIdx, cIdx),
+    []
+  );
+  const stableCellMouseEnter = useCallback(
+    (vIdx: number, cIdx: number) => latestRowHandlersRef.current.handleCellMouseEnter(vIdx, cIdx),
+    []
+  );
+  const stableCellContextMenu = useCallback(
+    (e: React.MouseEvent, vIdx: number, cIdx: number) =>
+      latestRowHandlersRef.current.handleCellContextMenu(e, vIdx, cIdx),
+    []
+  );
+  const stableStartEdit = useCallback(
+    (rowIndex: number, colIndex: number, currentVal: any) =>
+      latestRowHandlersRef.current.handleStartEdit(rowIndex, colIndex, currentVal),
+    []
+  );
+  const stableOpenTtlModal = useCallback(
+    (rowIndex: number, currentDisplayVal: any, isInsert: boolean) =>
+      latestRowHandlersRef.current.handleOpenTtlModal(rowIndex, currentDisplayVal, isInsert),
+    []
+  );
+  const stableFinishEdit = useCallback(() => latestRowHandlersRef.current.handleFinishEdit(), []);
+  const stableCancelEdit = useCallback(() => latestRowHandlersRef.current.handleCancelEdit(), []);
+  const stableTabNextFromEditor = useCallback(
+    (vIdx: number, cIdx: number) => latestRowHandlersRef.current.handleTabNextFromEditor(vIdx, cIdx),
+    []
+  );
+
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const sl = e.currentTarget.scrollLeft;
     if (sl > 0 !== isScrolledX) {
@@ -2736,21 +2814,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
                           isRedis={isRedis}
                           gridCellBorder={gridCellBorder}
                           gridRowClass={gridRowClass}
-                          onRowHeaderMouseDown={handleRowHeaderMouseDown}
-                          onRowHeaderMouseEnter={handleRowHeaderMouseEnter}
-                          onRowHeaderContextMenu={handleRowHeaderContextMenu}
-                          onCellMouseDown={handleCellMouseDown}
-                          onCellMouseEnter={handleCellMouseEnter}
-                          onCellContextMenu={handleCellContextMenu}
-                          onStartEdit={handleStartEdit}
-                          onOpenTtlModal={handleOpenTtlModal}
+                          onRowHeaderMouseDown={stableRowHeaderMouseDown}
+                          onRowHeaderMouseEnter={stableRowHeaderMouseEnter}
+                          onRowHeaderContextMenu={stableRowHeaderContextMenu}
+                          onCellMouseDown={stableCellMouseDown}
+                          onCellMouseEnter={stableCellMouseEnter}
+                          onCellContextMenu={stableCellContextMenu}
+                          onStartEdit={stableStartEdit}
+                          onOpenTtlModal={stableOpenTtlModal}
                           onEditValChange={setEditVal}
-                          onFinishEdit={handleFinishEdit}
-                          onCancelEdit={() => {
-                            setEditingCell(null);
-                            if (stagedCount > 0) setShowCancelConfirm(true);
-                          }}
-                          onTabNextFromEditor={handleTabNextFromEditor}
+                          onFinishEdit={stableFinishEdit}
+                          onCancelEdit={stableCancelEdit}
+                          onTabNextFromEditor={stableTabNextFromEditor}
                         />
                       );
                     })}
