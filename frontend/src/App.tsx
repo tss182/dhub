@@ -83,7 +83,6 @@ import { useUpdateStore } from './stores/useUpdateStore';
 import { useWorkspaceSessionStore } from './stores/useWorkspaceSessionStore';
 import { WorkspaceSelector } from './components/layout/WorkspaceSelector';
 import { WorkbenchHeader } from './components/layout/WorkbenchHeader';
-import { WorkbenchStatusBar } from './components/layout/WorkbenchStatusBar';
 import { EmptyWorkbenchState } from './components/layout/EmptyWorkbenchState';
 import { TabContextMenu } from './components/layout/TabContextMenu';
 import { DHubLogo } from './components/common/DHubLogo';
@@ -3936,16 +3935,6 @@ export function App() {
         schema={ddlModal.schema}
         tableName={ddlModal.tableName}
         onClose={closeDdlModal}
-      />
-
-      {/* Status Bar */}
-      <WorkbenchStatusBar
-        isMac={isMac}
-        statusMessage={statusMessage}
-        currentTx={activeTabId ? txStatusByTab[activeTabId] : undefined}
-        updateInfo={updateInfo}
-        onOpenUpdateModal={openUpdateModal}
-        onOpenHelp={openHelpModal}
       />
     </div>
     </Suspense>
