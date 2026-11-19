@@ -260,6 +260,82 @@ func (s *SchemaService) emitBackupProgress(ev app.BackupProgressEvent) {
 	}
 }
 
+func (s *SchemaService) emitRestoreProgress(ev app.BackupProgressEvent) {
+	if s.appGetter == nil {
+		return
+	}
+	if a := s.appGetter(); a != nil {
+		a.Event.Emit("restore:progress", ev)
+	}
+}
+
+type RestoreOptions struct {
+	ToolPath string `json:"toolPath,omitempty"`
+}
+
+type restoreProgressReader struct {
+	src          io.Reader
+	lineBuf      []byte
+	skipLine     bool
+	bytesRead    int64
+	currentTable string
+	lastEmit     time.Time
+	onUpdate     func(bytesRead int64, currentTable string)
+}
+
+func newRestoreProgressReader(src io.Reader, onUpdate func(bytesRead int64, currentTable string)) *restoreProgressReader {
+	return &restoreProgressReader{
+		src:      src,
+		lineBuf:  make([]byte, 0, 256),
+		onUpdate: onUpdate,
+	}
+}
+
+func (r *restoreProgressReader) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	if n > 0 {
+		r.bytesRead += int64(n)
+		tableChanged := false
+		for _, b := range p[:n] {
+			if b == '\n' {
+				if !r.skipLine && len(r.lineBuf) > 0 {
+					line := strings.TrimSpace(string(r.lineBuf))
+					var tbl string
+					if strings.HasPrefix(line, "-- Table structure for table ") {
+						tbl = strings.TrimPrefix(line, "-- Table structure for table ")
+					} else if strings.HasPrefix(line, "-- Dumping data for table ") {
+						tbl = strings.TrimPrefix(line, "-- Dumping data for table ")
+					}
+					tbl = strings.Trim(tbl, "`\" ")
+					if tbl != "" && tbl != r.currentTable {
+						r.currentTable = tbl
+						tableChanged = true
+					}
+				}
+				r.lineBuf = r.lineBuf[:0]
+				r.skipLine = false
+				continue
+			}
+			if r.skipLine {
+				continue
+			}
+			if len(r.lineBuf) < 256 {
+				r.lineBuf = append(r.lineBuf, b)
+				if len(r.lineBuf) == 3 && !bytes.HasPrefix(r.lineBuf, []byte("-- ")) {
+					r.skipLine = true
+				}
+			} else {
+				r.skipLine = true
+			}
+		}
+		if r.onUpdate != nil && (tableChanged || time.Since(r.lastEmit) >= 150*time.Millisecond) {
+			r.lastEmit = time.Now()
+			r.onUpdate(r.bytesRead, r.currentTable)
+		}
+	}
+	return n, err
+}
+
 func resolveBackupToolPath(customPath string, installHint string, candidates ...string) (string, error) {
 	custom := strings.TrimSpace(customPath)
 	if custom != "" {
@@ -1036,8 +1112,17 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 }
 
 func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string) (string, error) {
+	return s.RestoreDatabaseWithOptions(connectionID, database, filePath, "")
+}
+
+func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, filePath, optionsJSON string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+
+	var opts RestoreOptions
+	if strings.TrimSpace(optionsJSON) != "" {
+		_ = json.Unmarshal([]byte(optionsJSON), &opts)
+	}
 
 	conn, err := s.store.GetConnection(ctx, connectionID)
 	if err != nil {
@@ -1069,6 +1154,28 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 	if info.IsDir() {
 		return "", fmt.Errorf("selected path is a directory, please select a .sql file")
 	}
+	totalBytes := info.Size()
+
+	s.emitRestoreProgress(app.BackupProgressEvent{
+		ConnectionID: connectionID,
+		Database:     database,
+		Status:       "running",
+		Percent:      0,
+		TotalBytes:   totalBytes,
+		Message:      "Preparing restore...",
+	})
+
+	emitErr := func(err error) error {
+		s.emitRestoreProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "error",
+			Percent:      0,
+			TotalBytes:   totalBytes,
+			Message:      err.Error(),
+		})
+		return err
+	}
 
 	switch conn.Driver {
 	case "mysql", "mariadb":
@@ -1078,12 +1185,9 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 			firstBin = "mariadb"
 			secondBin = "mysql"
 		}
-		binPath, err := exec.LookPath(firstBin)
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install mysql-client or mariadb-client or set a custom path", firstBin, secondBin)
 		if err != nil {
-			binPath, err = exec.LookPath(secondBin)
-			if err != nil {
-				return "", fmt.Errorf("%s or %s executable not found in PATH; please install mysql-client or mariadb-client", firstBin, secondBin)
-			}
+			return "", emitErr(err)
 		}
 
 		host := strings.TrimSpace(conn.Host)
@@ -1101,7 +1205,7 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 
 		sqlFile, err := os.Open(filePath)
 		if err != nil {
-			return "", fmt.Errorf("failed to open SQL file: %w", err)
+			return "", emitErr(fmt.Errorf("failed to open SQL file: %w", err))
 		}
 		defer sqlFile.Close()
 
@@ -1115,7 +1219,32 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 		}
 
 		cmd := exec.CommandContext(ctx, binPath, args...)
-		cmd.Stdin = sqlFile
+		cmd.Stdin = newRestoreProgressReader(sqlFile, func(bytesRead int64, currentTable string) {
+			pct := 5.0
+			if totalBytes > 0 {
+				pct = (float64(bytesRead) / float64(totalBytes)) * 99.0
+				if bytesRead > 0 && pct < 1 {
+					pct = 1
+				}
+				if pct > 99 {
+					pct = 99
+				}
+			}
+			msg := fmt.Sprintf("Restoring with %s...", filepath.Base(binPath))
+			if currentTable != "" {
+				msg = fmt.Sprintf("Restoring table `%s`...", currentTable)
+			}
+			s.emitRestoreProgress(app.BackupProgressEvent{
+				ConnectionID: connectionID,
+				Database:     database,
+				Status:       "running",
+				Percent:      pct,
+				CurrentTable: currentTable,
+				BytesWritten: bytesRead,
+				TotalBytes:   totalBytes,
+				Message:      msg,
+			})
+		})
 		cmd.Env = os.Environ()
 		if conn.Password != "" {
 			cmd.Env = append(cmd.Env, "MYSQL_PWD="+conn.Password)
@@ -1126,7 +1255,7 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 			if msg == "" {
 				msg = err.Error()
 			}
-			return "", fmt.Errorf("%s restore failed: %s", filepath.Base(binPath), msg)
+			return "", emitErr(fmt.Errorf("%s restore failed: %s", filepath.Base(binPath), msg))
 		}
 
 	case "postgres":
@@ -1158,10 +1287,18 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 		}
 
 		if isCustomFormat {
-			binPath, err := exec.LookPath("pg_restore")
+			binPath, err := resolveBackupToolPath(opts.ToolPath, "please install postgresql-client or set a custom path", "pg_restore")
 			if err != nil {
-				return "", fmt.Errorf("pg_restore executable not found in PATH; please install postgresql-client")
+				return "", emitErr(err)
 			}
+			s.emitRestoreProgress(app.BackupProgressEvent{
+				ConnectionID: connectionID,
+				Database:     database,
+				Status:       "running",
+				Percent:      10,
+				TotalBytes:   totalBytes,
+				Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
+			})
 			args := []string{
 				"-h", host,
 				"-p", strconv.Itoa(port),
@@ -1184,13 +1321,21 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 				if msg == "" {
 					msg = err.Error()
 				}
-				return "", fmt.Errorf("pg_restore failed: %s", msg)
+				return "", emitErr(fmt.Errorf("pg_restore failed: %s", msg))
 			}
 		} else {
-			binPath, err := exec.LookPath("psql")
+			binPath, err := resolveBackupToolPath(opts.ToolPath, "please install postgresql-client or set a custom path", "psql")
 			if err != nil {
-				return "", fmt.Errorf("psql executable not found in PATH; please install postgresql-client")
+				return "", emitErr(err)
 			}
+			s.emitRestoreProgress(app.BackupProgressEvent{
+				ConnectionID: connectionID,
+				Database:     database,
+				Status:       "running",
+				Percent:      10,
+				TotalBytes:   totalBytes,
+				Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
+			})
 			args := []string{
 				"-h", host,
 				"-p", strconv.Itoa(port),
@@ -1211,7 +1356,7 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 				if msg == "" {
 					msg = err.Error()
 				}
-				return "", fmt.Errorf("psql restore failed: %s", msg)
+				return "", emitErr(fmt.Errorf("psql restore failed: %s", msg))
 			}
 		}
 
@@ -1235,10 +1380,18 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 		}
 
 	case "mongodb":
-		binPath, err := exec.LookPath("mongorestore")
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install MongoDB Database Tools or set a custom path", "mongorestore")
 		if err != nil {
-			return "", fmt.Errorf("mongorestore executable not found in PATH; please install MongoDB Database Tools")
+			return "", emitErr(err)
 		}
+		s.emitRestoreProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "running",
+			Percent:      10,
+			TotalBytes:   totalBytes,
+			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
+		})
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
 			host = "localhost"
@@ -1273,10 +1426,18 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 		}
 
 	case "mssql":
-		binPath, err := exec.LookPath("sqlcmd")
+		binPath, err := resolveBackupToolPath(opts.ToolPath, "please install Microsoft SQL Server Command Line Utilities or set a custom path", "sqlcmd")
 		if err != nil {
-			return "", fmt.Errorf("sqlcmd executable not found in PATH; please install Microsoft SQL Server Command Line Utilities")
+			return "", emitErr(err)
 		}
+		s.emitRestoreProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "running",
+			Percent:      10,
+			TotalBytes:   totalBytes,
+			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
+		})
 		host := strings.TrimSpace(conn.Host)
 		if host == "" {
 			host = "localhost"
@@ -1350,9 +1511,18 @@ func (s *SchemaService) RestoreDatabase(connectionID, database, filePath string)
 		}
 
 	default:
-		return "", fmt.Errorf("unsupported driver for restore: %s", conn.Driver)
+		return "", emitErr(fmt.Errorf("unsupported driver for restore: %s", conn.Driver))
 	}
 
+	s.emitRestoreProgress(app.BackupProgressEvent{
+		ConnectionID: connectionID,
+		Database:     database,
+		Status:       "completed",
+		Percent:      100,
+		BytesWritten: totalBytes,
+		TotalBytes:   totalBytes,
+		Message:      "Restore completed",
+	})
 	return fmt.Sprintf("Database '%s' restored successfully from %s", database, filepath.Base(filePath)), nil
 }
 

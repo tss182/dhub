@@ -38,6 +38,7 @@ type BackupProgressEvent struct {
 	TablesDone   int     `json:"tablesDone"`
 	TotalTables  int     `json:"totalTables"`
 	BytesWritten int64   `json:"bytesWritten"`
+	TotalBytes   int64   `json:"totalBytes,omitempty"`
 	Message      string  `json:"message,omitempty"`
 }
 

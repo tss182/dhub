@@ -3,7 +3,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
-import { Dialogs, Events } from '@wailsio/runtime';
+import { Call, Dialogs, Events } from '@wailsio/runtime';
 import { Popover } from '../common/Popover';
 import { ExportModal } from '../modals/ExportModal';
 import { ImportModal } from '../modals/ImportModal';
@@ -507,6 +507,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       tablesDone: number;
       totalTables: number;
       bytesWritten: number;
+      totalBytes?: number;
       message?: string;
     } | null;
   }>({
@@ -605,9 +606,33 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
+  const getRestoreCliTool = (drv?: string, filePath?: string) => {
+    switch (drv) {
+      case 'postgres': {
+        const lower = (filePath || '').toLowerCase();
+        return lower.endsWith('.dump') || lower.endsWith('.backup') || lower.endsWith('.tar')
+          ? 'pg_restore'
+          : 'psql';
+      }
+      case 'mariadb':
+        return 'mariadb';
+      case 'mongodb':
+        return 'mongorestore';
+      case 'mssql':
+        return 'sqlcmd';
+      case 'sqlite':
+      case 'clickhouse':
+      case 'oracle':
+        return '';
+      default:
+        return 'mysql';
+    }
+  };
+
   useEffect(() => {
-    if (!backupRestoreModal.isOpen || backupRestoreModal.mode !== 'backup') return;
-    const unsubscribe = Events.On('backup:progress', (event: any) => {
+    if (!backupRestoreModal.isOpen) return;
+    const eventName = backupRestoreModal.mode === 'backup' ? 'backup:progress' : 'restore:progress';
+    const unsubscribe = Events.On(eventName, (event: any) => {
       const payload = event?.data ?? event;
       if (!payload) return;
       if (
@@ -622,6 +647,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             tablesDone: payload.tablesDone || 0,
             totalTables: payload.totalTables || 0,
             bytesWritten: payload.bytesWritten || 0,
+            totalBytes: payload.totalBytes || 0,
             message: payload.message || '',
           },
         }));
@@ -690,7 +716,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   };
 
   const handleBrowseBackupToolPath = async () => {
-    const cliTool = getBackupCliTool(backupRestoreModal.connection?.driver);
+    const cliTool =
+      backupRestoreModal.mode === 'backup'
+        ? getBackupCliTool(backupRestoreModal.connection?.driver)
+        : getRestoreCliTool(backupRestoreModal.connection?.driver, backupRestoreModal.filePath);
+    if (!cliTool) return;
     try {
       const chosen: any = await Dialogs.OpenFile({
         Title: `Select ${cliTool} Executable`,
@@ -766,6 +796,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   };
 
   const handleOpenRestoreModal = async (conn: ConnectionConfig, database: string) => {
+    const cliTool = getRestoreCliTool(conn.driver);
+    const savedToolPath = cliTool ? (useSettingsStore.getState().backupToolPaths?.[cliTool] || '') : '';
     setBackupRestoreModal((prev) => ({
       ...prev,
       isOpen: true,
@@ -774,6 +806,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       database,
       filePath: '',
       isProcessing: false,
+      toolPath: savedToolPath,
+      backupProgress: null,
     }));
 
     // Prompt user immediately to pick the .sql file to restore
@@ -832,10 +866,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     setBackupRestoreModal((prev) => ({
       ...prev,
       isProcessing: true,
-      backupProgress:
-        mode === 'backup'
-          ? { percent: 0, tablesDone: 0, totalTables: 0, bytesWritten: 0, message: 'Preparing backup...' }
-          : null,
+      backupProgress: {
+        percent: 0,
+        tablesDone: 0,
+        totalTables: 0,
+        bytesWritten: 0,
+        message: mode === 'backup' ? 'Preparing backup...' : 'Preparing restore...',
+      },
     }));
 
     try {
@@ -867,10 +904,26 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         }));
         alertSuccess(msg, 'Database Backup Completed');
       } else {
-        const msg = await SchemaService.RestoreDatabase(connection.id, database, cleanPath);
-        setBackupRestoreModal((prev) => ({ ...prev, isOpen: false, isProcessing: false }));
+        const cliTool = getRestoreCliTool(connection.driver, cleanPath);
+        const cleanToolPath = backupRestoreModal.toolPath.trim();
+        if (cliTool) {
+          useSettingsStore.getState().setBackupToolPath(cliTool, cleanToolPath);
+        }
+        const msg = await Call.ByName(
+          'dhub/internal/services.SchemaService.RestoreDatabaseWithOptions',
+          connection.id,
+          database,
+          cleanPath,
+          JSON.stringify({ toolPath: cleanToolPath || undefined })
+        );
+        setBackupRestoreModal((prev) => ({
+          ...prev,
+          isOpen: false,
+          isProcessing: false,
+          backupProgress: null,
+        }));
         await handleRefreshDatabase(connection.id, database);
-        alertSuccess(msg, 'Database Restore Completed');
+        alertSuccess(String(msg || ''), 'Database Restore Completed');
       }
     } catch (err: any) {
       setBackupRestoreModal((prev) => ({ ...prev, isProcessing: false, backupProgress: null }));
@@ -6322,57 +6375,62 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   </p>
                 </div>
 
-                {isBackup && drv !== 'clickhouse' && drv !== 'oracle' && (
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
-                        Path to {cliTool}
-                      </label>
-                      <span className="text-[10px] text-zinc-500 font-mono">
-                        Optional (auto-detect in PATH)
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        disabled={backupRestoreModal.isProcessing}
-                        placeholder={`Auto-detect (${cliTool} in PATH)`}
-                        value={backupRestoreModal.toolPath}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setBackupRestoreModal((prev) => ({
-                            ...prev,
-                            toolPath: val,
-                          }));
-                        }}
-                        className="flex-1 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
-                      />
-                      {backupRestoreModal.toolPath && (
+                {drv !== 'clickhouse' && drv !== 'oracle' && (isBackup || drv !== 'sqlite') && (() => {
+                  const activeTool = isBackup
+                    ? getBackupCliTool(drv)
+                    : getRestoreCliTool(drv, backupRestoreModal.filePath);
+                  if (!activeTool) return null;
+                  return (
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                          Path to {activeTool}
+                        </label>
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          Optional (auto-detect in PATH)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          disabled={backupRestoreModal.isProcessing}
+                          placeholder={`Auto-detect (${activeTool} in PATH)`}
+                          value={backupRestoreModal.toolPath}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setBackupRestoreModal((prev) => ({
+                              ...prev,
+                              toolPath: val,
+                            }));
+                          }}
+                          className="flex-1 rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none transition-colors"
+                        />
+                        {backupRestoreModal.toolPath && (
+                          <button
+                            type="button"
+                            disabled={backupRestoreModal.isProcessing}
+                            title="Reset to auto-detect"
+                            onClick={() => {
+                              setBackupRestoreModal((prev) => ({ ...prev, toolPath: '' }));
+                              useSettingsStore.getState().setBackupToolPath(activeTool, '');
+                            }}
+                            className="p-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={backupRestoreModal.isProcessing}
-                          title="Reset to auto-detect"
-                          onClick={() => {
-                            const tool = getBackupCliTool(drv);
-                            setBackupRestoreModal((prev) => ({ ...prev, toolPath: '' }));
-                            useSettingsStore.getState().setBackupToolPath(tool, '');
-                          }}
-                          className="p-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+                          onClick={handleBrowseBackupToolPath}
+                          className="px-3 py-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-xs font-medium text-zinc-200 hover:text-white transition-colors cursor-pointer shrink-0 disabled:opacity-40"
                         >
-                          <X className="h-3.5 w-3.5" />
+                          Browse...
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={backupRestoreModal.isProcessing}
-                        onClick={handleBrowseBackupToolPath}
-                        className="px-3 py-2 rounded-lg bg-[#22242c] hover:bg-[#2c303c] border border-[#363948] text-xs font-medium text-zinc-200 hover:text-white transition-colors cursor-pointer shrink-0 disabled:opacity-40"
-                      >
-                        Browse...
-                      </button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {isBackup && (
                   <>
@@ -6609,34 +6667,49 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   </div>
                 )}
 
-                {isBackup && backupRestoreModal.isProcessing && (() => {
+                {backupRestoreModal.isProcessing && (() => {
                   const prog = backupRestoreModal.backupProgress;
                   const pct = Math.min(100, Math.max(0, Math.round(prog?.percent ?? 0)));
-                  const bytes = prog?.bytesWritten ?? 0;
-                  const sizeLabel =
-                    bytes >= 1024 * 1024
-                      ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-                      : bytes > 0
-                      ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+                  const formatBytes = (b: number) =>
+                    b >= 1024 * 1024
+                      ? `${(b / (1024 * 1024)).toFixed(1)} MB`
+                      : b > 0
+                      ? `${Math.max(1, Math.round(b / 1024))} KB`
                       : '';
+                  const bytes = prog?.bytesWritten ?? 0;
+                  const totalBytes = prog?.totalBytes ?? 0;
+                  const sizeLabel =
+                    bytes > 0 && totalBytes > 0
+                      ? `${formatBytes(bytes)} / ${formatBytes(totalBytes)}`
+                      : formatBytes(bytes);
                   return (
-                    <div className="rounded-xl bg-[#101115] border border-emerald-500/30 p-3.5 space-y-2">
+                    <div
+                      className={`rounded-xl bg-[#101115] border p-3.5 space-y-2 ${
+                        isBackup ? 'border-emerald-500/30' : 'border-amber-500/30'
+                      }`}
+                    >
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-zinc-200 font-medium truncate pr-2">
-                          {prog?.message || 'Backing up database...'}
+                          {prog?.message || (isBackup ? 'Backing up database...' : 'Restoring database...')}
                         </span>
                         <div className="flex items-center gap-2 shrink-0 font-mono">
                           {sizeLabel && (
                             <span className="text-[11px] text-zinc-400">{sizeLabel}</span>
                           )}
-                          <span className="text-emerald-400 font-bold tabular-nums">
+                          <span
+                            className={`font-bold tabular-nums ${
+                              isBackup ? 'text-emerald-400' : 'text-amber-400'
+                            }`}
+                          >
                             {pct}%
                           </span>
                         </div>
                       </div>
                       <div className="h-2 w-full rounded-full bg-[#1d1f28] overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-emerald-500 transition-all duration-150"
+                          className={`h-full rounded-full transition-all duration-150 ${
+                            isBackup ? 'bg-emerald-500' : 'bg-amber-500'
+                          }`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -6673,7 +6746,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                         <span>
                           {isBackup
                             ? `Backing up (${Math.round(backupRestoreModal.backupProgress?.percent ?? 0)}%)...`
-                            : 'Restoring...'}
+                            : `Restoring (${Math.round(backupRestoreModal.backupProgress?.percent ?? 0)}%)...`}
                         </span>
                       </>
                     ) : (
