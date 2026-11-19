@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,8 +32,9 @@ type SSHTunnelConfig struct {
 }
 
 type Tunnel struct {
-	client   *ssh.Client
-	listener net.Listener
+	client    *ssh.Client
+	listener  net.Listener
+	agentConn io.Closer
 	LocalPort int
 }
 
@@ -164,23 +166,32 @@ func RemoveKnownHost(host string, port int) error {
 
 func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 	var authMethods []ssh.AuthMethod
+	var agentConn io.Closer
+	closeAgent := func() {
+		if agentConn != nil {
+			_ = agentConn.Close()
+			agentConn = nil
+		}
+	}
 
 	if cfg.AuthType == "agent" {
 		sock := os.Getenv("SSH_AUTH_SOCK")
 		if sock == "" {
 			return nil, fmt.Errorf("SSH_AUTH_SOCK environment variable is not set; cannot connect to SSH agent")
 		}
-		agentConn, err := net.Dial("unix", sock)
+		conn, err := net.Dial("unix", sock)
 		if err != nil {
 			return nil, fmt.Errorf("failed to dial SSH agent (%s): %w", sock, err)
 		}
-		defer agentConn.Close()
-		agentClient := agent.NewClient(agentConn)
+		agentConn = conn
+		agentClient := agent.NewClient(conn)
 		signers, err := agentClient.Signers()
 		if err != nil {
+			closeAgent()
 			return nil, fmt.Errorf("failed to retrieve keys from SSH agent: %w", err)
 		}
 		if len(signers) == 0 {
+			closeAgent()
 			return nil, fmt.Errorf("SSH agent has no loaded identities (run ssh-add first)")
 		}
 		authMethods = append(authMethods, ssh.PublicKeys(signers...))
@@ -217,6 +228,7 @@ func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 	sshServer := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	client, err := ssh.Dial("tcp", sshServer, clientConfig)
 	if err != nil {
+		closeAgent()
 		return nil, fmt.Errorf("ssh dial failed: %w", err)
 	}
 
@@ -224,12 +236,14 @@ func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		client.Close()
+		closeAgent()
 		return nil, fmt.Errorf("failed to bind local tunnel listener: %w", err)
 	}
 
 	t := &Tunnel{
 		client:    client,
 		listener:  listener,
+		agentConn: agentConn,
 		LocalPort: listener.Addr().(*net.TCPAddr).Port,
 	}
 
@@ -295,16 +309,22 @@ func copyWithContext(ctx context.Context, dst net.Conn, src net.Conn) (int64, er
 }
 
 func (t *Tunnel) Close() error {
-	var err1, err2 error
+	var err1, err2, err3 error
 	if t.listener != nil {
 		err1 = t.listener.Close()
 	}
 	if t.client != nil {
 		err2 = t.client.Close()
 	}
+	if t.agentConn != nil {
+		err3 = t.agentConn.Close()
+	}
 	if err1 != nil {
 		return err1
 	}
-	return err2
+	if err2 != nil {
+		return err2
+	}
+	return err3
 }
 

@@ -66,8 +66,8 @@ func (m *SessionManager) GetOrConnect(ctx context.Context, connectionID string) 
 			s.lastPingUnixMs.Store(nowMs)
 			return s.Driver, nil
 		}
-		// Stale session, close and reconnect
-		m.Disconnect(connectionID)
+		// Stale session, close and reconnect only if it's still the same instance
+		m.disconnectIfSame(connectionID, s)
 	}
 
 	cfg, err := m.store.GetConnection(ctx, connectionID)
@@ -112,6 +112,19 @@ func (m *SessionManager) TestConnection(ctx context.Context, cfg store.Connectio
 	return drv.Ping(ctx)
 }
 
+func (m *SessionManager) disconnectIfSame(connectionID string, target *Session) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if s, ok := m.sessions[connectionID]; ok && s == target {
+		_ = s.Driver.Close()
+		if s.Tunnel != nil {
+			_ = s.Tunnel.Close()
+		}
+		delete(m.sessions, connectionID)
+	}
+}
+
 func (m *SessionManager) Disconnect(connectionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -141,6 +154,23 @@ func (m *SessionManager) CloseAll() {
 func (m *SessionManager) connect(ctx context.Context, cfg store.ConnectionConfig) (driver.DatabaseDriver, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Double-check in case another goroutine already established this session while waiting for the lock.
+	if existing, exists := m.sessions[cfg.ID]; exists {
+		nowMs := time.Now().UnixMilli()
+		if nowMs-existing.lastPingUnixMs.Load() <= sessionPingIntervalMs {
+			return existing.Driver, nil
+		}
+		if err := existing.Driver.Ping(ctx); err == nil {
+			existing.lastPingUnixMs.Store(nowMs)
+			return existing.Driver, nil
+		}
+		_ = existing.Driver.Close()
+		if existing.Tunnel != nil {
+			_ = existing.Tunnel.Close()
+		}
+		delete(m.sessions, cfg.ID)
+	}
 
 	var tun *tunnel.Tunnel
 	var err error
