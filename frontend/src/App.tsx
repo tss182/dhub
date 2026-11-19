@@ -30,7 +30,7 @@ import { SchemaDiffModal } from './components/modals/SchemaDiffModal';
 import { SnippetsModal } from './components/modals/SnippetsModal';
 import { MockDataModal } from './components/modals/MockDataModal';
 import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
-import { useAlertStore, alertSuccess, alertError, alertWarning } from './stores/useAlertStore';
+import { useAlertStore, alertSuccess, alertError, alertWarning, confirmDialog } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useUpdateStore } from './stores/useUpdateStore';
 import { useWorkspaceSessionStore } from './stores/useWorkspaceSessionStore';
@@ -72,6 +72,8 @@ import {
   HelpCircle,
   BookOpen,
   Plus,
+  Eraser,
+  Trash2,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
 import { UserManager } from './components/users/UserManager';
@@ -145,6 +147,9 @@ export function App() {
     treeDatabases,
     visibleDatabases,
     setTreeDatabases,
+    treeObjects,
+    setTreeObjects,
+    removeTreeObject,
     setActiveConnection,
   } = useConnectionStore();
   const [isRunningByTab, setIsRunningByTab] = useState<Record<string, boolean>>({});
@@ -369,6 +374,152 @@ export function App() {
       }
     } catch (err: any) {
       alertError('Failed to copy table schema: ' + (err?.message || String(err)));
+    }
+  };
+
+  const resolveTableTabMeta = (tab: WorkbenchTab) => {
+    const conn = connections.find((c) => c.id === tab.connectionId);
+    const driver = conn?.driver || tab.driver || '';
+    const targetDb = tab.database || conn?.databaseName || 'main';
+    const targetSchema =
+      tab.schema ||
+      (driver === 'postgres'
+        ? 'public'
+        : driver === 'mssql'
+        ? 'dbo'
+        : driver === 'oracle'
+        ? ''
+        : targetDb);
+    const schemaKey = `${tab.connectionId}:${targetDb}:${targetSchema}`;
+    const treeObj = (treeObjects[schemaKey] || []).find((o) => o.name === tab.table);
+    const objectType = treeObj?.type || 'table';
+    return { conn, driver, targetDb, targetSchema, schemaKey, objectType };
+  };
+
+  const handleTruncateTableFromTab = async (tab: WorkbenchTab) => {
+    if (!tab.connectionId || !tab.table) return;
+    const { conn, driver, targetDb, targetSchema, schemaKey, objectType } = resolveTableTabMeta(tab);
+    if (conn?.isReadOnly || driver === 'redis') return;
+
+    if (objectType === 'view' || objectType === 'materialized_view') {
+      alertWarning('Views cannot be truncated. Use Drop View instead.', 'Cannot Truncate View');
+      return;
+    }
+
+    const tableName = tab.table;
+    const ok = await confirmDialog({
+      title: 'Truncate Table',
+      message: `Are you sure you want to TRUNCATE table "${tableName}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
+      confirmLabel: 'Truncate Table',
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    let sql = '';
+    if (driver === 'mysql' || driver === 'mariadb' || driver === 'clickhouse') {
+      const dbPrefix = targetDb && targetDb !== 'main' ? `\`${targetDb}\`.` : '';
+      sql = `TRUNCATE TABLE ${dbPrefix}\`${tableName}\`;`;
+    } else if (driver === 'postgres') {
+      const sch = targetSchema || 'public';
+      sql = `TRUNCATE TABLE "${sch}"."${tableName}" RESTART IDENTITY;`;
+    } else if (driver === 'mssql') {
+      const sch = targetSchema || 'dbo';
+      sql = `TRUNCATE TABLE [${sch}].[${tableName}];`;
+    } else if (driver === 'sqlite') {
+      sql = `DELETE FROM "${tableName}"; DELETE FROM sqlite_sequence WHERE name = '${tableName}';`;
+    } else if (driver === 'mongodb') {
+      sql = `db.${tableName}.deleteMany({});`;
+    } else {
+      sql = `TRUNCATE TABLE "${tableName}";`;
+    }
+
+    try {
+      const execId = 'truncate-table-' + Date.now();
+      const res = await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: tab.connectionId,
+        database: targetDb,
+        schema: targetSchema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      if (res?.error) {
+        throw new Error(res.error);
+      }
+
+      SchemaService.GetObjects(tab.connectionId, targetDb, targetSchema)
+        .then((objs) => {
+          if (objs) setTreeObjects(schemaKey, objs as any);
+        })
+        .catch(() => {});
+
+      loadTableData(tab);
+      alertSuccess(`Table "${tableName}" was truncated successfully.`, 'Table Truncated');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Truncate Table');
+    }
+  };
+
+  const handleDropTableFromTab = async (tab: WorkbenchTab) => {
+    if (!tab.connectionId || !tab.table) return;
+    const { conn, driver, targetDb, targetSchema, schemaKey, objectType } = resolveTableTabMeta(tab);
+    if (conn?.isReadOnly || driver === 'redis') return;
+
+    const isView = objectType === 'view';
+    const keyword = isView ? 'VIEW' : 'TABLE';
+    const tableName = tab.table;
+
+    const ok = await confirmDialog({
+      title: `Drop ${isView ? 'View' : 'Table'}`,
+      message: `Are you sure you want to DROP ${keyword.toLowerCase()} "${tableName}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
+      confirmLabel: `Drop ${keyword.toLowerCase()}`,
+      isDanger: true,
+    });
+    if (!ok) return;
+
+    let sql = '';
+    if (driver === 'mysql' || driver === 'mariadb' || driver === 'clickhouse') {
+      sql = `DROP ${keyword} \`${tableName}\`;`;
+    } else if (driver === 'mssql') {
+      sql = `DROP ${keyword} [${targetSchema}].[${tableName}];`;
+    } else if (driver === 'mongodb') {
+      sql = `db.${tableName}.drop();`;
+    } else if (driver === 'postgres') {
+      sql = `DROP ${keyword} "${targetSchema}"."${tableName}";`;
+    } else {
+      sql = `DROP ${keyword} "${tableName}";`;
+    }
+
+    try {
+      const execId = 'drop-table-' + Date.now();
+      const res = await QueryService.ExecuteQuery({
+        executionId: execId,
+        connectionId: tab.connectionId,
+        database: targetDb,
+        schema: targetSchema,
+        sql,
+        limit: 10,
+        offset: 0,
+      } as any);
+
+      if (res?.error) {
+        throw new Error(res.error);
+      }
+
+      removeTreeObject(schemaKey, tableName);
+      closeTab(tab.id);
+
+      SchemaService.GetObjects(tab.connectionId, targetDb, targetSchema)
+        .then((objs) => {
+          if (objs) setTreeObjects(schemaKey, objs as any);
+        })
+        .catch(() => {});
+
+      alertSuccess(`Dropped ${keyword.toLowerCase()} "${tableName}".`, `${keyword} Dropped`);
+    } catch (err: any) {
+      alertError(err?.message || String(err), `Failed to Drop ${keyword}`);
     }
   };
 
@@ -921,7 +1072,7 @@ export function App() {
     e.preventDefault();
     e.stopPropagation();
     const menuWidth = 190;
-    const menuHeight = 220;
+    const menuHeight = tab.type === 'table_data' ? 300 : 220;
     const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
     const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
     setTabContextMenu({
@@ -3398,20 +3549,56 @@ export function App() {
             </>
           )}
 
-          {tabContextMenu.tab.type === 'table_data' && (
-            <button
-              type="button"
-              onClick={() => {
-                const tab = tabContextMenu.tab!;
-                setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
-                loadTableData(tab);
-              }}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-            >
-              <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Reload Data</span>
-            </button>
-          )}
+          {tabContextMenu.tab.type === 'table_data' && (() => {
+            const tab = tabContextMenu.tab!;
+            const { conn, driver, objectType } = resolveTableTabMeta(tab);
+            const canMutateTable = !!tab.table && !conn?.isReadOnly && driver !== 'redis';
+            const isView = objectType === 'view' || objectType === 'materialized_view';
+            return (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+                    loadTableData(tab);
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Reload Data</span>
+                </button>
+                {canMutateTable && (
+                  <>
+                    <div className="my-1 border-t border-[#272932]" />
+                    {!isView && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+                          handleTruncateTableFromTab(tab);
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                      >
+                        <Eraser className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                        <span>Truncate Table...</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTabContextMenu((prev) => ({ ...prev, isOpen: false }));
+                        handleDropTableFromTab(tab);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                      <span>Drop {objectType === 'view' ? 'View' : 'Table'}...</span>
+                    </button>
+                  </>
+                )}
+              </>
+            );
+          })()}
 
           <div className="my-1 border-t border-[#272932]" />
 
