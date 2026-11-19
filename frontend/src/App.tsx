@@ -1174,7 +1174,8 @@ export function App() {
     const setStatusMessage = (msg: string) =>
       setStatusMessageByTab((prev) => ({ ...prev, [tab.id]: msg }));
 
-    const savedViewState = tab.tableViewState;
+    const freshTab = useWorkbenchStore.getState().tabs.find((t) => t.id === tab.id);
+    const savedViewState = freshTab?.tableViewState ?? tab.tableViewState;
     const prevTabData = tableDataByTab[tab.id];
 
     // Priority: new param -> prevTabData -> saved tab state -> defaults
