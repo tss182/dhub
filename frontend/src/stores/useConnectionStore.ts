@@ -141,6 +141,13 @@ interface ConnectionState {
   expandedNodes: Record<string, boolean>;
   isLoading: boolean;
   selectedTable: string | null;
+  revealTarget: {
+    connectionId: string;
+    database: string;
+    schema: string;
+    table: string;
+    ts: number;
+  } | null;
 
   setConnections: (conns: ConnectionConfig[]) => void;
   setFolders: (folders: ConnectionFolder[]) => void;
@@ -155,6 +162,15 @@ interface ConnectionState {
   toggleNode: (nodeKey: string) => void;
   setNodeExpanded: (nodeKey: string, expanded: boolean) => void;
   setSelectedTable: (table: string | null) => void;
+  setRevealTarget: (
+    target: {
+      connectionId: string;
+      database: string;
+      schema: string;
+      table: string;
+      ts: number;
+    } | null
+  ) => void;
   setLoading: (loading: boolean) => void;
 
   // Folder & Ordering actions (persisted to SQLite)
@@ -398,6 +414,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       },
     })),
   setSelectedTable: (table) => set({ selectedTable: table }),
+  revealTarget: null,
+  setRevealTarget: (target) => set({ revealTarget: target }),
   setLoading: (loading) => set({ isLoading: loading }),
 
   setPendingFolderIdForNewConn: (folderId) => set({ pendingFolderIdForNewConn: folderId }),

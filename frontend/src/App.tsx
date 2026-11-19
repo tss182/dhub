@@ -106,6 +106,7 @@ import {
   Pencil,
   Copy,
   Eye,
+  LocateFixed,
   Check,
   Download,
   Upload,
@@ -653,13 +654,20 @@ export function App() {
 
   const updateOverflowTabs = React.useCallback(() => {
     const bar = tabBarContainerRef.current;
-    if (!bar || tabs.length === 0) {
+    if (tabs.length === 0) {
       setVisibleCount(0);
+      return;
+    }
+    if (!bar) {
+      setVisibleCount(tabs.length);
       return;
     }
 
     const totalBarWidth = bar.clientWidth;
-    if (totalBarWidth <= 0) return;
+    if (totalBarWidth <= 0) {
+      setVisibleCount(tabs.length);
+      return;
+    }
 
     const paddingX = 12; // px-1.5 (6px left + 6px right)
     const gap = 4; // gap-1 (4px)
@@ -687,7 +695,13 @@ export function App() {
   useEffect(() => {
     updateOverflowTabs();
     const raf = requestAnimationFrame(updateOverflowTabs);
-    return () => cancelAnimationFrame(raf);
+    const timer = setTimeout(updateOverflowTabs, 120);
+    window.addEventListener('resize', updateOverflowTabs);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+      window.removeEventListener('resize', updateOverflowTabs);
+    };
   }, [tabs.length, leftSidebarWidth, rightSidebarWidth, isRightPanelOpen, isLeftPanelOpen, updateOverflowTabs]);
 
   useEffect(() => {
@@ -2231,7 +2245,8 @@ export function App() {
         <div className="flex-1 flex flex-col min-w-0 bg-[#14151a]">
           {/* Tab Bar */}
           {(() => {
-            const clampedVisibleCount = Math.max(0, Math.min(visibleCount, tabs.length));
+            const clampedVisibleCount =
+              tabs.length === 0 ? 0 : Math.max(1, Math.min(visibleCount || tabs.length, tabs.length));
             const visibleTabs = tabs.slice(0, clampedVisibleCount);
             const overflowTabs = tabs.slice(clampedVisibleCount);
 
@@ -2728,6 +2743,26 @@ export function App() {
                             title="View Table DDL"
                           >
                             <Eye className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!activeTab.connectionId || !activeTab.table) return;
+                              const { targetDb, targetSchema } = resolveTableTabMeta(activeTab);
+                              setLeftPanelOpen(true);
+                              handleLeftSidebarTabChange('explorer');
+                              useConnectionStore.getState().setRevealTarget({
+                                connectionId: activeTab.connectionId,
+                                database: targetDb,
+                                schema: targetSchema,
+                                table: activeTab.table,
+                                ts: Date.now(),
+                              });
+                            }}
+                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title="Reveal Table in Left Sidebar"
+                          >
+                            <LocateFixed className="h-3 w-3" />
                           </button>
                         </>
                       )}

@@ -151,6 +151,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     deleteTableGroup,
     assignTableToGroup,
     reorderTableGroup,
+    revealTarget,
+    setRevealTarget,
   } = useConnectionStore(
     useShallow((s) => ({
       connections: s.connections,
@@ -189,6 +191,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       deleteTableGroup: s.deleteTableGroup,
       assignTableToGroup: s.assignTableToGroup,
       reorderTableGroup: s.reorderTableGroup,
+      revealTarget: s.revealTarget,
+      setRevealTarget: s.setRevealTarget,
     }))
   );
 
@@ -328,6 +332,119 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
   // PostgreSQL discovered schemas per database: key = `${connId}:${dbName}`
   const [treeSchemas, setTreeSchemas] = useState<Record<string, string[]>>({});
+  const [highlightedRevealKey, setHighlightedRevealKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!revealTarget) return;
+    let cancelled = false;
+    const { connectionId, database, schema, table } = revealTarget;
+
+    const runReveal = async () => {
+      const conn = connections.find((c) => c.id === connectionId);
+      if (!conn) {
+        setRevealTarget(null);
+        return;
+      }
+
+      // Expand any ancestor folders containing this connection
+      let curFolderId = connectionFolders[connectionId] ?? conn.folderId ?? null;
+      const visitedFolders = new Set<string>();
+      while (curFolderId && !visitedFolders.has(curFolderId)) {
+        visitedFolders.add(curFolderId);
+        setNodeExpanded(`folder:${curFolderId}`, true);
+        const fObj = folders.find((f) => f.id === curFolderId);
+        curFolderId = fObj?.parentId ?? null;
+      }
+
+      // Clear search filter if active so the target table is visible
+      setFilterText('');
+
+      setNodeExpanded(connectionId, true);
+
+      const targetDb = database || conn.databaseName || 'main';
+      const isSchemaDriver =
+        conn.driver === 'postgres' || conn.driver === 'mssql' || conn.driver === 'oracle';
+      const defaultSchema =
+        conn.driver === 'postgres'
+          ? 'public'
+          : conn.driver === 'mssql'
+          ? 'dbo'
+          : conn.driver === 'oracle'
+          ? (conn.username || 'SYSTEM').toUpperCase()
+          : targetDb;
+      const targetSchema = schema || defaultSchema;
+
+      try {
+        if (!treeDatabases[connectionId] || treeDatabases[connectionId].length === 0) {
+          await withConnTimeout(
+            ConnectionService.Connect(connectionId),
+            12000,
+            'Connection timed out after 12s'
+          );
+          const dbs = (await SchemaService.GetDatabases(connectionId)) ?? [];
+          const safeDbs =
+            dbs.length > 0 ? dbs : conn.databaseName ? [conn.databaseName] : ['main'];
+          if (!cancelled) setTreeDatabases(connectionId, safeDbs);
+        }
+
+        const dbNodeKey = `${connectionId}:${targetDb}`;
+        setNodeExpanded(dbNodeKey, true);
+
+        if (isSchemaDriver) {
+          let schemas = treeSchemas[dbNodeKey];
+          if (!schemas || schemas.length === 0) {
+            schemas = (await SchemaService.GetSchemas(connectionId, targetDb)) ?? [];
+            if (schemas.length === 0) schemas = [defaultSchema];
+            if (!cancelled) {
+              setTreeSchemas((prev) => ({ ...prev, [dbNodeKey]: schemas }));
+            }
+          }
+          setNodeExpanded(`${dbNodeKey}:schema:${targetSchema}`, true);
+        }
+
+        const schemaKey = `${connectionId}:${targetDb}:${targetSchema}`;
+        if (!treeObjects[schemaKey] || treeObjects[schemaKey].length === 0) {
+          const objs = (await SchemaService.GetObjects(connectionId, targetDb, targetSchema)) ?? [];
+          if (!cancelled) setTreeObjects(schemaKey, objs as any);
+        }
+
+        // Expand table group if table is assigned to one
+        const dbAssign = tableGroupAssignments[dbNodeKey];
+        const grpId = dbAssign?.[table];
+        if (grpId) {
+          setNodeExpanded(`tblgroup:${dbNodeKey}:${grpId}`, true);
+        }
+
+        setActiveConnection(connectionId, targetDb, targetSchema);
+      } catch (err) {
+        console.warn('Failed to reveal table in sidebar:', err);
+      }
+
+      if (cancelled) return;
+      const revealKey = `${connectionId}:${targetDb}:${targetSchema}:${table}`;
+      setHighlightedRevealKey(revealKey);
+      setRevealTarget(null);
+
+      // Wait for tree DOM to render, then scroll the target table into view
+      setTimeout(() => {
+        const el = document.querySelector(
+          `[data-explorer-table="${CSS.escape(revealKey)}"]`
+        ) as HTMLElement | null;
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 80);
+
+      setTimeout(() => {
+        setHighlightedRevealKey((prev) => (prev === revealKey ? null : prev));
+      }, 2200);
+    };
+
+    runReveal();
+    return () => {
+      cancelled = true;
+    };
+  }, [revealTarget]);
 
   // Drag & Drop state for sorting and grouping connections/folders or moving tables between schemas/groups
   const [draggedItem, setDraggedItem] = useState<{
@@ -2697,8 +2814,13 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                           })
                         }
                         onMouseLeave={handleItemMouseLeave}
+                        data-explorer-table={`${c.id}:main:main:${obj.name}`}
                         title={obj.name}
-                        className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                        className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-colors ${
+                          highlightedRevealKey === `${c.id}:main:main:${obj.name}`
+                            ? 'bg-blue-600/25 text-white ring-1 ring-blue-400/70'
+                            : ''
+                        }`}
                       >
                         {obj.type === 'view' ? (
                           <Eye className="h-3.5 w-3.5 text-purple-400 shrink-0" />
@@ -3102,10 +3224,15 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                               })
                                             }
                                             onMouseLeave={handleItemMouseLeave}
+                                            data-explorer-table={`${c.id}:${dbName}:${sName}:${obj.name}`}
                                             title={obj.name}
                                             className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
                                               draggedItem?.type === 'table' && draggedItem.id === objDragId
                                                 ? 'opacity-40'
+                                                : ''
+                                            } ${
+                                              highlightedRevealKey === `${c.id}:${dbName}:${sName}:${obj.name}`
+                                                ? 'bg-blue-600/25 text-white ring-1 ring-blue-400/70'
                                                 : ''
                                             }`}
                                           >
@@ -3163,10 +3290,15 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                                   })
                                                 }
                                                 onMouseLeave={handleItemMouseLeave}
+                                                data-explorer-table={`${c.id}:${dbName}:${sName}:${obj.name}`}
                                                 title={obj.name}
                                                 className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
                                                   draggedItem?.type === 'table' && draggedItem.id === objDragId
                                                     ? 'opacity-40'
+                                                    : ''
+                                                } ${
+                                                  highlightedRevealKey === `${c.id}:${dbName}:${sName}:${obj.name}`
+                                                    ? 'bg-blue-600/25 text-white ring-1 ring-blue-400/70'
                                                     : ''
                                                 }`}
                                               >
@@ -3226,10 +3358,15 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                                   })
                                                 }
                                                 onMouseLeave={handleItemMouseLeave}
+                                                data-explorer-table={`${c.id}:${dbName}:${sName}:${obj.name}`}
                                                 title={obj.name}
                                                 className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
                                                   draggedItem?.type === 'table' && draggedItem.id === objDragId
                                                     ? 'opacity-40'
+                                                    : ''
+                                                } ${
+                                                  highlightedRevealKey === `${c.id}:${dbName}:${sName}:${obj.name}`
+                                                    ? 'bg-blue-600/25 text-white ring-1 ring-blue-400/70'
                                                     : ''
                                                 }`}
                                               >
@@ -3477,10 +3614,15 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                       })
                                     }
                                     onMouseLeave={handleItemMouseLeave}
+                                    data-explorer-table={`${c.id}:${dbName}:${targetSchema}:${obj.name}`}
                                     title={obj.comment ? `${obj.name} (${obj.comment})` : obj.name}
                                     className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-opacity ${
                                       draggedItem?.type === 'table' && draggedItem.id === objDragId
                                         ? 'opacity-40'
+                                        : ''
+                                    } ${
+                                      highlightedRevealKey === `${c.id}:${dbName}:${targetSchema}:${obj.name}`
+                                        ? 'bg-blue-600/25 text-white ring-1 ring-blue-400/70'
                                         : ''
                                     }`}
                                   >
