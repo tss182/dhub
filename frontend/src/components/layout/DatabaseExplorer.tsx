@@ -116,6 +116,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     databaseTotals,
     getVisibleDatabases,
     setTreeDatabases,
+    setVisibleDatabases,
     removeTreeDatabase,
     treeObjects,
     setTreeObjects,
@@ -1274,6 +1275,18 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       const dbs = (await SchemaService.GetDatabases(conn.id)) ?? [];
       const safeDbs = dbs.length > 0 ? dbs : [dbName];
       setTreeDatabases(conn.id, safeDbs);
+
+      // Ensure the newly created database is visible by default
+      const currentVisible = useConnectionStore.getState().visibleDatabases[conn.id];
+      if (currentVisible !== undefined && !currentVisible.includes(dbName)) {
+        const nextVisibleSet = new Set([...currentVisible, dbName]);
+        const orderedVisible = safeDbs.filter((d) => nextVisibleSet.has(d));
+        setVisibleDatabases(
+          conn.id,
+          orderedVisible.length > 0 ? orderedVisible : [...currentVisible, dbName],
+          safeDbs.length
+        );
+      }
 
       // Expand node if not expanded
       if (!expandedNodes[conn.id]) {
