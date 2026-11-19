@@ -71,6 +71,12 @@ def update_index_html(latest_tag: str):
         html,
         count=1,
     )
+    html = re.sub(
+        r'(<h2[^>]*id="release-title"[^>]*>)[^<]*(</h2>)',
+        rf"\g<1>DHub {latest_tag}\g<2>",
+        html,
+        count=1,
+    )
     INDEX_HTML.write_text(html, encoding="utf-8")
 
 

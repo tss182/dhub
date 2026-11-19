@@ -92,10 +92,12 @@ if [ -f "$README_FILE" ]; then
   echo "  [✓] Updated README.md -> v$VERSION"
 fi
 
-# 6. Update pages/index.html fallback version pill
+# 6. Update pages/index.html fallback version pill, hero badge, and release title
 PAGES_HTML="$ROOT_DIR/pages/index.html"
 if [ -f "$PAGES_HTML" ]; then
   sed_inplace "s/(id=\"nav-version-pill\">)v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(<)/\1v$VERSION\3/g" "$PAGES_HTML"
+  sed_inplace "s/(id=\"hero-badge-text\">)[^<]*(<)/\1Latest Release v$VERSION\2/g" "$PAGES_HTML"
+  sed_inplace "s/(id=\"release-title\">)[^<]*(<)/\1DHub v$VERSION\2/g" "$PAGES_HTML"
   echo "  [✓] Updated pages/index.html -> v$VERSION"
 fi
 

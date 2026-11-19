@@ -6,7 +6,7 @@
   <title>DHub — Download Latest Version</title>
   <meta name="description" content="Download DHub, a lightweight, keyboard-first multi-database desktop client and SQL/NoSQL IDE for Windows, macOS, and Linux." />
   <meta property="og:title" content="DHub — Multi-Database Desktop Client" />
-  <meta property="og:description" content="Download the latest version of DHub for Windows, macOS, and Linux. Supports PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, ClickHouse, MongoDB, and Redis." />
+  <meta property="og:description" content="Download the latest version of DHub for Windows, macOS, and Linux. Supports PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, ClickHouse, MongoDB, and Redis." />
   <meta property="og:type" content="website" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -54,7 +54,7 @@
       <div class="container hero-content">
         <div class="hero-badge" id="hero-release-badge">
           <span class="pulse-dot"></span>
-          <span id="hero-badge-text">Latest Release v0.3.6</span>
+          <span id="hero-badge-text">Latest Release v0.3.11</span>
         </div>
 
         <h1 class="hero-title">
@@ -296,7 +296,7 @@
     <section id="databases" class="section section-alt">
       <div class="container">
         <div class="section-header">
-          <h2 class="section-title" data-i18n="db.title">8 Database Engines Out of the Box</h2>
+          <h2 class="section-title" data-i18n="db.title">9 Database Engines Out of the Box</h2>
           <p class="section-desc" data-i18n="db.subtitle">
             Connect to relational SQL warehouses and NoSQL stores from a single lightweight workspace.
           </p>
@@ -327,6 +327,11 @@
             <div class="db-badge sql">SQL</div>
             <h4>SQL Server</h4>
             <p data-i18n="db.mssql">Multi-database &amp; schema browsing, stored procedures &amp; T-SQL execution.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge sql">SQL</div>
+            <h4>Oracle</h4>
+            <p data-i18n="db.oracle">Schema browsing, views, materialized views, routines, triggers, sequences, PL/SQL &amp; privilege management.</p>
           </div>
           <div class="db-card">
             <div class="db-badge olap">OLAP</div>
@@ -371,22 +376,37 @@
           <div class="feature-item">
             <div class="feature-icon">⚡</div>
             <h3 data-i18n="features.f3Title">Smart Monaco Query Console</h3>
-            <p data-i18n="features.f3Desc">Context-aware SQL autocomplete, parameter binding, transaction control (AUTO/MANUAL), and dialect formatting.</p>
+            <p data-i18n="features.f3Desc">Context-aware SQL autocomplete, parameter binding, editable single-table query results, transaction control (AUTO/MANUAL), and dialect formatting.</p>
           </div>
           <div class="feature-item">
             <div class="feature-icon">📊</div>
             <h3 data-i18n="features.f4Title">Inline Grid &amp; DML Preview</h3>
-            <p data-i18n="features.f4Desc">Edit cells inline, duplicate rows, copy as SQL INSERT/UPSERT/JSON, and preview exact DML before applying.</p>
+            <p data-i18n="features.f4Desc">Multi-range selection, inline editing, duplicate rows, Copy As SQL INSERT/UPDATE/UPSERT/JSON, Value Viewer panel, and DML preview before applying.</p>
           </div>
           <div class="feature-item">
             <div class="feature-icon">🗺️</div>
-            <h3 data-i18n="features.f5Title">ER Diagrams &amp; Schema Diff</h3>
-            <p data-i18n="features.f5Desc">Interactive ER canvas, visual Table Structure Designer, and cross-connection Schema Diff migration generator.</p>
+            <h3 data-i18n="features.f5Title">ER Diagrams, DDL Viewer &amp; Schema Diff</h3>
+            <p data-i18n="features.f5Desc">Interactive ER canvas, visual Table Structure Designer, database/schema/table DDL viewer, and cross-connection Schema Diff migration generator.</p>
           </div>
           <div class="feature-item">
             <div class="feature-icon">🔄</div>
-            <h3 data-i18n="features.f6Title">Built-in Auto-Updater</h3>
-            <p data-i18n="features.f6Desc">Check for new GitHub Releases directly from Settings and download/install updates in-app.</p>
+            <h3 data-i18n="features.f6Title">Workspaces &amp; Auto-Updater</h3>
+            <p data-i18n="features.f6Desc">Save multi-tab workspace sessions, export portable JSON config backups, and install GitHub Releases updates in-app.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">📈</div>
+            <h3 data-i18n="features.f7Title">Split-Tab View &amp; Result Charts</h3>
+            <p data-i18n="features.f7Desc">Side-by-side split workbench tabs and interactive chart visualizations directly from query or table results.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">💾</div>
+            <h3 data-i18n="features.f8Title">Backup, Restore &amp; Auto CLI Tools</h3>
+            <p data-i18n="features.f8Desc">Native database backup and restore with real-time progress, cancellation, and automated client tool download/management.</p>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">👥</div>
+            <h3 data-i18n="features.f9Title">User &amp; Privilege Manager</h3>
+            <p data-i18n="features.f9Desc">Inspect and manage database users, roles, account locks, and object/admin privileges across supported engines.</p>
           </div>
         </div>
 
@@ -395,11 +415,14 @@
           <h3 class="shortcuts-title" data-i18n="shortcuts.title">Keyboard-First Workflow</h3>
           <div class="shortcuts-grid">
             <div class="shortcut-chip"><kbd>Ctrl/⌘ + P</kbd><span data-i18n="shortcuts.s1">Search Everywhere across connections</span></div>
-            <div class="shortcut-chip"><kbd>Ctrl + Enter</kbd><span data-i18n="shortcuts.s2">Execute query at cursor</span></div>
-            <div class="shortcut-chip"><kbd>Ctrl + D</kbd><span data-i18n="shortcuts.s3">Duplicate selected row(s)</span></div>
-            <div class="shortcut-chip"><kbd>Ctrl + I</kbd><span data-i18n="shortcuts.s4">Insert new row inline</span></div>
-            <div class="shortcut-chip"><kbd>Double-Click</kbd><span data-i18n="shortcuts.s5">Inline edit cell value</span></div>
-            <div class="shortcut-chip"><kbd>F1</kbd><span data-i18n="shortcuts.s6">Open Help &amp; User Guide</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + Enter</kbd><span data-i18n="shortcuts.s2">Execute query at cursor / selection</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + S</kbd><span data-i18n="shortcuts.s3">Apply staged grid changes</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + D</kbd><span data-i18n="shortcuts.s4">Duplicate selected row(s)</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + T</kbd><span data-i18n="shortcuts.s5">Toggle Value Viewer (Views) panel</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + Shift + C</kbd><span data-i18n="shortcuts.s6">Copy As (CSV, JSON, SQL INSERT/UPSERT)</span></div>
+            <div class="shortcut-chip"><kbd>Shift + Alt + F</kbd><span data-i18n="shortcuts.s7">Format SQL in active dialect</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + I</kbd><span data-i18n="shortcuts.s8">Open Settings &amp; Preferences</span></div>
+            <div class="shortcut-chip"><kbd>Ctrl/⌘ + H</kbd><span data-i18n="shortcuts.s9">Open Help &amp; User Guide</span></div>
           </div>
         </div>
 
@@ -434,7 +457,7 @@
           <div class="release-panel-header">
             <div>
               <span class="release-kicker" data-i18n="changelog.kicker">Latest Release</span>
-              <h2 id="release-title">DHub v0.3.6</h2>
+              <h2 id="release-title">DHub v0.3.11</h2>
               <p class="release-meta" id="release-meta">Recent releases &amp; changelog</p>
             </div>
             <a id="release-github-link" href="https://github.com/tss182/dhub/releases/latest" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-sm" data-i18n="changelog.viewOnGithub">
