@@ -66,6 +66,10 @@ export function RestoreDatabase(connectionID: string, database: string, filePath
     return $Call.ByID(3541253238, connectionID, database, filePath);
 }
 
+export function RestoreDatabaseWithOptions(connectionID: string, database: string, filePath: string, optionsJSON: string): $CancellablePromise<string> {
+    return $Call.ByID(2883911516, connectionID, database, filePath, optionsJSON);
+}
+
 /**
  * SaveDDLFile writes generated DDL text to the specified file path on disk.
  */

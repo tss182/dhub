@@ -51,7 +51,6 @@ export const SettingsModal: React.FC = () => {
     isSettingsOpen,
     activeSettingsTab,
     theme,
-    dataViewMode,
     defaultPageSize,
     editorFontSize,
     wordWrap,
@@ -62,7 +61,6 @@ export const SettingsModal: React.FC = () => {
     closeSettings,
     setActiveSettingsTab,
     setTheme,
-    setDataViewMode,
     setDefaultPageSize,
     setEditorFontSize,
     setWordWrap,
@@ -658,95 +656,6 @@ export const SettingsModal: React.FC = () => {
             {/* Data Grid Tab */}
             {activeSettingsTab === 'datagrid' && (
               <div className="space-y-6">
-                {/* 1. Data Display Mode: Lazy Load vs Pagination */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
-                      Data Display Mode
-                    </label>
-                  </div>
-                  <p className="text-[11px] text-zinc-400 mb-3">
-                    Choose whether tables and query results use page numbers (Pagination) or continuous scrolling (Lazy Load).
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Option: Pagination */}
-                    <div
-                      onClick={() => setDataViewMode('paged')}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-                        dataViewMode === 'paged'
-                          ? 'bg-blue-600/10 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/50'
-                          : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className={`p-1.5 rounded-lg ${
-                                dataViewMode === 'paged'
-                                  ? 'bg-blue-600 text-white'
-                                  : 'bg-[#282a35] text-zinc-400'
-                              }`}
-                            >
-                              <Layers className="h-4 w-4" />
-                            </div>
-                            <span className="font-semibold text-xs text-zinc-100">Pagination</span>
-                          </div>
-                          {dataViewMode === 'paged' && (
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
-                              <Check className="h-3 w-3 stroke-[3]" />
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] leading-relaxed text-zinc-400">
-                          Data is split into numbered pages (Page 1, 2, 3...) with First, Prev, Next, and Last controls.
-                        </p>
-                      </div>
-                      <div className="mt-3 pt-2.5 border-t border-[#2d303e] text-[10px] font-mono text-zinc-400">
-                        Recommended for large datasets
-                      </div>
-                    </div>
-
-                    {/* Option: Lazy Load */}
-                    <div
-                      onClick={() => setDataViewMode('infinite')}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-                        dataViewMode === 'infinite'
-                          ? 'bg-blue-600/10 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/50'
-                          : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className={`p-1.5 rounded-lg ${
-                                dataViewMode === 'infinite'
-                                  ? 'bg-blue-600 text-white'
-                                  : 'bg-[#282a35] text-zinc-400'
-                              }`}
-                            >
-                              <ArrowDownCircle className="h-4 w-4" />
-                            </div>
-                            <span className="font-semibold text-xs text-zinc-100">Lazy Load (Infinite)</span>
-                          </div>
-                          {dataViewMode === 'infinite' && (
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
-                              <Check className="h-3 w-3 stroke-[3]" />
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] leading-relaxed text-zinc-400">
-                          Continuous scrolling. Extra rows are fetched automatically as you scroll down.
-                        </p>
-                      </div>
-                      <div className="mt-3 pt-2.5 border-t border-[#2d303e] text-[10px] font-mono text-zinc-400">
-                        Best for rapid browsing & audit
-                      </div>
-                    </div>
-                  </div>
-                </div>
 
                 <div className="h-[1px] bg-[#272932]" />
 

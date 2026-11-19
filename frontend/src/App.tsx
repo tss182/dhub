@@ -264,6 +264,7 @@ export function App() {
       {
         page: number;
         pageSize: number;
+        totalCount?: number;
         isLoadingMore: boolean;
         lastSql: string;
         connectionId: string;
@@ -872,6 +873,7 @@ export function App() {
       | {
           page: number;
           pageSize: number;
+          totalCount?: number;
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
@@ -882,6 +884,7 @@ export function App() {
       | ((prev: {
           page: number;
           pageSize: number;
+          totalCount?: number;
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
@@ -891,6 +894,7 @@ export function App() {
         }) => {
           page: number;
           pageSize: number;
+          totalCount?: number;
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
@@ -1332,37 +1336,7 @@ export function App() {
         orderByClause = ` ORDER BY ${orderParts.join(', ')}`;
       }
 
-      // 3. Fetch total row count in background (on initial load or when filters change)
-      if (fetchMode === 'replace' && (filtersChanged || tableDataByTab[tab.id]?.totalCount === undefined)) {
-        QueryService.ExecuteQuery({
-          executionId: 'exec-count-' + Date.now(),
-          connectionId: connId,
-          database: targetDb,
-          schema: targetSchema,
-          sql: `SELECT COUNT(*) FROM ${fullTablePath}${combinedWhere};`,
-          limit: 1,
-          offset: 0,
-        } as any)
-          .then((countRes) => {
-            if (isStale()) return;
-            const countVal = countRes?.rows?.[0]?.[0];
-            const num = typeof countVal === 'number' ? countVal : parseInt(String(countVal), 10);
-            if (!isNaN(num) && num >= 0) {
-              setTableDataByTab((prev) => ({
-                ...prev,
-                [tab.id]: {
-                  ...prev[tab.id],
-                  totalCount: num,
-                },
-              }));
-            }
-          })
-          .catch((err) => {
-            console.warn('Count query failed:', err);
-          });
-      }
-
-      // 4. Query table data with LIMIT, OFFSET, WHERE and ORDER BY
+      // 3. Query table data with LIMIT, OFFSET, WHERE and ORDER BY
       const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause} LIMIT ${fetchLimit} OFFSET ${effectiveOffset};`;
 
       const execId = 'exec-tab-' + Date.now();
@@ -1667,6 +1641,7 @@ export function App() {
       setQueryPagination({
         page: 1,
         pageSize: defaultLimit,
+        totalCount: undefined,
         isLoadingMore: false,
         lastSql: sql,
         connectionId: targetConnId,
@@ -1710,6 +1685,84 @@ export function App() {
       if (last?.sql) return last.sql;
     }
     return queryPagination.lastSql;
+  };
+
+  const handleCountTableRows = async (tab: WorkbenchTab) => {
+    if (!tab.connectionId || !tab.table) return;
+    const conn = connections.find((c) => c.id === tab.connectionId);
+    const driver = conn?.driver || tab.driver;
+    if (driver === 'redis' || driver === 'mongodb') return;
+
+    const isMySQL = driver === 'mysql' || driver === 'mariadb';
+    const isMSSQL = driver === 'mssql';
+    const targetDb = tab.database || conn?.databaseName || 'main';
+    const targetSchema =
+      tab.schema || (driver === 'postgres' ? 'public' : isMSSQL ? 'dbo' : driver === 'oracle' ? '' : targetDb);
+    const quoteIdent = (name: string) =>
+      isMySQL ? '`' + name.replace(/`/g, '``') + '`' : '"' + name.replace(/"/g, '""') + '"';
+    const quotedTable = quoteIdent(tab.table);
+    const fullTablePath =
+      isMySQL && targetDb && targetDb !== 'main'
+        ? `${quoteIdent(targetDb)}.${quotedTable}`
+        : driver === 'postgres' && targetSchema
+        ? `${quoteIdent(targetSchema)}.${quotedTable}`
+        : quotedTable;
+
+    const whereClause = tableDataByTab[tab.id]?.whereClause ?? tab.tableViewState?.whereClause ?? '';
+    const cleanCustom = whereClause.trim().replace(/^where\s+/i, '').trim();
+    const combinedWhere = cleanCustom ? ` WHERE (${cleanCustom})` : '';
+
+    try {
+      const countRes = await QueryService.ExecuteQuery({
+        executionId: 'exec-count-' + Date.now(),
+        connectionId: tab.connectionId,
+        database: targetDb,
+        schema: targetSchema,
+        sql: `SELECT COUNT(*) FROM ${fullTablePath}${combinedWhere};`,
+        limit: 1,
+        offset: 0,
+      } as any);
+      const countVal = countRes?.rows?.[0]?.[0];
+      const num = typeof countVal === 'number' ? countVal : parseInt(String(countVal), 10);
+      if (!isNaN(num) && num >= 0) {
+        setTableDataByTab((prev) => ({
+          ...prev,
+          [tab.id]: {
+            ...prev[tab.id],
+            totalCount: num,
+          },
+        }));
+      }
+    } catch (err) {
+      console.warn('Count query failed:', err);
+    }
+  };
+
+  const handleCountQueryRows = async () => {
+    const pagingSql = getPagingSql();
+    if (!pagingSql || !queryPagination.connectionId) return;
+    const cleanSql = pagingSql.trim().replace(/;+\s*$/, '');
+    if (!cleanSql) return;
+
+    try {
+      const countRes = await QueryService.ExecuteQuery({
+        executionId: 'exec-qcount-' + Date.now(),
+        connectionId: queryPagination.connectionId,
+        tabId: queryPagination.tabId || currentTabId || '',
+        database: queryPagination.database,
+        schema: queryPagination.schema,
+        sql: `SELECT COUNT(*) FROM (${cleanSql}) _dhub_count_subq`,
+        limit: 1,
+        offset: 0,
+      } as any);
+      const countVal = countRes?.rows?.[0]?.[0];
+      const num = typeof countVal === 'number' ? countVal : parseInt(String(countVal), 10);
+      if (!isNaN(num) && num >= 0) {
+        setQueryPagination((p) => ({ ...p, totalCount: num }));
+      }
+    } catch (err) {
+      console.warn('Query count failed:', err);
+    }
   };
 
   const handleQueryLoadMore = async () => {
@@ -2777,6 +2830,7 @@ export function App() {
                       rows={tableDataByTab[activeTab.id]?.rows || []}
                       primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
                       totalCount={tableDataByTab[activeTab.id]?.totalCount}
+                      onCountRows={() => handleCountTableRows(activeTab)}
                       hasMore={tableDataByTab[activeTab.id]?.hasMore}
                       isLoadingMore={tableDataByTab[activeTab.id]?.isLoadingMore}
                       hasPrevious={tableDataByTab[activeTab.id]?.hasPrevious}
@@ -3254,6 +3308,8 @@ export function App() {
                             )}
                             columns={resultSource?.columns || currentRes.columns || []}
                             rows={currentRes.rows || []}
+                            totalCount={queryPagination.totalCount}
+                            onCountRows={handleCountQueryRows}
                             hasMore={currentRes.hasMore}
                             isLoadingMore={queryPagination.isLoadingMore}
                             page={queryPagination.page}

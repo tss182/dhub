@@ -546,6 +546,7 @@ interface DataGridProps {
   onSubmitChanges: (skipConfirm?: boolean) => void;
   onPreviewChanges: () => void;
   totalCount?: number;
+  onCountRows?: () => Promise<void> | void;
   hasMore?: boolean;
   isLoadingMore?: boolean;
   hasPrevious?: boolean;
@@ -675,6 +676,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onSubmitChanges,
   onPreviewChanges,
   totalCount,
+  onCountRows,
   hasMore = false,
   isLoadingMore = false,
   hasPrevious = false,
@@ -1328,17 +1330,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; colIndex: number } | null>(null);
   const [editVal, setEditVal] = useState<string>('');
   const isFirstEditRenderRef = useRef<boolean>(false);
-  const globalViewMode = useSettingsStore((state) => state.dataViewMode);
   const globalDefaultPageSize = useSettingsStore((state) => state.defaultPageSize);
   const copyFormat = useSettingsStore((state) => state.copyFormat);
-  const viewMode = globalViewMode;
 
   const [currentPage, setCurrentPage] = useState(page || 1);
   const [localPageSize, setLocalPageSize] = useState(pageSize || globalDefaultPageSize || 100);
-  const [isBatchSizeOpen, setIsBatchSizeOpen] = useState(false);
+  const [isCountingTotal, setIsCountingTotal] = useState(false);
+  const [isPageSizeOpen, setIsPageSizeOpen] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const batchSizeRef = useRef<HTMLDivElement>(null);
+  const pageSizeMenuRef = useRef<HTMLDivElement>(null);
 
   const onScrollChangeRef = useRef(onScrollChange);
   onScrollChangeRef.current = onScrollChange;
@@ -1438,24 +1439,24 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
   }, [page]);
 
-  // Close batch size dropdown on outside click or Escape
+  // Close page size dropdown on outside click or Escape
   useEffect(() => {
+    if (!isPageSizeOpen) return;
     const handleOutsideClick = (e: MouseEvent) => {
-      if (batchSizeRef.current && !batchSizeRef.current.contains(e.target as Node)) {
-        setIsBatchSizeOpen(false);
+      if (pageSizeMenuRef.current && !pageSizeMenuRef.current.contains(e.target as Node)) {
+        setIsPageSizeOpen(false);
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsBatchSizeOpen(false);
+      if (e.key === 'Escape') setIsPageSizeOpen(false);
     };
     window.addEventListener('mousedown', handleOutsideClick);
     window.addEventListener('keydown', handleKeyDown);
-  return () => {
-
+    return () => {
       window.removeEventListener('mousedown', handleOutsideClick);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [isPageSizeOpen]);
 
   // Sync external pageSize prop
   useEffect(() => {
@@ -1802,14 +1803,10 @@ WHERE ${whereClause};`;
 
   const isMultiPageInMemory = sortedRows.length > localPageSize;
 
-  // Rows to display based on viewMode
-  const displayedRows =
-    viewMode === 'paged'
-      ? isMultiPageInMemory
-        ? sortedRows.slice((currentPage - 1) * localPageSize, currentPage * localPageSize)
-        : sortedRows
-      : sortedRows;
-
+  // Rows to display for current page
+  const displayedRows = isMultiPageInMemory
+    ? sortedRows.slice((currentPage - 1) * localPageSize, currentPage * localPageSize)
+    : sortedRows;
 
   // Visual rows in display order (displayed database rows first, then new added rows at bottom)
   const visualRows = useMemo(() => {
@@ -1823,10 +1820,7 @@ WHERE ${whereClause};`;
     }> = [];
 
     displayedRows.forEach((row, rIdx) => {
-      const globalRowIndex =
-        viewMode === 'paged'
-          ? (currentPage - 1) * localPageSize + rIdx
-          : (startOffset !== undefined ? startOffset + rIdx : rIdx);
+      const globalRowIndex = (currentPage - 1) * localPageSize + rIdx;
       list.push({
         vIdx: list.length,
         rowId: globalRowIndex,
@@ -1846,7 +1840,7 @@ WHERE ${whereClause};`;
     });
 
     return list;
-  }, [displayedRows, insertedChanges, viewMode, currentPage, localPageSize, startOffset]);
+  }, [displayedRows, insertedChanges, currentPage, localPageSize]);
 
   // Rectangular cell selection range (active range)
   const selectionRange = useMemo<CellRect | null>(() => {
@@ -3321,6 +3315,16 @@ ${setClauses};`;
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
   const endRow = currentOffset + displayedRows.length;
 
+  const handleCountRows = async () => {
+    if (!onCountRows || isCountingTotal) return;
+    setIsCountingTotal(true);
+    try {
+      await onCountRows();
+    } finally {
+      setIsCountingTotal(false);
+    }
+  };
+
   // Determine effective total rows:
   // 1. If explicit totalCount is provided and >= endRow, use it.
   // 2. If client-side multi-page in memory, use rows.length.
@@ -3353,7 +3357,7 @@ ${setClauses};`;
     if (sl > 0 !== isScrolledX) {
       setIsScrolledX(sl > 0);
     }
-    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    const { scrollTop } = e.currentTarget;
 
     // Track scroll position and approximate visible database row for workspace auto-save
     const rowHeight = 28;
@@ -3374,26 +3378,6 @@ ${setClauses};`;
       debouncedScrollTimerRef.current = setTimeout(() => {
         onScrollChangeRef.current?.(scrollTop, sl, approxRowIndex, topRowOffsetPx);
       }, 200);
-    }
-
-    if (viewMode !== 'infinite') return;
-
-    // Downward infinite scroll (Load Next Batch)
-    if (hasMore && !isLoadingMore && onLoadMore) {
-      if (scrollHeight - scrollTop - clientHeight < 250) {
-        onLoadMore();
-      }
-    }
-
-    // Upward infinite scroll (Load Previous Batch)
-    if (hasPrevious && !isLoadingPrevious && onLoadPrevious) {
-      if (scrollTop < 150) {
-        scrollAdjustRef.current = {
-          prevScrollHeight: scrollHeight,
-          prevScrollTop: scrollTop,
-        };
-        onLoadPrevious();
-      }
     }
   };
 
@@ -3839,7 +3823,7 @@ ${setClauses};`;
           ref={containerRef}
           tabIndex={0}
           onScroll={handleScroll}
-          className="flex-1 overflow-auto min-h-0 relative outline-none focus:ring-1 focus:ring-blue-500/20"
+          className="flex-1 overflow-auto min-h-0 relative outline-none focus:ring-1 focus:ring-blue-500/20 pb-12"
         >
         <table
           className="border-collapse font-mono text-[12px] text-zinc-300 min-w-full"
@@ -4063,10 +4047,7 @@ ${setClauses};`;
 
                 {/* 1. Existing Database Rows */}
                 {displayedRows.map((row, rIdx) => {
-                  const globalRowIndex =
-                    viewMode === 'paged'
-                      ? (currentPage - 1) * localPageSize + rIdx
-                      : (startOffset !== undefined ? startOffset + rIdx : rIdx);
+                  const globalRowIndex = (currentPage - 1) * localPageSize + rIdx;
                   const vIdx = rIdx;
                   const staged = stagedChanges[globalRowIndex];
                   const isDeleted = staged?.type === 'delete';
@@ -4492,204 +4473,128 @@ ${setClauses};`;
           </div>
         )}
       </div>
-    </div>
 
-      {/* Pagination Footer */}
-      <div className={`flex h-9 items-center justify-between border-t px-3 ${gridBarBg} text-zinc-400 text-xs shrink-0 select-none`}>
-        {/* Left: Row Count Info */}
-        <div className="flex items-center gap-2 font-sans text-[11px]">
-          {viewMode === 'paged' ? (
-            (() => {
-              const totalDisplay = isExactTotalKnown ? String(effectiveTotal) : `${endRow}+`;
-
-            
-  return (
-                <span>
-                  Showing <strong className="text-zinc-200">{startRow}</strong> –{' '}
-                  <strong className="text-zinc-200">{endRow}</strong> of{' '}
-                  <strong className="text-zinc-200">{totalDisplay}</strong> rows
-                </span>
-              );
-            })()
-          ) : (
-            <div className="flex items-center gap-2">
-              <span>
-                Loaded <strong className="text-zinc-200">{rows.length}</strong>
-                {isExactTotalKnown ? (
-                  <> of <strong className="text-zinc-200">{effectiveTotal}</strong></>
-                ) : hasMore ? (
-                  <>+ rows</>
-                ) : null}{' '}
-                rows
-                {startOffset !== undefined && startOffset > 0 && (
-                  <span className="text-zinc-500 text-[10px] ml-1">
-                    (from #{startOffset + 1})
-                  </span>
-                )}
-              </span>
-              {hasPrevious && onLoadPrevious && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (containerRef.current) {
-                      scrollAdjustRef.current = {
-                        prevScrollHeight: containerRef.current.scrollHeight,
-                        prevScrollTop: containerRef.current.scrollTop,
-                      };
-                    }
-                    onLoadPrevious();
-                  }}
-                  disabled={isLoadingPrevious}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 text-[10px] font-medium border border-blue-500/30 cursor-pointer ml-1 transition-colors"
-                  title="Click to load previous batch"
-                >
-                  {isLoadingPrevious ? (
-                    <RefreshCw className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <ArrowUpCircle className="h-3 w-3" />
-                  )}
-                  <span>Prev</span>
-                </button>
-              )}
-              {hasMore && onLoadMore && (
-                <button
-                  type="button"
-                  onClick={onLoadMore}
-                  disabled={isLoadingMore}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 text-[10px] font-medium border border-blue-500/30 cursor-pointer ml-1 transition-colors"
-                  title="Click to load next batch"
-                >
-                  {isLoadingMore ? (
-                    <RefreshCw className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <ArrowDownCircle className="h-3 w-3" />
-                  )}
-                  <span>+{localPageSize} more</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Center: Paged Navigation Controls (if Paged Mode) */}
-        {viewMode === 'paged' ? (
-          <div className="flex items-center gap-1 font-mono">
-            <button
-              onClick={() => handleNavigatePage(1)}
-              disabled={currentPage <= 1 || isLoadingMore}
-              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title="First Page"
-            >
-              <ChevronsLeft className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => handleNavigatePage(currentPage - 1)}
-              disabled={currentPage <= 1 || isLoadingMore}
-              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title="Previous Page"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-
-            <span className="px-2 text-zinc-300 font-sans text-[11px] flex items-center gap-1">
-              <span>Page</span>
-              <strong className="text-white font-mono">{currentPage}</strong>
-              <span>of</span>
-              <strong className="text-white font-mono">
-                {totalPages}{!isExactTotalKnown ? '+' : ''}
-              </strong>
-              {isLoadingMore && <RefreshCw className="h-3 w-3 animate-spin text-blue-400 ml-1" />}
-            </span>
-
-            <button
-              onClick={() => handleNavigatePage(currentPage + 1)}
-              disabled={(isExactTotalKnown ? currentPage >= totalPages : !hasMore) || isLoadingMore}
-              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title="Next Page"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => handleNavigatePage(totalPages)}
-              disabled={!isExactTotalKnown || currentPage >= totalPages || isLoadingMore}
-              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-              title={isExactTotalKnown ? `Last Page (${totalPages})` : 'Last page unknown until end reached'}
-            >
-              <ChevronsRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-zinc-500 font-sans text-[11px]">
-            {isLoadingPrevious ? (
-              <>
-                <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
-                <span className="text-blue-400">Loading previous...</span>
-              </>
-            ) : isLoadingMore ? (
-              <>
-                <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
-                <span className="text-blue-400">Loading more...</span>
-              </>
-            ) : (
-              <>
-                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
-                <span>Lazy Load Active</span>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Right: Batch Size Selector (Opens Upward) */}
-        <div className="relative flex items-center gap-2" ref={batchSizeRef}>
-          <span className="text-zinc-400 font-sans text-[11px] font-medium">Batch size:</span>
+      {/* Floating Pagination Pill */}
+      {(displayedRows.length > 0 || currentPage > 1) && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 rounded-lg border border-[#3b3e4f] bg-[#23252c]/95 backdrop-blur-md px-2 py-1 shadow-[0_8px_24px_rgba(0,0,0,0.55)] text-xs text-zinc-300 select-none">
           <button
             type="button"
-            onClick={() => setIsBatchSizeOpen((prev) => !prev)}
-            className="flex items-center gap-1.5 h-6 rounded bg-[#22242c] hover:bg-[#2c303c] border border-[#3b3e4f] px-2 text-[11px] font-mono font-medium text-amber-300 hover:text-amber-200 transition-colors cursor-pointer shadow-xs"
-            title="Batch size per page or lazy load batch (opens upward)"
+            onClick={() => handleNavigatePage(1)}
+            disabled={currentPage <= 1 || isLoadingMore}
+            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
+            title="First Page"
           >
-            <span>{localPageSize} rows</span>
-            <ChevronUp
-              className={`h-3 w-3 text-zinc-400 transition-transform duration-150 ${
-                isBatchSizeOpen ? 'rotate-180' : ''
-              }`}
-            />
+            <ChevronsLeft className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNavigatePage(currentPage - 1)}
+            disabled={currentPage <= 1 || isLoadingMore}
+            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
+            title="Previous Page"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
           </button>
 
-          {isBatchSizeOpen && (
-            <div className="absolute bottom-full right-0 mb-1.5 min-w-[130px] rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-              <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1 flex items-center justify-between">
-                <span>Batch Size</span>
-                <span className="font-mono text-zinc-500 text-[9px]">LIMIT</span>
-              </div>
-              {Array.from(new Set([25, 50, 100, 250, 500, globalDefaultPageSize, localPageSize]))
-                .sort((a, b) => a - b)
-                .map((size) => {
-                const isSelected = size === localPageSize;
-              
-  return (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => {
-                      handlePageSizeChange(size);
-                      setIsBatchSizeOpen(false);
-                    }}
-                    className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded cursor-pointer text-xs font-mono transition-colors ${
-                      isSelected
-                        ? 'bg-blue-600 text-white font-bold'
-                        : 'text-zinc-200 hover:bg-[#2c303c] hover:text-white'
-                    }`}
-                  >
-                    <span>{size} rows</span>
-                    {isSelected && <Check className="h-3.5 w-3.5 text-white shrink-0 ml-2" />}
-                  </button>
-                );
-              })}
+          <div className="flex items-center gap-1.5 px-1.5 text-[11px] font-mono tabular-nums">
+            <div className="relative" ref={pageSizeMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsPageSizeOpen((prev) => !prev)}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-[#323541] text-zinc-100 font-medium transition-colors cursor-pointer"
+                title="Select rows per page"
+              >
+                <span>{startRow}-{endRow}</span>
+                <ChevronDown
+                  className={`h-3 w-3 text-zinc-400 transition-transform duration-150 ${
+                    isPageSizeOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+
+              {isPageSizeOpen && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 min-w-[120px] rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-2 py-1 text-[10px] font-sans font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1">
+                    Rows per page
+                  </div>
+                  {Array.from(new Set([25, 50, 100, 250, 500, 1000, globalDefaultPageSize, localPageSize]))
+                    .sort((a, b) => a - b)
+                    .map((size) => {
+                      const isSelected = size === localPageSize;
+                      return (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() => {
+                            handlePageSizeChange(size);
+                            setIsPageSizeOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between px-2.5 py-1.5 rounded cursor-pointer text-xs font-mono transition-colors ${
+                            isSelected
+                              ? 'bg-blue-600 text-white font-bold'
+                              : 'text-zinc-200 hover:bg-[#2c303c] hover:text-white'
+                          }`}
+                        >
+                          <span>{size}</span>
+                          {isSelected && <Check className="h-3.5 w-3.5 text-white shrink-0 ml-2" />}
+                        </button>
+                      );
+                    })}
+                </div>
+              )}
             </div>
-          )}
+
+            <span className="font-sans text-zinc-400">of</span>
+            {isExactTotalKnown ? (
+              <span className="text-zinc-200 font-medium">{effectiveTotal}</span>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCountRows}
+                disabled={isCountingTotal || !onCountRows}
+                className={`font-medium transition-colors ${
+                  onCountRows
+                    ? 'text-zinc-200 hover:text-blue-400 underline decoration-dotted decoration-zinc-500 hover:decoration-blue-400 underline-offset-2 cursor-pointer'
+                    : 'text-zinc-200 cursor-default'
+                }`}
+                title={onCountRows ? 'Click to count total rows' : undefined}
+              >
+                {isCountingTotal ? (
+                  <span className="inline-flex items-center gap-1 text-blue-400">
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    <span>{endRow + 1}+</span>
+                  </span>
+                ) : (
+                  `${endRow + 1}+`
+                )}
+              </button>
+            )}
+            {(isLoadingMore || isLoadingPrevious) && (
+              <RefreshCw className="h-3 w-3 animate-spin text-blue-400 ml-0.5" />
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleNavigatePage(currentPage + 1)}
+            disabled={(isExactTotalKnown ? currentPage >= totalPages : !hasMore) || isLoadingMore}
+            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
+            title="Next Page"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNavigatePage(totalPages)}
+            disabled={!isExactTotalKnown || currentPage >= totalPages || isLoadingMore}
+            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
+            title={isExactTotalKnown ? `Last Page (${totalPages})` : 'Click total count first to jump to last page'}
+          >
+            <ChevronsRight className="h-3.5 w-3.5" />
+          </button>
         </div>
-      </div>
+      )}
+    </div>
 
       {/* Column Hover Metadata Popover Card */}
       {hoveredCol && (

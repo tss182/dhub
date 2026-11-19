@@ -1,14 +1,12 @@
 import { create } from 'zustand';
 import { WorkspaceService } from '../../bindings/dhub/internal/services';
 
-export type DataViewMode = 'infinite' | 'paged';
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'sql_insert' | 'sql_update' | 'sql_upsert';
 export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'updates' | 'backup' | 'shortcuts' | 'version';
 
 interface SettingsValues {
   theme: ThemeMode;
-  dataViewMode: DataViewMode;
   defaultPageSize: number;
   editorFontSize: number;
   wordWrap: boolean;
@@ -26,7 +24,6 @@ interface SettingsState extends SettingsValues {
   toggleSettings: () => void;
   setActiveSettingsTab: (tab: SettingsTab) => void;
   setTheme: (theme: ThemeMode) => void;
-  setDataViewMode: (mode: DataViewMode) => void;
   setDefaultPageSize: (size: number) => void;
   setEditorFontSize: (size: number) => void;
   setWordWrap: (wrap: boolean) => void;
@@ -42,7 +39,6 @@ const SETTINGS_STORAGE_KEY = 'dhub_settings_v1';
 
 const DEFAULT_SETTINGS: SettingsValues = {
   theme: 'dark',
-  dataViewMode: 'infinite', // Default to infinite (Lazy Load)
   defaultPageSize: 100,     // Default batch size 100
   editorFontSize: 13,
   wordWrap: false,
@@ -76,7 +72,6 @@ function parseSettingsObject(parsed: any): SettingsValues {
   }
   return {
     theme: parsed?.theme === 'light' ? 'light' : 'dark',
-    dataViewMode: parsed?.dataViewMode === 'infinite' ? 'infinite' : 'paged',
     defaultPageSize:
       typeof parsed?.defaultPageSize === 'number' && parsed.defaultPageSize > 0
         ? parsed.defaultPageSize
@@ -140,11 +135,6 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     applyThemeToDocument(theme);
     persistSettings({ theme });
     set({ theme });
-  },
-
-  setDataViewMode: (mode) => {
-    persistSettings({ dataViewMode: mode });
-    set({ dataViewMode: mode });
   },
 
   setDefaultPageSize: (size) => {
