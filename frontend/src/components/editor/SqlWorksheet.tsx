@@ -1,8 +1,7 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
-import Editor, { OnMount, loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
-
-loader.config({ monaco });
+import Editor, { OnMount } from '@monaco-editor/react';
+import type * as MonacoTypes from 'monaco-editor';
+import { monaco } from '../../utils/monacoSetup';
 import {
   Play,
   Square,
@@ -466,7 +465,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   onExplain,
   onTxStatusChange,
 }) => {
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const editorRef = useRef<MonacoTypes.editor.IStandaloneCodeEditor | null>(null);
   const [isDbOpen, setIsDbOpen] = useState(false);
   const dbDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -703,7 +702,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   // Register SQL completion item provider with Monaco (singleton to prevent duplicate suggestions)
   useEffect(() => {
     const GLOBAL_PROVIDER_KEY = '__dhub_sql_completion_provider__';
-    const prevProvider = (window as unknown as Record<string, monaco.IDisposable | undefined>)[GLOBAL_PROVIDER_KEY];
+    const prevProvider = (window as unknown as Record<string, MonacoTypes.IDisposable | undefined>)[GLOBAL_PROVIDER_KEY];
     if (prevProvider) {
       prevProvider.dispose();
     }
@@ -731,7 +730,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         }
 
         const word = model.getWordUntilPosition(position);
-        const range: monaco.IRange = {
+        const range: MonacoTypes.IRange = {
           startLineNumber: position.lineNumber,
           endLineNumber: position.lineNumber,
           startColumn: word.startColumn,
@@ -739,8 +738,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         };
 
         const { connectionId, database, schema, driver, tableMap, availableDatabases } = metadataRef.current;
-        const suggestions: monaco.languages.CompletionItem[] = [];
-        const dedupeSuggestions = (items: monaco.languages.CompletionItem[]): monaco.languages.CompletionItem[] => {
+        const suggestions: MonacoTypes.languages.CompletionItem[] = [];
+        const dedupeSuggestions = (items: MonacoTypes.languages.CompletionItem[]): MonacoTypes.languages.CompletionItem[] => {
           const seen = new Set<string>();
           return items.filter((item) => {
             const labelStr = typeof item.label === 'string' ? item.label : item.label.label;
@@ -1052,11 +1051,11 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       },
     });
 
-    (window as unknown as Record<string, monaco.IDisposable | undefined>)[GLOBAL_PROVIDER_KEY] = provider;
+    (window as unknown as Record<string, MonacoTypes.IDisposable | undefined>)[GLOBAL_PROVIDER_KEY] = provider;
 
     return () => {
       provider.dispose();
-      const store = window as unknown as Record<string, monaco.IDisposable | undefined>;
+      const store = window as unknown as Record<string, MonacoTypes.IDisposable | undefined>;
       if (store[GLOBAL_PROVIDER_KEY] === provider) {
         delete store[GLOBAL_PROVIDER_KEY];
       }

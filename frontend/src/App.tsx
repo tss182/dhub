@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { useWorkbenchStore } from './stores/useWorkbenchStore';
 import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
@@ -7,29 +7,71 @@ import { LeftSidebar, LeftSidebarTab } from './components/layout/LeftSidebar';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
 import { RightSidebar } from './components/layout/RightSidebar';
 import { ConsoleList } from './components/layout/ConsoleList';
-import { SqlWorksheet } from './components/editor/SqlWorksheet';
-import { DataGrid } from './components/grid/DataGrid';
-import { ConnectionDialog } from './components/modals/ConnectionDialog';
-import { SearchEverywhere } from './components/modals/SearchEverywhere';
-import { SettingsModal } from './components/modals/SettingsModal';
-import { HelpModal } from './components/modals/HelpModal';
 import { AlertModal } from './components/modals/AlertModal';
 import { ToastContainer } from './components/common/ToastContainer';
 import { Popover } from './components/common/Popover';
-import { TableStructureModal } from './components/modals/CreateTableModal';
-import { ViewDdlModal } from './components/modals/ViewDdlModal';
-import { QueryHistoryPanel } from './components/history/QueryHistoryPanel';
-import { ExplainPlanPanel } from './components/explain/ExplainPlanPanel';
-import { ERDiagramView } from './components/diagram/ERDiagramView';
-import { ExportModal } from './components/modals/ExportModal';
-import { ImportModal } from './components/modals/ImportModal';
-import { UpdateModal } from './components/modals/UpdateModal';
-import { DmlPreviewModal } from './components/modals/DmlPreviewModal';
-import { RenameTabModal } from './components/modals/RenameTabModal';
-import { SchemaDiffModal } from './components/modals/SchemaDiffModal';
-import { SnippetsModal } from './components/modals/SnippetsModal';
-import { MockDataModal } from './components/modals/MockDataModal';
 import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
+
+const SqlWorksheet = lazy(() =>
+  import('./components/editor/SqlWorksheet').then((m) => ({ default: m.SqlWorksheet }))
+);
+const DataGrid = lazy(() =>
+  import('./components/grid/DataGrid').then((m) => ({ default: m.DataGrid }))
+);
+const ConnectionDialog = lazy(() =>
+  import('./components/modals/ConnectionDialog').then((m) => ({ default: m.ConnectionDialog }))
+);
+const SearchEverywhere = lazy(() =>
+  import('./components/modals/SearchEverywhere').then((m) => ({ default: m.SearchEverywhere }))
+);
+const SettingsModal = lazy(() =>
+  import('./components/modals/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+);
+const HelpModal = lazy(() =>
+  import('./components/modals/HelpModal').then((m) => ({ default: m.HelpModal }))
+);
+const TableStructureModal = lazy(() =>
+  import('./components/modals/CreateTableModal').then((m) => ({ default: m.TableStructureModal }))
+);
+const ViewDdlModal = lazy(() =>
+  import('./components/modals/ViewDdlModal').then((m) => ({ default: m.ViewDdlModal }))
+);
+const QueryHistoryPanel = lazy(() =>
+  import('./components/history/QueryHistoryPanel').then((m) => ({ default: m.QueryHistoryPanel }))
+);
+const ExplainPlanPanel = lazy(() =>
+  import('./components/explain/ExplainPlanPanel').then((m) => ({ default: m.ExplainPlanPanel }))
+);
+const ERDiagramView = lazy(() =>
+  import('./components/diagram/ERDiagramView').then((m) => ({ default: m.ERDiagramView }))
+);
+const ExportModal = lazy(() =>
+  import('./components/modals/ExportModal').then((m) => ({ default: m.ExportModal }))
+);
+const ImportModal = lazy(() =>
+  import('./components/modals/ImportModal').then((m) => ({ default: m.ImportModal }))
+);
+const UpdateModal = lazy(() =>
+  import('./components/modals/UpdateModal').then((m) => ({ default: m.UpdateModal }))
+);
+const DmlPreviewModal = lazy(() =>
+  import('./components/modals/DmlPreviewModal').then((m) => ({ default: m.DmlPreviewModal }))
+);
+const RenameTabModal = lazy(() =>
+  import('./components/modals/RenameTabModal').then((m) => ({ default: m.RenameTabModal }))
+);
+const SchemaDiffModal = lazy(() =>
+  import('./components/modals/SchemaDiffModal').then((m) => ({ default: m.SchemaDiffModal }))
+);
+const SnippetsModal = lazy(() =>
+  import('./components/modals/SnippetsModal').then((m) => ({ default: m.SnippetsModal }))
+);
+const MockDataModal = lazy(() =>
+  import('./components/modals/MockDataModal').then((m) => ({ default: m.MockDataModal }))
+);
+const UserManager = lazy(() =>
+  import('./components/users/UserManager').then((m) => ({ default: m.UserManager }))
+);
 import { useAlertStore, alertSuccess, alertError, alertWarning, confirmDialog } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useUpdateStore } from './stores/useUpdateStore';
@@ -76,7 +118,6 @@ import {
   Trash2,
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv } from './types/domain';
-import { UserManager } from './components/users/UserManager';
 import { parseSingleTableSelect } from './utils/querySource';
 
 interface ChangeTarget {
@@ -1174,53 +1215,14 @@ export function App() {
       effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
       fetchLimit = effectivePageSize + 1;
     } else {
-      // 'replace'
-      if (offset === 0 && savedViewState && newWhereClause === undefined && newSortConfigs === undefined) {
-        let targetTopRow: number | undefined = undefined;
-
-        if (savedViewState.topRowIndex !== undefined && savedViewState.topRowIndex >= 0) {
-          targetTopRow = savedViewState.topRowIndex;
-        } else if (
-          savedViewState.offset !== undefined &&
-          savedViewState.scrollTop !== undefined &&
-          savedViewState.scrollTop > 0
-        ) {
-          targetTopRow = savedViewState.offset + Math.floor(savedViewState.scrollTop / 28);
-        } else if (savedViewState.activeRowIndex !== undefined && savedViewState.activeRowIndex > 0) {
-          // If only activeRowIndex was saved, preserve it at the bottom/end of the visible viewport (~24 rows)
-          targetTopRow = Math.max(0, savedViewState.activeRowIndex - 24);
-        }
-
-        if (targetTopRow !== undefined && targetTopRow > 0) {
-          // Keep a buffer of 15 rows before targetTopRow for upward scrolling
-          const bufferBefore = Math.min(15, targetTopRow);
-          effectiveOffset = targetTopRow - bufferBefore;
-          effectivePage = Math.floor(effectiveOffset / effectivePageSize) + 1;
-
-          // Recompute exact scrollTop relative to effectiveOffset so targetTopRow is at the top of the viewport
-          const topRowOffset = savedViewState.topRowOffsetPx || 0;
-          const restoredScrollTop = bufferBefore * 28 + topRowOffset;
-
-          // Update tab's tableViewState with the adjusted scrollTop and offset
-          const currTabs = useWorkbenchStore.getState().tabs;
-          useWorkbenchStore.setState({
-            tabs: currTabs.map((t) =>
-              t.id === tab.id
-                ? {
-                    ...t,
-                    tableViewState: {
-                      ...(t.tableViewState || {}),
-                      offset: effectiveOffset,
-                      scrollTop: restoredScrollTop,
-                      startOffset: effectiveOffset,
-                    },
-                  }
-                : t
-            ),
-          });
-        } else if (savedViewState.offset !== undefined && savedViewState.offset > 0) {
-          effectiveOffset = savedViewState.offset;
-          effectivePage = savedViewState.page || Math.floor(effectiveOffset / effectivePageSize) + 1;
+      // 'replace': restore active page from savedViewState if opening/restoring tab
+      if (offset === 0 && page === 1 && savedViewState && newWhereClause === undefined && newSortConfigs === undefined) {
+        const savedPage =
+          savedViewState.page ||
+          (savedViewState.offset ? Math.floor(savedViewState.offset / effectivePageSize) + 1 : 1);
+        if (savedPage > 1) {
+          effectivePage = savedPage;
+          effectiveOffset = (savedPage - 1) * effectivePageSize;
         }
       }
       fetchLimit = effectivePageSize + 1;
@@ -1259,7 +1261,7 @@ export function App() {
           error: null,
           totalCount: filtersChanged ? undefined : prev[tab.id]?.totalCount,
           hasMore: false,
-          hasPrevious: effectiveOffset > 0,
+          hasPrevious: false,
           startOffset: effectiveOffset,
           pageSize: effectivePageSize,
           page: effectivePage,
@@ -2047,6 +2049,7 @@ export function App() {
   };
 
   return (
+    <Suspense fallback={null}>
     <div className="flex h-screen w-screen flex-col bg-[#121317] text-zinc-300 font-sans select-none overflow-hidden">
       {/* Top Titlebar / Islands Header */}
       <header className="flex h-11 items-center justify-between border-b border-[#272932] px-4 bg-[#14151a]">
@@ -2833,8 +2836,6 @@ export function App() {
                       onCountRows={() => handleCountTableRows(activeTab)}
                       hasMore={tableDataByTab[activeTab.id]?.hasMore}
                       isLoadingMore={tableDataByTab[activeTab.id]?.isLoadingMore}
-                      hasPrevious={tableDataByTab[activeTab.id]?.hasPrevious}
-                      isLoadingPrevious={tableDataByTab[activeTab.id]?.isLoadingPrevious}
                       startOffset={tableDataByTab[activeTab.id]?.startOffset ?? activeTab.tableViewState?.offset ?? 0}
                       page={tableDataByTab[activeTab.id]?.page || 1}
                       pageSize={tableDataByTab[activeTab.id]?.pageSize || 100}
@@ -2906,20 +2907,30 @@ export function App() {
                         loadTableData(activeTab, newOffset, size, 'replace', newPage);
                       }}
                       onPageSizeChange={(newSize) => {
+                        const currTabs = useWorkbenchStore.getState().tabs;
+                        useWorkbenchStore.setState({
+                          tabs: currTabs.map((t) =>
+                            t.id === activeTab.id
+                              ? {
+                                  ...t,
+                                  tableViewState: {
+                                    ...(t.tableViewState || {}),
+                                    page: 1,
+                                    offset: 0,
+                                    pageSize: newSize,
+                                    scrollTop: 0,
+                                  },
+                                }
+                              : t
+                          ),
+                        });
                         loadTableData(activeTab, 0, newSize, 'replace', 1);
-                      }}
-                      onLoadMore={() => {
-                        const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        loadTableData(activeTab, 0, currentSize, 'append');
-                      }}
-                      onLoadPrevious={() => {
-                        const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        loadTableData(activeTab, 0, currentSize, 'prepend');
                       }}
                       onRefresh={() => {
                         const currentSize = tableDataByTab[activeTab.id]?.pageSize || 100;
-                        const currentStart = tableDataByTab[activeTab.id]?.startOffset || 0;
-                        loadTableData(activeTab, currentStart, currentSize, 'replace');
+                        const currentPage = tableDataByTab[activeTab.id]?.page || 1;
+                        const currentStart = (currentPage - 1) * currentSize;
+                        loadTableData(activeTab, currentStart, currentSize, 'replace', currentPage);
                       }}
                       onSubmitChanges={(skip) => handleSubmitChanges(skip === true)}
                       onPreviewChanges={() => handlePreviewChanges()}
@@ -3858,6 +3869,7 @@ export function App() {
         </div>
       </footer>
     </div>
+    </Suspense>
   );
 }
 

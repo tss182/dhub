@@ -2528,43 +2528,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
             <tbody>
               {displayedRows.length === 0 && insertedChanges.length === 0 ? null : (
                 <>
-                  {hasPrevious && (
-                    <tr className="bg-[#121318] border-b border-[#22242c] hover:bg-[#181a22] transition-colors">
-                      <td
-                        colSpan={columns.length + 2}
-                        className="py-1 px-3 text-center"
-                        style={{ position: 'sticky', left: 0 }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (containerRef.current) {
-                              scrollAdjustRef.current = {
-                                prevScrollHeight: containerRef.current.scrollHeight,
-                                prevScrollTop: containerRef.current.scrollTop,
-                              };
-                            }
-                            onLoadPrevious?.();
-                          }}
-                          disabled={isLoadingPrevious}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-blue-300 text-[11px] font-medium border border-blue-500/30 cursor-pointer transition-colors shadow-xs"
-                          title="Load previous batch of rows"
-                        >
-                          {isLoadingPrevious ? (
-                            <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />
-                          ) : (
-                            <ArrowUpCircle className="h-3 w-3" />
-                          )}
-                          <span>
-                            {isLoadingPrevious
-                              ? 'Loading previous rows...'
-                              : `Load previous rows (${Math.min(localPageSize, startOffset || 0)} rows above)`}
-                          </span>
-                        </button>
-                      </td>
-                    </tr>
-                  )}
-
                   {displayedRows.map((row, rIdx) => {
                     const globalRowIndex = (currentPage - 1) * localPageSize + rIdx;
                     const vIdx = rIdx;

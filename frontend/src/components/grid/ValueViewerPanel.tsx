@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import Editor, { OnMount, loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor';
+import Editor, { OnMount } from '@monaco-editor/react';
+import '../../utils/monacoSetup';
 import {
   X,
   Copy,
@@ -24,8 +24,6 @@ import {
   Edit3,
   PanelRight,
 } from 'lucide-react';
-
-loader.config({ monaco });
 
 export type ValueFormat = 'auto' | 'html' | 'json' | 'xml' | 'text';
 

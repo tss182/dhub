@@ -1,9 +1,8 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
 import { ConsoleList } from './ConsoleList';
-import { ValueViewerPanel } from '../grid/ValueViewerPanel';
 import { Popover } from '../common/Popover';
 import {
   Terminal,
@@ -12,6 +11,10 @@ import {
   X,
 } from 'lucide-react';
 import { alertWarning } from '../../stores/useAlertStore';
+
+const ValueViewerPanel = lazy(() =>
+  import('../grid/ValueViewerPanel').then((m) => ({ default: m.ValueViewerPanel }))
+);
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 
@@ -155,20 +158,22 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         {activeRightSidebarTab === 'consoles' ? (
           <ConsoleList onRename={onRename} hideHeader={true} />
         ) : (
-          <ValueViewerPanel
-            inSidebar={true}
-            isOpen={true}
-            width={width}
-            onWidthChange={onWidthChange}
-            columnName={activeCellViewer?.columnName}
-            columnType={activeCellViewer?.columnType}
-            rowIndex={activeCellViewer?.rowIndex}
-            columnIndex={activeCellViewer?.columnIndex}
-            tableName={activeCellViewer?.tableName}
-            rawValue={activeCellViewer?.rawValue}
-            onSave={activeCellViewer?.onSave}
-            onClose={toggleRightPanel}
-          />
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-xs text-zinc-500">Loading viewer...</div>}>
+            <ValueViewerPanel
+              inSidebar={true}
+              isOpen={true}
+              width={width}
+              onWidthChange={onWidthChange}
+              columnName={activeCellViewer?.columnName}
+              columnType={activeCellViewer?.columnType}
+              rowIndex={activeCellViewer?.rowIndex}
+              columnIndex={activeCellViewer?.columnIndex}
+              tableName={activeCellViewer?.tableName}
+              rawValue={activeCellViewer?.rawValue}
+              onSave={activeCellViewer?.onSave}
+              onClose={toggleRightPanel}
+            />
+          </Suspense>
         )}
       </div>
     </div>
