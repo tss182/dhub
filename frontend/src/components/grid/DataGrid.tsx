@@ -1501,8 +1501,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const revertTabChanges = useGridEditStore((state) => state.revertTabChanges);
   const stagedCount = Object.keys(stagedChanges).length;
 
+  type CellRect = { startR: number; endR: number; startC: number; endC: number };
   const [selectionAnchor, setSelectionAnchor] = useState<{ r: number; c: number } | null>(null);
   const [selectionFocus, setSelectionFocus] = useState<{ r: number; c: number } | null>(null);
+  const [additionalSelections, setAdditionalSelections] = useState<CellRect[]>([]);
   const isDraggingRef = useRef(false);
   const [contextMenu, setContextMenu] = useState<{
     isOpen: boolean;
@@ -1567,6 +1569,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const newRowId = -Date.now();
     stageRowInsert(tabId, newRowId);
     const newRowVIdx = displayedRows.length + insertedChanges.length;
+    setAdditionalSelections([]);
     setSelectionAnchor({ r: newRowVIdx, c: 0 });
     setSelectionFocus({ r: newRowVIdx, c: columns.length > 0 ? columns.length - 1 : 0 });
 
@@ -1845,8 +1848,8 @@ WHERE ${whereClause};`;
     return list;
   }, [displayedRows, insertedChanges, viewMode, currentPage, localPageSize, startOffset]);
 
-  // Rectangular cell selection range
-  const selectionRange = useMemo(() => {
+  // Rectangular cell selection range (active range)
+  const selectionRange = useMemo<CellRect | null>(() => {
     if (!selectionAnchor || !selectionFocus) return null;
     return {
       startR: Math.min(selectionAnchor.r, selectionFocus.r),
@@ -1856,15 +1859,92 @@ WHERE ${whereClause};`;
     };
   }, [selectionAnchor, selectionFocus]);
 
+  // All selected ranges (committed Ctrl/Cmd ranges + current active range)
+  const allSelectionRanges = useMemo<CellRect[]>(() => {
+    if (!selectionRange) return additionalSelections;
+    return [...additionalSelections, selectionRange];
+  }, [additionalSelections, selectionRange]);
+
   const isCellSelected = (vIdx: number, cIdx: number) => {
-    if (!selectionRange) return false;
-    return (
-      vIdx >= selectionRange.startR &&
-      vIdx <= selectionRange.endR &&
-      cIdx >= selectionRange.startC &&
-      cIdx <= selectionRange.endC
+    return allSelectionRanges.some(
+      (rng) => vIdx >= rng.startR && vIdx <= rng.endR && cIdx >= rng.startC && cIdx <= rng.endC
     );
   };
+
+  const isRowFullySelected = (vIdx: number) => {
+    if (columns.length === 0) return false;
+    return allSelectionRanges.some(
+      (rng) => vIdx >= rng.startR && vIdx <= rng.endR && rng.startC === 0 && rng.endC === columns.length - 1
+    );
+  };
+
+  const removeRowFromRects = (rects: CellRect[], targetR: number): CellRect[] => {
+    const result: CellRect[] = [];
+    for (const rect of rects) {
+      if (targetR < rect.startR || targetR > rect.endR) {
+        result.push(rect);
+      } else {
+        if (targetR > rect.startR) {
+          result.push({ ...rect, endR: targetR - 1 });
+        }
+        if (targetR < rect.endR) {
+          result.push({ ...rect, startR: targetR + 1 });
+        }
+      }
+    }
+    return result;
+  };
+
+  const removeCellFromRects = (rects: CellRect[], targetR: number, targetC: number): CellRect[] => {
+    const result: CellRect[] = [];
+    for (const rect of rects) {
+      if (targetR < rect.startR || targetR > rect.endR || targetC < rect.startC || targetC > rect.endC) {
+        result.push(rect);
+      } else {
+        if (targetR > rect.startR) {
+          result.push({ startR: rect.startR, endR: targetR - 1, startC: rect.startC, endC: rect.endC });
+        }
+        if (targetR < rect.endR) {
+          result.push({ startR: targetR + 1, endR: rect.endR, startC: rect.startC, endC: rect.endC });
+        }
+        if (targetC > rect.startC) {
+          result.push({ startR: targetR, endR: targetR, startC: rect.startC, endC: targetC - 1 });
+        }
+        if (targetC < rect.endC) {
+          result.push({ startR: targetR, endR: targetR, startC: targetC + 1, endC: rect.endC });
+        }
+      }
+    }
+    return result;
+  };
+
+  const applyRemainingRects = (remaining: CellRect[]) => {
+    if (remaining.length === 0) {
+      setAdditionalSelections([]);
+      setSelectionAnchor(null);
+      setSelectionFocus(null);
+    } else {
+      const last = remaining[remaining.length - 1];
+      setAdditionalSelections(remaining.slice(0, -1));
+      setSelectionAnchor({ r: last.startR, c: last.startC });
+      setSelectionFocus({ r: last.endR, c: last.endC });
+    }
+  };
+
+  const selectionSummary = useMemo(() => {
+    if (allSelectionRanges.length === 0) return undefined;
+    if (allSelectionRanges.length === 1) {
+      const r = allSelectionRanges[0];
+      return `${r.endR - r.startR + 1}r × ${r.endC - r.startC + 1}c`;
+    }
+    const rSet = new Set<number>();
+    const cSet = new Set<number>();
+    allSelectionRanges.forEach((rng) => {
+      for (let r = rng.startR; r <= rng.endR; r++) rSet.add(r);
+      for (let c = rng.startC; c <= rng.endC; c++) cSet.add(c);
+    });
+    return `${rSet.size}r × ${cSet.size}c`;
+  }, [allSelectionRanges]);
 
   // Restore initial scroll or scroll to target row on mount or workspace restore
   useEffect(() => {
@@ -1885,6 +1965,7 @@ WHERE ${whereClause};`;
         if (targetRowIndex !== undefined && targetRowIndex >= 0) {
           const matchIdx = visualRows.findIndex((vr) => vr.globalRowIndex === targetRowIndex);
           if (matchIdx !== -1) {
+            setAdditionalSelections([]);
             setSelectionAnchor({ r: matchIdx, c: 0 });
             setSelectionFocus({ r: matchIdx, c: Math.min(columns.length - 1, 1) });
             if (st === undefined || st === 0) {
@@ -1902,14 +1983,16 @@ WHERE ${whereClause};`;
   }, [tabId, displayedRows.length, targetRowIndex, initialScrollTop, initialScrollLeft]);
 
   const selectedRowKeys = useMemo(() => {
-    if (!selectionRange) return new Set<number>();
+    if (allSelectionRanges.length === 0) return new Set<number>();
     const set = new Set<number>();
-    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
-      const vr = visualRows[r];
-      if (vr) set.add(vr.rowId);
-    }
+    allSelectionRanges.forEach((rng) => {
+      for (let r = rng.startR; r <= rng.endR; r++) {
+        const vr = visualRows[r];
+        if (vr) set.add(vr.rowId);
+      }
+    });
     return set;
-  }, [selectionRange, visualRows]);
+  }, [allSelectionRanges, visualRows]);
 
   const selectedRowIndex = useMemo(() => {
     if (!selectionFocus) return null;
@@ -2058,6 +2141,7 @@ WHERE ${whereClause};`;
     e.stopPropagation();
 
     if (!isCellSelected(vIdx, cIdx)) {
+      setAdditionalSelections([]);
       setSelectionAnchor({ r: vIdx, c: cIdx });
       setSelectionFocus({ r: vIdx, c: cIdx });
     }
@@ -2085,6 +2169,7 @@ WHERE ${whereClause};`;
     e.stopPropagation();
 
     if (!isCellSelected(vIdx, 0)) {
+      setAdditionalSelections([]);
       setSelectionAnchor({ r: vIdx, c: 0 });
       setSelectionFocus({ r: vIdx, c: columns.length - 1 });
     }
@@ -2109,7 +2194,18 @@ WHERE ${whereClause};`;
 
   const getFormattedCopyText = (fmt?: CopyFormat) => {
     const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
-    if (!selectionRange || columns.length === 0) return '';
+    if (allSelectionRanges.length === 0 || columns.length === 0) return '';
+    const selectedRowSet = new Set<number>();
+    const selectedColSet = new Set<number>();
+    allSelectionRanges.forEach((rng) => {
+      for (let r = rng.startR; r <= rng.endR; r++) selectedRowSet.add(r);
+      for (let c = rng.startC; c <= rng.endC; c++) selectedColSet.add(c);
+    });
+    const selectedRowIndices = Array.from(selectedRowSet).sort((a, b) => a - b);
+    const selectedColIndices = Array.from(selectedColSet).sort((a, b) => a - b);
+    if (selectedRowIndices.length === 0 || selectedColIndices.length === 0) return '';
+    const isMultiRange = allSelectionRanges.length > 1;
+
     const tbl = tableName || 'table_name';
     const isMySQL = (driver || '').toLowerCase() === 'mysql' || (driver || '').toLowerCase() === 'mariadb' || (driver || '').toLowerCase() === 'clickhouse';
     const isMSSQL = (driver || '').toLowerCase() === 'mssql' || (driver || '').toLowerCase() === 'sqlserver';
@@ -2137,11 +2233,12 @@ WHERE ${whereClause};`;
     // 1. JSON
     if (targetFormat === 'json') {
       const list: Record<string, any>[] = [];
-      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      for (const r of selectedRowIndices) {
         const vr = visualRows[r];
         if (!vr) continue;
         const rowObj: Record<string, any> = {};
-        for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        for (const c of selectedColIndices) {
+          if (isMultiRange && !isCellSelected(r, c)) continue;
           const col = columns[c];
           if (!col) continue;
           rowObj[col.name] = getVal(vr, c, col.name);
@@ -2153,19 +2250,18 @@ WHERE ${whereClause};`;
 
     // 2. SQL INSERT
     if (targetFormat === 'sql_insert') {
-      const selectedCols: ColumnMeta[] = [];
-      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
-        if (columns[c]) selectedCols.push(columns[c]);
+      const selectedCols: Array<{ col: ColumnMeta; cIdx: number }> = [];
+      for (const c of selectedColIndices) {
+        if (columns[c]) selectedCols.push({ col: columns[c], cIdx: c });
       }
       if (selectedCols.length === 0) return '';
-      const colNames = selectedCols.map((c) => quoteIdent(c.name)).join(', ');
+      const colNames = selectedCols.map(({ col }) => quoteIdent(col.name)).join(', ');
       const valueTuples: string[] = [];
-      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      for (const r of selectedRowIndices) {
         const vr = visualRows[r];
         if (!vr) continue;
-        const vals = selectedCols.map((col, idx) => {
-          const cIdx = selectionRange.startC + idx;
-          const val = getVal(vr, cIdx, col.name);
+        const vals = selectedCols.map(({ col, cIdx }) => {
+          const val = !isMultiRange || isCellSelected(r, cIdx) ? getVal(vr, cIdx, col.name) : null;
           return formatSqlLiteral(val, col.dataType);
         });
         valueTuples.push(`  (${vals.join(', ')})`);
@@ -2178,16 +2274,17 @@ ${valueTuples.join(',\n')};`;
     // 3. SQL UPDATE
     if (targetFormat === 'sql_update') {
       const statements: string[] = [];
-      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      for (const r of selectedRowIndices) {
         const vr = visualRows[r];
         if (!vr) continue;
 
+        const rowSelectedCols = selectedColIndices.filter((c) => !isMultiRange || isCellSelected(r, c));
         const setClauses: string[] = [];
-        for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+        for (const c of rowSelectedCols) {
           const col = columns[c];
           if (!col) continue;
           const isPK = Boolean(col.isPrimaryKey || primaryKeys.includes(col.name));
-          if (!isPK || selectionRange.startC === selectionRange.endC) {
+          if (!isPK || rowSelectedCols.length === 1) {
             const val = getVal(vr, c, col.name);
             setClauses.push(`${quoteIdent(col.name)} = ${formatSqlLiteral(val, col.dataType)}`);
           }
@@ -2211,7 +2308,7 @@ ${valueTuples.join(',\n')};`;
 
         if (!whereClause) {
           const fallbackConds: string[] = [];
-          for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+          for (const c of rowSelectedCols) {
             const col = columns[c];
             if (!col) continue;
             const val = getVal(vr, c, col.name);
@@ -2233,19 +2330,19 @@ WHERE ${whereClause};`);
 
     // 4. SQL UPSERT
     if (targetFormat === 'sql_upsert') {
-      const selectedCols: ColumnMeta[] = [];
-      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
-        if (columns[c]) selectedCols.push(columns[c]);
+      const selectedColsWithIdx: Array<{ col: ColumnMeta; cIdx: number }> = [];
+      for (const c of selectedColIndices) {
+        if (columns[c]) selectedColsWithIdx.push({ col: columns[c], cIdx: c });
       }
-      if (selectedCols.length === 0) return '';
+      if (selectedColsWithIdx.length === 0) return '';
+      const selectedCols = selectedColsWithIdx.map(({ col }) => col);
       const colNames = selectedCols.map((c) => quoteIdent(c.name)).join(', ');
       const valueTuples: string[] = [];
-      for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+      for (const r of selectedRowIndices) {
         const vr = visualRows[r];
         if (!vr) continue;
-        const vals = selectedCols.map((col, idx) => {
-          const cIdx = selectionRange.startC + idx;
-          const val = getVal(vr, cIdx, col.name);
+        const vals = selectedColsWithIdx.map(({ col, cIdx }) => {
+          const val = !isMultiRange || isCellSelected(r, cIdx) ? getVal(vr, cIdx, col.name) : null;
           return formatSqlLiteral(val, col.dataType);
         });
         valueTuples.push(`  (${vals.join(', ')})`);
@@ -2307,7 +2404,7 @@ ${setClauses};`;
     // 4. Default: CSV (RFC 4180 standard)
     const lines: string[] = [];
     const headerCols: string[] = [];
-    for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+    for (const c of selectedColIndices) {
       if (columns[c]) {
         const name = columns[c].name;
         headerCols.push(
@@ -2319,14 +2416,14 @@ ${setClauses};`;
     }
     lines.push(headerCols.join(','));
 
-    for (let r = selectionRange.startR; r <= selectionRange.endR; r++) {
+    for (const r of selectedRowIndices) {
       const vr = visualRows[r];
       if (!vr) continue;
       const cellVals: string[] = [];
-      for (let c = selectionRange.startC; c <= selectionRange.endC; c++) {
+      for (const c of selectedColIndices) {
         const col = columns[c];
         if (!col) continue;
-        const raw = getVal(vr, c, col.name);
+        const raw = !isMultiRange || isCellSelected(r, c) ? getVal(vr, c, col.name) : null;
         if (raw === null || raw === undefined) {
           cellVals.push('');
         } else {
@@ -2344,46 +2441,41 @@ ${setClauses};`;
   };
 
   const handleSetSelectedToNull = (targetVIdx?: number | null, targetCIdx?: number | null) => {
-    let startR = selectionRange?.startR;
-    let endR = selectionRange?.endR;
-    let startC = selectionRange?.startC;
-    let endC = selectionRange?.endC;
-
-    if (startR === undefined || endR === undefined || startC === undefined || endC === undefined) {
+    let ranges: CellRect[] = allSelectionRanges;
+    if (ranges.length === 0) {
       if (targetVIdx !== null && targetVIdx !== undefined && targetCIdx !== null && targetCIdx !== undefined) {
-        startR = targetVIdx;
-        endR = targetVIdx;
-        startC = targetCIdx;
-        endC = targetCIdx;
+        ranges = [{ startR: targetVIdx, endR: targetVIdx, startC: targetCIdx, endC: targetCIdx }];
       } else {
         return;
       }
     }
 
-    for (let r = startR; r <= endR; r++) {
-      const vr = visualRows[r];
-      if (!vr) continue;
-      for (let c = startC; c <= endC; c++) {
-        const col = columns[c];
-        if (!col || col.isPrimaryKey || col.isAutoIncrement || !isCellEditable(vr.rowId, c)) continue;
-        if (vr.isInsert) {
-          stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, null);
-        } else {
-          const originalRowValues: Record<string, unknown> = {};
-          const rowInArray =
-            vr.globalRowIndex !== undefined && vr.globalRowIndex >= (startOffset || 0)
-              ? vr.globalRowIndex - (startOffset || 0)
-              : (vr.globalRowIndex ?? 0);
-          const targetRow = vr.rowData || rows[rowInArray];
-          columns.forEach((colMeta, idx) => {
-            originalRowValues[colMeta.name] = targetRow?.[idx];
-          });
-          const pkMap: Record<string, unknown> = {};
-          primaryKeys.forEach((pk) => {
-            const idx = columns.findIndex((colMeta) => colMeta.name === pk);
-            if (idx !== -1) pkMap[pk] = targetRow?.[idx];
-          });
-          stageCellUpdate(tabId, vr.globalRowIndex!, pkMap, originalRowValues, col.name, null);
+    for (const rng of ranges) {
+      for (let r = rng.startR; r <= rng.endR; r++) {
+        const vr = visualRows[r];
+        if (!vr) continue;
+        for (let c = rng.startC; c <= rng.endC; c++) {
+          const col = columns[c];
+          if (!col || col.isPrimaryKey || col.isAutoIncrement || !isCellEditable(vr.rowId, c)) continue;
+          if (vr.isInsert) {
+            stageCellUpdate(tabId, vr.rowId, {}, {}, col.name, null);
+          } else {
+            const originalRowValues: Record<string, unknown> = {};
+            const rowInArray =
+              vr.globalRowIndex !== undefined && vr.globalRowIndex >= (startOffset || 0)
+                ? vr.globalRowIndex - (startOffset || 0)
+                : (vr.globalRowIndex ?? 0);
+            const targetRow = vr.rowData || rows[rowInArray];
+            columns.forEach((colMeta, idx) => {
+              originalRowValues[colMeta.name] = targetRow?.[idx];
+            });
+            const pkMap: Record<string, unknown> = {};
+            primaryKeys.forEach((pk) => {
+              const idx = columns.findIndex((colMeta) => colMeta.name === pk);
+              if (idx !== -1) pkMap[pk] = targetRow?.[idx];
+            });
+            stageCellUpdate(tabId, vr.globalRowIndex!, pkMap, originalRowValues, col.name, null);
+          }
         }
       }
     }
@@ -2634,6 +2726,7 @@ ${setClauses};`;
     });
 
     // Update selection range to highlight the newly pasted cells
+    setAdditionalSelections([]);
     setSelectionAnchor({ r: startR, c: startC });
     setSelectionFocus({ r: maxAffectedVIdx, c: Math.min(columns.length - 1, maxAffectedCIdx) });
   };
@@ -2648,10 +2741,30 @@ ${setClauses};`;
 
     containerRef.current?.focus({ preventScroll: true });
 
+    const isMod = e.ctrlKey || e.metaKey;
+
     if (e.shiftKey && selectionAnchor) {
       window.getSelection()?.removeAllRanges();
+      if (!isMod) {
+        setAdditionalSelections([]);
+      }
       setSelectionFocus({ r: vIdx, c: cIdx });
+    } else if (isMod) {
+      window.getSelection()?.removeAllRanges();
+      if (isCellSelected(vIdx, cIdx)) {
+        const remaining = removeCellFromRects(allSelectionRanges, vIdx, cIdx);
+        applyRemainingRects(remaining);
+        isDraggingRef.current = false;
+      } else {
+        if (selectionRange) {
+          setAdditionalSelections((prev) => [...prev, selectionRange]);
+        }
+        isDraggingRef.current = true;
+        setSelectionAnchor({ r: vIdx, c: cIdx });
+        setSelectionFocus({ r: vIdx, c: cIdx });
+      }
     } else {
+      setAdditionalSelections([]);
       isDraggingRef.current = true;
       setSelectionAnchor({ r: vIdx, c: cIdx });
       setSelectionFocus({ r: vIdx, c: cIdx });
@@ -2675,14 +2788,35 @@ ${setClauses};`;
 
     containerRef.current?.focus({ preventScroll: true });
 
+    const isMod = e.ctrlKey || e.metaKey;
+    const lastColIdx = Math.max(0, columns.length - 1);
+
     if (e.shiftKey && selectionAnchor) {
       window.getSelection()?.removeAllRanges();
+      if (!isMod) {
+        setAdditionalSelections([]);
+      }
       setSelectionAnchor({ r: selectionAnchor.r, c: 0 });
-      setSelectionFocus({ r: vIdx, c: columns.length - 1 });
+      setSelectionFocus({ r: vIdx, c: lastColIdx });
+    } else if (isMod) {
+      window.getSelection()?.removeAllRanges();
+      if (isRowFullySelected(vIdx)) {
+        const remaining = removeRowFromRects(allSelectionRanges, vIdx);
+        applyRemainingRects(remaining);
+        isDraggingRef.current = false;
+      } else {
+        if (selectionRange) {
+          setAdditionalSelections((prev) => [...prev, selectionRange]);
+        }
+        isDraggingRef.current = true;
+        setSelectionAnchor({ r: vIdx, c: 0 });
+        setSelectionFocus({ r: vIdx, c: lastColIdx });
+      }
     } else {
+      setAdditionalSelections([]);
       isDraggingRef.current = true;
       setSelectionAnchor({ r: vIdx, c: 0 });
-      setSelectionFocus({ r: vIdx, c: columns.length - 1 });
+      setSelectionFocus({ r: vIdx, c: lastColIdx });
     }
 
     const vr = visualRows[vIdx];
@@ -2759,6 +2893,7 @@ ${setClauses};`;
     });
 
     const startVIdx = displayedRows.length + insertedChanges.length;
+    setAdditionalSelections([]);
     setSelectionAnchor({ r: startVIdx, c: 0 });
     setSelectionFocus({ r: startVIdx + newIds.length - 1, c: columns.length - 1 });
 
@@ -2808,6 +2943,7 @@ ${setClauses};`;
       stageRowDelete(tabId, idx, pkMap, originalRowValues);
     });
 
+    setAdditionalSelections([]);
     setSelectionAnchor(null);
     setSelectionFocus(null);
   };
@@ -2830,6 +2966,7 @@ ${setClauses};`;
           e.stopPropagation();
           revertTabChanges(tabId);
           setEditingCell(null);
+          setAdditionalSelections([]);
           setSelectionAnchor(null);
           setSelectionFocus(null);
           setShowCancelConfirm(false);
@@ -2896,6 +3033,7 @@ ${setClauses};`;
               nextC = columns.length - 1;
               nextR = Math.max(0, nextR - 1);
             }
+            setAdditionalSelections([]);
             setSelectionAnchor({ r: nextR, c: nextC });
             setSelectionFocus({ r: nextR, c: nextC });
             scrollToCell(nextR, nextC);
@@ -2940,6 +3078,7 @@ ${setClauses};`;
           if (e.shiftKey && e.key.startsWith('Arrow')) {
             setSelectionFocus({ r: newR, c: newC });
           } else {
+            setAdditionalSelections([]);
             setSelectionAnchor({ r: newR, c: newC });
             setSelectionFocus({ r: newR, c: newC });
           }
@@ -3051,6 +3190,7 @@ ${setClauses};`;
       if (e.key === 'a' || e.key === 'A') {
         if (!isTyping && visualRows.length > 0 && columns.length > 0) {
           e.preventDefault();
+          setAdditionalSelections([]);
           setSelectionAnchor({ r: 0, c: 0 });
           setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
           return;
@@ -3059,7 +3199,7 @@ ${setClauses};`;
 
       // Copy As modal (Ctrl+Shift+C / Cmd+Shift+C) or regular Copy based on active copyFormat
       if (e.key === 'c' || e.key === 'C') {
-        if (!isTyping && selectionRange && columns.length > 0) {
+        if (!isTyping && allSelectionRanges.length > 0 && columns.length > 0) {
           e.preventDefault();
           if (e.shiftKey) {
             setIsCopyAsOpen(true);
@@ -3122,6 +3262,7 @@ ${setClauses};`;
     selectionAnchor,
     selectionFocus,
     selectionRange,
+    allSelectionRanges,
     visualRows,
     selectedRowKeys,
     onSubmitChanges,
@@ -3148,7 +3289,7 @@ ${setClauses};`;
         target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
       if (isTyping) return;
 
-      if (selectionRange && columns.length > 0) {
+      if (allSelectionRanges.length > 0 && columns.length > 0) {
         const text = getFormattedCopyText();
         if (text) {
           e.preventDefault();
@@ -3175,7 +3316,7 @@ ${setClauses};`;
       window.removeEventListener('copy', handleNativeCopy);
       window.removeEventListener('paste', handleNativePaste);
     };
-  }, [selectionRange, columns, visualRows, stagedChanges, tableName, primaryKeys, copyFormat, driver]);
+  }, [selectionRange, allSelectionRanges, columns, visualRows, stagedChanges, tableName, primaryKeys, copyFormat, driver]);
   const currentOffset = (currentPage - 1) * localPageSize;
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
   const endRow = currentOffset + displayedRows.length;
@@ -3717,6 +3858,7 @@ ${setClauses};`;
               <th
                 onClick={() => {
                   if (visualRows.length > 0 && columns.length > 0) {
+                    setAdditionalSelections([]);
                     setSelectionAnchor({ r: 0, c: 0 });
                     setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
                     containerRef.current?.focus({ preventScroll: true });
@@ -3932,15 +4074,10 @@ ${setClauses};`;
                   let rowClass = gridRowClass;
                   if (isDeleted) rowClass += ' bg-rose-950/20 text-zinc-500 line-through';
 
-                  const isRowInSelection = Boolean(
-                    selectionRange && vIdx >= selectionRange.startR && vIdx <= selectionRange.endR
+                  const isRowInSelection = allSelectionRanges.some(
+                    (rng) => vIdx >= rng.startR && vIdx <= rng.endR
                   );
-                  const isFullRowSelected = Boolean(
-                    isRowInSelection &&
-                      columns.length > 0 &&
-                      selectionRange!.startC === 0 &&
-                      selectionRange!.endC === columns.length - 1
-                  );
+                  const isFullRowSelected = isRowFullySelected(vIdx);
 
                   return (
                     <tr
@@ -4093,6 +4230,7 @@ ${setClauses};`;
                                       attempts++;
                                     }
                                     const nextVr = visualRows[nextVIdx];
+                                    setAdditionalSelections([]);
                                     setSelectionAnchor({ r: nextVIdx, c: nextCol });
                                     setSelectionFocus({ r: nextVIdx, c: nextCol });
                                     scrollToCell(nextVIdx, nextCol);
@@ -4131,15 +4269,10 @@ ${setClauses};`;
                   const vIdx = displayedRows.length + insIdx;
                   const rowClass = 'border-b border-emerald-800/40 bg-emerald-950/25 hover:bg-emerald-900/35 border-l-4 border-l-emerald-500 transition-colors group/insert';
 
-                  const isRowInSelection = Boolean(
-                    selectionRange && vIdx >= selectionRange.startR && vIdx <= selectionRange.endR
+                  const isRowInSelection = allSelectionRanges.some(
+                    (rng) => vIdx >= rng.startR && vIdx <= rng.endR
                   );
-                  const isFullRowSelected = Boolean(
-                    isRowInSelection &&
-                      columns.length > 0 &&
-                      selectionRange!.startC === 0 &&
-                      selectionRange!.endC === columns.length - 1
-                  );
+                  const isFullRowSelected = isRowFullySelected(vIdx);
 
                   return (
                     <tr
@@ -4287,6 +4420,7 @@ ${setClauses};`;
                                       attempts++;
                                     }
                                     const nextVr = visualRows[nextVIdx];
+                                    setAdditionalSelections([]);
                                     setSelectionAnchor({ r: nextVIdx, c: nextCol });
                                     setSelectionFocus({ r: nextVIdx, c: nextCol });
                                     scrollToCell(nextVIdx, nextCol);
@@ -4716,6 +4850,7 @@ ${setClauses};`;
                   revertTabChanges(tabId);
                   setEditingCell(null);
                   if (selectedRowIndex !== null && selectedRowIndex < 0) {
+                    setAdditionalSelections([]);
                     setSelectionAnchor(null);
                     setSelectionFocus(null);
                   }
@@ -4739,9 +4874,9 @@ ${setClauses};`;
         >
           <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1 truncate flex items-center justify-between">
             <span>Grid Actions</span>
-            {selectionRange && (
+            {selectionSummary && (
               <span className="text-zinc-600 font-mono text-[9px]">
-                {selectionRange.endR - selectionRange.startR + 1}r × {selectionRange.endC - selectionRange.startC + 1}c
+                {selectionSummary}
               </span>
             )}
           </div>
@@ -5142,6 +5277,7 @@ ${setClauses};`;
             onClick={() => {
               setContextMenu((prev) => ({ ...prev, isOpen: false }));
               if (visualRows.length > 0 && columns.length > 0) {
+                setAdditionalSelections([]);
                 setSelectionAnchor({ r: 0, c: 0 });
                 setSelectionFocus({ r: visualRows.length - 1, c: columns.length - 1 });
               }
@@ -5701,11 +5837,7 @@ ${setClauses};`;
       <CopyAsModal
         isOpen={isCopyAsOpen}
         defaultFormat={copyFormat}
-        selectionSummary={
-          selectionRange
-            ? `${selectionRange.endR - selectionRange.startR + 1}r × ${selectionRange.endC - selectionRange.startC + 1}c`
-            : undefined
-        }
+        selectionSummary={selectionSummary}
         onClose={() => setIsCopyAsOpen(false)}
         onCopy={(fmt) => {
           const text = getFormattedCopyText(fmt);
