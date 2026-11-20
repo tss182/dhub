@@ -182,6 +182,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const [showAllFrozenModal, setShowAllFrozenModal] = useState(false);
   const [isCopyAsOpen, setIsCopyAsOpen] = useState(false);
   const [isCopyAsSubmenuOpen, setIsCopyAsSubmenuOpen] = useState(false);
+  const [maskSensitiveData, setMaskSensitiveData] = useState(false);
   const [fkMapByCol, setFkMapByCol] = useState<Record<string, ForeignKeyMeta>>({});
 
   const [ttlModal, setTtlModal] = useState<TtlModalState | null>(null);
@@ -2547,6 +2548,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
         selectedSuggestionIndex={selectedSuggestionIndex}
         localSortConfigs={localSortConfigs}
         frozenColumns={frozenColumns}
+        maskSensitiveData={maskSensitiveData}
+        onToggleMaskSensitiveData={() => setMaskSensitiveData((prev) => !prev)}
         onOpenRedisAddKey={() => setRedisAddKeyOpen(true)}
         onAddRow={handleAddRow}
         onDeleteActiveRow={handleDeleteActiveRow}
@@ -2978,6 +2981,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                           onTabNextFromEditor={stableTabNextFromEditor}
                           fkMapByCol={fkMapByCol}
                           onForeignKeyJump={handleForeignKeyJump}
+                          maskSensitiveData={maskSensitiveData}
                         />
                       );
                     })}

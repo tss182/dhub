@@ -23,7 +23,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   table = '',
   sql = '',
 }) => {
-  const [format, setFormat] = useState<'csv' | 'json' | 'sql_insert'>('csv');
+  const [format, setFormat] = useState<'csv' | 'xlsx' | 'json' | 'markdown' | 'sql_insert'>('csv');
   const [delimiter, setDelimiter] = useState<string>(',');
   const [includeHeader, setIncludeHeader] = useState<boolean>(true);
   const [filePath, setFilePath] = useState<string>('');
@@ -33,11 +33,16 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const defaultFileName = table ? `${table}_export.${format === 'sql_insert' ? 'sql' : format}` : `export_${Date.now()}.${format === 'sql_insert' ? 'sql' : format}`;
+  const getFileExt = (fmt: string) =>
+    fmt === 'sql_insert' ? 'sql' : fmt === 'markdown' ? 'md' : fmt;
+
+  const defaultFileName = table
+    ? `${table}_export.${getFileExt(format)}`
+    : `export_${Date.now()}.${getFileExt(format)}`;
 
   const handleBrowseSaveFile = async () => {
     try {
-      const ext = format === 'sql_insert' ? 'sql' : format;
+      const ext = getFileExt(format);
       const pattern = `*.${ext}`;
       const chosen = await Dialogs.SaveFile({
         Title: 'Choose Export Destination',
@@ -137,7 +142,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <div className="grid grid-cols-3 gap-2">
               {[
                 { id: 'csv', label: 'CSV', desc: 'Delimited text' },
+                { id: 'xlsx', label: 'Excel (.xlsx)', desc: 'Spreadsheet workbook' },
                 { id: 'json', label: 'JSON', desc: 'Array of records' },
+                { id: 'markdown', label: 'Markdown', desc: 'GitHub .md table' },
                 { id: 'sql_insert', label: 'SQL INSERT', desc: 'DML batch script' },
               ].map((f) => (
                 <button
@@ -147,7 +154,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     setFormat(f.id as any);
                     if (filePath) {
                       const base = filePath.replace(/\.[^/.]+$/, '');
-                      setFilePath(`${base}.${f.id === 'sql_insert' ? 'sql' : f.id}`);
+                      setFilePath(`${base}.${getFileExt(f.id)}`);
                     }
                   }}
                   className={`flex flex-col items-center justify-center rounded-lg border p-3 text-center transition-colors ${

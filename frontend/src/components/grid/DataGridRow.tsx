@@ -4,6 +4,7 @@ import { ColumnMeta, ForeignKeyMeta } from '../../types/domain';
 import { StagedRowChange } from '../../stores/useGridEditStore';
 import { GridCellEditor } from './GridCellEditor';
 import { ROW_NUM_COL_WIDTH, VisualRow } from './gridTypes';
+import { isSensitiveColumn, maskCellValue } from './piiMasker';
 
 export interface DataGridRowProps {
   vr: VisualRow;
@@ -45,6 +46,7 @@ export interface DataGridRowProps {
   onTabNextFromEditor: (vIdx: number, cIdx: number) => void;
   fkMapByCol?: Record<string, ForeignKeyMeta>;
   onForeignKeyJump?: (fk: ForeignKeyMeta, val: any) => void;
+  maskSensitiveData?: boolean;
 }
 
 const DataGridRowInner: React.FC<DataGridRowProps> = ({
@@ -85,6 +87,7 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
   onTabNextFromEditor,
   fkMapByCol,
   onForeignKeyJump,
+  maskSensitiveData = false,
 }) => {
   const vIdx = vr.vIdx;
   const colIndicesToRender = visibleColIndices ?? columns.map((_, idx) => idx);
@@ -215,6 +218,10 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
               ) : displayVal === null || displayVal === undefined ? (
                 <span className={isSelected ? 'text-blue-200/80 italic' : 'text-zinc-600 italic'}>
                   NULL
+                </span>
+              ) : maskSensitiveData && isSensitiveColumn(col.name) ? (
+                <span className={isSelected ? 'text-amber-200 font-mono' : 'text-amber-300/80 font-mono'}>
+                  {maskCellValue(col.name, displayVal)}
                 </span>
               ) : colInputType !== 'text' ? (
                 String(displayVal).replace('T', ' ').replace(/Z$/, '')

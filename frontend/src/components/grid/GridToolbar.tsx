@@ -16,6 +16,7 @@ import {
   FileText,
   ArrowDownAZ,
   ArrowDownZA,
+  Shield,
 } from 'lucide-react';
 import { SortConfig, WhereSuggestionItem, isMac, modKey } from './gridTypes';
 
@@ -37,6 +38,8 @@ interface GridToolbarProps {
   selectedSuggestionIndex: number;
   localSortConfigs: SortConfig[];
   frozenColumns: string[];
+  maskSensitiveData?: boolean;
+  onToggleMaskSensitiveData?: () => void;
   onOpenRedisAddKey: () => void;
   onAddRow: () => void;
   onDeleteActiveRow: () => void;
@@ -78,6 +81,8 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
   selectedSuggestionIndex,
   localSortConfigs,
   frozenColumns,
+  maskSensitiveData = false,
+  onToggleMaskSensitiveData,
   onOpenRedisAddKey,
   onAddRow,
   onDeleteActiveRow,
@@ -165,6 +170,22 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
               <Trash2 className="h-3.5 w-3.5 text-rose-400" />
             </button>
           </>
+        )}
+
+        {onToggleMaskSensitiveData && (
+          <button
+            type="button"
+            onClick={onToggleMaskSensitiveData}
+            className={`flex h-7 items-center gap-1 px-2 rounded text-[11px] font-medium border transition-colors cursor-pointer select-none ${
+              maskSensitiveData
+                ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                : 'bg-[#22242c] hover:bg-[#2b2d37] border-[#272932] text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="Mask Sensitive Data (PII / Screen-Share Safe)"
+          >
+            <Shield className={`h-3.5 w-3.5 ${maskSensitiveData ? 'text-amber-400' : 'text-zinc-400'}`} />
+            {maskSensitiveData && <span>Masked</span>}
+          </button>
         )}
 
         {rawSql && (

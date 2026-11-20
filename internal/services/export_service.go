@@ -320,7 +320,15 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	format := strings.ToLower(req.Format)
 
 	var csvWriter *csv.Writer
-	if format != "json" && format != "sql_insert" && format != "sql" {
+	var xlsxWriter *xlsxStreamWriter
+	switch format {
+	case "xlsx":
+		xlsxWriter, err = newXLSXStreamWriter(f)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize xlsx writer: %w", err)
+		}
+	case "json", "sql_insert", "sql", "markdown", "md":
+	default:
 		delimRune := ','
 		if req.Delimiter == ";" {
 			delimRune = ';'
@@ -390,6 +398,28 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 					quotedCols[i] = quoteIdentifier(driverType, col.Name)
 				}
 				sqlColsJoined = strings.Join(quotedCols, ", ")
+			case "markdown", "md":
+				if len(res.Columns) > 0 {
+					headers := make([]string, len(res.Columns))
+					seps := make([]string, len(res.Columns))
+					for i, col := range res.Columns {
+						headers[i] = strings.ReplaceAll(col.Name, "|", "\\|")
+						seps[i] = "---"
+					}
+					if _, err := bw.WriteString("| " + strings.Join(headers, " | ") + " |\n| " + strings.Join(seps, " | ") + " |\n"); err != nil {
+						return nil, err
+					}
+				}
+			case "xlsx":
+				if req.IncludeHeader && len(res.Columns) > 0 {
+					headers := make([]any, len(res.Columns))
+					for i, col := range res.Columns {
+						headers[i] = col.Name
+					}
+					if err := xlsxWriter.writeRow(headers); err != nil {
+						return nil, err
+					}
+				}
 			default:
 				if req.IncludeHeader && len(res.Columns) > 0 {
 					headers := make([]string, len(res.Columns))
@@ -449,6 +479,33 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				exportedRows++
 			}
 
+		case "markdown", "md":
+			for _, row := range res.Rows {
+				cells := make([]string, len(row))
+				for i, v := range row {
+					if v == nil {
+						cells[i] = "_NULL_"
+					} else {
+						s := strings.ReplaceAll(fmt.Sprintf("%v", v), "|", "\\|")
+						s = strings.ReplaceAll(s, "\r\n", "<br>")
+						s = strings.ReplaceAll(s, "\n", "<br>")
+						cells[i] = s
+					}
+				}
+				if _, err := bw.WriteString("| " + strings.Join(cells, " | ") + " |\n"); err != nil {
+					return nil, err
+				}
+				exportedRows++
+			}
+
+		case "xlsx":
+			for _, row := range res.Rows {
+				if err := xlsxWriter.writeRow(row); err != nil {
+					return nil, err
+				}
+				exportedRows++
+			}
+
 		default:
 			for _, row := range res.Rows {
 				strRow := make([]string, len(row))
@@ -483,8 +540,12 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		if err := bw.Flush(); err != nil {
 			return nil, err
 		}
-	case "sql_insert", "sql":
+	case "sql_insert", "sql", "markdown", "md":
 		if err := bw.Flush(); err != nil {
+			return nil, err
+		}
+	case "xlsx":
+		if err := xlsxWriter.Close(); err != nil {
 			return nil, err
 		}
 	default:
