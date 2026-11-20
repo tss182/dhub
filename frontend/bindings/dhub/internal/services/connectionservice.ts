@@ -53,6 +53,10 @@ export function SaveFolder(folder: store$0.ConnectionFolder): $CancellablePromis
     return $Call.ByID(1227884293, folder);
 }
 
+export function SetOnDisconnect(fn: any): $CancellablePromise<void> {
+    return $Call.ByID(1347966175, fn);
+}
+
 export function TestConnection(cfg: store$0.ConnectionConfig): $CancellablePromise<string> {
     return $Call.ByID(505073892, cfg);
 }

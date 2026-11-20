@@ -73,6 +73,28 @@ BEGIN
 END`,
 			},
 		},
+		{
+			name: "postgres dollar-quoted block with semicolons",
+			sql: `DO $$
+BEGIN
+  PERFORM 1;
+  PERFORM 2;
+END $$;
+SELECT 3;`,
+			want: []string{
+				`DO $$
+BEGIN
+  PERFORM 1;
+  PERFORM 2;
+END $$`,
+				"SELECT 3",
+			},
+		},
+		{
+			name: "mssql bracketed identifier with semicolon",
+			sql:  "SELECT [col;name] FROM [dbo].[users]; SELECT 1;",
+			want: []string{"SELECT [col;name] FROM [dbo].[users]", "SELECT 1"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -112,6 +134,36 @@ func TestIsQueryReturningRows(t *testing.T) {
 	for _, q := range nonReturning {
 		if IsQueryReturningRows(q) {
 			t.Errorf("expected IsQueryReturningRows(%q) = false", q)
+		}
+	}
+}
+
+func TestIsReadOnlySafeQuery(t *testing.T) {
+	safe := []string{
+		"SELECT * FROM users",
+		"SELECT updated_at, delete_flag FROM users WHERE status = 'DELETE'",
+		"WITH active AS (SELECT * FROM users) SELECT * FROM active",
+		"EXPLAIN SELECT * FROM users",
+		"SHOW TABLES",
+	}
+	for _, q := range safe {
+		if !IsReadOnlySafeQuery(q) {
+			t.Errorf("expected IsReadOnlySafeQuery(%q) = true", q)
+		}
+	}
+
+	unsafe := []string{
+		"INSERT INTO users VALUES (1)",
+		"INSERT INTO users VALUES (1) RETURNING *",
+		"WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d",
+		"WITH u AS (UPDATE users SET a = 1 RETURNING *) SELECT * FROM u",
+		"EXPLAIN ANALYZE DELETE FROM users",
+		"DROP TABLE users",
+		"EXEC sp_who2",
+	}
+	for _, q := range unsafe {
+		if IsReadOnlySafeQuery(q) {
+			t.Errorf("expected IsReadOnlySafeQuery(%q) = false", q)
 		}
 	}
 }

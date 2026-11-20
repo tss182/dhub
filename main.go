@@ -37,7 +37,7 @@ func main() {
 		debug.SetGCPercent(40)
 	}
 	if os.Getenv("GOMEMLIMIT") == "" {
-		debug.SetMemoryLimit(128 << 20) // 128 MiB soft limit
+		debug.SetMemoryLimit(512 << 20) // 512 MiB soft limit
 	}
 
 	localStore, err := store.NewLocalStore()
@@ -54,6 +54,7 @@ func main() {
 	connSvc := services.NewConnectionService(localStore, sessionMgr, func() *application.App { return wailsApp })
 	schemaSvc := services.NewSchemaService(localStore, sessionMgr, func() *application.App { return wailsApp })
 	querySvc := services.NewQueryService(localStore, sessionMgr, func() *application.App { return wailsApp })
+	connSvc.SetOnDisconnect(querySvc.CleanupConnectionTransactions)
 	workspaceSvc := services.NewWorkspaceService(localStore)
 	exportSvc := services.NewExportService(localStore, sessionMgr, func() *application.App { return wailsApp })
 	updateSvc := services.NewUpdateService(func() *application.App { return wailsApp })
@@ -64,7 +65,7 @@ func main() {
 		Icon:        appIcon,
 		Linux: application.LinuxOptions{
 			ProgramName:   "dhub",
-			ApplicationID: "com.dhub.app",
+			ApplicationID: "com.asdev.dhub",
 		},
 		Services: []application.Service{
 			application.NewService(connSvc),

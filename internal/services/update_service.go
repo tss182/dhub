@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,6 +65,7 @@ type UpdateService struct {
 	isDownloading    bool
 	cancelDownload   context.CancelFunc
 	downloadedTarget string
+	assetChecksums   map[string]string
 }
 
 func NewUpdateService(appGetter func() *application.App) *UpdateService {
@@ -249,7 +252,57 @@ func (u *UpdateService) CheckForUpdate() (*UpdateInfo, error) {
 		info.DownloadURL = rel.HTMLURL
 	}
 
+	u.cacheReleaseChecksums(ctx, rel.Assets)
+
 	return info, nil
+}
+
+func (u *UpdateService) cacheReleaseChecksums(ctx context.Context, assets []ReleaseAsset) {
+	var checksumURL string
+	for _, a := range assets {
+		if strings.EqualFold(a.Name, "checksums.txt") && a.BrowserDownloadURL != "" {
+			checksumURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if checksumURL == "" {
+		return
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "DHub-Desktop/"+version.CurrentVersion)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return
+	}
+
+	parsed := make(map[string]string)
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) >= 2 && len(fields[0]) == 64 {
+			name := filepath.Base(strings.TrimPrefix(fields[1], "*"))
+			parsed[name] = strings.ToLower(fields[0])
+		}
+	}
+	if len(parsed) > 0 {
+		u.mu.Lock()
+		u.assetChecksums = parsed
+		u.mu.Unlock()
+	}
 }
 
 func (u *UpdateService) OpenURL(targetURL string) error {
@@ -368,10 +421,26 @@ func (u *UpdateService) DownloadAndStage(downloadURL, assetFileName string) (str
 		},
 	}
 
-	_, err = io.Copy(file, io.TeeReader(resp.Body, pw))
+	hasher := sha256.New()
+	_, err = io.Copy(io.MultiWriter(file, hasher), io.TeeReader(resp.Body, pw))
 	if err != nil {
+		_ = os.Remove(destPath)
 		u.emitProgress("error", 0, 0, 0, err.Error())
 		return "", fmt.Errorf("failed writing downloaded asset: %w", err)
+	}
+
+	u.mu.Lock()
+	expectedHash := u.assetChecksums[cleanName]
+	u.mu.Unlock()
+	if expectedHash != "" {
+		actualHash := strings.ToLower(hex.EncodeToString(hasher.Sum(nil)))
+		if actualHash != expectedHash {
+			_ = file.Close()
+			_ = os.Remove(destPath)
+			verifyErr := fmt.Errorf("SHA256 checksum mismatch for %s (expected %s, got %s)", cleanName, expectedHash, actualHash)
+			u.emitProgress("error", 0, 0, 0, verifyErr.Error())
+			return "", verifyErr
+		}
 	}
 
 	u.mu.Lock()

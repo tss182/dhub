@@ -21,6 +21,13 @@ export function CancelQuery(executionID: string): $CancellablePromise<boolean> {
     return $Call.ByID(1812827844, executionID);
 }
 
+/**
+ * CleanupConnectionTransactions rolls back and removes all open manual transactions for a connection.
+ */
+export function CleanupConnectionTransactions(connectionID: string): $CancellablePromise<void> {
+    return $Call.ByID(4263075083, connectionID);
+}
+
 export function CommitTransaction(tabID: string): $CancellablePromise<void> {
     return $Call.ByID(1919003025, tabID);
 }

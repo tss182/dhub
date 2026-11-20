@@ -98,7 +98,7 @@ jobs:
 
       - name: Install Wails v3 CLI
         run: |
-          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Sync Version across Config, Code, README, and Tag

@@ -495,13 +495,21 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				if normalizeMySQLValue(c.PrimaryKey[k]) == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				}
 			}
 			statements = append(statements, fmt.Sprintf("UPDATE %s SET %s WHERE %s;", prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				if normalizeMySQLValue(c.PrimaryKey[k]) == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				}
 			}
 			statements = append(statements, fmt.Sprintf("DELETE FROM %s WHERE %s;", prefix, strings.Join(where, " AND ")))
 		}
@@ -578,8 +586,13 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, normalizeMySQLValue(c.PrimaryKey[k]))
+				pkVal := normalizeMySQLValue(c.PrimaryKey[k])
+				if pkVal == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
+					vals = append(vals, pkVal)
+				}
 			}
 			stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -592,8 +605,13 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			where := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, normalizeMySQLValue(c.PrimaryKey[k]))
+				pkVal := normalizeMySQLValue(c.PrimaryKey[k])
+				if pkVal == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
+					vals = append(vals, pkVal)
+				}
 			}
 			stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", prefix, strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)

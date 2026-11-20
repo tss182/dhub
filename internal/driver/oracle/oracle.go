@@ -634,13 +634,21 @@ func (o *OracleDriver) GenerateDMLPreview(database, schema, table string, change
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf(`%s IS NULL`, quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				}
 			}
 			statements = append(statements, fmt.Sprintf(`UPDATE %s SET %s WHERE %s;`, prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf(`%s IS NULL`, quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				}
 			}
 			statements = append(statements, fmt.Sprintf(`DELETE FROM %s WHERE %s;`, prefix, strings.Join(where, " AND ")))
 		}
@@ -689,9 +697,13 @@ func (o *OracleDriver) ApplyChanges(ctx context.Context, database, schema, table
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf(`%s = :%d`, quoteIdent(k), idx))
-				vals = append(vals, c.PrimaryKey[k])
-				idx++
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf(`%s IS NULL`, quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf(`%s = :%d`, quoteIdent(k), idx))
+					vals = append(vals, c.PrimaryKey[k])
+					idx++
+				}
 			}
 			stmt := fmt.Sprintf(`UPDATE %s SET %s WHERE %s`, prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -705,9 +717,13 @@ func (o *OracleDriver) ApplyChanges(ctx context.Context, database, schema, table
 			vals := []any{}
 			idx := 1
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf(`%s = :%d`, quoteIdent(k), idx))
-				vals = append(vals, c.PrimaryKey[k])
-				idx++
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf(`%s IS NULL`, quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf(`%s = :%d`, quoteIdent(k), idx))
+					vals = append(vals, c.PrimaryKey[k])
+					idx++
+				}
 			}
 			stmt := fmt.Sprintf(`DELETE FROM %s WHERE %s`, prefix, strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)

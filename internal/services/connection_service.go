@@ -17,9 +17,10 @@ import (
 const connectionOpTimeout = 10 * time.Second
 
 type ConnectionService struct {
-	store     *store.LocalStore
-	sessions  *manager.SessionManager
-	appGetter func() *application.App
+	store        *store.LocalStore
+	sessions     *manager.SessionManager
+	appGetter    func() *application.App
+	onDisconnect func(connectionID string)
 }
 
 func NewConnectionService(s *store.LocalStore, sm *manager.SessionManager, appGetter func() *application.App) *ConnectionService {
@@ -28,6 +29,10 @@ func NewConnectionService(s *store.LocalStore, sm *manager.SessionManager, appGe
 		sessions:  sm,
 		appGetter: appGetter,
 	}
+}
+
+func (s *ConnectionService) SetOnDisconnect(fn func(connectionID string)) {
+	s.onDisconnect = fn
 }
 
 func (s *ConnectionService) ListConnections() ([]store.ConnectionConfig, error) {
@@ -64,6 +69,9 @@ func (s *ConnectionService) GetConnection(id string) (*store.ConnectionConfig, e
 
 func (s *ConnectionService) SaveConnection(cfg store.ConnectionConfig) (string, error) {
 	if cfg.ID != "" {
+		if s.onDisconnect != nil {
+			s.onDisconnect(cfg.ID)
+		}
 		s.sessions.Disconnect(cfg.ID)
 	}
 	id, err := s.store.SaveConnection(context.Background(), cfg)
@@ -113,6 +121,9 @@ func (s *ConnectionService) Connect(id string) (string, error) {
 }
 
 func (s *ConnectionService) Disconnect(id string) error {
+	if s.onDisconnect != nil {
+		s.onDisconnect(id)
+	}
 	s.sessions.Disconnect(id)
 	s.emitState(id, "disconnected", "")
 	return nil

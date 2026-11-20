@@ -412,14 +412,22 @@ func (c *ClickHouseDriver) GenerateDMLPreview(database, schema, table string, ch
 				sets = append(sets, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(ch.Changes[k])))
 			}
 			for _, k := range sortedKeys(ch.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(ch.PrimaryKey[k])))
+				if ch.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(ch.PrimaryKey[k])))
+				}
 			}
 			stmt := fmt.Sprintf("ALTER TABLE %s UPDATE %s WHERE %s;", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			statements = append(statements, stmt)
 		case "delete":
 			var where []string
 			for _, k := range sortedKeys(ch.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(ch.PrimaryKey[k])))
+				if ch.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(ch.PrimaryKey[k])))
+				}
 			}
 			stmt := fmt.Sprintf("ALTER TABLE %s DELETE WHERE %s;", prefix, strings.Join(where, " AND "))
 			statements = append(statements, stmt)
@@ -465,8 +473,12 @@ func (c *ClickHouseDriver) ApplyChanges(ctx context.Context, database, schema, t
 				vals = append(vals, ch.Changes[k])
 			}
 			for _, k := range sortedKeys(ch.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, ch.PrimaryKey[k])
+				if ch.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
+					vals = append(vals, ch.PrimaryKey[k])
+				}
 			}
 			stmt := fmt.Sprintf("ALTER TABLE %s UPDATE %s WHERE %s", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			res, err := db.ExecContext(ctx, stmt, vals...)
@@ -482,8 +494,12 @@ func (c *ClickHouseDriver) ApplyChanges(ctx context.Context, database, schema, t
 			var where []string
 			var vals []any
 			for _, k := range sortedKeys(ch.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, ch.PrimaryKey[k])
+				if ch.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
+					vals = append(vals, ch.PrimaryKey[k])
+				}
 			}
 			stmt := fmt.Sprintf("ALTER TABLE %s DELETE WHERE %s", prefix, strings.Join(where, " AND "))
 			res, err := db.ExecContext(ctx, stmt, vals...)

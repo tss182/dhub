@@ -574,7 +574,7 @@ func (m *MongoDBDriver) Execute(ctx context.Context, req driver.QueryRequest) (*
 		collName := match[1]
 		method := strings.ToLower(match[2])
 		argsRaw := strings.TrimSpace(match[3])
-		return m.executeMongoShellMethod(ctx, req.ExecutionID, dbName, collName, method, argsRaw, start)
+		return m.executeMongoShellMethod(ctx, req.ExecutionID, dbName, collName, method, argsRaw, req.Limit, req.Offset, start)
 	}
 
 	// 6. JSON Command: {"command": ...}
@@ -596,6 +596,7 @@ func (m *MongoDBDriver) Execute(ctx context.Context, req driver.QueryRequest) (*
 func (m *MongoDBDriver) executeMongoShellMethod(
 	ctx context.Context,
 	execID, dbName, collName, method, argsRaw string,
+	reqLimit, reqOffset int,
 	start time.Time,
 ) (*driver.QueryResult, error) {
 	coll := m.client.Database(dbName).Collection(collName)
@@ -606,7 +607,15 @@ func (m *MongoDBDriver) executeMongoShellMethod(
 		if argsRaw != "" {
 			_ = bson.UnmarshalExtJSON([]byte(argsRaw), true, &filter)
 		}
-		cur, err := coll.Find(ctx, filter, options.Find().SetLimit(100))
+		limit := int64(100)
+		if reqLimit > 0 {
+			limit = int64(reqLimit)
+		}
+		findOpts := options.Find().SetLimit(limit)
+		if reqOffset > 0 {
+			findOpts.SetSkip(int64(reqOffset))
+		}
+		cur, err := coll.Find(ctx, filter, findOpts)
 		if err != nil {
 			return nil, err
 		}
@@ -717,8 +726,38 @@ func (m *MongoDBDriver) executeMongoShellMethod(
 	}
 }
 
+func parseWhereScalar(raw string, isID bool) any {
+	v := strings.TrimSpace(raw)
+	v = strings.Trim(v, "'\"")
+	if isID {
+		return parseID(v)
+	}
+	if strings.EqualFold(v, "true") {
+		return true
+	}
+	if strings.EqualFold(v, "false") {
+		return false
+	}
+	if strings.EqualFold(v, "null") {
+		return nil
+	}
+	if num, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return num
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil {
+		return f
+	}
+	return v
+}
+
+var mongoWhereAndRegex = regexp.MustCompile(`(?i)\s+AND\s+`)
+var mongoWhereCondRegex = regexp.MustCompile(`(?i)^(.+?)\s*(!=|<>|>=|<=|=|>|<|\bLIKE\b)\s*(.+)$`)
+
 func parseWhereClause(where string) bson.M {
 	where = strings.TrimSpace(where)
+	if strings.HasPrefix(where, "(") && strings.HasSuffix(where, ")") {
+		where = strings.TrimSpace(where[1 : len(where)-1])
+	}
 	if strings.HasPrefix(where, "{") && strings.HasSuffix(where, "}") {
 		var m bson.M
 		if err := bson.UnmarshalExtJSON([]byte(where), true, &m); err == nil {
@@ -727,18 +766,40 @@ func parseWhereClause(where string) bson.M {
 	}
 
 	filter := bson.M{}
-	// Simple equality: field = 'val' or field = 123
-	eqParts := strings.SplitN(where, "=", 2)
-	if len(eqParts) == 2 {
-		k := stripQuotes(eqParts[0])
-		v := strings.TrimSpace(eqParts[1])
-		v = strings.Trim(v, "'\"")
-		if k == "_id" {
-			filter[k] = parseID(v)
-		} else if num, err := strconv.ParseInt(v, 10, 64); err == nil {
-			filter[k] = num
-		} else {
-			filter[k] = v
+	clauses := mongoWhereAndRegex.Split(where, -1)
+	for _, clause := range clauses {
+		clause = strings.TrimSpace(clause)
+		m := mongoWhereCondRegex.FindStringSubmatch(clause)
+		if len(m) != 4 {
+			continue
+		}
+		k := stripQuotes(m[1])
+		op := strings.ToUpper(strings.TrimSpace(m[2]))
+		rawVal := strings.TrimSpace(m[3])
+
+		if op == "LIKE" {
+			pattern := strings.Trim(rawVal, "'\"")
+			pattern = regexp.QuoteMeta(pattern)
+			pattern = strings.ReplaceAll(pattern, "%", ".*")
+			pattern = strings.ReplaceAll(pattern, "_", ".")
+			filter[k] = bson.M{"$regex": "^" + pattern + "$", "$options": "i"}
+			continue
+		}
+
+		val := parseWhereScalar(rawVal, k == "_id")
+		switch op {
+		case "=":
+			filter[k] = val
+		case "!=", "<>":
+			filter[k] = bson.M{"$ne": val}
+		case ">":
+			filter[k] = bson.M{"$gt": val}
+		case ">=":
+			filter[k] = bson.M{"$gte": val}
+		case "<":
+			filter[k] = bson.M{"$lt": val}
+		case "<=":
+			filter[k] = bson.M{"$lte": val}
 		}
 	}
 	return filter

@@ -67,6 +67,27 @@ func matchSliceAt(runes []rune, idx int, target []rune) bool {
 	return true
 }
 
+func parseDollarTag(runes []rune, idx int) ([]rune, bool) {
+	n := len(runes)
+	if idx >= n || runes[idx] != '$' {
+		return nil, false
+	}
+	if idx+1 < n && runes[idx+1] == '$' {
+		return runes[idx : idx+2], true
+	}
+	if idx+1 >= n || (!unicode.IsLetter(runes[idx+1]) && runes[idx+1] != '_') {
+		return nil, false
+	}
+	j := idx + 2
+	for j < n && (unicode.IsLetter(runes[j]) || unicode.IsDigit(runes[j]) || runes[j] == '_') {
+		j++
+	}
+	if j < n && runes[j] == '$' {
+		return runes[idx : j+1], true
+	}
+	return nil, false
+}
+
 func parseDelimiterLine(runes []rune, lineStart int) (delim string, lineEnd int, ok bool) {
 	n := len(runes)
 	i := lineStart
@@ -117,6 +138,9 @@ func SplitStatements(sql string) []string {
 	var inSingleQuote bool
 	var inDoubleQuote bool
 	var inBacktick bool
+	var inBracket bool
+	var inDollarQuote bool
+	var dollarTag []rune
 	var inLineComment bool
 	var inBlockComment bool
 
@@ -139,7 +163,7 @@ func SplitStatements(sql string) []string {
 		r := runes[i]
 
 		// Handle client DELIMITER directive at line start when not inside quotes/comments
-		if atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inLineComment && !inBlockComment {
+		if atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !inDollarQuote && !inLineComment && !inBlockComment {
 			if newDelim, nextIdx, ok := parseDelimiterLine(runes, i); ok {
 				delim = []rune(newDelim)
 				i = nextIdx - 1
@@ -219,6 +243,37 @@ func SplitStatements(sql string) []string {
 			continue
 		}
 
+		// Check MSSQL bracketed identifier end
+		if inBracket {
+			current.WriteRune(r)
+			if r == ']' {
+				if i+1 < n && runes[i+1] == ']' {
+					current.WriteRune(']')
+					i++
+				} else {
+					inBracket = false
+				}
+			}
+			atLineStart = (r == '\n')
+			continue
+		}
+
+		// Check PostgreSQL dollar-quoted string end
+		if inDollarQuote {
+			if matchSliceAt(runes, i, dollarTag) {
+				for _, tr := range dollarTag {
+					current.WriteRune(tr)
+				}
+				i += len(dollarTag) - 1
+				inDollarQuote = false
+				atLineStart = false
+			} else {
+				current.WriteRune(r)
+				atLineStart = (r == '\n')
+			}
+			continue
+		}
+
 		// Start of comments or quotes
 		if r == '-' && i+1 < n && runes[i+1] == '-' {
 			current.WriteRune(r)
@@ -262,6 +317,26 @@ func SplitStatements(sql string) []string {
 			current.WriteRune(r)
 			atLineStart = false
 			continue
+		}
+		if r == '[' {
+			inBracket = true
+			stmtStarted = true
+			current.WriteRune(r)
+			atLineStart = false
+			continue
+		}
+		if r == '$' {
+			if tag, ok := parseDollarTag(runes, i); ok {
+				inDollarQuote = true
+				dollarTag = tag
+				stmtStarted = true
+				for _, tr := range tag {
+					current.WriteRune(tr)
+				}
+				i += len(tag) - 1
+				atLineStart = false
+				continue
+			}
 		}
 
 		// Track delimiter match (only split on ';' when not inside a compound BEGIN ... END block)
@@ -386,11 +461,165 @@ func hasLeadingKeyword(upper, kw string) bool {
 	return next == ' ' || next == '\t' || next == '\n' || next == '\r' || next == '('
 }
 
-// IsQueryReturningRows determines if a statement produces a result set (SELECT, SHOW, DESC, EXPLAIN, ANALYZE, PRAGMA, WITH, VALUES, etc.).
+// stripStringsAndComments replaces quoted literals, dollar-quoted strings, bracketed identifiers,
+// and comments with spaces so keyword scanning does not match inside literal text.
+func stripStringsAndComments(sql string) string {
+	var out strings.Builder
+	runes := []rune(sql)
+	n := len(runes)
+	var inSingle, inDouble, inBacktick, inBracket, inDollar, inLineComment, inBlockComment bool
+	var dollarTag []rune
+
+	for i := 0; i < n; i++ {
+		r := runes[i]
+		if inLineComment {
+			if r == '\n' {
+				inLineComment = false
+				out.WriteRune('\n')
+			} else {
+				out.WriteRune(' ')
+			}
+			continue
+		}
+		if inBlockComment {
+			if r == '*' && i+1 < n && runes[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			out.WriteRune(' ')
+			continue
+		}
+		if inSingle {
+			if r == '\\' && i+1 < n {
+				i++
+			} else if r == '\'' {
+				if i+1 < n && runes[i+1] == '\'' {
+					i++
+				} else {
+					inSingle = false
+				}
+			}
+			out.WriteRune(' ')
+			continue
+		}
+		if inDouble {
+			if r == '\\' && i+1 < n {
+				i++
+			} else if r == '"' {
+				if i+1 < n && runes[i+1] == '"' {
+					i++
+				} else {
+					inDouble = false
+				}
+			}
+			out.WriteRune(' ')
+			continue
+		}
+		if inBacktick {
+			if r == '`' {
+				inBacktick = false
+			}
+			out.WriteRune(' ')
+			continue
+		}
+		if inBracket {
+			if r == ']' {
+				if i+1 < n && runes[i+1] == ']' {
+					i++
+				} else {
+					inBracket = false
+				}
+			}
+			out.WriteRune(' ')
+			continue
+		}
+		if inDollar {
+			if matchSliceAt(runes, i, dollarTag) {
+				i += len(dollarTag) - 1
+				inDollar = false
+			}
+			out.WriteRune(' ')
+			continue
+		}
+
+		if r == '-' && i+1 < n && runes[i+1] == '-' {
+			inLineComment = true
+			i++
+			out.WriteRune(' ')
+			continue
+		}
+		if r == '#' {
+			inLineComment = true
+			out.WriteRune(' ')
+			continue
+		}
+		if r == '/' && i+1 < n && runes[i+1] == '*' {
+			inBlockComment = true
+			i++
+			out.WriteRune(' ')
+			continue
+		}
+		if r == '\'' {
+			inSingle = true
+			out.WriteRune(' ')
+			continue
+		}
+		if r == '"' {
+			inDouble = true
+			out.WriteRune(' ')
+			continue
+		}
+		if r == '`' {
+			inBacktick = true
+			out.WriteRune(' ')
+			continue
+		}
+		if r == '[' {
+			inBracket = true
+			out.WriteRune(' ')
+			continue
+		}
+		if r == '$' {
+			if tag, ok := parseDollarTag(runes, i); ok {
+				inDollar = true
+				dollarTag = tag
+				i += len(tag) - 1
+				out.WriteRune(' ')
+				continue
+			}
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
+}
+
+func containsStandaloneWord(upperSanitized string, targets ...string) bool {
+	targetSet := make(map[string]struct{}, len(targets))
+	for _, t := range targets {
+		targetSet[t] = struct{}{}
+	}
+	runes := []rune(upperSanitized)
+	n := len(runes)
+	for i := 0; i < n; i++ {
+		if isIdentChar(runes[i]) && (i == 0 || !isIdentChar(runes[i-1])) {
+			j := i
+			for j < n && isIdentChar(runes[j]) {
+				j++
+			}
+			if _, ok := targetSet[string(runes[i:j])]; ok {
+				return true
+			}
+			i = j - 1
+		}
+	}
+	return false
+}
+
+// IsQueryReturningRows determines if a statement produces a result set (SELECT, SHOW, DESC, EXPLAIN, ANALYZE, PRAGMA, WITH, VALUES, RETURNING, etc.).
 func IsQueryReturningRows(sql string) bool {
 	clean := StripLeadingComments(sql)
 	upper := strings.ToUpper(clean)
-	return hasLeadingKeyword(upper, "SELECT") ||
+	if hasLeadingKeyword(upper, "SELECT") ||
 		hasLeadingKeyword(upper, "SHOW") ||
 		hasLeadingKeyword(upper, "DESCRIBE") ||
 		hasLeadingKeyword(upper, "DESC") ||
@@ -401,7 +630,39 @@ func IsQueryReturningRows(sql string) bool {
 		hasLeadingKeyword(upper, "VALUES") ||
 		hasLeadingKeyword(upper, "OPTIMIZE") ||
 		hasLeadingKeyword(upper, "CHECK") ||
-		hasLeadingKeyword(upper, "REPAIR")
+		hasLeadingKeyword(upper, "REPAIR") ||
+		hasLeadingKeyword(upper, "EXEC") ||
+		hasLeadingKeyword(upper, "EXECUTE") ||
+		hasLeadingKeyword(upper, "CALL") {
+		return true
+	}
+	sanitizedUpper := strings.ToUpper(stripStringsAndComments(clean))
+	return containsStandaloneWord(sanitizedUpper, "RETURNING")
+}
+
+// IsReadOnlySafeQuery verifies that a SQL statement only performs read operations
+// and does not contain data-modifying CTEs (e.g., WITH ... DELETE) or DML/DDL statements.
+func IsReadOnlySafeQuery(sql string) bool {
+	clean := StripLeadingComments(sql)
+	upper := strings.ToUpper(clean)
+	isReadLeading := hasLeadingKeyword(upper, "SELECT") ||
+		hasLeadingKeyword(upper, "SHOW") ||
+		hasLeadingKeyword(upper, "DESCRIBE") ||
+		hasLeadingKeyword(upper, "DESC") ||
+		hasLeadingKeyword(upper, "EXPLAIN") ||
+		hasLeadingKeyword(upper, "ANALYZE") ||
+		hasLeadingKeyword(upper, "PRAGMA") ||
+		hasLeadingKeyword(upper, "WITH") ||
+		hasLeadingKeyword(upper, "VALUES") ||
+		hasLeadingKeyword(upper, "CHECK")
+	if !isReadLeading {
+		return false
+	}
+	sanitizedUpper := strings.ToUpper(stripStringsAndComments(clean))
+	return !containsStandaloneWord(sanitizedUpper,
+		"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
+		"TRUNCATE", "REPLACE", "MERGE", "GRANT", "REVOKE",
+	)
 }
 
 // TruncateSQL shortens a SQL string for display in log messages.

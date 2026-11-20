@@ -563,11 +563,19 @@ export function App() {
     const limitVal = Math.max(pageSize, rowsLen);
     const offsetVal = tabData?.startOffset ?? tab.tableViewState?.offset ?? 0;
 
+    let sql = '';
+    if (driver === 'mssql' || driver === 'oracle') {
+      const effectiveOrder = orderByClause || (driver === 'mssql' ? '\nORDER BY (SELECT NULL)' : '');
+      sql = `SELECT ${selectClause}\nFROM ${fullTablePath}${combinedWhere}${effectiveOrder}\nOFFSET ${offsetVal} ROWS FETCH NEXT ${limitVal} ROWS ONLY;`;
+    } else {
+      sql = `SELECT ${selectClause}\nFROM ${fullTablePath}${combinedWhere}${orderByClause}\nLIMIT ${limitVal} OFFSET ${offsetVal};`;
+    }
+
     return {
       conn: conn || null,
       targetDb,
       targetSchema,
-      sql: `SELECT ${selectClause}\nFROM ${fullTablePath}${combinedWhere}${orderByClause}\nLIMIT ${limitVal} OFFSET ${offsetVal};`,
+      sql,
     };
   };
 
@@ -1504,8 +1512,8 @@ export function App() {
         orderByClause = ` ORDER BY ${orderParts.join(', ')}`;
       }
 
-      // 3. Query table data with LIMIT, OFFSET, WHERE and ORDER BY
-      const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause} LIMIT ${fetchLimit} OFFSET ${effectiveOffset};`;
+      // 3. Query table data using dialect-aware pagination via ExecuteQuery limit/offset
+      const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause};`;
 
       const execId = 'exec-tab-' + Date.now();
       const res = await QueryService.ExecuteQuery({
@@ -1515,7 +1523,7 @@ export function App() {
         schema: targetSchema,
         sql,
         limit: fetchLimit,
-        offset: 0,
+        offset: effectiveOffset,
       } as any);
 
       if (res) {

@@ -56,7 +56,7 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
 		statements := driver.SplitStatements(req.SQL)
 		for _, stmt := range statements {
-			if !driver.IsQueryReturningRows(stmt) {
+			if !driver.IsReadOnlySafeQuery(stmt) {
 				errMsg := fmt.Sprintf("execution blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(stmt, 60))
 				q.emitStatus(req.ExecutionID, "error", errMsg)
 				_ = q.store.RecordQueryHistory(store.QueryHistoryEntry{
@@ -243,6 +243,26 @@ func (q *QueryService) RollbackTransaction(tabID string) error {
 		return fmt.Errorf("rollback failed: %w", err)
 	}
 	return nil
+}
+
+// CleanupConnectionTransactions rolls back and removes all open manual transactions for a connection.
+func (q *QueryService) CleanupConnectionTransactions(connectionID string) {
+	if connectionID == "" {
+		return
+	}
+	q.mu.Lock()
+	var toRollback []*TxSession
+	for tabID, session := range q.activeTx {
+		if session != nil && session.ConnectionID == connectionID {
+			toRollback = append(toRollback, session)
+			delete(q.activeTx, tabID)
+		}
+	}
+	q.mu.Unlock()
+
+	for _, session := range toRollback {
+		_ = session.Tx.Rollback()
+	}
 }
 
 func (q *QueryService) GetTransactionStatus(tabID string) *TxStatus {
