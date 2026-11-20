@@ -102,7 +102,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : conn.driver === 'oracle' ? 1521 : conn.driver === 'qdrant' ? 6333 : 5432));
+          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : conn.driver === 'oracle' ? 1521 : conn.driver === 'qdrant' ? 6333 : conn.driver === 'elasticsearch' ? 9200 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -140,7 +140,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : existing.driver === 'oracle' ? 1521 : existing.driver === 'qdrant' ? 6333 : 5432));
+          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : existing.driver === 'oracle' ? 1521 : existing.driver === 'qdrant' ? 6333 : existing.driver === 'elasticsearch' ? 9200 : 5432));
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -231,6 +231,13 @@ export const ConnectionDialog: React.FC = () => {
     } else if (d === 'qdrant') {
       setPort(6333);
       setUsername('');
+      setDatabaseName('default');
+      setSslMode('disable');
+    } else if (d === 'elasticsearch') {
+      setPort(9200);
+      if (!username || username === 'postgres' || username === 'root' || username === 'sa') {
+        setUsername('elastic');
+      }
       setDatabaseName('default');
       setSslMode('disable');
     }

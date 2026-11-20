@@ -263,7 +263,7 @@ func quoteIdentifier(driverType, name string) string {
 		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 	case "mssql", "sqlserver":
 		return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
-	case "redis", "mongodb", "mongo", "qdrant":
+	case "redis", "mongodb", "mongo", "qdrant", "elasticsearch", "es":
 		return name
 	default:
 		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`

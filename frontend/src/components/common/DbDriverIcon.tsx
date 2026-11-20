@@ -179,6 +179,21 @@ export const DbDriverIcon: React.FC<DbDriverIconProps> = ({
     );
   }
 
+  // Elasticsearch
+  if (norm === 'elasticsearch' || norm === 'es') {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        fill={color || '#00BFB3'}
+        className={className}
+        xmlns="http://www.w3.org/2000/svg"
+        aria-label="Elasticsearch"
+      >
+        <path d="M18.93 5.28A9.96 9.96 0 0 0 12 2.5C7.64 2.5 3.96 5.31 2.66 9.2h13.12c1.27 0 2.38-.8 3.15-3.92zM2.16 10.95a9.89 9.89 0 0 0 0 2.1h11.39a1.05 1.05 0 0 0 0-2.1H2.16zm.5 3.85C3.96 18.69 7.64 21.5 12 21.5c2.71 0 5.17-1.08 6.96-2.84-.75-3.04-1.88-3.86-3.18-3.86H2.66z" />
+      </svg>
+    );
+  }
+
   // Fallback / Generic Database
   return <Database className={`${className} ${color ? '' : 'text-zinc-400'}`} style={color ? { color } : undefined} />;
 };

@@ -1138,6 +1138,39 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               });
             });
           }
+
+          // 7. Elasticsearch snippets
+          if (driver === 'elasticsearch') {
+            const esSnippets = [
+              {
+                label: 'ES KNN VECTOR SEARCH',
+                detail: 'kNN similarity search on dense_vector field',
+                insertText: 'POST /${1:index_name}/_search\n{\n  "knn": {\n    "field": "${2:embedding}",\n    "query_vector": [${3:0.1, 0.2, 0.3}],\n    "k": ${4:10},\n    "num_candidates": ${5:50}\n  }\n}',
+              },
+              {
+                label: 'ES MATCH SEARCH',
+                detail: 'Full-text match query via Elasticsearch REST API',
+                insertText: 'POST /${1:index_name}/_search\n{\n  "query": {\n    "match": {\n      "${2:title}": "${3:search term}"\n    }\n  },\n  "size": ${4:20}\n}',
+              },
+              {
+                label: 'ES SQL QUERY',
+                detail: 'Run native SQL against Elasticsearch /_sql',
+                insertText: 'SELECT * FROM "${1:index_name}" LIMIT ${2:20};',
+              },
+            ];
+            esSnippets.forEach((snip) => {
+              suggestions.push({
+                label: snip.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                detail: snip.detail,
+                filterText: `${snip.label.toLowerCase()} elasticsearch knn vector`,
+                insertText: snip.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                sortText: `4_z_${snip.label}`,
+                range,
+              });
+            });
+          }
         }
 
         return { suggestions: dedupeSuggestions(suggestions) };
@@ -1262,7 +1295,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const handleFormatSql = async () => {
     try {
       const drv = connection?.driver || 'sqlite';
-      if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant') return;
+      if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant' || drv === 'elasticsearch') return;
       let lang: any = 'sql';
       if (drv === 'postgres') lang = 'postgresql';
       else if (drv === 'mariadb') lang = 'mariadb';
@@ -1292,7 +1325,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     if (!stmt) return;
 
     const drv = connection?.driver || 'sqlite';
-    if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant') return;
+    if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant' || drv === 'elasticsearch') return;
     let prefix = 'EXPLAIN ';
     if (drv === 'postgres') {
       prefix = isAnalyze

@@ -621,6 +621,8 @@ export function App() {
       sql = `DELETE FROM ${quoteSqlIdentifier(driver, tableName)}; DELETE FROM sqlite_sequence WHERE name = '${escapedLiteral}';`;
     } else if (driver === 'mongodb') {
       sql = `db.${tableName}.deleteMany({});`;
+    } else if (driver === 'elasticsearch') {
+      sql = `POST /${encodeURIComponent(tableName)}/_delete_by_query\n{"query":{"match_all":{}}}`;
     } else {
       sql = `TRUNCATE TABLE ${fullTablePath};`;
     }
@@ -682,6 +684,8 @@ export function App() {
       sql = `db.${tableName}.drop();`;
     } else if (driver === 'qdrant') {
       sql = `DELETE /collections/${encodeURIComponent(tableName)}`;
+    } else if (driver === 'elasticsearch') {
+      sql = `DELETE /${encodeURIComponent(tableName)}`;
     } else {
       const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tableName);
       sql = `DROP ${keyword} ${fullTablePath};`;
@@ -1811,7 +1815,7 @@ export function App() {
     if (!tab.connectionId || !tab.table) return;
     const conn = connections.find((c) => c.id === tab.connectionId);
     const driver = conn?.driver || tab.driver;
-    if (driver === 'redis' || driver === 'mongodb' || driver === 'qdrant') return;
+    if (driver === 'redis' || driver === 'mongodb' || driver === 'qdrant' || driver === 'elasticsearch') return;
 
     const isMSSQL = driver === 'mssql';
     const targetDb = tab.database || conn?.databaseName || 'main';

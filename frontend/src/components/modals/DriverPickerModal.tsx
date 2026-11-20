@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Search, Check, Database } from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
 
-export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle' | 'qdrant';
+export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle' | 'qdrant' | 'elasticsearch';
 
 export interface DriverOption {
   id: DriverType;
   name: string;
-  category: 'Relational' | 'Document' | 'Key-Value' | 'Column-Oriented' | 'Vector';
+  category: 'Relational' | 'Document' | 'Key-Value' | 'Column-Oriented' | 'Vector' | 'Search';
   tag: 'SQL' | 'NoSQL';
   description: string;
 }
@@ -82,6 +82,13 @@ export const DRIVER_OPTIONS: DriverOption[] = [
     category: 'Vector',
     tag: 'NoSQL',
     description: 'High-performance vector similarity search engine',
+  },
+  {
+    id: 'elasticsearch',
+    name: 'Elasticsearch',
+    category: 'Search',
+    tag: 'NoSQL',
+    description: 'Distributed full-text search, analytics, and kNN vector engine',
   },
 ];
 
