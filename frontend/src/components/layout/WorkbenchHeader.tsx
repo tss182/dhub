@@ -4,6 +4,7 @@ import {
   Settings as SettingsIcon,
   Bookmark,
   GitCompare,
+  ArrowLeftRight,
   HelpCircle,
   Search,
   Minus,
@@ -25,6 +26,7 @@ export interface WorkbenchHeaderProps {
   onOpenUpdateModal: () => void;
   onOpenSnippets: () => void;
   onOpenSchemaDiff: () => void;
+  onOpenDataDiff: () => void;
   onOpenHelp: (tab: HelpTab) => void;
 }
 
@@ -51,6 +53,7 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
   onOpenUpdateModal,
   onOpenSnippets,
   onOpenSchemaDiff,
+  onOpenDataDiff,
   onOpenHelp,
 }) => {
   const [isMaximised, setIsMaximised] = useState(false);
@@ -194,6 +197,17 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
           aria-label="Schema Diff"
         >
           <GitCompare className="h-3.5 w-3.5" />
+        </button>
+
+        {/* Data Diff & Sync Icon Button */}
+        <button
+          type="button"
+          onClick={onOpenDataDiff}
+          className="flex items-center justify-center rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors cursor-pointer"
+          title="Data Compare & Sync"
+          aria-label="Data Compare & Sync"
+        >
+          <ArrowLeftRight className="h-3.5 w-3.5" />
         </button>
       </div>
 

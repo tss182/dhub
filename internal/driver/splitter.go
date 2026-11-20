@@ -325,6 +325,21 @@ func SplitStatements(sql string) []string {
 			atLineStart = false
 			continue
 		}
+		// Track delimiter match (only split on ';' when not inside a compound BEGIN ... END block)
+		// Checked before dollar-quoting so custom client delimiters like `DELIMITER $$` are recognized.
+		isDefaultDelim := len(delim) == 1 && delim[0] == ';'
+		if matchSliceAt(runes, i, delim) && (!isDefaultDelim || beginDepth == 0) {
+			stmt := strings.TrimSpace(current.String())
+			if stmt != "" {
+				statements = append(statements, stmt)
+			}
+			current.Reset()
+			resetStmtState()
+			i += len(delim) - 1
+			atLineStart = false
+			continue
+		}
+
 		if r == '$' {
 			if tag, ok := parseDollarTag(runes, i); ok {
 				inDollarQuote = true
@@ -339,24 +354,10 @@ func SplitStatements(sql string) []string {
 			}
 		}
 
-		// Track delimiter match (only split on ';' when not inside a compound BEGIN ... END block)
-		isDefaultDelim := len(delim) == 1 && delim[0] == ';'
-		if matchSliceAt(runes, i, delim) && (!isDefaultDelim || beginDepth == 0) {
-			stmt := strings.TrimSpace(current.String())
-			if stmt != "" {
-				statements = append(statements, stmt)
-			}
-			current.Reset()
-			resetStmtState()
-			i += len(delim) - 1
-			atLineStart = false
-			continue
-		}
-
 		// Track identifiers for compound BEGIN ... END blocks
 		if isIdentChar(r) && (i == 0 || !isIdentChar(runes[i-1])) {
 			j := i
-			for j < n && isIdentChar(runes[j]) {
+			for j < n && isIdentChar(runes[j]) && (isDefaultDelim || !matchSliceAt(runes, j, delim)) {
 				j++
 			}
 			word := strings.ToUpper(string(runes[i:j]))

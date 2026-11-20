@@ -40,6 +40,14 @@ export function CompareSchemas(srcConnID: string, srcDB: string, srcSchema: stri
 }
 
 /**
+ * CompareTableData compares rows between two tables across connections/databases using primary/key columns
+ * and generates dialect-accurate INSERT/UPDATE/DELETE sync statements for the target table.
+ */
+export function CompareTableData(req: $models.DataDiffRequest): $CancellablePromise<$models.DataDiffResult | null> {
+    return $Call.ByID(1499356198, req);
+}
+
+/**
  * DownloadBackupTool downloads and installs the client tool for the specified database driver
  * into DHub's local tools folder (<configDir>/tools/<driver>/) and returns the updated status.
  */

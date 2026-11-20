@@ -68,6 +68,9 @@ const RenameTabModal = lazy(() =>
 const SchemaDiffModal = lazy(() =>
   import('./components/modals/SchemaDiffModal').then((m) => ({ default: m.SchemaDiffModal }))
 );
+const DataDiffModal = lazy(() =>
+  import('./components/modals/DataDiffModal').then((m) => ({ default: m.DataDiffModal }))
+);
 const SnippetsModal = lazy(() =>
   import('./components/modals/SnippetsModal').then((m) => ({ default: m.SnippetsModal }))
 );
@@ -299,6 +302,7 @@ export function App() {
   const [isTableExportOpen, setIsTableExportOpen] = useState(false);
   const [isTableImportOpen, setIsTableImportOpen] = useState(false);
   const [isSchemaDiffOpen, setIsSchemaDiffOpen] = useState(false);
+  const [isDataDiffOpen, setIsDataDiffOpen] = useState(false);
   const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
   const [isMockDataOpen, setIsMockDataOpen] = useState(false);
   const [resultViewMode, setResultViewMode] = useState<'table' | 'chart'>('table');
@@ -2193,6 +2197,7 @@ export function App() {
         onOpenUpdateModal={openUpdateModal}
         onOpenSnippets={() => setIsSnippetsOpen(true)}
         onOpenSchemaDiff={() => setIsSchemaDiffOpen(true)}
+        onOpenDataDiff={() => setIsDataDiffOpen(true)}
         onOpenHelp={openHelpModal}
       />
 
@@ -4166,6 +4171,25 @@ export function App() {
             id: `console-diff-${Date.now()}`,
             type: 'worksheet',
             title: 'Schema Migration',
+            connectionId: connId,
+            driver: conn?.driver,
+            database: db,
+            schema: sch,
+            content: sql,
+          });
+        }}
+      />
+
+      {/* Data Diff & Sync Modal */}
+      <DataDiffModal
+        isOpen={isDataDiffOpen}
+        onClose={() => setIsDataDiffOpen(false)}
+        onOpenInConsole={(sql, connId, db, sch) => {
+          const conn = connections.find((c) => c.id === connId);
+          openTab({
+            id: `console-datadiff-${Date.now()}`,
+            type: 'worksheet',
+            title: 'Data Sync DML',
             connectionId: connId,
             driver: conn?.driver,
             database: db,
