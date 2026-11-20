@@ -41,13 +41,14 @@ type ForeignKeyMeta struct {
 }
 
 type IndexMeta struct {
-	Name      string   `json:"name"`
-	Columns   []string `json:"columns"`
-	IsUnique  bool     `json:"isUnique"`
-	IsPrimary bool     `json:"isPrimary"`
-	Type      string   `json:"type,omitempty"`
-	Method    string   `json:"method,omitempty"`
-	Comment   string   `json:"comment,omitempty"`
+	Name       string   `json:"name"`
+	Columns    []string `json:"columns"`
+	IsUnique   bool     `json:"isUnique"`
+	IsPrimary  bool     `json:"isPrimary"`
+	Type       string   `json:"type,omitempty"`
+	Method     string   `json:"method,omitempty"`
+	Definition string   `json:"definition,omitempty"`
+	Comment    string   `json:"comment,omitempty"`
 }
 
 type ObjectSummary struct {

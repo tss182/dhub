@@ -721,3 +721,81 @@ export function formatSelectedCells(params: {
   }
   return lines.join('\n');
 }
+
+/** Checks whether column metadata represents a vector / embedding column. */
+export function isVectorColumn(dataType?: string, rawType?: string): boolean {
+  const dt = (dataType || '').trim().toLowerCase();
+  const rt = (rawType || '').trim().toLowerCase();
+  return (
+    dt.startsWith('vector') ||
+    dt.startsWith('halfvec') ||
+    dt.startsWith('sparsevec') ||
+    dt.startsWith('dense_vector') ||
+    rt === 'vector' ||
+    rt === 'halfvec' ||
+    rt === 'sparsevec' ||
+    rt === 'dense_vector'
+  );
+}
+
+/**
+ * Formats a vector embedding (array or pgvector string) into a compact preview
+ * without parsing the full payload on every cell render.
+ */
+export function parseVectorPreview(
+  val: any,
+  dataType?: string,
+  rawType?: string,
+  maxPreview = 4
+): { dims: number; preview: string } | null {
+  if (val === null || val === undefined) return null;
+  const knownVector = isVectorColumn(dataType, rawType);
+
+  if (Array.isArray(val)) {
+    const len = val.length;
+    if (len === 0) return knownVector ? { dims: 0, preview: '[]' } : null;
+    if (!knownVector && len < 8) return null;
+    if (typeof val[0] !== 'number' || typeof val[len - 1] !== 'number') return null;
+
+    const head = val.slice(0, maxPreview).map((n) => (Number.isInteger(n) ? String(n) : Number(n.toFixed(4))));
+    const suffix = len > maxPreview ? ', …' : '';
+    return { dims: len, preview: `[${head.join(', ')}${suffix}]` };
+  }
+
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+    const inner = trimmed.slice(1, -1).trim();
+    if (!inner) return knownVector ? { dims: 0, preview: '[]' } : null;
+
+    // Fast validation: first token must be numeric
+    const firstComma = inner.indexOf(',');
+    const firstToken = (firstComma === -1 ? inner : inner.slice(0, firstComma)).trim();
+    if (!/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(firstToken)) return null;
+
+    // Count dimensions in a single pass without splitting the entire string
+    let dims = 1;
+    for (let i = 0; i < inner.length; i++) {
+      if (inner.charCodeAt(i) === 44) dims++; // ','
+    }
+    if (!knownVector && dims < 8) return null;
+
+    // Extract first maxPreview items
+    const previewItems: string[] = [];
+    let start = 0;
+    for (let i = 0; i <= inner.length && previewItems.length < maxPreview; i++) {
+      if (i === inner.length || inner.charCodeAt(i) === 44) {
+        const rawNum = inner.slice(start, i).trim();
+        const num = Number(rawNum);
+        if (Number.isNaN(num)) return null;
+        previewItems.push(Number.isInteger(num) ? String(num) : String(Number(num.toFixed(4))));
+        start = i + 1;
+      }
+    }
+
+    const suffix = dims > maxPreview ? ', …' : '';
+    return { dims, preview: `[${previewItems.join(', ')}${suffix}]` };
+  }
+
+  return null;
+}

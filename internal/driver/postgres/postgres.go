@@ -396,12 +396,22 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		pkSet[pk] = true
 	}
 
-	// 2. Get Columns
+	// 2. Get Columns (including pg_catalog.format_type for parameterized UDTs like vector(1536))
 	colQuery := `
-		SELECT column_name, data_type, udt_name, is_nullable, column_default, is_identity
-		FROM information_schema.columns
-		WHERE table_schema = $1 AND table_name = $2
-		ORDER BY ordinal_position;`
+		SELECT
+			c.column_name,
+			c.data_type,
+			c.udt_name,
+			c.is_nullable,
+			c.column_default,
+			c.is_identity,
+			COALESCE(pg_catalog.format_type(a.atttypid, a.atttypmod), '') AS formatted_type
+		FROM information_schema.columns c
+		LEFT JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
+		LEFT JOIN pg_catalog.pg_class cl ON cl.relnamespace = n.oid AND cl.relname = c.table_name
+		LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = cl.oid AND a.attname = c.column_name AND NOT a.attisdropped
+		WHERE c.table_schema = $1 AND c.table_name = $2
+		ORDER BY c.ordinal_position;`
 	rows, err := db.QueryContext(ctx, colQuery, schema, table)
 	if err != nil {
 		return nil, err
@@ -412,9 +422,9 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 	var enumMap map[string]string
 	enumLoaded := false
 	for rows.Next() {
-		var name, dataType, udtName, isNullable string
+		var name, dataType, udtName, isNullable, formattedType string
 		var dflt, isIdentity *string
-		if err := rows.Scan(&name, &dataType, &udtName, &isNullable, &dflt, &isIdentity); err == nil {
+		if err := rows.Scan(&name, &dataType, &udtName, &isNullable, &dflt, &isIdentity, &formattedType); err == nil {
 			defVal := ""
 			if dflt != nil {
 				defVal = *dflt
@@ -426,6 +436,9 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 			effectiveType := dataType
 			if strings.EqualFold(dataType, "USER-DEFINED") {
 				effectiveType = udtName
+				if formattedType != "" {
+					effectiveType = formattedType
+				}
 				if !enumLoaded {
 					enumLoaded = true
 					enumMap = make(map[string]string)
@@ -523,9 +536,9 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		}
 	}
 
-	// 4. Get Indexes (composite indexes grouped by name, columns in key order)
+	// 4. Get Indexes (composite indexes grouped by name, columns in key order, plus full definition for vector/GIN/GiST indexes)
 	idxQuery := `
-		SELECT i.relname, ix.indisunique, ix.indisprimary, am.amname, a.attname
+		SELECT i.relname, ix.indisunique, ix.indisprimary, am.amname, a.attname, COALESCE(pg_get_indexdef(i.oid), '')
 		FROM pg_class t
 		JOIN pg_namespace n ON n.oid = t.relnamespace
 		JOIN pg_index ix ON ix.indrelid = t.oid
@@ -539,9 +552,9 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		defer idxRows.Close()
 		idxPos := make(map[string]int)
 		for idxRows.Next() {
-			var idxName, method, colName string
+			var idxName, method, colName, idxDef string
 			var isUnique, isPrimary bool
-			if err := idxRows.Scan(&idxName, &isUnique, &isPrimary, &method, &colName); err != nil {
+			if err := idxRows.Scan(&idxName, &isUnique, &isPrimary, &method, &colName, &idxDef); err != nil {
 				continue
 			}
 			pos, exists := idxPos[idxName]
@@ -549,12 +562,13 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 				pos = len(structure.Indexes)
 				idxPos[idxName] = pos
 				structure.Indexes = append(structure.Indexes, driver.IndexMeta{
-					Name:      idxName,
-					Columns:   []string{},
-					IsUnique:  isUnique,
-					IsPrimary: isPrimary,
-					Type:      method,
-					Method:    method,
+					Name:       idxName,
+					Columns:    []string{},
+					IsUnique:   isUnique,
+					IsPrimary:  isPrimary,
+					Type:       method,
+					Method:     method,
+					Definition: idxDef,
 				})
 			}
 			structure.Indexes[pos].Columns = append(structure.Indexes[pos].Columns, colName)
@@ -676,6 +690,11 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 
 	for _, idx := range s.Indexes {
 		if idx.IsPrimary {
+			continue
+		}
+		if idx.Definition != "" && (strings.EqualFold(idx.Method, "hnsw") || strings.EqualFold(idx.Method, "ivfflat")) {
+			def := strings.TrimRight(strings.TrimSpace(idx.Definition), ";")
+			sb.WriteString(fmt.Sprintf("\n\n%s;", def))
 			continue
 		}
 		var cols []string

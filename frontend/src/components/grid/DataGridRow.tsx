@@ -5,6 +5,7 @@ import { StagedRowChange } from '../../stores/useGridEditStore';
 import { GridCellEditor } from './GridCellEditor';
 import { ROW_NUM_COL_WIDTH, VisualRow } from './gridTypes';
 import { isSensitiveColumn, maskCellValue } from './piiMasker';
+import { parseVectorPreview } from './gridFormatters';
 
 export interface DataGridRowProps {
   vr: VisualRow;
@@ -225,9 +226,28 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
                 </span>
               ) : colInputType !== 'text' ? (
                 String(displayVal).replace('T', ' ').replace(/Z$/, '')
-              ) : (
-                String(displayVal)
-              )}
+              ) : (() => {
+                const vec = parseVectorPreview(displayVal, col.dataType, col.rawType);
+                if (vec) {
+                  return (
+                    <span className="inline-flex items-center gap-1.5 font-mono text-[11px]">
+                      <span
+                        className={`px-1 py-0.2 rounded text-[10px] font-semibold ${
+                          isSelected
+                            ? 'bg-blue-500/40 text-blue-100'
+                            : 'bg-violet-500/15 text-violet-300 border border-violet-500/30'
+                        }`}
+                      >
+                        {vec.dims}d
+                      </span>
+                      <span className={isSelected ? 'text-blue-100' : 'text-zinc-300'}>
+                        {vec.preview}
+                      </span>
+                    </span>
+                  );
+                }
+                return String(displayVal);
+              })()}
               {!isEditing &&
                 fkMapByCol?.[col.name] &&
                 onForeignKeyJump &&

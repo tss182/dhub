@@ -1062,6 +1062,49 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               range,
             });
           });
+
+          // 5. pgvector snippets for PostgreSQL
+          if (driver === 'postgres') {
+            const pgvectorSnippets = [
+              {
+                label: 'PGVECTOR COSINE SEARCH',
+                detail: 'Similarity search using Cosine distance (<=>)',
+                insertText: "SELECT *, 1 - (${1:embedding} <=> '${2:[0.1, 0.2, ...]}') AS similarity\nFROM ${3:table_name}\nORDER BY ${1:embedding} <=> '${2:[0.1, 0.2, ...]}'\nLIMIT ${4:10};",
+              },
+              {
+                label: 'PGVECTOR L2 SEARCH',
+                detail: 'Similarity search using Euclidean L2 distance (<->)',
+                insertText: "SELECT *, (${1:embedding} <-> '${2:[0.1, 0.2, ...]}') AS distance\nFROM ${3:table_name}\nORDER BY ${1:embedding} <-> '${2:[0.1, 0.2, ...]}'\nLIMIT ${4:10};",
+              },
+              {
+                label: 'PGVECTOR INNER PRODUCT',
+                detail: 'Similarity search using negative inner product (<#>)',
+                insertText: "SELECT *, (${1:embedding} <#> '${2:[0.1, 0.2, ...]}') AS neg_inner_product\nFROM ${3:table_name}\nORDER BY ${1:embedding} <#> '${2:[0.1, 0.2, ...]}'\nLIMIT ${4:10};",
+              },
+              {
+                label: 'CREATE HNSW INDEX (pgvector)',
+                detail: 'Create HNSW vector index on embedding column',
+                insertText: 'CREATE INDEX ${1:idx_embedding_hnsw} ON ${2:table_name} USING hnsw (${3:embedding} ${4|vector_cosine_ops,vector_l2_ops,vector_ip_ops|});',
+              },
+              {
+                label: 'CREATE IVFFLAT INDEX (pgvector)',
+                detail: 'Create IVFFlat vector index on embedding column',
+                insertText: 'CREATE INDEX ${1:idx_embedding_ivf} ON ${2:table_name} USING ivfflat (${3:embedding} ${4|vector_cosine_ops,vector_l2_ops,vector_ip_ops|}) WITH (lists = ${5:100});',
+              },
+            ];
+            pgvectorSnippets.forEach((snip) => {
+              suggestions.push({
+                label: snip.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                detail: snip.detail,
+                filterText: `${snip.label.toLowerCase()} pgvector vector`,
+                insertText: snip.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                sortText: `4_z_${snip.label}`,
+                range,
+              });
+            });
+          }
         }
 
         return { suggestions: dedupeSuggestions(suggestions) };

@@ -184,6 +184,10 @@ const POSTGRES_TYPE_GROUPS: TypeGroup[] = [
     group: 'JSON / UUID / Binary',
     types: ['JSON', 'JSONB', 'UUID', 'BYTEA'],
   },
+  {
+    group: 'Vector (pgvector)',
+    types: ['vector(1536)', 'vector(768)', 'vector(384)', 'halfvec(1536)', 'sparsevec(1000)'],
+  },
 ];
 
 const SQLITE_TYPE_GROUPS: TypeGroup[] = [

@@ -81,3 +81,42 @@ func TestGeneratePostgresDDLIncludesIndexesAndFKRules(t *testing.T) {
 	}
 }
 
+func TestGeneratePostgresDDLIncludesPgvectorColumnsAndIndexes(t *testing.T) {
+	s := &driver.TableStructure{
+		Columns: []driver.ColumnMeta{
+			{Name: "id", DataType: "bigint"},
+			{Name: "embedding", DataType: "vector(1536)", IsNullable: true},
+			{Name: "half_emb", DataType: "halfvec(768)", IsNullable: true},
+		},
+		PrimaryKeys: []string{"id"},
+		Indexes: []driver.IndexMeta{
+			{Name: "docs_pkey", Columns: []string{"id"}, IsPrimary: true, Method: "btree"},
+			{
+				Name:       "idx_docs_embedding_hnsw",
+				Columns:    []string{"embedding"},
+				Method:     "hnsw",
+				Definition: "CREATE INDEX idx_docs_embedding_hnsw ON public.docs USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')",
+			},
+			{
+				Name:       "idx_docs_half_ivf",
+				Columns:    []string{"half_emb"},
+				Method:     "ivfflat",
+				Definition: "CREATE INDEX idx_docs_half_ivf ON public.docs USING ivfflat (half_emb halfvec_l2_ops) WITH (lists='100')",
+			},
+		},
+	}
+
+	ddl := generatePostgresDDL("public", "docs", s)
+
+	for _, want := range []string{
+		`"embedding" vector(1536)`,
+		`"half_emb" halfvec(768)`,
+		`CREATE INDEX idx_docs_embedding_hnsw ON public.docs USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64');`,
+		`CREATE INDEX idx_docs_half_ivf ON public.docs USING ivfflat (half_emb halfvec_l2_ops) WITH (lists='100');`,
+	} {
+		if !strings.Contains(ddl, want) {
+			t.Errorf("DDL missing %q\n%s", want, ddl)
+		}
+	}
+}
+
