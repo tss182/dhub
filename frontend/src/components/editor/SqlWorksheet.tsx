@@ -445,6 +445,7 @@ interface SqlWorksheetProps {
   onCancel: () => void;
   onDatabaseChange?: (newDatabase: string) => void;
   onExplain?: (statementSql: string, isAnalyze: boolean) => void;
+  txStatus?: { mode: 'auto' | 'manual'; isOpen: boolean; count: number };
   onTxStatusChange?: (status: { mode: 'auto' | 'manual'; isOpen: boolean; count: number }) => void;
 }
 
@@ -462,6 +463,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   onCancel,
   onDatabaseChange,
   onExplain,
+  txStatus,
   onTxStatusChange,
 }) => {
   const editorRef = useRef<MonacoTypes.editor.IStandaloneCodeEditor | null>(null);
@@ -475,16 +477,23 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const visibleDatabases = useConnectionStore((s) => s.visibleDatabases);
 
   const [txMode, setTxMode] = useState<'auto' | 'manual'>(() => {
+    if (txStatus?.mode) return txStatus.mode;
     return (connection?.txMode as any) === 'manual' ? 'manual' : 'auto';
   });
-  const [isTxOpen, setIsTxOpen] = useState(false);
-  const [txCount, setTxCount] = useState(0);
+  const [isTxOpen, setIsTxOpen] = useState(() => Boolean(txStatus?.isOpen));
+  const [txCount, setTxCount] = useState(() => txStatus?.count ?? 0);
 
   useEffect(() => {
-    if (connection?.txMode) {
-      setTxMode(connection.txMode === 'manual' ? 'manual' : 'auto');
+    if (txStatus) {
+      setTxMode(txStatus.mode);
+      setIsTxOpen(txStatus.isOpen);
+      setTxCount(txStatus.count);
+    } else {
+      setTxMode((connection?.txMode as any) === 'manual' ? 'manual' : 'auto');
+      setIsTxOpen(false);
+      setTxCount(0);
     }
-  }, [connection?.id, connection?.txMode]);
+  }, [tabId, connection?.id, connection?.txMode]);
 
   const [pendingParams, setPendingParams] = useState<{
     parameters: string[];
@@ -1124,8 +1133,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             setTxCount(0);
             onTxStatusChange?.({ mode: 'manual', isOpen: true, count: 0 });
           }
-        } catch (err) {
+        } catch (err: any) {
           console.warn('BeginTransaction failed:', err);
+          alertError(err?.message || err || 'Failed to start manual transaction', 'Transaction Error');
+          return;
         }
       }
 
@@ -1282,26 +1293,87 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     }
   };
 
+  const executeWithChecksRef = useRef(executeWithChecks);
+  executeWithChecksRef.current = executeWithChecks;
+  const handleFormatSqlRef = useRef(handleFormatSql);
+  handleFormatSqlRef.current = handleFormatSql;
+
+  const txActionRef = useRef({
+    txMode,
+    isTxOpen,
+    isRunning,
+    tabId,
+    handleCommitTx,
+    handleRollbackTx,
+  });
+  txActionRef.current = {
+    txMode,
+    isTxOpen,
+    isRunning,
+    tabId,
+    handleCommitTx,
+    handleRollbackTx,
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const {
+        txMode: mode,
+        isTxOpen: open,
+        isRunning: running,
+        tabId: currentTabId,
+        handleCommitTx: commit,
+        handleRollbackTx: rollback,
+      } = txActionRef.current;
+      const activeId = useWorkbenchStore.getState().activeTabId;
+      if (currentTabId && activeId && currentTabId !== activeId) return;
+      if (mode !== 'manual' || !open || running) return;
+
+      const isMod = e.ctrlKey || e.metaKey;
+      if (isMod && e.shiftKey && !e.altKey && e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        commit();
+      } else if (isMod && e.shiftKey && !e.altKey && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        e.stopPropagation();
+        rollback();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
     // Shortcut Ctrl+Enter / Cmd+Enter to execute statement at cursor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       const stmt = extractActiveStatement();
-      if (stmt) executeWithChecks(stmt, databaseRef.current);
+      if (stmt) executeWithChecksRef.current(stmt, databaseRef.current);
     });
 
-    // Shortcut Ctrl+Shift+Enter / Cmd+Shift+Enter to execute ALL statements in the editor
+    // Shortcut Ctrl+Shift+Enter / Cmd+Shift+Enter to commit active manual transaction
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
-      const all = extractAllStatements();
-      if (all) executeWithChecks(all, databaseRef.current);
+      const { txMode: mode, isTxOpen: open, isRunning: running, handleCommitTx: commit } = txActionRef.current;
+      if (mode === 'manual' && open && !running) {
+        commit();
+      }
+    });
+
+    // Shortcut Ctrl+Shift+R / Cmd+Shift+R to rollback active manual transaction
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR, () => {
+      const { txMode: mode, isTxOpen: open, isRunning: running, handleRollbackTx: rollback } = txActionRef.current;
+      if (mode === 'manual' && open && !running) {
+        rollback();
+      }
     });
 
     // Shortcut Shift+Alt+F to format SQL
     editor.addCommand(
       monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
       () => {
-        handleFormatSql();
+        handleFormatSqlRef.current();
       }
     );
 
@@ -1358,7 +1430,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             <button
               onClick={() => executeWithChecks(extractAllStatements(), database)}
               className="flex items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] p-1.5 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-              title={`Run All — Execute All Statements in Editor (${modKey}+Shift+Enter)`}
+              title="Run All — Execute All Statements in Editor"
             >
               <span className="flex items-center">
                 <Play className="h-3.5 w-3.5 text-emerald-400" />
@@ -1483,23 +1555,28 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                   type="button"
                   disabled={!isTxOpen || isRunning}
                   onClick={handleCommitTx}
-                  className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[11px] font-medium"
-                  title="Commit Transaction"
+                  className={`flex items-center justify-center p-1.5 rounded border transition-colors ${
+                    isTxOpen && !isRunning
+                      ? 'bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-400 cursor-pointer'
+                      : 'bg-[#22242c]/60 border-[#272932] text-zinc-500 cursor-not-allowed opacity-60'
+                  }`}
+                  title={`Commit (${modKey}+Shift+Enter)`}
                 >
-                  <Check className="h-3 w-3" />
-                  <span>Commit</span>
-                  {txCount > 0 && <span className="text-[10px] bg-emerald-500/30 px-1 rounded-full">{txCount}</span>}
+                  <Check className="h-3.5 w-3.5" />
                 </button>
 
                 <button
                   type="button"
                   disabled={!isTxOpen || isRunning}
                   onClick={handleRollbackTx}
-                  className="flex items-center gap-1 px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[11px] font-medium"
-                  title="Rollback Transaction"
+                  className={`flex items-center justify-center p-1.5 rounded border transition-colors ${
+                    isTxOpen && !isRunning
+                      ? 'bg-rose-600/20 hover:bg-rose-600/30 border-rose-500/40 text-rose-400 cursor-pointer'
+                      : 'bg-[#22242c]/60 border-[#272932] text-zinc-500 cursor-not-allowed opacity-60'
+                  }`}
+                  title={`Rollback (${modKey}+Shift+R)`}
                 >
-                  <RotateCcw className="h-3 w-3" />
-                  <span>Rollback</span>
+                  <RotateCcw className="h-3.5 w-3.5" />
                 </button>
               </div>
             )}

@@ -2678,6 +2678,7 @@ export function App() {
                       handleExecuteQuery(explainSql, effectiveDb);
                       setActiveBottomTab('explain');
                     }}
+                    txStatus={txStatusByTab[activeTab.id]}
                     onTxStatusChange={(st) => {
                       setTxStatusByTab((prev) => ({ ...prev, [activeTab.id]: st }));
                     }}
