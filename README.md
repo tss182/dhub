@@ -54,6 +54,7 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 - **Transaction Control (`Tx: AUTO` / `Tx: MANUAL`)**: Switch between auto-commit and manual transaction mode with one-click `Commit` and `Rollback` buttons and live status indicators.
 - **SQL Formatting & Explain Plans**: Format SQL (`Shift+Alt+F`) according to the active engine dialect and inspect `EXPLAIN` / `EXPLAIN ANALYZE` execution plans.
 - **Query History, Snippets & Syntax Cheat-Sheet**: Re-run past queries, bookmark reusable SQL snippets, and open the driver-aware **Syntax & Help** popover right in the console toolbar.
+- **Quick Console Switcher & Tab Context Menu**: Click the **`+`** button next to the rightmost tab—or right-click any table tab and open **Console**—to create a **New Console** on the active connection and database/schema or jump directly to any existing console on that connection.
 
 ### High-Performance Data Grid
 - **Pagination & Infinite Lazy-Load**: Switch between numbered pages and continuous scroll loading with customizable batch sizes (`10`–`5000` rows).
@@ -72,22 +73,36 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 
 ## Keyboard Shortcuts
 
+### Global & Navigation
 | Action | Windows / Linux | macOS |
 | :--- | :--- | :--- |
 | **Open Help & User Guide** | `Ctrl+H` | `⌘H` |
 | **Search Everywhere** | `Ctrl+P` | `⌘P` |
-| **Execute Query at Cursor / Selection** | `Ctrl+Enter` | `⌘Enter` |
-| **Stop Running Query** | `Ctrl+Shift+D` | `⌘Shift+D` |
-| **Format SQL Code** | `Shift+Alt+F` | `Shift+Alt+F` |
-| **Apply Staged Grid Changes** | `Ctrl+S` | `⌘S` |
-| **Duplicate Active Grid Row** | `Ctrl+D` | `⌘D` |
-| **Delete Active Grid Row** | `Delete` | `⌘⌫` |
-| **Revert / Cancel Edits or Close Modal** | `Esc` | `Esc` |
-| **Toggle Value Viewer (`Views`)** | `Ctrl+T` | `⌘T` |
 | **Toggle Left Sidebar (Explorer / Workspaces)** | `Ctrl+B` | `⌘B` |
 | **Toggle Right Sidebar (Consoles / Views)** | `Ctrl+R` | `⌘R` |
 | **Open Settings & Preferences** | `Ctrl+I` | `⌘I` |
 | **Close Active Tab** | `Ctrl+W` | `⌘W` |
+
+### Query Console & SQL Editor
+| Action | Windows / Linux | macOS |
+| :--- | :--- | :--- |
+| **Execute Query at Cursor / Selection** | `Ctrl+Enter` | `⌘Enter` |
+| **Execute All Statements in Editor** | `Ctrl+Shift+Enter` | `⌘Shift+Enter` |
+| **Stop Running Query** | `Ctrl+Shift+D` | `⌘Shift+D` |
+| **Format SQL Code** | `Shift+Alt+F` | `Shift+Alt+F` |
+| **Revert / Close Popovers & Modals** | `Esc` | `Esc` |
+
+### Data Grid & Cell Editing
+| Action | Windows / Linux | macOS |
+| :--- | :--- | :--- |
+| **Apply Staged Grid Changes** | `Ctrl+S` | `⌘S` |
+| **Duplicate Active Grid Row** | `Ctrl+D` | `⌘D` |
+| **Delete Active Grid Row** | `Delete` | `⌘⌫` |
+| **Toggle Value Viewer (`Views`)** | `Ctrl+T` | `⌘T` |
+| **Copy Selected Cells** | `Ctrl+C` | `⌘C` |
+| **Copy As Format Dialog** | `Ctrl+Shift+C` | `⌘Shift+C` |
+| **Paste Data into Grid** | `Ctrl+V` | `⌘V` |
+| **Revert / Cancel Edits or Close Modal** | `Esc` | `Esc` |
 
 ---
 
@@ -138,7 +153,7 @@ docker compose up -d
 ## Project Structure
 
 - `main.go` — Wails v3 application entry point, window setup, event and service registration
-- `internal/driver/` — `DatabaseDriver` interface and implementations for `postgres`, `mysql`, `sqlite`, `mariadb`, `mssql`, `clickhouse`, `mongodb`, and `redis`
+- `internal/driver/` — `DatabaseDriver` interface and implementations for `postgres`, `mysql`, `sqlite`, `mariadb`, `mssql`, `oracle`, `clickhouse`, `mongodb`, and `redis`
 - `internal/manager/` — Active session and connection pool manager (including SSH tunnel lifecycle)
 - `internal/services/` — Wails RPC services (`ConnectionService`, `SchemaService`, `QueryService`, `WorkspaceService`, `ExportService`, `UpdateService`)
 - `internal/store/` — Local SQLite persistence for connections, folders, worksheets, snippets, query history, workspaces, and schema cache
