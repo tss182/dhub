@@ -42,6 +42,7 @@ export interface IndexMeta {
     "isPrimary": boolean;
     "type"?: string;
     "method"?: string;
+    "definition"?: string;
     "comment"?: string;
 }
 
