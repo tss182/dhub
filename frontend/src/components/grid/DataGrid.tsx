@@ -130,6 +130,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
   initialScrollLeft,
   onScrollChange,
 }) => {
+  const isRedis = useMemo(() => {
+    if ((driver || '').toLowerCase() === 'redis') return true;
+    if (connectionId) {
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
+      if (conn?.driver?.toLowerCase() === 'redis') return true;
+    }
+    return false;
+  }, [driver, connectionId]);
+
   const [whereInput, setWhereInput] = useState(whereClause || '');
   const [whereCursorPos, setWhereCursorPos] = useState<number>(0);
   const [showWhereSuggestions, setShowWhereSuggestions] = useState<boolean>(false);
@@ -139,11 +148,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const whereContainerRef = useRef<HTMLDivElement>(null);
   const suggestionListRef = useRef<HTMLDivElement>(null);
   const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
-  const [frozenColumns, setFrozenColumns] = useState<string[]>(
-    initialFrozenColumns && initialFrozenColumns.length > 0
+  const [frozenColumns, setFrozenColumns] = useState<string[]>(() => {
+    if (isRedis) return [];
+    return initialFrozenColumns && initialFrozenColumns.length > 0
       ? initialFrozenColumns
-      : Array.from(new Set(columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name)))
-  );
+      : Array.from(new Set(columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name)));
+  });
   const prevTabTableKeyRef = useRef<string>(`${tabId || ''}::${tableName || ''}`);
   const hasInitializedPKsRef = useRef<boolean>(false);
   const primaryKeysKey = primaryKeys.join(',');
@@ -198,7 +208,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
-    const pks = columns.filter((c) => c.isPrimaryKey || primaryKeySet.has(c.name)).map((c) => c.name);
+    const pks = isRedis
+      ? []
+      : columns.filter((c) => c.isPrimaryKey || primaryKeySet.has(c.name)).map((c) => c.name);
     const uniquePKs = Array.from(new Set(pks));
 
     if (prevTabTableKeyRef.current !== currentKey) {
@@ -207,20 +219,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
       setFrozenColumns(uniquePKs);
       hasSampledRowsRef.current = false;
       userHasResizedRef.current = false;
+    } else if (isRedis) {
+      setFrozenColumns([]);
     } else if (!hasInitializedPKsRef.current && uniquePKs.length > 0) {
       hasInitializedPKsRef.current = true;
       setFrozenColumns((prev) => Array.from(new Set([...prev, ...uniquePKs])));
     }
-  }, [tabId, tableName, columns, primaryKeysKey, primaryKeySet]);
-
-  const isRedis = useMemo(() => {
-    if ((driver || '').toLowerCase() === 'redis') return true;
-    if (connectionId) {
-      const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
-      if (conn?.driver?.toLowerCase() === 'redis') return true;
-    }
-    return false;
-  }, [driver, connectionId]);
+  }, [tabId, tableName, columns, primaryKeysKey, primaryKeySet, isRedis]);
 
   useEffect(() => {
     if (!isTableTab || !connectionId || !database || !tableName || isRedis) {
@@ -574,6 +579,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const handleToggleFreeze = (colName: string) => {
+    if (isRedis) return;
     setFrozenColumns((prev) => {
       const next = prev.includes(colName) ? prev.filter((c) => c !== colName) : [...prev, colName];
       onFrozenColumnsChange?.(next);
@@ -2738,7 +2744,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       onContextMenu={(e) => handleColHeaderContextMenu(e, cIdx)}
                       onClick={(e) => {
                         if (isResizingRef.current) return;
-                        if (e.altKey) {
+                        if (e.altKey && !isRedis) {
                           handleToggleFreeze(col.name);
                         }
                       }}
@@ -2792,25 +2798,27 @@ export const DataGrid: React.FC<DataGridProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleFreeze(col.name);
-                            }}
-                            className={`flex items-center p-1 rounded transition-all cursor-pointer ${
-                              isFrozen
-                                ? 'text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 shadow-xs'
-                                : 'text-zinc-500 opacity-0 group-hover/th:opacity-100 hover:text-cyan-300 hover:bg-zinc-800'
-                            }`}
-                            title={
-                              isFrozen
-                                ? `Unfreeze column "${col.name}"`
-                                : `Freeze column "${col.name}" (Alt+Click header)`
-                            }
-                          >
-                            <Snowflake className={`h-3 w-3 ${isFrozen ? 'text-cyan-400' : ''}`} />
-                          </button>
+                          {!isRedis && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleFreeze(col.name);
+                              }}
+                              className={`flex items-center p-1 rounded transition-all cursor-pointer ${
+                                isFrozen
+                                  ? 'text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 shadow-xs'
+                                  : 'text-zinc-500 opacity-0 group-hover/th:opacity-100 hover:text-cyan-300 hover:bg-zinc-800'
+                              }`}
+                              title={
+                                isFrozen
+                                  ? `Unfreeze column "${col.name}"`
+                                  : `Freeze column "${col.name}" (Alt+Click header)`
+                              }
+                            >
+                              <Snowflake className={`h-3 w-3 ${isFrozen ? 'text-cyan-400' : ''}`} />
+                            </button>
+                          )}
 
                           <button
                             type="button"

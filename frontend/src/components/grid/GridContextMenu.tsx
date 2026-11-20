@@ -148,44 +148,48 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
           <div className="my-1 border-t border-[#272932]" />
         )}
 
-        <button
-          type="button"
-          onClick={() => {
-            onClose();
-            onToggleFreeze(col.name);
-          }}
-          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <Snowflake
-              className={`h-3.5 w-3.5 shrink-0 ${
-                isFrozen ? 'text-cyan-400' : 'text-zinc-400'
-              } group-hover:text-white`}
-            />
-            <span className="truncate">
-              {isFrozen ? `Unfreeze Column (${col.name})` : `Freeze Column (${col.name})`}
-            </span>
-          </div>
-          <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Alt+Click</kbd>
-        </button>
+        {!isRedis && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onToggleFreeze(col.name);
+              }}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Snowflake
+                  className={`h-3.5 w-3.5 shrink-0 ${
+                    isFrozen ? 'text-cyan-400' : 'text-zinc-400'
+                  } group-hover:text-white`}
+                />
+                <span className="truncate">
+                  {isFrozen ? `Unfreeze Column (${col.name})` : `Freeze Column (${col.name})`}
+                </span>
+              </div>
+              <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Alt+Click</kbd>
+            </button>
 
-        {frozenColumns.length > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onUnfreezeAll();
-            }}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-          >
-            <div className="flex items-center gap-2">
-              <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-              <span>Unfreeze All Columns ({frozenColumns.length})</span>
-            </div>
-          </button>
+            {frozenColumns.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onUnfreezeAll();
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                  <span>Unfreeze All Columns ({frozenColumns.length})</span>
+                </div>
+              </button>
+            )}
+
+            <div className="my-1 border-t border-[#272932]" />
+          </>
         )}
-
-        <div className="my-1 border-t border-[#272932]" />
 
         <button
           type="button"
@@ -530,48 +534,52 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  const { cIdx } = contextMenu;
-                  onClose();
-                  if (cIdx !== null && columns[cIdx]) {
-                    onToggleFreeze(columns[cIdx].name);
-                  }
-                }}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <Snowflake
-                    className={`h-3.5 w-3.5 ${
-                      contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
-                        ? 'text-cyan-400'
-                        : 'text-zinc-400'
-                    } group-hover:text-white`}
-                  />
-                  <span>
-                    {contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
-                      ? `Unfreeze Column (${columns[contextMenu.cIdx]?.name})`
-                      : `Freeze Column (${columns[contextMenu.cIdx]?.name})`}
-                  </span>
-                </div>
-                <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Alt+Click</kbd>
-              </button>
+              {!isRedis && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { cIdx } = contextMenu;
+                      onClose();
+                      if (cIdx !== null && columns[cIdx]) {
+                        onToggleFreeze(columns[cIdx].name);
+                      }
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Snowflake
+                        className={`h-3.5 w-3.5 ${
+                          contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
+                            ? 'text-cyan-400'
+                            : 'text-zinc-400'
+                        } group-hover:text-white`}
+                      />
+                      <span>
+                        {contextMenu.cIdx !== null && frozenColumns.includes(columns[contextMenu.cIdx]?.name)
+                          ? `Unfreeze Column (${columns[contextMenu.cIdx]?.name})`
+                          : `Freeze Column (${columns[contextMenu.cIdx]?.name})`}
+                      </span>
+                    </div>
+                    <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">Alt+Click</kbd>
+                  </button>
 
-              {frozenColumns.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onUnfreezeAll();
-                  }}
-                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                >
-                  <div className="flex items-center gap-2">
-                    <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                    <span>Unfreeze All Columns ({frozenColumns.length})</span>
-                  </div>
-                </button>
+                  {frozenColumns.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onUnfreezeAll();
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Snowflake className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                        <span>Unfreeze All Columns ({frozenColumns.length})</span>
+                      </div>
+                    </button>
+                  )}
+                </>
               )}
 
               {onHideColumn && contextMenu.cIdx !== null && columns[contextMenu.cIdx] && (
