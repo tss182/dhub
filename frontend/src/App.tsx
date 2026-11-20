@@ -182,6 +182,7 @@ export function App() {
     updateTabConnection,
     renameTab,
     duplicateTab,
+    createConsole,
     setActiveBottomTab,
     toggleBottomPanel,
     toggleRightPanel,
@@ -224,6 +225,7 @@ export function App() {
       updateTabConnection: s.updateTabConnection,
       renameTab: s.renameTab,
       duplicateTab: s.duplicateTab,
+      createConsole: s.createConsole,
       setActiveBottomTab: s.setActiveBottomTab,
       toggleBottomPanel: s.toggleBottomPanel,
       toggleRightPanel: s.toggleRightPanel,
@@ -468,8 +470,14 @@ export function App() {
   // Overflow tabs (>> count) & dropdown state (no horizontal scrolling; only fitting tabs shown in tab bar)
   const tabBarContainerRef = React.useRef<HTMLDivElement | null>(null);
   const tabDropdownRef = React.useRef<HTMLDivElement | null>(null);
+  const newConsoleDropdownRef = React.useRef<HTMLDivElement | null>(null);
   const [visibleCount, setVisibleCount] = useState<number>(() => Math.max(1, tabs.length));
   const [isTabDropdownOpen, setIsTabDropdownOpen] = useState(false);
+  const [isNewConsoleDropdownOpen, setIsNewConsoleDropdownOpen] = useState(false);
+  const [newConsoleDropdownPos, setNewConsoleDropdownPos] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
   const [tabDropdownSearch, setTabDropdownSearch] = useState('');
   const [tabDropdownSelectedIndex, setTabDropdownSelectedIndex] = useState(0);
   const [hoveredDropdownTab, setHoveredDropdownTab] = useState<{
@@ -1223,6 +1231,13 @@ export function App() {
         setIsTabDropdownOpen(false);
         setHoveredDropdownTab(null);
       }
+      if (
+        isNewConsoleDropdownOpen &&
+        newConsoleDropdownRef.current &&
+        !newConsoleDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsNewConsoleDropdownOpen(false);
+      }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -1232,6 +1247,9 @@ export function App() {
         if (isTabDropdownOpen) {
           setIsTabDropdownOpen(false);
           setHoveredDropdownTab(null);
+        }
+        if (isNewConsoleDropdownOpen) {
+          setIsNewConsoleDropdownOpen(false);
         }
         if (renameModal.isOpen) {
           setRenameModal({ isOpen: false, id: '', title: '' });
@@ -1244,13 +1262,13 @@ export function App() {
       window.removeEventListener('click', handleClose);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [tabContextMenu.isOpen, renameModal.isOpen, isTabDropdownOpen]);
+  }, [tabContextMenu.isOpen, renameModal.isOpen, isTabDropdownOpen, isNewConsoleDropdownOpen]);
 
   const handleTabContextMenu = (e: React.MouseEvent, tab: WorkbenchTab) => {
     e.preventDefault();
     e.stopPropagation();
     const menuWidth = 190;
-    const menuHeight = tab.type === 'table_data' ? 300 : 220;
+    const menuHeight = tab.type === 'table_data' ? 330 : 220;
     const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
     const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
     setTabContextMenu({
@@ -1259,6 +1277,46 @@ export function App() {
       y: Math.max(10, y),
       tab,
     });
+  };
+
+  const handleOpenConsoleRecord = (consoleRecord: {
+    id: string;
+    title: string;
+    connectionId: string;
+    database: string;
+    schema: string;
+    content: string;
+  }) => {
+    const existing = tabs.find((t) => t.id === consoleRecord.id);
+    if (existing) {
+      setActiveTabId(consoleRecord.id);
+    } else {
+      const conn = connections.find((c) => c.id === consoleRecord.connectionId);
+      openTab({
+        id: consoleRecord.id,
+        type: 'worksheet',
+        title: consoleRecord.title,
+        connectionId: consoleRecord.connectionId,
+        driver: conn?.driver,
+        database: consoleRecord.database,
+        schema: consoleRecord.schema,
+        content: consoleRecord.content,
+      });
+    }
+  };
+
+  const handleCreateConsoleFromTab = (sourceTab?: WorkbenchTab) => {
+    const connId = sourceTab?.connectionId || activeConnectionId || '';
+    const conn = connections.find((c) => c.id === connId);
+    if (sourceTab?.type === 'table_data') {
+      const { targetDb, targetSchema } = resolveTableTabMeta(sourceTab);
+      createConsole(connId, targetDb, targetSchema);
+      return;
+    }
+    const targetDb =
+      sourceTab?.database || activeDatabase || conn?.databaseName || '';
+    const targetSchema = sourceTab?.schema || activeSchema || '';
+    createConsole(connId, targetDb, targetSchema);
   };
 
   const handleOpenRename = (id: string, currentTitle: string) => {
@@ -2428,6 +2486,107 @@ export function App() {
                       </div>
                     );
                   })}
+
+                  {/* New / Switch Console Dropdown Trigger (+) — next to the rightmost visible tab */}
+                  {tabs.length > 0 && (() => {
+                    const targetConnId = activeTab?.connectionId || activeConnectionId || '';
+                    const connectionConsoles = targetConnId
+                      ? consoles.filter((c) => c.connectionId === targetConnId)
+                      : [];
+
+                    return (
+                      <div ref={newConsoleDropdownRef} className="flex items-center shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleTabMouseLeave();
+                            setIsTabDropdownOpen(false);
+                            setHoveredDropdownTab(null);
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            const menuWidth = 220;
+                            setNewConsoleDropdownPos({
+                              x: Math.min(rect.left, window.innerWidth - menuWidth - 10),
+                              y: rect.bottom + 2,
+                            });
+                            setIsNewConsoleDropdownOpen((prev) => !prev);
+                          }}
+                          className={`flex h-6 w-6 items-center justify-center rounded transition-colors cursor-pointer ${
+                            isNewConsoleDropdownOpen
+                              ? 'bg-[#22242c] text-white'
+                              : 'text-zinc-400 hover:text-zinc-100 hover:bg-[#191a20]'
+                          }`}
+                          title="New or Open Console"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+
+                        {isNewConsoleDropdownOpen && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              top: newConsoleDropdownPos.y,
+                              left: newConsoleDropdownPos.x,
+                            }}
+                            className="fixed z-50 min-w-[200px] max-w-[280px] max-h-[260px] overflow-y-auto rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl text-[12px] text-zinc-300 select-none animate-in fade-in zoom-in-95 duration-100"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsNewConsoleDropdownOpen(false);
+                                handleCreateConsoleFromTab(activeTab);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-200 transition-colors text-left cursor-pointer group"
+                            >
+                              <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white shrink-0" />
+                              <span>New Console</span>
+                            </button>
+
+                            {connectionConsoles.length > 0 && (
+                              <>
+                                <div className="my-1 border-t border-[#272932]" />
+                                {connectionConsoles.map((consoleRecord) => {
+                                  const isOpenTab = tabs.some((t) => t.id === consoleRecord.id);
+                                  return (
+                                    <button
+                                      key={consoleRecord.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setIsNewConsoleDropdownOpen(false);
+                                        handleOpenConsoleRecord(consoleRecord);
+                                      }}
+                                      title={
+                                        consoleRecord.database
+                                          ? `${consoleRecord.title} (${consoleRecord.database})`
+                                          : consoleRecord.title
+                                      }
+                                      className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                                    >
+                                      <span className="flex items-center gap-2 min-w-0">
+                                        <FileCode className="h-3.5 w-3.5 text-blue-400 group-hover:text-white shrink-0" />
+                                        <span className="truncate">{consoleRecord.title}</span>
+                                        {isOpenTab && (
+                                          <span
+                                            className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0"
+                                            title="Currently open"
+                                          />
+                                        )}
+                                      </span>
+                                      {consoleRecord.database && (
+                                        <span className="text-[10px] font-mono text-zinc-500 group-hover:text-blue-100 truncate max-w-[80px] shrink-0">
+                                          {consoleRecord.database}
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Overflow Tabs Dropdown Trigger (>> {{count}}) — only shown when there are excess tabs */}
@@ -3962,6 +4121,8 @@ export function App() {
         x={tabContextMenu.x}
         y={tabContextMenu.y}
         tab={tabContextMenu.tab}
+        tabs={tabs}
+        consoles={consoles}
         activeTabId={activeTabId}
         splitTabId={splitTabId}
         tabCount={tabs.length}
@@ -3980,6 +4141,8 @@ export function App() {
         }}
         onCloseSplitView={() => setSplitTabId(null)}
         onReloadTableData={loadTableData}
+        onNewConsole={handleCreateConsoleFromTab}
+        onSelectConsole={handleOpenConsoleRecord}
         onTruncateTable={handleTruncateTableFromTab}
         onDropTable={handleDropTableFromTab}
         onCloseTab={closeTab}
