@@ -9,6 +9,7 @@ import {
   Copy,
   AlertCircle,
   Loader2,
+  ScatterChart,
 } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
@@ -66,6 +67,8 @@ export interface VectorSearchPanelProps {
   error: string | null;
   onExecuteVectorSearch: (sql: string) => void;
   onResetSearch: () => void;
+  showVisualization?: boolean;
+  onToggleVisualization?: () => void;
 }
 
 function quotePgIdent(ident: string): string {
@@ -97,6 +100,8 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   error,
   onExecuteVectorSearch,
   onResetSearch,
+  showVisualization = false,
+  onToggleVisualization,
 }) => {
   const vectorColumns = useMemo(
     () => columns.filter((c) => isVectorColumn(c.dataType, c.rawType)),
@@ -351,6 +356,21 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {onToggleVisualization && (
+            <button
+              type="button"
+              onClick={onToggleVisualization}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] cursor-pointer transition-colors ${
+                showVisualization
+                  ? 'bg-violet-600 text-white border-violet-500 font-medium'
+                  : 'bg-[#1e2028] hover:bg-[#272a35] text-zinc-300 border-[#2d303c]'
+              }`}
+              title="Toggle 2D PCA Embedding Visualization"
+            >
+              <ScatterChart className="h-3 w-3" />
+              <span>{showVisualization ? 'Table Grid' : '2D PCA'}</span>
+            </button>
+          )}
           {isVectorSearchActive && (
             <button
               type="button"

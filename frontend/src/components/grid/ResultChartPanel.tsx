@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, LineChart, AreaChart, PieChart, Download, AlertCircle } from 'lucide-react';
+import { BarChart3, LineChart, AreaChart, PieChart, Download, AlertCircle, ScatterChart } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
+import { isVectorColumn } from './gridFormatters';
+import { VectorPcaChart } from './VectorPcaChart';
 
 export interface ResultChartPanelProps {
   columns: ColumnMeta[];
@@ -8,7 +10,7 @@ export interface ResultChartPanelProps {
   title?: string;
 }
 
-type ChartType = 'bar' | 'line' | 'area' | 'pie';
+type ChartType = 'bar' | 'line' | 'area' | 'pie' | 'pca';
 type AggMode = 'raw' | 'sum' | 'avg' | 'count';
 
 const PALETTE = [
@@ -73,6 +75,11 @@ export const ResultChartPanel: React.FC<ResultChartPanelProps> = ({ columns, row
     }
     return Math.min(1, Math.max(0, columns.length - 1));
   }, [numericColIndices, defaultXIdx, columns.length]);
+
+  const hasVectorCol = useMemo(
+    () => columns.some((c) => isVectorColumn(c.dataType, c.rawType)),
+    [columns]
+  );
 
   const [chartType, setChartType] = useState<ChartType>('bar');
   const [xColIdx, setXColIdx] = useState<number>(defaultXIdx);
@@ -186,6 +193,7 @@ export const ResultChartPanel: React.FC<ResultChartPanelProps> = ({ columns, row
                 { id: 'line', label: 'Line', icon: LineChart },
                 { id: 'area', label: 'Area', icon: AreaChart },
                 { id: 'pie', label: 'Pie', icon: PieChart },
+                ...(hasVectorCol ? [{ id: 'pca', label: 'Vector PCA', icon: ScatterChart }] : []),
               ] as const
             ).map((t) => {
               const Icon = t.icon;
@@ -193,7 +201,7 @@ export const ResultChartPanel: React.FC<ResultChartPanelProps> = ({ columns, row
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setChartType(t.id)}
+                  onClick={() => setChartType(t.id as ChartType)}
                   className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] cursor-pointer transition-colors ${
                     chartType === t.id
                       ? 'bg-blue-600/25 text-blue-300 font-medium'
@@ -293,7 +301,11 @@ export const ResultChartPanel: React.FC<ResultChartPanelProps> = ({ columns, row
 
       {/* SVG Canvas */}
       <div className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden">
-        {chartType === 'pie' ? (() => {
+        {chartType === 'pca' ? (
+          <div className="w-full h-full">
+            <VectorPcaChart columns={columns} rows={rows} title={title} />
+          </div>
+        ) : chartType === 'pie' ? (() => {
           const positives = series.map((s) => ({ ...s, val: Math.max(0, s.value) })).filter((s) => s.val > 0);
           const total = positives.reduce((acc, s) => acc + s.val, 0);
           if (total <= 0) {

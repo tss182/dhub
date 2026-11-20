@@ -14,6 +14,7 @@ import { Popover } from './components/common/Popover';
 import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { ResultChartPanel } from './components/grid/ResultChartPanel';
 import { VectorSearchPanel, VectorSearchStats } from './components/grid/VectorSearchPanel';
+import { VectorPcaChart } from './components/grid/VectorPcaChart';
 
 const SqlWorksheet = lazy(() =>
   import('./components/editor/SqlWorksheet').then((m) => ({ default: m.SqlWorksheet }))
@@ -427,6 +428,7 @@ export function App() {
   const [vectorSearchByTab, setVectorSearchByTab] = useState<
     Record<string, { active: boolean; loading: boolean; error: string | null; stats: VectorSearchStats | null }>
   >({});
+  const [vectorVizByTab, setVectorVizByTab] = useState<Record<string, boolean>>({});
 
   const handleExecuteVectorSearch = async (tab: WorkbenchTab, sql: string) => {
     if (!tab.connectionId || !tab.table) return;
@@ -3192,6 +3194,7 @@ export function App() {
 
                     const vecState = vectorSearchByTab[activeTab.id];
                     const effectiveDriver = tableConn?.driver || activeTab.driver || '';
+                    const isVectorViz = Boolean(vectorVizByTab[activeTab.id]);
 
                     return (
                     <div className="flex flex-col h-full min-h-0">
@@ -3208,8 +3211,22 @@ export function App() {
                         error={vecState?.error || null}
                         onExecuteVectorSearch={(sql) => handleExecuteVectorSearch(activeTab, sql)}
                         onResetSearch={() => handleResetVectorSearch(activeTab)}
+                        showVisualization={isVectorViz}
+                        onToggleVisualization={() =>
+                          setVectorVizByTab((prev) => ({
+                            ...prev,
+                            [activeTab.id]: !prev[activeTab.id],
+                          }))
+                        }
                       />
                       <div className="flex-1 min-h-0">
+                        {isVectorViz ? (
+                          <VectorPcaChart
+                            columns={finalColumns}
+                            rows={finalRows}
+                            title={activeTab.table}
+                          />
+                        ) : (
                         <DataGrid
                       tabId={activeTab.id}
                       connectionId={activeTab.connectionId}
@@ -3458,6 +3475,7 @@ export function App() {
                         });
                       }}
                         />
+                        )}
                       </div>
                     </div>
                     );
