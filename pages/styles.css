@@ -660,6 +660,8 @@ body {
 .db-badge.olap  { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
 .db-badge.nosql { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
 .db-badge.kv    { background: rgba(244, 63, 94, 0.15);  color: #fda4af; }
+.db-badge.vector { background: rgba(139, 92, 246, 0.15); color: #c4b5fd; }
+.db-badge.search { background: rgba(20, 184, 166, 0.15); color: #5eead4; }
 
 .db-card h4 {
   margin: 0 0 6px;

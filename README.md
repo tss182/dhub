@@ -18,7 +18,7 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 
 | Engine | Default Port | Category | Highlights |
 | :--- | :---: | :--- | :--- |
-| **PostgreSQL** | `5432` | Relational (`SQL`) | Multi-database & multi-schema navigation, tables, views, materialized views, routines, triggers, indexes, `EXPLAIN ANALYZE`, user & role privileges |
+| **PostgreSQL** | `5432` | Relational (`SQL`) | Multi-database & multi-schema navigation, `pgvector` (`vector(N)` / `halfvec` / `hnsw` & `ivfflat` indexes), tables, views, materialized views, routines, triggers, indexes, `EXPLAIN ANALYZE`, user & role privileges |
 | **MySQL** | `3306` | Relational (`SQL`) | Multi-database browsing, routines, triggers, indexes, `EXPLAIN`, user & privilege management |
 | **MariaDB** | `3306` | Relational (`SQL`) | Full MariaDB dialect formatting, `ANALYZE` plans, and user/privilege management |
 | **SQLite** | Local file | Relational (`SQL`) | Zero-config local file databases, schema designer, DDL viewer, and inline editing |
@@ -27,6 +27,8 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 | **ClickHouse** | `9000` | Column-Oriented (`SQL`) | High-speed OLAP query execution, system catalog inspection, `EXPLAIN PIPELINE` |
 | **MongoDB** | `27017` | Document (`NoSQL`) | Collection browsing, BSON schema & index inference, Mongo Shell methods (`db.<coll>.find()`, `countDocuments()`, `insertOne()`, `deleteOne()`, `deleteMany()`, `drop()`), SQL-like `SELECT` syntax, raw JSON commands, and inline document editing |
 | **Redis** | `6379` | Key-Value (`NoSQL`) | Logical database switcher (`db0`–`db15`), key scanner with type & TTL badges (`string`, `hash`, `list`, `set`, `zset`), Add Key / Flush DB / Server Info modals, Redis CLI commands, and pseudo-SQL (`SELECT * FROM keys`) |
+| **Qdrant** | `6333` | Vector (`NoSQL`) | Collection browsing, vector config & payload schema inspection, REST similarity search (`points/search`, `points/query`, `points/scroll`), pseudo-SQL (`SELECT`), compact vector previews, and inline point editing |
+| **Elasticsearch** | `9200` | Search (`NoSQL`) | Index browsing, `_mapping` & `dense_vector` inspection, Kibana-style REST DSL (`_search`, `knn`), native `/_sql` queries, pseudo-SQL (`SELECT`), and inline document editing |
 
 ---
 

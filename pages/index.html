@@ -6,7 +6,7 @@
   <title>DHub — Download Latest Version</title>
   <meta name="description" content="Download DHub, a lightweight, keyboard-first multi-database desktop client and SQL/NoSQL IDE for Windows, macOS, and Linux." />
   <meta property="og:title" content="DHub — Multi-Database Desktop Client" />
-  <meta property="og:description" content="Download the latest version of DHub for Windows, macOS, and Linux. Supports PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, ClickHouse, MongoDB, and Redis." />
+  <meta property="og:description" content="Download the latest version of DHub for Windows, macOS, and Linux. Supports PostgreSQL (with pgvector), MySQL, MariaDB, SQLite, SQL Server, Oracle, ClickHouse, MongoDB, Redis, Qdrant, and Elasticsearch." />
   <meta property="og:type" content="website" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -306,7 +306,7 @@
           <div class="db-card">
             <div class="db-badge sql">SQL</div>
             <h4>PostgreSQL</h4>
-            <p data-i18n="db.pg">Multi-DB &amp; schema navigation, EXPLAIN ANALYZE, routines, triggers &amp; role privileges.</p>
+            <p data-i18n="db.pg">Multi-DB &amp; schema navigation, pgvector embeddings &amp; HNSW/IVFFlat indexes, EXPLAIN ANALYZE &amp; role privileges.</p>
           </div>
           <div class="db-card">
             <div class="db-badge sql">SQL</div>
@@ -347,6 +347,16 @@
             <div class="db-badge kv">KV</div>
             <h4>Redis</h4>
             <p data-i18n="db.redis">Logical DB switcher (db0–db15), key scanner with TTL badges &amp; Redis CLI.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge vector">Vector</div>
+            <h4>Qdrant</h4>
+            <p data-i18n="db.qdrant">Collection browsing, vector &amp; payload inspection, REST similarity search &amp; inline point editing.</p>
+          </div>
+          <div class="db-card">
+            <div class="db-badge search">Search</div>
+            <h4>Elasticsearch</h4>
+            <p data-i18n="db.es">Index &amp; dense_vector mapping inspection, Kibana REST DSL, kNN search &amp; native /_sql.</p>
           </div>
         </div>
       </div>
