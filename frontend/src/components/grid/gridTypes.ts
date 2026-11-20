@@ -76,6 +76,7 @@ export interface DataGridProps {
   primaryKeys?: string[];
   onSubmitChanges: (skipConfirm?: boolean) => void;
   onPreviewChanges: () => void;
+  onCopyDml?: () => Promise<boolean | void> | void;
   totalCount?: number;
   onCountRows?: () => Promise<void> | void;
   hasMore?: boolean;

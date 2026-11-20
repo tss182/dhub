@@ -154,7 +154,7 @@ jobs:
           ref: ${{ needs.sync-version.outputs.commit_sha }}
 
       - name: Build Linux & Windows
-        uses: tss182/action-wails3-linux-windows@v1
+        uses: tss182/action-wails3-linux-windows@v1.0.1
         with:
           skip-setup: "true"
           app-name: dhub
@@ -186,7 +186,7 @@ jobs:
           ref: ${{ needs.sync-version.outputs.commit_sha }}
 
       - name: Build macOS
-        uses: tss182/action-wails3-macos@v1
+        uses: tss182/action-wails3-macos@v1.0.1
         with:
           app-name: dhub
           version: ${{ needs.prepare-version.outputs.version }}

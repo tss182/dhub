@@ -96,6 +96,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   primaryKeys = EMPTY_PRIMARY_KEYS,
   onSubmitChanges,
   onPreviewChanges,
+  onCopyDml,
   totalCount,
   onCountRows,
   hasMore = false,
@@ -2548,10 +2549,10 @@ export const DataGrid: React.FC<DataGridProps> = ({
         frozenColumns={frozenColumns}
         onOpenRedisAddKey={() => setRedisAddKeyOpen(true)}
         onAddRow={handleAddRow}
-        onDuplicateRow={handleDuplicateRow}
         onDeleteActiveRow={handleDeleteActiveRow}
         onCopyRawSql={handleCopyRawSql}
         onPreviewChanges={onPreviewChanges}
+        onCopyDml={onCopyDml}
         onApplyChanges={handleApplyChanges}
         onRequestCancelConfirm={() => setShowCancelConfirm(true)}
         onWhereInputChange={(val, pos) => {

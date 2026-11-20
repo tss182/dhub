@@ -2134,12 +2134,12 @@ export function App() {
     };
   };
 
-  const handlePreviewChanges = async (explicitTarget?: ChangeTarget) => {
+  const fetchDmlPreview = async (explicitTarget?: ChangeTarget): Promise<string[] | null> => {
     const target = explicitTarget || resolveTableTabTarget();
-    if (!target) return;
+    if (!target) return null;
     const staged = useGridEditStore.getState().stagedByTab[target.stagedKey] || {};
     const changeList = Object.values(staged);
-    if (changeList.length === 0) return;
+    if (changeList.length === 0) return null;
 
     try {
       const sqls = await QueryService.PreviewChanges(
@@ -2149,13 +2149,44 @@ export function App() {
         target.table,
         changeList as any
       );
-      setDmlPreview(sqls ?? []);
+      return sqls ?? [];
     } catch (e: any) {
       alertError(
         'An error occurred while generating SQL DML preview for staged changes.',
         'SQL Preview Failed',
         e?.message || String(e)
       );
+      return null;
+    }
+  };
+
+  const handlePreviewChanges = async (explicitTarget?: ChangeTarget) => {
+    const sqls = await fetchDmlPreview(explicitTarget);
+    if (sqls !== null) {
+      setDmlPreview(sqls);
+    }
+  };
+
+  const handleCopyDml = async (explicitTarget?: ChangeTarget): Promise<boolean> => {
+    const sqls = await fetchDmlPreview(explicitTarget);
+    if (!sqls || sqls.length === 0) return false;
+    const text = sqls.join('\n\n');
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      return true;
+    } catch {
+      return false;
     }
   };
 
@@ -3220,6 +3251,7 @@ export function App() {
                       }}
                       onSubmitChanges={(skip) => handleSubmitChanges(skip === true)}
                       onPreviewChanges={() => handlePreviewChanges()}
+                      onCopyDml={() => handleCopyDml()}
                       isReadOnly={Boolean(tableConn?.isReadOnly)}
                       initialFrozenColumns={activeTab.tableViewState?.frozenColumns}
                       onFrozenColumnsChange={(frozenCols) => {
@@ -3753,6 +3785,7 @@ export function App() {
                             onRefresh={() => handleQueryPageChange(queryPagination.page)}
                             onSubmitChanges={(skip) => handleSubmitChanges(skip === true, buildResultTarget() || undefined)}
                             onPreviewChanges={() => handlePreviewChanges(buildResultTarget() || undefined)}
+                            onCopyDml={() => handleCopyDml(buildResultTarget() || undefined)}
                             rawSql={currentResSql}
                               isReadOnly={
                                 Boolean(
@@ -3910,6 +3943,14 @@ export function App() {
                         onApplied: () => loadTableData(splitTab),
                       })}
                       onPreviewChanges={() => handlePreviewChanges({
+                        stagedKey: splitTab.id,
+                        connectionId: splitTab.connectionId,
+                        database: splitTab.database || '',
+                        schema: splitTab.schema || '',
+                        table: splitTab.table || '',
+                        onApplied: () => loadTableData(splitTab),
+                      })}
+                      onCopyDml={() => handleCopyDml({
                         stagedKey: splitTab.id,
                         connectionId: splitTab.connectionId,
                         database: splitTab.database || '',

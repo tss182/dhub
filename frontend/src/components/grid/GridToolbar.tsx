@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus,
   Copy,
@@ -39,10 +39,10 @@ interface GridToolbarProps {
   frozenColumns: string[];
   onOpenRedisAddKey: () => void;
   onAddRow: () => void;
-  onDuplicateRow: () => void;
   onDeleteActiveRow: () => void;
   onCopyRawSql: () => void;
   onPreviewChanges: () => void;
+  onCopyDml?: () => Promise<boolean | void> | void;
   onApplyChanges: () => void;
   onRequestCancelConfirm: () => void;
   onWhereInputChange: (value: string, cursorPos: number) => void;
@@ -80,10 +80,10 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
   frozenColumns,
   onOpenRedisAddKey,
   onAddRow,
-  onDuplicateRow,
   onDeleteActiveRow,
   onCopyRawSql,
   onPreviewChanges,
+  onCopyDml,
   onApplyChanges,
   onRequestCancelConfirm,
   onWhereInputChange,
@@ -100,6 +100,28 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
   onShowAllFrozen,
   onClearAllFrozen,
 }) => {
+  const [copiedDml, setCopiedDml] = useState(false);
+  const copyDmlTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyDmlTimerRef.current !== null) {
+        window.clearTimeout(copyDmlTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyDmlClick = async () => {
+    if (!onCopyDml) return;
+    const result = await onCopyDml();
+    if (result === false) return;
+    setCopiedDml(true);
+    if (copyDmlTimerRef.current !== null) {
+      window.clearTimeout(copyDmlTimerRef.current);
+    }
+    copyDmlTimerRef.current = window.setTimeout(() => setCopiedDml(false), 2000);
+  };
+
   return (
     <div className={`flex h-10 items-center justify-between border-b px-3 ${gridBarBg}`}>
       <div className="flex items-center gap-1.5 shrink-0">
@@ -134,14 +156,6 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
                 <Plus className="h-4 w-4 text-emerald-400" />
               </button>
             )}
-
-            <button
-              onClick={onDuplicateRow}
-              className="flex h-7 w-7 items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2d37] text-zinc-300 transition-colors cursor-pointer"
-              title={`Duplicate Selected Row (${modKey}+D)`}
-            >
-              <Copy className="h-3.5 w-3.5 text-sky-400" />
-            </button>
 
             <button
               onClick={onDeleteActiveRow}
@@ -187,6 +201,25 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
             >
               <Eye className="h-4 w-4" />
             </button>
+
+            {onCopyDml && (
+              <button
+                type="button"
+                onClick={handleCopyDmlClick}
+                className={`flex h-7 w-7 items-center justify-center rounded transition-colors cursor-pointer ${
+                  copiedDml
+                    ? 'bg-emerald-600/25 text-emerald-300'
+                    : 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/30'
+                }`}
+                title="Copy SQL DML"
+              >
+                {copiedDml ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
 
             <button
               onClick={onApplyChanges}

@@ -1,5 +1,5 @@
-import React from 'react';
-import { X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Copy, Check } from 'lucide-react';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 
 interface DmlPreviewModalProps {
@@ -15,7 +15,35 @@ export const DmlPreviewModal: React.FC<DmlPreviewModalProps> = ({
   onClose,
   onApply,
 }) => {
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setCopied(false);
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, [statements]);
+
   if (!statements) return null;
+
+  const sqlText = statements.join('\n\n');
+
+  const handleCopy = async () => {
+    if (!sqlText) return;
+    try {
+      await navigator.clipboard.writeText(sqlText);
+      setCopied(true);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
 
   const env = resolveConnectionEnv(connection);
   const headerClass =
@@ -36,24 +64,46 @@ export const DmlPreviewModal: React.FC<DmlPreviewModalProps> = ({
         </div>
         <div className="p-4">
           <pre className="p-3 bg-[#121317] rounded border border-[#272932] font-mono text-xs text-emerald-400 max-h-60 overflow-auto">
-            {statements.join('\n\n')}
+            {sqlText}
           </pre>
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="flex items-center justify-between gap-2 mt-4">
             <button
-              onClick={onClose}
-              className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c] cursor-pointer"
+              type="button"
+              onClick={handleCopy}
+              disabled={!sqlText}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c] text-zinc-200 cursor-pointer disabled:opacity-40"
             >
-              Close
+              {copied ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  <span>Copy Query</span>
+                </>
+              )}
             </button>
-            <button
-              onClick={() => {
-                onClose();
-                onApply();
-              }}
-              className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm cursor-pointer"
-            >
-              Apply Changes
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3 py-1.5 rounded border border-[#272932] hover:bg-[#22242c] cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onApply();
+                }}
+                className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-sm cursor-pointer"
+              >
+                Apply Changes
+              </button>
+            </div>
           </div>
         </div>
       </div>
