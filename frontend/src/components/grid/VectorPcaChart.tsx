@@ -41,18 +41,19 @@ function parseNumericVector(val: any): number[] | null {
 }
 
 /**
- * Computes 2D PCA coordinates via the N x N Gram matrix (O(N^2 * D)),
+ * Computes 3D PCA coordinates via the N x N Gram matrix (O(N^2 * D)),
  * keeping projection fast even for 1536–3072 dimensional embeddings.
  */
-function computePca2D(vectors: number[][]): Array<[number, number]> {
+function computePca3D(vectors: number[][]): Array<[number, number, number]> {
   const n = vectors.length;
   if (n === 0) return [];
-  if (n === 1) return [[0, 0]];
+  if (n === 1) return [[0, 0, 0]];
 
   const d = vectors[0].length;
-  if (d === 0) return vectors.map(() => [0, 0]);
-  if (d === 1) return vectors.map((v) => [v[0] || 0, 0]);
-  if (d === 2) return vectors.map((v) => [v[0] || 0, v[1] || 0]);
+  if (d === 0) return vectors.map(() => [0, 0, 0]);
+  if (d === 1) return vectors.map((v) => [v[0] || 0, 0, 0]);
+  if (d === 2) return vectors.map((v) => [v[0] || 0, v[1] || 0, 0]);
+  if (d === 3) return vectors.map((v) => [v[0] || 0, v[1] || 0, v[2] || 0]);
 
   // 1. Center vectors
   const mean = new Float64Array(d);
@@ -91,10 +92,11 @@ function computePca2D(vectors: number[][]): Array<[number, number]> {
     }
   }
 
-  // 3. Power iteration for top-2 eigenvectors of G
-  const powerIter = (mat: Float64Array[], ortho?: Float64Array): { vec: Float64Array; val: number } => {
+  // 3. Power iteration with Gram-Schmidt orthogonalization against prior eigenvectors
+  const powerIter = (mat: Float64Array[], orthos: Float64Array[]): { vec: Float64Array; val: number } => {
     const u = new Float64Array(n);
-    for (let i = 0; i < n; i++) u[i] = ((i * 7 + 3) % 13) - 6;
+    const seedOffset = orthos.length * 5 + 3;
+    for (let i = 0; i < n; i++) u[i] = ((i * 7 + seedOffset) % 13) - 6;
 
     const norm = (arr: Float64Array) => {
       let s = 0;
@@ -103,10 +105,10 @@ function computePca2D(vectors: number[][]): Array<[number, number]> {
       for (let i = 0; i < n; i++) arr[i] /= len;
     };
 
-    if (ortho) {
+    for (const o of orthos) {
       let proj = 0;
-      for (let i = 0; i < n; i++) proj += u[i] * ortho[i];
-      for (let i = 0; i < n; i++) u[i] -= proj * ortho[i];
+      for (let i = 0; i < n; i++) proj += u[i] * o[i];
+      for (let i = 0; i < n; i++) u[i] -= proj * o[i];
     }
     norm(u);
 
@@ -119,10 +121,10 @@ function computePca2D(vectors: number[][]): Array<[number, number]> {
         for (let j = 0; j < n; j++) sum += gi[j] * u[j];
         next[i] = sum;
       }
-      if (ortho) {
+      for (const o of orthos) {
         let proj = 0;
-        for (let i = 0; i < n; i++) proj += next[i] * ortho[i];
-        for (let i = 0; i < n; i++) next[i] -= proj * ortho[i];
+        for (let i = 0; i < n; i++) proj += next[i] * o[i];
+        for (let i = 0; i < n; i++) next[i] -= proj * o[i];
       }
       let rayleigh = 0;
       for (let i = 0; i < n; i++) rayleigh += next[i] * u[i];
@@ -134,14 +136,16 @@ function computePca2D(vectors: number[][]): Array<[number, number]> {
     return { vec: u, val: eigVal };
   };
 
-  const pc1 = powerIter(G);
-  const pc2 = powerIter(G, pc1.vec);
+  const pc1 = powerIter(G, []);
+  const pc2 = powerIter(G, [pc1.vec]);
+  const pc3 = powerIter(G, [pc1.vec, pc2.vec]);
   const s1 = Math.sqrt(pc1.val) || 1;
   const s2 = Math.sqrt(pc2.val) || 1;
+  const s3 = Math.sqrt(pc3.val) || 1;
 
-  const coords: Array<[number, number]> = new Array(n);
+  const coords: Array<[number, number, number]> = new Array(n);
   for (let i = 0; i < n; i++) {
-    coords[i] = [pc1.vec[i] * s1, pc2.vec[i] * s2];
+    coords[i] = [pc1.vec[i] * s1, pc2.vec[i] * s2, pc3.vec[i] * s3];
   }
   return coords;
 }
@@ -176,6 +180,9 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
     return pref?.idx ?? -1;
   });
   const [maxPoints, setMaxPoints] = useState<number>(200);
+  const [dimMode, setDimMode] = useState<'2d' | '3d'>('2d');
+  const [angles, setAngles] = useState<{ yaw: number; pitch: number }>({ yaw: 0.5, pitch: 0.35 });
+  const [dragStart, setDragStart] = useState<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
   const [hoveredPointIdx, setHoveredPointIdx] = useState<number | null>(null);
 
   const activeVecIdx = vectorCols.some((v) => v.idx === selectedVecIdx)
@@ -214,12 +221,13 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
     }
 
     if (validItems.length === 0) return [];
-    const coords = computePca2D(validItems.map((it) => it.vec));
+    const coords = computePca3D(validItems.map((it) => it.vec));
 
     return validItems.map((it, idx) => ({
       ...it,
       x: coords[idx][0],
       y: coords[idx][1],
+      z: coords[idx][2],
       dims: it.vec.length,
     }));
   }, [activeVecIdx, rows, maxPoints, columns, labelColIdx, colorColIdx]);
@@ -264,18 +272,55 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
 
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const p of projected) {
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
     if (p.y < minY) minY = p.y;
     if (p.y > maxY) maxY = p.y;
+    if (p.z < minZ) minZ = p.z;
+    if (p.z > maxZ) maxZ = p.z;
   }
   const spanX = maxX - minX || 1;
   const spanY = maxY - minY || 1;
+  const spanZ = maxZ - minZ || 1;
 
-  const toSvgX = (x: number) => pad.left + ((x - minX) / spanX) * plotW;
-  const toSvgY = (y: number) => pad.top + plotH - ((y - minY) / spanY) * plotH;
+  const cosY = Math.cos(angles.yaw);
+  const sinY = Math.sin(angles.yaw);
+  const cosP = Math.cos(angles.pitch);
+  const sinP = Math.sin(angles.pitch);
+
+  const displayPoints = projected.map((p, idx) => {
+    if (dimMode === '2d') {
+      return {
+        ...p,
+        origIdx: idx,
+        sx: pad.left + ((p.x - minX) / spanX) * plotW,
+        sy: pad.top + plotH - ((p.y - minY) / spanY) * plotH,
+        depth: 0,
+        radius: 4.5,
+      };
+    }
+    // Normalize to [-1, 1] then rotate in 3D
+    const nx = ((p.x - minX) / spanX) * 2 - 1;
+    const ny = ((p.y - minY) / spanY) * 2 - 1;
+    const nz = ((p.z - minZ) / spanZ) * 2 - 1;
+
+    const x1 = nx * cosY - nz * sinY;
+    const z1 = nx * sinY + nz * cosY;
+    const y2 = ny * cosP - z1 * sinP;
+    const z2 = ny * sinP + z1 * cosP;
+
+    const persp = 2.6 / (2.6 - z2 * 0.65);
+    const sx = pad.left + plotW / 2 + x1 * (plotW * 0.36) * persp;
+    const sy = pad.top + plotH / 2 - y2 * (plotH * 0.36) * persp;
+    const radius = Math.max(2.5, Math.min(7.5, 4.5 * persp));
+    return { ...p, origIdx: idx, sx, sy, depth: z2, radius };
+  });
+
+  if (dimMode === '3d') {
+    displayPoints.sort((a, b) => a.depth - b.depth);
+  }
 
   const hovered = hoveredPointIdx !== null ? projected[hoveredPointIdx] : null;
 
@@ -349,9 +394,30 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
+            <button
+              type="button"
+              onClick={() => setDimMode('2d')}
+              className={`px-2 py-0.5 rounded text-[11px] cursor-pointer ${
+                dimMode === '2d' ? 'bg-violet-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              2D
+            </button>
+            <button
+              type="button"
+              onClick={() => setDimMode('3d')}
+              className={`px-2 py-0.5 rounded text-[11px] cursor-pointer ${
+                dimMode === '3d' ? 'bg-violet-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              3D
+            </button>
+          </div>
+
           {projected.length > 0 && (
             <span className="text-[11px] text-zinc-400">
-              {projected.length} vectors ({projected[0].dims}d → 2d)
+              {projected.length} vectors ({projected[0].dims}d → {dimMode})
             </span>
           )}
           <button
@@ -373,7 +439,22 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
           <svg
             id="dhub-vector-pca-svg"
             viewBox={`0 0 ${width} ${height}`}
-            className="w-full h-full max-w-[960px] max-h-full"
+            className={`w-full h-full max-w-[960px] max-h-full ${dimMode === '3d' ? 'cursor-grab active:cursor-grabbing' : ''}`}
+            onMouseDown={(e) => {
+              if (dimMode !== '3d') return;
+              setDragStart({ x: e.clientX, y: e.clientY, yaw: angles.yaw, pitch: angles.pitch });
+            }}
+            onMouseMove={(e) => {
+              if (!dragStart || dimMode !== '3d') return;
+              const dx = e.clientX - dragStart.x;
+              const dy = e.clientY - dragStart.y;
+              setAngles({
+                yaw: dragStart.yaw + dx * 0.01,
+                pitch: Math.max(-1.4, Math.min(1.4, dragStart.pitch + dy * 0.01)),
+              });
+            }}
+            onMouseUp={() => setDragStart(null)}
+            onMouseLeave={() => setDragStart(null)}
           >
             {/* Grid lines */}
             <line x1={pad.left} y1={pad.top + plotH / 2} x2={pad.left + plotW} y2={pad.top + plotH / 2} stroke="#232530" strokeDasharray="3 3" />
@@ -382,30 +463,28 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
 
             {/* Axis captions */}
             <text x={pad.left + plotW / 2} y={height - 8} textAnchor="middle" fill="#71717a" fontSize="10">
-              PC1
+              {dimMode === '3d' ? 'Drag to rotate 3D PCA space (PC1 / PC2 / PC3)' : 'PC1'}
             </text>
             <text x={14} y={pad.top + plotH / 2} textAnchor="middle" fill="#71717a" fontSize="10" transform={`rotate(-90 14 ${pad.top + plotH / 2})`}>
               PC2
             </text>
 
             {/* Points */}
-            {projected.map((pt, idx) => {
-              const cx = toSvgX(pt.x);
-              const cy = toSvgY(pt.y);
-              const isHovered = hoveredPointIdx === idx;
+            {displayPoints.map((pt) => {
+              const isHovered = hoveredPointIdx === pt.origIdx;
               const fill = groupColors.get(pt.colorGroup) || '#8b5cf6';
               return (
                 <g key={pt.rowIdx}>
                   <circle
-                    cx={cx}
-                    cy={cy}
-                    r={isHovered ? 7 : 4.5}
+                    cx={pt.sx}
+                    cy={pt.sy}
+                    r={isHovered ? pt.radius + 2.5 : pt.radius}
                     fill={fill}
-                    fillOpacity={isHovered ? 1 : 0.8}
+                    fillOpacity={isHovered ? 1 : 0.82}
                     stroke={isHovered ? '#ffffff' : '#111216'}
                     strokeWidth={isHovered ? 2 : 1}
-                    className="cursor-pointer transition-all"
-                    onMouseEnter={() => setHoveredPointIdx(idx)}
+                    className="cursor-pointer"
+                    onMouseEnter={() => setHoveredPointIdx(pt.origIdx)}
                     onMouseLeave={() => setHoveredPointIdx(null)}
                   />
                 </g>

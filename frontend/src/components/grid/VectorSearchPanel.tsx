@@ -25,7 +25,7 @@ export interface VectorSearchStats {
 }
 
 interface EmbeddingConfig {
-  provider: 'ollama' | 'openai';
+  provider: 'ollama' | 'openai' | 'gemini';
   endpoint: string;
   model: string;
   apiKey: string;
@@ -38,8 +38,10 @@ function loadEmbeddingConfig(): EmbeddingConfig {
     const raw = localStorage.getItem(EMBEDDING_CFG_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const provider =
+        parsed.provider === 'openai' || parsed.provider === 'gemini' ? parsed.provider : 'ollama';
       return {
-        provider: parsed.provider === 'openai' ? 'openai' : 'ollama',
+        provider,
         endpoint: parsed.endpoint || 'http://localhost:11434/api/embeddings',
         model: parsed.model || 'nomic-embed-text',
         apiKey: parsed.apiKey || '',
@@ -120,6 +122,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const [showEmbedSettings, setShowEmbedSettings] = useState(false);
   const [embedCfg, setEmbedCfg] = useState<EmbeddingConfig>(loadEmbeddingConfig);
   const [embedError, setEmbedError] = useState<string | null>(null);
+  const [embedTestMsg, setEmbedTestMsg] = useState<string | null>(null);
   const [isEmbedding, setIsEmbedding] = useState(false);
 
   const activeVectorCol = useMemo(() => {
@@ -184,6 +187,34 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       if (Array.isArray(data?.embedding)) return data.embedding;
       if (Array.isArray(data?.embeddings?.[0])) return data.embeddings[0];
       throw new Error('Unexpected Ollama embedding response format.');
+    }
+
+    if (embedCfg.provider === 'gemini') {
+      const modelName = embedCfg.model.trim() || 'text-embedding-004';
+      const base = endpoint.replace(/\/+$/, '');
+      const url = base.includes(':embedContent')
+        ? base
+        : `${base}/models/${encodeURIComponent(modelName)}:embedContent`;
+      const finalUrl = embedCfg.apiKey.trim()
+        ? `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(embedCfg.apiKey.trim())}`
+        : url;
+      const res = await fetch(finalUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: `models/${modelName}`,
+          content: { parts: [{ text }] },
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Gemini embedding failed (${res.status}): ${await res.text()}`);
+      }
+      const data = await res.json();
+      const vec = data?.embedding?.values;
+      if (!Array.isArray(vec)) {
+        throw new Error('Unexpected Gemini embedding response format.');
+      }
+      return vec;
     }
 
     // OpenAI-compatible /v1/embeddings
@@ -502,21 +533,33 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 <select
                   value={embedCfg.provider}
                   onChange={(e) => {
-                    const p = e.target.value === 'openai' ? 'openai' : 'ollama';
+                    const p =
+                      e.target.value === 'openai' || e.target.value === 'gemini'
+                        ? e.target.value
+                        : 'ollama';
+                    setEmbedTestMsg(null);
                     saveEmbedCfg({
                       ...embedCfg,
                       provider: p,
                       endpoint:
                         p === 'ollama'
                           ? 'http://localhost:11434/api/embeddings'
+                          : p === 'gemini'
+                          ? 'https://generativelanguage.googleapis.com/v1beta'
                           : 'https://api.openai.com/v1/embeddings',
-                      model: p === 'ollama' ? 'nomic-embed-text' : 'text-embedding-3-small',
+                      model:
+                        p === 'ollama'
+                          ? 'nomic-embed-text'
+                          : p === 'gemini'
+                          ? 'text-embedding-004'
+                          : 'text-embedding-3-small',
                     });
                   }}
                   className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200"
                 >
                   <option value="ollama">Ollama (Local)</option>
                   <option value="openai">OpenAI / Compatible</option>
+                  <option value="gemini">Google Gemini</option>
                 </select>
               </div>
               <div>
@@ -539,13 +582,39 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
               </div>
               <div>
                 <label className="block text-[10px] text-zinc-500 mb-0.5">API Key (if required)</label>
-                <input
-                  type="password"
-                  placeholder="sk-..."
-                  value={embedCfg.apiKey}
-                  onChange={(e) => saveEmbedCfg({ ...embedCfg, apiKey: e.target.value })}
-                  className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="password"
+                    placeholder="sk-... / AIza..."
+                    value={embedCfg.apiKey}
+                    onChange={(e) => saveEmbedCfg({ ...embedCfg, apiKey: e.target.value })}
+                    className="flex-1 min-w-0 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
+                  />
+                  <button
+                    type="button"
+                    disabled={isEmbedding}
+                    onClick={async () => {
+                      setEmbedError(null);
+                      setEmbedTestMsg(null);
+                      setIsEmbedding(true);
+                      try {
+                        const vec = await generateEmbedding('hello');
+                        setEmbedTestMsg(`OK (${vec.length}d)`);
+                      } catch (err: any) {
+                        setEmbedError(err?.message || String(err));
+                      } finally {
+                        setIsEmbedding(false);
+                      }
+                    }}
+                    className="px-2 py-1 rounded bg-[#1e2028] hover:bg-[#272a35] text-zinc-300 border border-[#2d303c] text-[10px] cursor-pointer shrink-0"
+                    title="Test embedding endpoint"
+                  >
+                    Test
+                  </button>
+                </div>
+                {embedTestMsg && (
+                  <div className="text-[10px] text-emerald-400 mt-0.5">{embedTestMsg}</div>
+                )}
               </div>
             </div>
           )}
