@@ -1171,6 +1171,44 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               });
             });
           }
+
+          // 8. RediSearch (Redis Stack) snippets
+          if (driver === 'redis') {
+            const redisSnippets = [
+              {
+                label: 'REDISEARCH KNN VECTOR SEARCH',
+                detail: 'Vector similarity search via RediSearch FT.SEARCH',
+                insertText: 'FT.SEARCH ${1:idx_name} "*=>[KNN $K @${2:embedding} $vec AS score]" PARAMS 4 K ${3:10} vec \'${4:[0.1, 0.2, 0.3]}\' SORTBY score ASC LIMIT 0 ${3:10} DIALECT 2',
+              },
+              {
+                label: 'REDISEARCH VECTOR RANGE',
+                detail: 'Vector range search with distance threshold',
+                insertText: 'FT.SEARCH ${1:idx_name} "@${2:embedding}:[VECTOR_RANGE $r $vec]=>{$YIELD_DISTANCE_AS: score}" PARAMS 4 r ${3:0.5} vec \'${4:[0.1, 0.2, 0.3]}\' SORTBY score ASC LIMIT 0 ${5:10} DIALECT 2',
+              },
+              {
+                label: 'REDISEARCH CREATE HNSW INDEX',
+                detail: 'Create a RediSearch HNSW vector index on HASH keys',
+                insertText: 'FT.CREATE ${1:idx_docs} ON HASH PREFIX 1 ${2:doc:} SCHEMA ${3:title} TEXT ${4:embedding} VECTOR HNSW 6 TYPE FLOAT32 DIM ${5:1536} DISTANCE_METRIC ${6|COSINE,L2,IP|}',
+              },
+              {
+                label: 'REDISEARCH FT.INFO',
+                detail: 'Inspect RediSearch index schema and stats',
+                insertText: 'FT.INFO ${1:idx_name}',
+              },
+            ];
+            redisSnippets.forEach((snip) => {
+              suggestions.push({
+                label: snip.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                detail: snip.detail,
+                filterText: `${snip.label.toLowerCase()} redisearch vector ft.search`,
+                insertText: snip.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                sortText: `4_z_${snip.label}`,
+                range,
+              });
+            });
+          }
         }
 
         return { suggestions: dedupeSuggestions(suggestions) };

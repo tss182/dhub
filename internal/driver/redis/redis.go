@@ -86,6 +86,10 @@ func (r *RedisDriver) ListObjects(ctx context.Context, database, schema string) 
 	sort.Strings(keys)
 
 	if len(keys) == 0 {
+		ftObjects := r.listRediSearchIndices(ctx, conn, database)
+		if len(ftObjects) > 0 {
+			return ftObjects, nil
+		}
 		return []driver.ObjectSummary{}, nil
 	}
 
@@ -126,6 +130,9 @@ func (r *RedisDriver) ListObjects(ctx context.Context, database, schema string) 
 		})
 	}
 
+	ftObjects := r.listRediSearchIndices(ctx, conn, database)
+	objects = append(ftObjects, objects...)
+
 	return objects, nil
 }
 
@@ -159,6 +166,9 @@ func (r *RedisDriver) GetTableStructure(ctx context.Context, database, schema, t
 
 	kType, _ := conn.Type(ctx, table).Result()
 	if kType == "" || kType == "none" {
+		if ftStruct, ftErr := r.getRediSearchStructure(ctx, conn, database, table); ftErr == nil {
+			return ftStruct, nil
+		}
 		kType = "string"
 	}
 
@@ -264,6 +274,10 @@ func (r *RedisDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 				count, _ = conn.ZCard(ctx, key).Result()
 			case "string":
 				count = 1
+			default:
+				if ftCount, ok := r.countRediSearchIndex(ctx, conn, key); ok {
+					count = ftCount
+				}
 			}
 		}
 
@@ -308,8 +322,32 @@ func (r *RedisDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 			continue
 		}
 
+		cmdName := strings.ToUpper(fmt.Sprint(args[0]))
+		if cmdName == "FT.SEARCH" {
+			strArgs := make([]string, len(args))
+			for i, a := range args {
+				strArgs[i] = fmt.Sprint(a)
+			}
+			args = encodeVectorParamsIfPresent(strArgs)
+		}
+
 		res, err := conn.Do(ctx, args...).Result()
-		cols, rows, affected, errMsg := formatRedisResult(args[0].(string), res, err)
+		var cols []driver.ColumnMeta
+		var rows [][]any
+		var affected int64
+		var errMsg string
+		if cmdName == "FT.SEARCH" && err == nil {
+			idxName := ""
+			if len(args) > 1 {
+				idxName = fmt.Sprint(args[1])
+			}
+			qr := ftSearchResultToQueryResult(req.ExecutionID, req.Database, idxName, res, time.Since(cmdStart).Milliseconds())
+			cols = qr.Columns
+			rows = qr.Rows
+			affected = qr.RowsAffected
+		} else {
+			cols, rows, affected, errMsg = formatRedisResult(args[0].(string), res, err)
+		}
 
 		stmtRes := driver.StatementResult{
 			SQL:          line,
@@ -344,6 +382,11 @@ func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, r
 	}
 
 	kType, _ := conn.Type(ctx, key).Result()
+	if kType == "" || kType == "none" {
+		if ftRes, ftErr := r.executeRediSearchBrowse(ctx, conn, req, key, start); ftErr == nil {
+			return ftRes, nil
+		}
+	}
 
 	var cols []driver.ColumnMeta
 	var rows [][]any
@@ -876,6 +919,9 @@ func (r *RedisDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, er
 }
 
 func (r *RedisDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
+	if isRediSearchChanges(changes) {
+		return generateRediSearchDML(changes), nil
+	}
 	var statements []string
 	cleanTable := extractKeyName(table)
 	for _, c := range changes {
@@ -988,6 +1034,10 @@ func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table 
 
 	if err := conn.Select(ctx, dbNum).Err(); err != nil {
 		return 0, err
+	}
+
+	if isRediSearchChanges(changes) {
+		return applyRediSearchChanges(ctx, conn, changes)
 	}
 
 	cleanTable := extractKeyName(table)

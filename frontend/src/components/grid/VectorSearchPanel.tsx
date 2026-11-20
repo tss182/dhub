@@ -291,6 +291,18 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       return `POST /${encodeURIComponent(tableName)}/_search\n${JSON.stringify(body, null, 2)}`;
     }
 
+    if (driver === 'redis') {
+      const prefix = filter ? `(${filter})` : '*';
+      if (threshold !== null) {
+        const rangeQuery =
+          prefix === '*'
+            ? `@${activeVectorCol}:[VECTOR_RANGE $r $vec]=>{$YIELD_DISTANCE_AS: score}`
+            : `${prefix} @${activeVectorCol}:[VECTOR_RANGE $r $vec]=>{$YIELD_DISTANCE_AS: score}`;
+        return `FT.SEARCH ${tableName} "${rangeQuery}" PARAMS 4 r ${threshold} vec '${vecJson}' SORTBY score ASC LIMIT 0 ${k} DIALECT 2`;
+      }
+      return `FT.SEARCH ${tableName} "${prefix}=>[KNN $K @${activeVectorCol} $vec AS score]" PARAMS 4 K ${k} vec '${vecJson}' SORTBY score ASC LIMIT 0 ${k} DIALECT 2`;
+    }
+
     // PostgreSQL (pgvector)
     const qualifiedTbl =
       schema && schema !== 'main'
