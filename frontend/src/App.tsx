@@ -38,6 +38,9 @@ const TableStructureModal = lazy(() =>
 const ViewDdlModal = lazy(() =>
   import('./components/modals/ViewDdlModal').then((m) => ({ default: m.ViewDdlModal }))
 );
+const TableSqlModal = lazy(() =>
+  import('./components/modals/TableSqlModal').then((m) => ({ default: m.TableSqlModal }))
+);
 const QueryHistoryPanel = lazy(() =>
   import('./components/history/QueryHistoryPanel').then((m) => ({ default: m.QueryHistoryPanel }))
 );
@@ -131,7 +134,7 @@ import {
   Columns,
   ArrowLeftRight,
 } from 'lucide-react';
-import { QueryResult, ColumnMeta, WorkbenchTab, resolveConnectionEnv, buildAlertConnectionContext } from './types/domain';
+import { QueryResult, ColumnMeta, WorkbenchTab, ConnectionConfig, resolveConnectionEnv, buildAlertConnectionContext } from './types/domain';
 import { parseSingleTableSelect } from './utils/querySource';
 import { quoteSqlIdentifier, buildQualifiedTablePath } from './utils/sqlIdentifier';
 
@@ -498,6 +501,65 @@ export function App() {
     const treeObj = (treeObjects[schemaKey] || []).find((o) => o.name === tab.table);
     const objectType = treeObj?.type || 'table';
     return { conn, driver, targetDb, targetSchema, schemaKey, objectType };
+  };
+
+  const [tableSqlModal, setTableSqlModal] = useState<{
+    isOpen: boolean;
+    conn: ConnectionConfig | null;
+    database: string;
+    schema: string;
+    tableName: string;
+    sql: string;
+  }>({
+    isOpen: false,
+    conn: null,
+    database: '',
+    schema: '',
+    tableName: '',
+    sql: '',
+  });
+
+  const buildTableTabSql = (tab: WorkbenchTab) => {
+    const { conn, driver, targetDb, targetSchema } = resolveTableTabMeta(tab);
+    const tabData = tableDataByTab[tab.id];
+    const rawColumns = tabData?.columns || [];
+    const hiddenSet = new Set(tab.tableViewState?.hiddenColumns || []);
+    const orderedCols = resolveOrderedColumns(rawColumns, tab.tableViewState?.columnOrder);
+    const visibleCols = orderedCols.filter((c) => !hiddenSet.has(c.name));
+    const hasCustomCols =
+      rawColumns.length > 0 &&
+      (hiddenSet.size > 0 ||
+        (tab.tableViewState?.columnOrder && tab.tableViewState.columnOrder.length > 0));
+    const selectClause =
+      hasCustomCols && visibleCols.length > 0
+        ? visibleCols.map((c) => quoteSqlIdentifier(driver, c.name)).join(', ')
+        : '*';
+
+    const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tab.table || '');
+    const whereClause = tabData?.whereClause ?? tab.tableViewState?.whereClause ?? '';
+    const cleanCustom = whereClause.trim().replace(/^where\s+/i, '').trim();
+    const combinedWhere = cleanCustom ? `\nWHERE (${cleanCustom})` : '';
+
+    const sortConfigs = tabData?.sortConfigs ?? tab.tableViewState?.sortConfigs ?? [];
+    let orderByClause = '';
+    if (sortConfigs.length > 0) {
+      const orderParts = sortConfigs.map(
+        (sc) => `${quoteSqlIdentifier(driver, sc.column)} ${sc.direction.toUpperCase()}`
+      );
+      orderByClause = `\nORDER BY ${orderParts.join(', ')}`;
+    }
+
+    const pageSize = tabData?.pageSize || tab.tableViewState?.pageSize || defaultPageSize;
+    const rowsLen = tabData?.rows?.length || 0;
+    const limitVal = Math.max(pageSize, rowsLen);
+    const offsetVal = tabData?.startOffset ?? tab.tableViewState?.offset ?? 0;
+
+    return {
+      conn: conn || null,
+      targetDb,
+      targetSchema,
+      sql: `SELECT ${selectClause}\nFROM ${fullTablePath}${combinedWhere}${orderByClause}\nLIMIT ${limitVal} OFFSET ${offsetVal};`,
+    };
   };
 
   const handleTruncateTableFromTab = async (tab: WorkbenchTab) => {
@@ -2702,6 +2764,24 @@ export function App() {
                           >
                             DDL
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const { conn, targetDb, targetSchema, sql } = buildTableTabSql(activeTab);
+                              setTableSqlModal({
+                                isOpen: true,
+                                conn,
+                                database: targetDb,
+                                schema: targetSchema,
+                                tableName: activeTab.table || '',
+                                sql,
+                              });
+                            }}
+                            className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title="View Complete Table Query SQL"
+                          >
+                            SQL
+                          </button>
                           <ColumnVisibilityPopover
                             columns={tableDataByTab[activeTab.id]?.columns || []}
                             primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
@@ -4005,6 +4085,26 @@ export function App() {
         schema={ddlModal.schema}
         tableName={ddlModal.tableName}
         onClose={closeDdlModal}
+      />
+      <TableSqlModal
+        isOpen={tableSqlModal.isOpen}
+        connection={tableSqlModal.conn}
+        database={tableSqlModal.database}
+        tableName={tableSqlModal.tableName}
+        sql={tableSqlModal.sql}
+        onClose={() => setTableSqlModal((prev) => ({ ...prev, isOpen: false }))}
+        onOpenInConsole={(sql) => {
+          openTab({
+            id: `console-table-sql-${Date.now()}`,
+            type: 'worksheet',
+            title: `${tableSqlModal.tableName || 'table'}_query.sql`,
+            connectionId: tableSqlModal.conn?.id || activeConnectionId || '',
+            driver: tableSqlModal.conn?.driver,
+            database: tableSqlModal.database,
+            schema: tableSqlModal.schema,
+            content: sql,
+          });
+        }}
       />
     </div>
     </Suspense>
