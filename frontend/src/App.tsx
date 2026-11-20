@@ -1747,9 +1747,11 @@ export function App() {
       (conn?.driver === 'sqlite' ? 'main' : '');
 
     const targetSchema =
-      currentTab?.schema ||
-      useConnectionStore.getState().activeSchema ||
-      (conn?.driver === 'postgres' ? 'public' : targetDb);
+      conn?.driver === 'postgres'
+        ? (currentTab?.schema || useConnectionStore.getState().activeSchema || 'public')
+        : conn?.driver === 'mssql'
+        ? (currentTab?.schema || 'dbo')
+        : targetDb;
 
     setIsRunning(true);
     setStatusMessage(`Executing query on [${conn?.name || 'db'}] / [${targetDb}]...`);
@@ -2647,9 +2649,11 @@ export function App() {
                 nonSystemDb ||
                 (visibleDbs.length > 0 ? visibleDbs[0] : (tabConn?.driver === 'sqlite' ? 'main' : ''));
               const effectiveSchema =
-                activeTab.schema ||
-                useConnectionStore.getState().activeSchema ||
-                (tabConn?.driver === 'postgres' ? 'public' : effectiveDb);
+                tabConn?.driver === 'postgres'
+                  ? (activeTab.schema || useConnectionStore.getState().activeSchema || 'public')
+                  : tabConn?.driver === 'mssql'
+                  ? (activeTab.schema || 'dbo')
+                  : effectiveDb;
               const availableDbs =
                 visibleDbs.length > 0
                   ? visibleDbs
@@ -2684,8 +2688,11 @@ export function App() {
                       const connId = currentTab?.connectionId || activeConnectionId || '';
                       const conn = connections.find((c) => c.id === connId);
                       const targetSchema =
-                        currentTab?.schema ||
-                        (conn?.driver === 'postgres' ? (useConnectionStore.getState().activeSchema || 'public') : newDb);
+                        conn?.driver === 'postgres'
+                          ? (currentTab?.schema || useConnectionStore.getState().activeSchema || 'public')
+                          : conn?.driver === 'mssql'
+                          ? (currentTab?.schema || 'dbo')
+                          : newDb;
                       if (currentTab) {
                         updateTabDatabase(currentTab.id, newDb, targetSchema);
                       }
