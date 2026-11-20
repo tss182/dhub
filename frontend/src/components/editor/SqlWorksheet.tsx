@@ -1105,6 +1105,39 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               });
             });
           }
+
+          // 6. Qdrant snippets
+          if (driver === 'qdrant') {
+            const qdrantSnippets = [
+              {
+                label: 'QDRANT SEARCH POINTS',
+                detail: 'Vector similarity search via Qdrant REST API',
+                insertText: 'POST /collections/${1:collection_name}/points/search\n{\n  "vector": [${2:0.1, 0.2, 0.3}],\n  "limit": ${3:10},\n  "with_payload": true,\n  "with_vector": false\n}',
+              },
+              {
+                label: 'QDRANT SCROLL POINTS',
+                detail: 'Browse points in a Qdrant collection',
+                insertText: 'POST /collections/${1:collection_name}/points/scroll\n{\n  "limit": ${2:20},\n  "with_payload": true,\n  "with_vector": true\n}',
+              },
+              {
+                label: 'QDRANT QUERY POINTS',
+                detail: 'Universal query API in Qdrant',
+                insertText: 'POST /collections/${1:collection_name}/points/query\n{\n  "query": [${2:0.1, 0.2, 0.3}],\n  "limit": ${3:10},\n  "with_payload": true\n}',
+              },
+            ];
+            qdrantSnippets.forEach((snip) => {
+              suggestions.push({
+                label: snip.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                detail: snip.detail,
+                filterText: `${snip.label.toLowerCase()} qdrant vector`,
+                insertText: snip.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                sortText: `4_z_${snip.label}`,
+                range,
+              });
+            });
+          }
         }
 
         return { suggestions: dedupeSuggestions(suggestions) };
@@ -1229,7 +1262,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const handleFormatSql = async () => {
     try {
       const drv = connection?.driver || 'sqlite';
-      if (drv === 'redis' || drv === 'mongodb') return;
+      if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant') return;
       let lang: any = 'sql';
       if (drv === 'postgres') lang = 'postgresql';
       else if (drv === 'mariadb') lang = 'mariadb';
@@ -1259,7 +1292,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     if (!stmt) return;
 
     const drv = connection?.driver || 'sqlite';
-    if (drv === 'redis' || drv === 'mongodb') return;
+    if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant') return;
     let prefix = 'EXPLAIN ';
     if (drv === 'postgres') {
       prefix = isAnalyze

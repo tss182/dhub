@@ -680,6 +680,8 @@ export function App() {
     let sql = '';
     if (driver === 'mongodb') {
       sql = `db.${tableName}.drop();`;
+    } else if (driver === 'qdrant') {
+      sql = `DELETE /collections/${encodeURIComponent(tableName)}`;
     } else {
       const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tableName);
       sql = `DROP ${keyword} ${fullTablePath};`;
@@ -1809,7 +1811,7 @@ export function App() {
     if (!tab.connectionId || !tab.table) return;
     const conn = connections.find((c) => c.id === tab.connectionId);
     const driver = conn?.driver || tab.driver;
-    if (driver === 'redis' || driver === 'mongodb') return;
+    if (driver === 'redis' || driver === 'mongodb' || driver === 'qdrant') return;
 
     const isMSSQL = driver === 'mssql';
     const targetDb = tab.database || conn?.databaseName || 'main';

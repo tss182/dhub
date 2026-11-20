@@ -102,7 +102,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : conn.driver === 'oracle' ? 1521 : 5432));
+          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : conn.driver === 'oracle' ? 1521 : conn.driver === 'qdrant' ? 6333 : 5432));
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -140,7 +140,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : existing.driver === 'oracle' ? 1521 : 5432));
+          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : existing.driver === 'oracle' ? 1521 : existing.driver === 'qdrant' ? 6333 : 5432));
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -187,7 +187,7 @@ export const ConnectionDialog: React.FC = () => {
 
   if (!isConnectionDialogOpen) return null;
 
-  const handleDriverChange = (d: 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle') => {
+  const handleDriverChange = (d: DriverType) => {
     setDriver(d);
     if (d === 'mysql' || d === 'mariadb') {
       setPort(3306);
@@ -227,6 +227,11 @@ export const ConnectionDialog: React.FC = () => {
       setPort(1521);
       if (username === 'postgres' || username === 'root' || username === 'sa' || username === 'default') setUsername('system');
       if (!databaseName || databaseName === 'postgres' || databaseName === 'master' || databaseName === '0' || databaseName === 'admin' || databaseName === 'default') setDatabaseName('ORCL');
+      setSslMode('disable');
+    } else if (d === 'qdrant') {
+      setPort(6333);
+      setUsername('');
+      setDatabaseName('default');
       setSslMode('disable');
     }
   };
@@ -681,58 +686,73 @@ export const ConnectionDialog: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  {driver === 'qdrant' ? (
                     <div>
                       <label className="block text-[11px] text-zinc-400 mb-1">
-                        User {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
-                      </label>
-                      <input
-                        type="text"
-                        placeholder={driver === 'redis' ? 'default (optional)' : 'e.g. root'}
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">
-                        Password {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(AUTH)</span>}
+                        API Key <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>
                       </label>
                       <input
                         type="password"
-                        placeholder="••••••••"
+                        placeholder="Optional Qdrant API Key"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
                       />
                     </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] text-zinc-400 mb-1">
+                            User {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
+                          </label>
+                          <input
+                            type="text"
+                            placeholder={driver === 'redis' ? 'default (optional)' : 'e.g. root'}
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-zinc-400 mb-1">
+                            Password {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(AUTH)</span>}
+                          </label>
+                          <input
+                            type="password"
+                            placeholder="••••••••"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
 
-                  <div>
-                    <label className="block text-[11px] text-zinc-400 mb-1">
-                      {driver === 'redis' ? 'Database Index' : driver === 'oracle' ? 'Service Name' : 'Database Name'}{' '}
-                      {(driver === 'mysql' || driver === 'mariadb') && (
-                        <span className="text-zinc-500 text-[10px] lowercase">(leave empty to show all databases)</span>
-                      )}
-                      {driver === 'redis' && (
-                        <span className="text-zinc-500 text-[10px] lowercase">(0-15, default 0)</span>
-                      )}
-                    </label>
-                    <input
-                      type="text"
-                      placeholder={
-                        driver === 'mysql' || driver === 'mariadb'
-                          ? 'Optional (leave empty to list all databases)'
-                          : driver === 'redis'
-                          ? '0'
-                          : driver === 'mssql'
-                          ? 'master'
-                          : driver === 'mongodb'
-                          ? 'admin'
-                          : driver === 'clickhouse'
-                          ? 'default'
-                          : driver === 'oracle'
-                          ? 'e.g. ORCL or FREEPDB1'
+                      <div>
+                        <label className="block text-[11px] text-zinc-400 mb-1">
+                          {driver === 'redis' ? 'Database Index' : driver === 'oracle' ? 'Service Name' : 'Database Name'}{' '}
+                          {(driver === 'mysql' || driver === 'mariadb') && (
+                            <span className="text-zinc-500 text-[10px] lowercase">(leave empty to show all databases)</span>
+                          )}
+                          {driver === 'redis' && (
+                            <span className="text-zinc-500 text-[10px] lowercase">(0-15, default 0)</span>
+                          )}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={
+                            driver === 'mysql' || driver === 'mariadb'
+                              ? 'Optional (leave empty to list all databases)'
+                              : driver === 'redis'
+                              ? '0'
+                              : driver === 'mssql'
+                              ? 'master'
+                              : driver === 'mongodb'
+                              ? 'admin'
+                              : driver === 'clickhouse'
+                              ? 'default'
+                              : driver === 'oracle'
+                              ? 'e.g. ORCL or FREEPDB1'
                           : 'e.g. postgres'
                       }
                       value={databaseName}
@@ -740,6 +760,8 @@ export const ConnectionDialog: React.FC = () => {
                       className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                     />
                   </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>

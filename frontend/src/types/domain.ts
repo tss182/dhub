@@ -20,7 +20,7 @@ export interface ConnectionConfig {
   folderId?: string | null;
   sortOrder?: number;
   name: string;
-  driver: 'postgres' | 'mysql' | 'sqlite' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle';
+  driver: 'postgres' | 'mysql' | 'sqlite' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle' | 'qdrant';
   envType?: ConnectionEnvType;
   colorTag: string;
   isReadOnly: boolean;

@@ -20,6 +20,7 @@ import (
 	"dhub/internal/driver/mysql"
 	"dhub/internal/driver/oracle"
 	"dhub/internal/driver/postgres"
+	"dhub/internal/driver/qdrant"
 	redisdriver "dhub/internal/driver/redis"
 	"dhub/internal/driver/sqlite"
 	"dhub/internal/store"
@@ -442,6 +443,45 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 
 		u.RawQuery = q.Encode()
 		return mongodb.NewMongoDBDriver(u.String())
+	case "qdrant":
+		rawHost := strings.TrimSpace(cfg.Host)
+		var baseURL string
+		if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
+			baseURL = rawHost
+		} else {
+			if port <= 0 {
+				port = 6333
+			}
+			if host == "" {
+				host = "127.0.0.1"
+			}
+			scheme := "http"
+			if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+				scheme = "https"
+			}
+			baseURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
+		}
+
+		var tlsCfg *tls.Config
+		if strings.HasPrefix(baseURL, "https://") || (cfg.SSLMode != "" && cfg.SSLMode != "disable") {
+			tlsCfg = &tls.Config{}
+			if cfg.SSLCAPath != "" {
+				rootCertPool := x509.NewCertPool()
+				if pem, err := os.ReadFile(cfg.SSLCAPath); err == nil {
+					rootCertPool.AppendCertsFromPEM(pem)
+					tlsCfg.RootCAs = rootCertPool
+				}
+			}
+			if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
+				if cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath); err == nil {
+					tlsCfg.Certificates = []tls.Certificate{cert}
+				}
+			}
+			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+				tlsCfg.InsecureSkipVerify = true
+			}
+		}
+		return qdrant.NewQdrantDriver(baseURL, cfg.Password, tlsCfg)
 	case "clickhouse":
 		connStr := strings.TrimSpace(cfg.Host)
 		if strings.HasPrefix(connStr, "clickhouse://") || strings.HasPrefix(connStr, "http://") || strings.HasPrefix(connStr, "https://") {

@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Search, Check, Database } from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
 
-export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle';
+export type DriverType = 'sqlite' | 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'mssql' | 'mongodb' | 'clickhouse' | 'oracle' | 'qdrant';
 
 export interface DriverOption {
   id: DriverType;
   name: string;
-  category: 'Relational' | 'Document' | 'Key-Value' | 'Column-Oriented';
+  category: 'Relational' | 'Document' | 'Key-Value' | 'Column-Oriented' | 'Vector';
   tag: 'SQL' | 'NoSQL';
   description: string;
 }
@@ -75,6 +75,13 @@ export const DRIVER_OPTIONS: DriverOption[] = [
     category: 'Relational',
     tag: 'SQL',
     description: 'Enterprise multi-model relational database',
+  },
+  {
+    id: 'qdrant',
+    name: 'Qdrant',
+    category: 'Vector',
+    tag: 'NoSQL',
+    description: 'High-performance vector similarity search engine',
   },
 ];
 

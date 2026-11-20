@@ -164,6 +164,21 @@ export const DbDriverIcon: React.FC<DbDriverIconProps> = ({
     );
   }
 
+  // Qdrant
+  if (norm === 'qdrant') {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        fill={color || '#DC244C'}
+        className={className}
+        xmlns="http://www.w3.org/2000/svg"
+        aria-label="Qdrant"
+      >
+        <path d="M12 2 3.5 6.9v10.2L12 22l4.1-2.37 2.9 1.67 2-1.15-2.9-1.67L20.5 17.1V6.9L12 2zm0 2.7 6.1 3.52v7.56L12 19.3l-6.1-3.52V8.22L12 4.7zm0 3.2-3.5 2.02v4.16L12 16.1l3.5-2.02V9.92L12 7.9z" />
+      </svg>
+    );
+  }
+
   // Fallback / Generic Database
   return <Database className={`${className} ${color ? '' : 'text-zinc-400'}`} style={color ? { color } : undefined} />;
 };
