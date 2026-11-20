@@ -538,7 +538,7 @@ export function App() {
     const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tab.table || '');
     const whereClause = tabData?.whereClause ?? tab.tableViewState?.whereClause ?? '';
     const cleanCustom = whereClause.trim().replace(/^where\s+/i, '').trim();
-    const combinedWhere = cleanCustom ? `\nWHERE (${cleanCustom})` : '';
+    const combinedWhere = cleanCustom ? `\nWHERE ${cleanCustom}` : '';
 
     const sortConfigs = tabData?.sortConfigs ?? tab.tableViewState?.sortConfigs ?? [];
     let orderByClause = '';
