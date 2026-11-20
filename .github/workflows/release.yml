@@ -34,7 +34,6 @@ jobs:
     outputs:
       version: ${{ steps.version_step.outputs.version }}
       tag_name: ${{ steps.version_step.outputs.tag_name }}
-      commit_sha: ${{ steps.version_step.outputs.commit_sha }}
       target_branch: ${{ steps.version_step.outputs.target_branch }}
     steps:
       - name: Checkout repository
@@ -71,11 +70,77 @@ jobs:
           echo "Target branch: $TARGET_BRANCH"
           echo "target_branch=$TARGET_BRANCH" >> $GITHUB_OUTPUT
 
+  sync-version:
+    needs: prepare-version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      commit_sha: ${{ steps.sync_step.outputs.commit_sha }}
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-version.outputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+
+      - name: Install Wails v3 CLI
+        run: |
+          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Sync Version across Config, Code, README, and Tag
+        id: sync_step
+        run: |
+          VERSION="${{ needs.prepare-version.outputs.version }}"
+          TAG_NAME="${{ needs.prepare-version.outputs.tag_name }}"
+          TARGET_BRANCH="${{ needs.prepare-version.outputs.target_branch }}"
+
+          python3 -c "
+          import re
+          with open('build/config.yml', 'r') as f:
+              content = f.read()
+          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
+          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
+          with open('build/config.yml', 'w') as f:
+              f.write(new_content)
+          "
+          echo "==> Updated build/config.yml with version: $VERSION"
+
+          make update-asset
+
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "==> No changes detected. Version and README already up-to-date."
+          else
+            git add -A
+            git commit -m "publish: version ${VERSION}"
+            git push origin "$TARGET_BRANCH"
+            git tag -f "$TAG_NAME"
+            git push origin "refs/tags/${TAG_NAME}" --force
+          fi
+
           COMMIT_SHA=$(git rev-parse HEAD)
           echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
 
   build-linux-windows:
-    needs: prepare-version
+    needs:
+      - prepare-version
+      - sync-version
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/tss182/wails3-linux-windows:latest
@@ -86,7 +151,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-version.outputs.commit_sha }}
+          ref: ${{ needs.sync-version.outputs.commit_sha }}
 
       - name: Build Linux & Windows
         uses: tss182/action-wails3-linux-windows@v1
@@ -110,13 +175,15 @@ jobs:
           if-no-files-found: error
 
   build-macos:
-    needs: prepare-version
+    needs:
+      - prepare-version
+      - sync-version
     runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-version.outputs.commit_sha }}
+          ref: ${{ needs.sync-version.outputs.commit_sha }}
 
       - name: Build macOS
         uses: tss182/action-wails3-macos@v1
@@ -169,71 +236,11 @@ jobs:
           generate_release_notes: true
           files: dist-release/*
 
-  post-release-sync:
-    needs:
-      - prepare-version
-      - publish-release
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout target branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-version.outputs.target_branch }}
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          check-latest: true
-
-      - name: Install Wails v3 CLI
-        run: |
-          CGO_ENABLED=0 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-      - name: Sync Version across Config, Code, README, and Pages
-        run: |
-          VERSION="${{ needs.prepare-version.outputs.version }}"
-          TARGET_BRANCH="${{ needs.prepare-version.outputs.target_branch }}"
-
-          python3 -c "
-          import re
-          with open('build/config.yml', 'r') as f:
-              content = f.read()
-          pattern = r'(info:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*[\"\'\']).*?([\"\'\'][ \t]*(?:#.*)?)'
-          new_content = re.sub(pattern, rf'\g<1>${VERSION}\g<2>', content, count=1)
-          with open('build/config.yml', 'w') as f:
-              f.write(new_content)
-          "
-          echo "==> Updated build/config.yml with version: $VERSION"
-
-          make update-asset
-
-          git config --local user.name "github-actions[bot]"
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "==> No changes detected. Version and README already up-to-date."
-          else
-            git add -A
-            git commit -m "publish: version ${VERSION}"
-            git push origin "$TARGET_BRANCH"
-          fi
-
   deploy-pages:
     needs:
       - prepare-version
-      - post-release-sync
-    if: always() && (needs.post-release-sync.result == 'success' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')))
+      - publish-release
+    if: always() && (needs.publish-release.result == 'success' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')))
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
