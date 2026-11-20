@@ -711,11 +711,11 @@ export const ConnectionDialog: React.FC = () => {
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="block text-[11px] text-zinc-400 mb-1">
-                            User {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
+                            User {(driver === 'redis' || driver === 'elasticsearch') && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
                           </label>
                           <input
                             type="text"
-                            placeholder={driver === 'redis' ? 'default (optional)' : 'e.g. root'}
+                            placeholder={driver === 'redis' ? 'default (optional)' : driver === 'elasticsearch' ? 'elastic (or empty for API Key)' : 'e.g. root'}
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
@@ -723,7 +723,9 @@ export const ConnectionDialog: React.FC = () => {
                         </div>
                         <div>
                           <label className="block text-[11px] text-zinc-400 mb-1">
-                            Password {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(AUTH)</span>}
+                            {driver === 'elasticsearch' ? 'Password / API Key' : 'Password'}{' '}
+                            {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(AUTH)</span>}
+                            {driver === 'elasticsearch' && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
                           </label>
                           <input
                             type="password"
@@ -735,7 +737,8 @@ export const ConnectionDialog: React.FC = () => {
                         </div>
                       </div>
 
-                      <div>
+                      {driver !== 'elasticsearch' && (
+                        <div>
                         <label className="block text-[11px] text-zinc-400 mb-1">
                           {driver === 'redis' ? 'Database Index' : driver === 'oracle' ? 'Service Name' : 'Database Name'}{' '}
                           {(driver === 'mysql' || driver === 'mariadb') && (
@@ -767,6 +770,7 @@ export const ConnectionDialog: React.FC = () => {
                       className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                     />
                   </div>
+                      )}
                     </>
                   )}
                 </div>

@@ -3976,8 +3976,10 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                       <span>
                                         {c.driver?.toLowerCase() === 'redis'
                                           ? `keys (${ungroupedTables.length})`
-                                          : c.driver === 'mongodb'
+                                          : c.driver === 'mongodb' || c.driver === 'qdrant'
                                           ? `collections (${ungroupedTables.length})`
+                                          : c.driver === 'elasticsearch'
+                                          ? `indices (${ungroupedTables.length})`
                                           : isMysqlFamily && dbGroups.length > 0
                                           ? `ungrouped tables (${ungroupedTables.length})`
                                           : `tables (${ungroupedTables.length})`}
@@ -3997,7 +3999,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                           <FolderPlus className="h-2.5 w-2.5" />
                                         </button>
                                       )}
-                                      {c.driver === 'redis' ? (
+                                      {c.driver === 'redis' || c.driver === 'qdrant' || c.driver === 'elasticsearch' ? (
                                         <button
                                           type="button"
                                           onClick={(e) => {
@@ -4005,7 +4007,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             handleRefreshDatabase(c.id, dbName);
                                           }}
                                           className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                          title={`Refresh keys in "${dbName}"`}
+                                          title={`Refresh ${c.driver === 'redis' ? 'keys' : c.driver === 'qdrant' ? 'collections' : 'indices'} in "${dbName}"`}
                                         >
                                           <RefreshCw className="h-2.5 w-2.5" />
                                         </button>
