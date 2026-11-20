@@ -24,6 +24,11 @@ export const BackupToolDownload = "backup:tool-download";
 export const ConnectionState = "connection:state";
 
 /**
+ * Name of the custom event "export:progress".
+ */
+export const ExportProgress = "export:progress";
+
+/**
  * Name of the custom event "query:status".
  */
 export const QueryStatus = "query:status";

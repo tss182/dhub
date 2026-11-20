@@ -10,8 +10,10 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
+	"dhub/internal/app"
 	"dhub/internal/driver"
 	"dhub/internal/manager"
 	"dhub/internal/store"
@@ -66,16 +68,70 @@ type FilePreview struct {
 }
 
 type ExportService struct {
-	store     *store.LocalStore
-	sessions  *manager.SessionManager
-	appGetter func() *application.App
+	store      *store.LocalStore
+	sessions   *manager.SessionManager
+	appGetter  func() *application.App
+	mu         sync.Mutex
+	runningOps map[string]context.CancelFunc
 }
 
 func NewExportService(s *store.LocalStore, sm *manager.SessionManager, appGetter func() *application.App) *ExportService {
 	return &ExportService{
-		store:     s,
-		sessions:  sm,
-		appGetter: appGetter,
+		store:      s,
+		sessions:   sm,
+		appGetter:  appGetter,
+		runningOps: make(map[string]context.CancelFunc),
+	}
+}
+
+func (e *ExportService) registerOp(opID string, cancel context.CancelFunc) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.runningOps == nil {
+		e.runningOps = make(map[string]context.CancelFunc)
+	}
+	e.runningOps[opID] = cancel
+}
+
+func (e *ExportService) unregisterOp(opID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.runningOps, opID)
+}
+
+// CancelExportImport cancels an active export or import operation by ID (or all active ops if empty).
+func (e *ExportService) CancelExportImport(operationID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if operationID != "" {
+		if cancel, ok := e.runningOps[operationID]; ok && cancel != nil {
+			cancel()
+			return true
+		}
+		return false
+	}
+	cancelled := false
+	for _, cancel := range e.runningOps {
+		if cancel != nil {
+			cancel()
+			cancelled = true
+		}
+	}
+	return cancelled
+}
+
+func (e *ExportService) emitProgress(opID, kind, status string, rowsDone int64, msg string) {
+	if e.appGetter == nil {
+		return
+	}
+	if a := e.appGetter(); a != nil {
+		a.Event.Emit("export:progress", app.ExportProgressEvent{
+			OperationID: opID,
+			Kind:        kind,
+			Status:      status,
+			RowsDone:    rowsDone,
+			Message:     msg,
+		})
 	}
 }
 
@@ -217,9 +273,16 @@ func quoteIdentifier(driverType, name string) string {
 // ExportToFile streams query or table rows directly into a file on disk.
 func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
 
-	drv, err := e.sessions.GetOrConnect(context.Background(), req.ConnectionID)
+	opID := fmt.Sprintf("export-%d", start.UnixNano())
+	e.registerOp(opID, cancel)
+	defer e.unregisterOp(opID)
+
+	drv, err := e.sessions.GetOrConnect(ctx, req.ConnectionID)
 	if err != nil {
+		e.emitProgress(opID, "export", "error", 0, err.Error())
 		return nil, err
 	}
 
@@ -293,8 +356,13 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			Offset:       offset,
 		}
 
-		res, err := drv.Execute(context.Background(), qReq)
+		res, err := drv.Execute(ctx, qReq)
 		if err != nil {
+			if ctx.Err() == context.Canceled {
+				e.emitProgress(opID, "export", "cancelled", exportedRows, "Export cancelled")
+			} else {
+				e.emitProgress(opID, "export", "error", exportedRows, err.Error())
+			}
 			return nil, fmt.Errorf("query execution failed: %w", err)
 		}
 
@@ -400,6 +468,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 
 		hasMore := res.HasMore && rowCount >= limit
 		res = nil
+		e.emitProgress(opID, "export", "running", exportedRows, fmt.Sprintf("Exported %d rows...", exportedRows))
 		if !hasMore {
 			break
 		}
@@ -439,6 +508,8 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		fileSize = fi.Size()
 	}
 
+	e.emitProgress(opID, "export", "completed", exportedRows, fmt.Sprintf("Exported %d rows", exportedRows))
+
 	return &ExportResult{
 		RowsExported: exportedRows,
 		FileSize:     fileSize,
@@ -450,19 +521,27 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 // ImportFileToTable imports CSV rows into a database table using batch inserts.
 func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, error) {
 	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
 
-	cfg, cfgErr := e.store.GetConnection(context.Background(), req.ConnectionID)
+	opID := fmt.Sprintf("import-%d", start.UnixNano())
+	e.registerOp(opID, cancel)
+	defer e.unregisterOp(opID)
+
+	cfg, cfgErr := e.store.GetConnection(ctx, req.ConnectionID)
 	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
 		return nil, fmt.Errorf("import blocked: connection %q is configured as read-only", cfg.Name)
 	}
 
-	drv, err := e.sessions.GetOrConnect(context.Background(), req.ConnectionID)
+	drv, err := e.sessions.GetOrConnect(ctx, req.ConnectionID)
 	if err != nil {
+		e.emitProgress(opID, "import", "error", 0, err.Error())
 		return nil, err
 	}
 
 	f, err := os.Open(req.FilePath)
 	if err != nil {
+		e.emitProgress(opID, "import", "error", 0, err.Error())
 		return nil, fmt.Errorf("failed to open import file: %w", err)
 	}
 	defer f.Close()
@@ -475,12 +554,17 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 		if len(batch) == 0 {
 			return nil
 		}
-		affected, err := drv.ApplyChanges(context.Background(), req.Database, req.Schema, req.Table, batch)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		affected, err := drv.ApplyChanges(ctx, req.Database, req.Schema, req.Table, batch)
 		if err != nil {
+			e.emitProgress(opID, "import", "error", totalImported, err.Error())
 			return fmt.Errorf("failed to apply batch of %d rows: %w", len(batch), err)
 		}
 		totalImported += affected
 		batch = batch[:0]
+		e.emitProgress(opID, "import", "running", totalImported, fmt.Sprintf("Imported %d rows...", totalImported))
 		return nil
 	}
 
@@ -630,6 +714,8 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 	if err := flushBatch(); err != nil {
 		return nil, err
 	}
+
+	e.emitProgress(opID, "import", "completed", totalImported, fmt.Sprintf("Imported %d rows", totalImported))
 
 	return &ImportResult{
 		RowsImported: totalImported,

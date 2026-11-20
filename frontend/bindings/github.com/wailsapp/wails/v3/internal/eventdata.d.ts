@@ -15,6 +15,7 @@ declare module "@wailsio/runtime" {
             "backup:progress": app$0.BackupProgressEvent;
             "backup:tool-download": app$0.ToolDownloadProgressEvent;
             "connection:state": app$0.ConnectionStateEvent;
+            "export:progress": app$0.ExportProgressEvent;
             "query:status": app$0.QueryStatusEvent;
             "restore:progress": app$0.BackupProgressEvent;
             "schema:sync": app$0.SchemaSyncEvent;

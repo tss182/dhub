@@ -28,6 +28,22 @@ export interface ConnectionStateEvent {
     "error"?: string;
 }
 
+export interface ExportProgressEvent {
+    "operationId": string;
+
+    /**
+     * "export" | "import"
+     */
+    "kind": string;
+
+    /**
+     * "running" | "completed" | "error" | "cancelled"
+     */
+    "status": string;
+    "rowsDone": number;
+    "message"?: string;
+}
+
 export interface QueryStatusEvent {
     "executionId": string;
 

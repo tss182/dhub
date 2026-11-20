@@ -53,5 +53,13 @@ type ToolDownloadProgressEvent struct {
 	Message      string  `json:"message,omitempty"`
 }
 
+type ExportProgressEvent struct {
+	OperationID string `json:"operationId"`
+	Kind        string `json:"kind"`   // "export" | "import"
+	Status      string `json:"status"` // "running" | "completed" | "error" | "cancelled"
+	RowsDone    int64  `json:"rowsDone"`
+	Message     string `json:"message,omitempty"`
+}
+
 
 

@@ -10,6 +10,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * CancelExportImport cancels an active export or import operation by ID (or all active ops if empty).
+ */
+export function CancelExportImport(operationID: string): $CancellablePromise<boolean> {
+    return $Call.ByID(2103711971, operationID);
+}
+
+/**
  * ExportToFile streams query or table rows directly into a file on disk.
  */
 export function ExportToFile(req: $models.ExportRequest): $CancellablePromise<$models.ExportResult | null> {

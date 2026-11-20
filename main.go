@@ -29,6 +29,7 @@ func init() {
 	application.RegisterEvent[app.BackupProgressEvent]("backup:progress")
 	application.RegisterEvent[app.BackupProgressEvent]("restore:progress")
 	application.RegisterEvent[app.ToolDownloadProgressEvent]("backup:tool-download")
+	application.RegisterEvent[app.ExportProgressEvent]("export:progress")
 }
 
 func main() {

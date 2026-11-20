@@ -88,6 +88,8 @@ import { useSettingsStore } from './stores/useSettingsStore';
 import { APP_DEFAULTS } from './config/defaults';
 import { useUpdateStore } from './stores/useUpdateStore';
 import { useWorkspaceSessionStore } from './stores/useWorkspaceSessionStore';
+import { usePanelResizers } from './hooks/usePanelResizers';
+import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { WorkspaceSelector } from './components/layout/WorkspaceSelector';
 import { WorkbenchHeader } from './components/layout/WorkbenchHeader';
 import { EmptyWorkbenchState } from './components/layout/EmptyWorkbenchState';
@@ -433,12 +435,20 @@ export function App() {
     });
   }, [tabs, txStatusByTab]);
 
-  // Left & Right sidebar resizable widths
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
-    const saved = localStorage.getItem('dhub_left_sidebar_w');
-    return saved ? Math.max(180, Math.min(600, Number(saved))) : 256;
-  });
-  const [isDraggingLeftResizer, setIsDraggingLeftResizer] = useState(false);
+  const {
+    leftSidebarWidth,
+    setLeftSidebarWidth,
+    isDraggingLeftResizer,
+    handleLeftResizerMouseDown,
+    rightSidebarWidth,
+    setRightSidebarWidth,
+    isDraggingRightResizer,
+    handleRightResizerMouseDown,
+    bottomPanelHeight,
+    setBottomPanelHeight,
+    isDraggingBottomResizer,
+    handleBottomResizerMouseDown,
+  } = usePanelResizers();
 
   const [activeLeftSidebarTab, setActiveLeftSidebarTab] = useState<LeftSidebarTab>(() => {
     if (typeof localStorage !== 'undefined') {
@@ -452,12 +462,6 @@ export function App() {
     setActiveLeftSidebarTab(tab);
     localStorage.setItem('dhub_left_sidebar_tab', tab);
   };
-
-  const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(() => {
-    const saved = localStorage.getItem('dhub_right_sidebar_w');
-    return saved ? Math.max(180, Math.min(1000, Number(saved))) : 280;
-  });
-  const [isDraggingRightResizer, setIsDraggingRightResizer] = useState(false);
 
   // Hovered workbench tab popover state
   const [hoveredTab, setHoveredTab] = useState<{
@@ -809,115 +813,10 @@ export function App() {
     setHoveredTab(null);
   };
 
-  const handleLeftResizerMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingLeftResizer(true);
-    const startX = e.clientX;
-    const startWidth = leftSidebarWidth;
-    let latestWidth = startWidth;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const maxW = Math.max(220, Math.min(650, window.innerWidth - 360));
-      const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
-      latestWidth = newWidth;
-      setLeftSidebarWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsDraggingLeftResizer(false);
-      localStorage.setItem('dhub_left_sidebar_w', String(latestWidth));
-      WorkspaceService.SaveSetting('dhub_left_sidebar_w', String(latestWidth)).catch(() => {});
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  const handleRightResizerMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingRightResizer(true);
-    const startX = e.clientX;
-    const startWidth = rightSidebarWidth;
-    let latestWidth = startWidth;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = startX - moveEvent.clientX;
-      const maxW = Math.max(260, Math.min(1000, window.innerWidth - 200));
-      const newWidth = Math.max(180, Math.min(maxW, startWidth + deltaX));
-      latestWidth = newWidth;
-      setRightSidebarWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsDraggingRightResizer(false);
-      localStorage.setItem('dhub_right_sidebar_w', String(latestWidth));
-      WorkspaceService.SaveSetting('dhub_right_sidebar_w', String(latestWidth)).catch(() => {});
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  // Bottom panel resizable height
-  const [bottomPanelHeight, setBottomPanelHeight] = useState<number>(() => {
-    const saved = localStorage.getItem('dhub_bottom_panel_h');
-    return saved ? Math.max(120, Math.min(800, Number(saved))) : 280;
-  });
-  const [isDraggingBottomResizer, setIsDraggingBottomResizer] = useState(false);
-
-  // Load persisted panel dimensions and workspaces from SQLite on mount
+  // Load persisted workspaces from SQLite on mount
   useEffect(() => {
     useWorkspaceSessionStore.getState().loadWorkspaces();
-    WorkspaceService.GetSettings()
-      .then((settings) => {
-        if (!settings) return;
-        if (settings['dhub_left_sidebar_w']) {
-          const w = Math.max(180, Math.min(600, Number(settings['dhub_left_sidebar_w'])));
-          if (!Number.isNaN(w)) setLeftSidebarWidth(w);
-        }
-        if (settings['dhub_right_sidebar_w']) {
-          const w = Math.max(180, Math.min(1000, Number(settings['dhub_right_sidebar_w'])));
-          if (!Number.isNaN(w)) setRightSidebarWidth(w);
-        }
-        if (settings['dhub_bottom_panel_h']) {
-          const h = Math.max(120, Math.min(800, Number(settings['dhub_bottom_panel_h'])));
-          if (!Number.isNaN(h)) setBottomPanelHeight(h);
-        }
-      })
-      .catch(() => {});
   }, []);
-
-  const handleBottomResizerMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingBottomResizer(true);
-    const startY = e.clientY;
-    const startHeight = bottomPanelHeight;
-    let latestHeight = startHeight;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaY = startY - moveEvent.clientY;
-      const maxH = Math.max(180, window.innerHeight - 160);
-      const newHeight = Math.max(100, Math.min(maxH, startHeight + deltaY));
-      latestHeight = newHeight;
-      setBottomPanelHeight(newHeight);
-    };
-
-    const handleMouseUp = () => {
-      setIsDraggingBottomResizer(false);
-      localStorage.setItem('dhub_bottom_panel_h', String(latestHeight));
-      WorkspaceService.SaveSetting('dhub_bottom_panel_h', String(latestHeight)).catch(() => {});
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const splitTab = splitTabId && splitTabId !== activeTabId ? tabs.find((t) => t.id === splitTabId) : undefined;
@@ -1129,82 +1028,12 @@ export function App() {
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
   const searchShortcutLabel = isMac ? '⌘P' : 'Ctrl+P';
 
-  // Global Keyboard shortcuts: Ctrl+P / Cmd+P for Search Everywhere
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Primary shortcut: Ctrl+P on Linux/Windows, Cmd+P on macOS
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
-        e.preventDefault();
-        setSearchEverywhereOpen(true);
-        return;
-      }
-
-      // Toggle Left Explorer: Ctrl+B / Cmd+B
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
-        e.preventDefault();
-        toggleLeftPanel();
-        return;
-      }
-
-      // Toggle Right Sidebar: Ctrl+R / Cmd+R
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R')) {
-        e.preventDefault();
-        toggleRightPanel();
-        return;
-      }
-
-      // Settings shortcut: Ctrl+I / Cmd+I
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'i' || e.key === 'I')) {
-        e.preventDefault();
-        useSettingsStore.getState().toggleSettings();
-        return;
-      }
-
-      // Close Active Tab: Ctrl+W / Cmd+W
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'w' || e.key === 'W')) {
-        e.preventDefault();
-        const activeId = useWorkbenchStore.getState().activeTabId;
-        if (activeId) {
-          useWorkbenchStore.getState().closeTab(activeId);
-        }
-        return;
-      }
-
-      // Stop Query Execution: Ctrl+Shift+D / Cmd+Shift+D
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'd' || e.key === 'D')) {
-        e.preventDefault();
-        const activeId = useWorkbenchStore.getState().activeTabId;
-        if (activeId) {
-          handleCancelQuery(activeId);
-        }
-        return;
-      }
-
-      // Open Help & User Guide: Ctrl+H / Cmd+H
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'h' || e.key === 'H')) {
-        e.preventDefault();
-        useWorkbenchStore.getState().toggleHelpModal();
-        return;
-      }
-
-      // Views / Value Viewer: Ctrl+T / Cmd+T
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 't' || e.key === 'T')) {
-        e.preventDefault();
-        const store = useWorkbenchStore.getState();
-        if (!store.isRightPanelOpen) {
-          store.setRightPanelOpen(true);
-          store.setActiveRightSidebarTab('views');
-        } else if (store.activeRightSidebarTab === 'views') {
-          store.setRightPanelOpen(false);
-        } else {
-          store.setActiveRightSidebarTab('views');
-        }
-        return;
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  useGlobalShortcuts({
+    onOpenSearchEverywhere: () => setSearchEverywhereOpen(true),
+    onToggleLeftPanel: toggleLeftPanel,
+    onToggleRightPanel: toggleRightPanel,
+    onCancelQuery: handleCancelQuery,
+  });
 
   // Listeners to close Tab Context Menu, Tab Overflow Dropdown & escape Rename Modal
   useEffect(() => {

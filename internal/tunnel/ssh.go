@@ -36,6 +36,8 @@ type Tunnel struct {
 	listener  net.Listener
 	agentConn io.Closer
 	LocalPort int
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 var knownHostsMu sync.Mutex
@@ -245,11 +247,32 @@ func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 		listener:  listener,
 		agentConn: agentConn,
 		LocalPort: listener.Addr().(*net.TCPAddr).Port,
+		done:      make(chan struct{}),
 	}
 
+	go t.keepAlive(30 * time.Second)
 	go t.forward(fmt.Sprintf("%s:%d", cfg.RemoteHost, cfg.RemotePort))
 
 	return t, nil
+}
+
+func (t *Tunnel) keepAlive(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.done:
+			return
+		case <-ticker.C:
+			if t.client == nil {
+				return
+			}
+			_, _, err := t.client.SendRequest("keepalive@openssh.com", true, nil)
+			if err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (t *Tunnel) forward(remoteAddr string) {
@@ -309,6 +332,11 @@ func copyWithContext(ctx context.Context, dst net.Conn, src net.Conn) (int64, er
 }
 
 func (t *Tunnel) Close() error {
+	t.closeOnce.Do(func() {
+		if t.done != nil {
+			close(t.done)
+		}
+	})
 	var err1, err2, err3 error
 	if t.listener != nil {
 		err1 = t.listener.Close()
