@@ -44,6 +44,32 @@ function debouncedSaveWorksheet(record: ConsoleRecord, delayMs = 400) {
 
 const TAB_STORAGE_KEY = 'dhub_open_tabs';
 const ACTIVE_TAB_STORAGE_KEY = 'dhub_active_tab_id';
+const LEFT_SIDEBAR_OPEN_KEY = 'dhub_left_sidebar_open';
+const RIGHT_SIDEBAR_OPEN_KEY = 'dhub_right_sidebar_open';
+
+function getSavedBoolean(key: string, defaultValue: boolean): boolean {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved !== null) return saved === 'true';
+    } catch {
+      // ignore
+    }
+  }
+  return defaultValue;
+}
+
+function saveBooleanSetting(key: string, value: boolean): void {
+  const serialized = String(value);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(key, serialized);
+    } catch {
+      // ignore
+    }
+  }
+  WorkspaceService.SaveSetting(key, serialized).catch(() => {});
+}
 
 function getSavedTabs(): { tabs: WorkbenchTab[]; activeTabId: string | null } {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -231,7 +257,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   splitTabId: null,
   activeBottomTab: 'result',
   isBottomPanelOpen: true,
-  isRightPanelOpen: true,
+  isRightPanelOpen: getSavedBoolean(RIGHT_SIDEBAR_OPEN_KEY, true),
   activeRightSidebarTab: (() => {
     if (typeof localStorage !== 'undefined') {
       try {
@@ -242,13 +268,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     return 'consoles';
   })(),
   activeCellViewer: null,
-  isLeftPanelOpen: (() => {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem('dhub_left_sidebar_open');
-      if (saved !== null) return saved === 'true';
-    }
-    return true;
-  })(),
+  isLeftPanelOpen: getSavedBoolean(LEFT_SIDEBAR_OPEN_KEY, true),
   isSearchEverywhereOpen: false,
   isConnectionDialogOpen: false,
   isHelpModalOpen: false,
@@ -636,9 +656,16 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     set((state) => ({ isBottomPanelOpen: !state.isBottomPanelOpen })),
 
   toggleRightPanel: () =>
-    set((state) => ({ isRightPanelOpen: !state.isRightPanelOpen })),
+    set((state) => {
+      const next = !state.isRightPanelOpen;
+      saveBooleanSetting(RIGHT_SIDEBAR_OPEN_KEY, next);
+      return { isRightPanelOpen: next };
+    }),
 
-  setRightPanelOpen: (isRightPanelOpen) => set({ isRightPanelOpen }),
+  setRightPanelOpen: (isRightPanelOpen) => {
+    saveBooleanSetting(RIGHT_SIDEBAR_OPEN_KEY, isRightPanelOpen);
+    set({ isRightPanelOpen });
+  },
 
   setActiveRightSidebarTab: (activeRightSidebarTab) => {
     if (typeof localStorage !== 'undefined') {
@@ -670,16 +697,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   toggleLeftPanel: () =>
     set((state) => {
       const next = !state.isLeftPanelOpen;
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('dhub_left_sidebar_open', String(next));
-      }
+      saveBooleanSetting(LEFT_SIDEBAR_OPEN_KEY, next);
       return { isLeftPanelOpen: next };
     }),
 
   setLeftPanelOpen: (isLeftPanelOpen) => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('dhub_left_sidebar_open', String(isLeftPanelOpen));
-    }
+    saveBooleanSetting(LEFT_SIDEBAR_OPEN_KEY, isLeftPanelOpen);
     set({ isLeftPanelOpen });
   },
 
@@ -729,6 +752,8 @@ if (typeof window !== 'undefined') {
   WorkspaceService.GetSettings()
     .then((settings) => {
       if (!settings) return;
+      const updates: Partial<WorkbenchState> = {};
+
       const currentTabs = useWorkbenchStore.getState().tabs;
       if (currentTabs.length === 0 && settings[TAB_STORAGE_KEY]) {
         try {
@@ -738,11 +763,29 @@ if (typeof window !== 'undefined') {
             const activeId = parsed.some((t: any) => t && t.id === savedActiveId)
               ? savedActiveId
               : parsed[0]?.id || null;
-            useWorkbenchStore.setState({ tabs: parsed, activeTabId: activeId });
+            updates.tabs = parsed;
+            updates.activeTabId = activeId;
           }
         } catch {
           // ignore
         }
+      }
+
+      if (typeof localStorage !== 'undefined') {
+        if (localStorage.getItem(LEFT_SIDEBAR_OPEN_KEY) === null && settings[LEFT_SIDEBAR_OPEN_KEY] !== undefined) {
+          const isOpen = settings[LEFT_SIDEBAR_OPEN_KEY] === 'true';
+          localStorage.setItem(LEFT_SIDEBAR_OPEN_KEY, String(isOpen));
+          updates.isLeftPanelOpen = isOpen;
+        }
+        if (localStorage.getItem(RIGHT_SIDEBAR_OPEN_KEY) === null && settings[RIGHT_SIDEBAR_OPEN_KEY] !== undefined) {
+          const isOpen = settings[RIGHT_SIDEBAR_OPEN_KEY] === 'true';
+          localStorage.setItem(RIGHT_SIDEBAR_OPEN_KEY, String(isOpen));
+          updates.isRightPanelOpen = isOpen;
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        useWorkbenchStore.setState(updates);
       }
     })
     .catch(() => {});
