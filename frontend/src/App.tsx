@@ -13,6 +13,7 @@ import { ToastContainer } from './components/common/ToastContainer';
 import { Popover } from './components/common/Popover';
 import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { ResultChartPanel } from './components/grid/ResultChartPanel';
+import { VectorSearchPanel, VectorSearchStats } from './components/grid/VectorSearchPanel';
 
 const SqlWorksheet = lazy(() =>
   import('./components/editor/SqlWorksheet').then((m) => ({ default: m.SqlWorksheet }))
@@ -421,6 +422,111 @@ export function App() {
   const [txStatusByTab, setTxStatusByTab] = useState<
     Record<string, { mode: 'auto' | 'manual'; isOpen: boolean; count: number }>
   >({});
+
+  // Interactive Vector Search state per table tab
+  const [vectorSearchByTab, setVectorSearchByTab] = useState<
+    Record<string, { active: boolean; loading: boolean; error: string | null; stats: VectorSearchStats | null }>
+  >({});
+
+  const handleExecuteVectorSearch = async (tab: WorkbenchTab, sql: string) => {
+    if (!tab.connectionId || !tab.table) return;
+    const { targetDb, targetSchema } = resolveTableTabMeta(tab);
+    setVectorSearchByTab((prev) => ({
+      ...prev,
+      [tab.id]: {
+        active: true,
+        loading: true,
+        error: null,
+        stats: prev[tab.id]?.stats || null,
+      },
+    }));
+
+    try {
+      const res = await QueryService.ExecuteQuery({
+        executionId: 'vec-search-' + Date.now(),
+        connectionId: tab.connectionId,
+        database: targetDb,
+        schema: targetSchema,
+        sql,
+        limit: 100,
+        offset: 0,
+      } as any);
+
+      if (res?.error) {
+        throw new Error(res.error);
+      }
+
+      const cols = ((res?.columns as any[]) || []) as ColumnMeta[];
+      const resRows = ((res?.rows as any[][]) || []) as any[][];
+      const scoreIdx = cols.findIndex((c) => c.name === 'score' || c.name === '_score' || c.name === 'distance');
+      let minScore: number | undefined;
+      let maxScore: number | undefined;
+      if (scoreIdx >= 0) {
+        for (const r of resRows) {
+          const val = Number(r?.[scoreIdx]);
+          if (Number.isFinite(val)) {
+            if (minScore === undefined || val < minScore) minScore = val;
+            if (maxScore === undefined || val > maxScore) maxScore = val;
+          }
+        }
+      }
+
+      setTableDataByTab((prev) => ({
+        ...prev,
+        [tab.id]: {
+          ...(prev[tab.id] || { pageSize: 100, page: 1 }),
+          columns: cols,
+          rows: resRows,
+          primaryKeys: (res?.primaryKeys as string[]) || prev[tab.id]?.primaryKeys || [],
+          isLoading: false,
+          isLoadingMore: false,
+          isLoadingPrevious: false,
+          error: null,
+          totalCount: resRows.length,
+          hasMore: false,
+          hasPrevious: false,
+          startOffset: 0,
+          page: 1,
+        },
+      }));
+
+      setVectorSearchByTab((prev) => ({
+        ...prev,
+        [tab.id]: {
+          active: true,
+          loading: false,
+          error: null,
+          stats: {
+            elapsedMs: Number(res?.elapsedMs || 0),
+            count: resRows.length,
+            minScore,
+            maxScore,
+            querySql: sql,
+          },
+        },
+      }));
+    } catch (err: any) {
+      setVectorSearchByTab((prev) => ({
+        ...prev,
+        [tab.id]: {
+          active: true,
+          loading: false,
+          error: err?.message || String(err),
+          stats: prev[tab.id]?.stats || null,
+        },
+      }));
+    }
+  };
+
+  const handleResetVectorSearch = (tab: WorkbenchTab) => {
+    setVectorSearchByTab((prev) => {
+      const next = { ...prev };
+      delete next[tab.id];
+      return next;
+    });
+    const currentSize = tableDataByTab[tab.id]?.pageSize || 100;
+    loadTableData(tab, 0, currentSize, 'replace', 1);
+  };
 
   useEffect(() => {
     const tabIdSet = new Set(tabs.map((t) => t.id));
@@ -3084,8 +3190,27 @@ export function App() {
                         })()
                       : rawRows;
 
+                    const vecState = vectorSearchByTab[activeTab.id];
+                    const effectiveDriver = tableConn?.driver || activeTab.driver || '';
+
                     return (
-                    <DataGrid
+                    <div className="flex flex-col h-full min-h-0">
+                      <VectorSearchPanel
+                        driver={effectiveDriver}
+                        database={activeTab.database || ''}
+                        schema={activeTab.schema || ''}
+                        tableName={activeTab.table || ''}
+                        columns={finalColumns}
+                        rows={finalRows}
+                        isSearching={Boolean(vecState?.loading)}
+                        isVectorSearchActive={Boolean(vecState?.active)}
+                        searchStats={vecState?.stats || null}
+                        error={vecState?.error || null}
+                        onExecuteVectorSearch={(sql) => handleExecuteVectorSearch(activeTab, sql)}
+                        onResetSearch={() => handleResetVectorSearch(activeTab)}
+                      />
+                      <div className="flex-1 min-h-0">
+                        <DataGrid
                       tabId={activeTab.id}
                       connectionId={activeTab.connectionId}
                       driver={tableConn?.driver || activeTab.driver}
@@ -3332,7 +3457,9 @@ export function App() {
                           ),
                         });
                       }}
-                    />
+                        />
+                      </div>
+                    </div>
                     );
                   })()}
 
