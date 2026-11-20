@@ -88,6 +88,7 @@ func main() {
 		Height:           900,
 		MinWidth:         1024,
 		MinHeight:        640,
+		StartState:       application.WindowStateMaximised,
 		Frameless:        true,
 		BackgroundColour: application.NewRGB(18, 19, 23), // DataGrip Islands Dark
 		URL:              "/",

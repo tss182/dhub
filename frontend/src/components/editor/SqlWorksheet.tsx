@@ -6,7 +6,6 @@ import {
   Play,
   Square,
   Database,
-  Terminal,
   ChevronDown,
   Check,
   AlignLeft,
@@ -25,6 +24,7 @@ import { SchemaService } from '../../../bindings/dhub/internal/services';
 import * as QueryService from '../../../bindings/dhub/internal/services/queryservice';
 import { ParameterPromptModal } from '../modals/ParameterPromptModal';
 import { DangerousQueryModal } from '../modals/DangerousQueryModal';
+import { DbDriverIcon } from '../common/DbDriverIcon';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -1329,11 +1329,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           {!isRunning ? (
             <button
               onClick={() => executeWithChecks(extractActiveStatement(), database)}
-              className="flex items-center gap-1.5 rounded bg-emerald-600/90 px-2.5 py-1 font-medium text-white hover:bg-emerald-500 transition-colors shadow-sm cursor-pointer"
-              title={`Execute Statement at Cursor (${modKey}+Enter)`}
+              className="flex items-center justify-center rounded bg-emerald-600/90 p-1.5 font-medium text-white hover:bg-emerald-500 transition-colors shadow-sm cursor-pointer"
+              title={`Run — Execute Statement at Cursor (${modKey}+Enter)`}
             >
               <Play className="h-3.5 w-3.5 fill-current" />
-              <span>Run</span>
             </button>
           ) : (
             <button
@@ -1349,11 +1348,13 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           {!isRunning && (
             <button
               onClick={() => executeWithChecks(extractAllStatements(), database)}
-              className="flex items-center gap-1.5 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] px-2 py-1 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-              title={`Run All Statements in Editor, one result tab each (${modKey}+Shift+Enter)`}
+              className="flex items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] p-1.5 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+              title={`Run All — Execute All Statements in Editor (${modKey}+Shift+Enter)`}
             >
-              <Play className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Run All</span>
+              <span className="flex items-center">
+                <Play className="h-3.5 w-3.5 text-emerald-400" />
+                <Play className="h-3.5 w-3.5 text-emerald-400 -ml-1.5" />
+              </span>
             </button>
           )}
 
@@ -1403,11 +1404,10 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           <button
             type="button"
             onClick={handleFormatSql}
-            className="flex items-center gap-1.5 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] px-2 py-1 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+            className="flex items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] p-1.5 text-zinc-300 hover:text-white transition-colors cursor-pointer"
             title="Format SQL (Shift+Alt+F)"
           >
             <AlignLeft className="h-3.5 w-3.5 text-zinc-400" />
-            <span>Format</span>
           </button>
 
           <div className="h-4 w-[1px] bg-[#272932] mx-1" />
@@ -1475,25 +1475,12 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 }`}
               />
             )}
+            {connection?.driver && (
+              <DbDriverIcon driver={connection.driver} className="h-3.5 w-3.5 shrink-0" />
+            )}
             <span className="font-semibold text-xs truncate max-w-[150px]">
               {connection ? connection.name : 'Console'}
             </span>
-            {connEnv !== 'local' && (
-              <span
-                className={`text-[9px] font-bold px-1 py-0.2 rounded border uppercase ${
-                  connEnv === 'prod'
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                }`}
-              >
-                {connEnv}
-              </span>
-            )}
-            {connection?.driver && (
-              <span className="text-[9px] text-zinc-400 font-mono uppercase bg-[#14151a] px-1 py-0.2 rounded border border-[#272932]">
-                {connection.driver}
-              </span>
-            )}
           </div>
 
           <span className="text-zinc-600 font-mono">/</span>
@@ -1554,25 +1541,19 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5 text-zinc-400">
-          <div className="hidden md:flex items-center gap-1.5">
-            <Terminal className="h-3.5 w-3.5 text-zinc-500" />
-            <span className="text-[11px] text-zinc-400">{modKey}+Enter to Execute</span>
-          </div>
-
           {/* Driver-Aware Syntax & Help Popover */}
           <div className="relative" ref={syntaxHelpRef}>
             <button
               type="button"
               onClick={() => setIsSyntaxHelpOpen((prev) => !prev)}
-              className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium transition-colors cursor-pointer ${
+              className={`flex items-center justify-center p-1.5 rounded border text-[11px] font-medium transition-colors cursor-pointer ${
                 isSyntaxHelpOpen
                   ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
                   : 'bg-[#22242c] hover:bg-[#2b2e3b] border-[#272932] text-zinc-300 hover:text-white'
               }`}
-              title="Driver-aware query syntax cheat-sheet & help"
+              title="Syntax & Help — Driver-aware query cheat-sheet"
             >
               <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
-              <span>Syntax &amp; Help</span>
             </button>
 
             {isSyntaxHelpOpen && (() => {
