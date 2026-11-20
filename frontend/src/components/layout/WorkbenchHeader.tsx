@@ -22,10 +22,6 @@ export interface WorkbenchHeaderProps {
   isMac: boolean;
   updateInfo: { hasUpdate?: boolean; latestVersion?: string } | null;
   isUpdateModalOpen: boolean;
-  isSettingsMenuOpen: boolean;
-  settingsMenuRef: React.RefObject<HTMLDivElement>;
-  onToggleSettingsMenu: () => void;
-  onCloseSettingsMenu: () => void;
   onOpenUpdateModal: () => void;
   onOpenSnippets: () => void;
   onOpenSchemaDiff: () => void;
@@ -52,10 +48,6 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
   isMac,
   updateInfo,
   isUpdateModalOpen,
-  isSettingsMenuOpen,
-  settingsMenuRef,
-  onToggleSettingsMenu,
-  onCloseSettingsMenu,
   onOpenUpdateModal,
   onOpenSnippets,
   onOpenSchemaDiff,
@@ -119,163 +111,132 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
       }`}
     >
       {/* Left: (macOS/Linux Traffic Lights) + App Logo + Workspace Selector */}
-      <div className="flex items-center gap-3" style={noDragStyle}>
-        {controlsOnLeft && (
-          <>
-            <div className="group/traffic flex items-center gap-2 pr-0.5">
-              <button
-                type="button"
-                onClick={handleCloseWindow}
-                className="flex h-3 w-3 items-center justify-center rounded-full bg-[#ff5f57] hover:bg-[#ff5f57]/90 text-black/80 transition-opacity cursor-pointer"
-                title="Close"
-                aria-label="Close window"
-              >
-                <X className="h-2 w-2 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
-              </button>
-              <button
-                type="button"
-                onClick={handleMinimize}
-                className="flex h-3 w-3 items-center justify-center rounded-full bg-[#febc2e] hover:bg-[#febc2e]/90 text-black/80 transition-opacity cursor-pointer"
-                title="Minimize"
-                aria-label="Minimize window"
-              >
-                <Minus className="h-2 w-2 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
-              </button>
-              <button
-                type="button"
-                onClick={handleToggleMaximize}
-                className="flex h-3 w-3 items-center justify-center rounded-full bg-[#28c840] hover:bg-[#28c840]/90 text-black/80 transition-opacity cursor-pointer"
-                title={isMaximised ? 'Restore' : 'Zoom / Maximize'}
-                aria-label={isMaximised ? 'Restore window' : 'Maximize window'}
-              >
-                <Maximize2 className="h-1.5 w-1.5 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
-              </button>
-            </div>
-            <div className="h-4 w-px bg-[#272932]" />
-          </>
-        )}
-
-        <DHubLogo variant="full" size={24} />
-        <div className="h-4 w-px bg-[#272932]" />
-        <WorkspaceSelector />
-      </div>
-
-      {/* Center draggable spacer */}
       <div
-        style={dragStyle}
-        onDoubleClick={handleToggleMaximize}
-        className="flex-1 h-full"
-      />
-
-      {/* Right: Search, Settings, Update Pill, and (Windows) Window Controls */}
-      <div className="flex items-center h-full" style={noDragStyle}>
-        <div className={`flex items-center gap-1.5 ${controlsOnLeft ? '' : 'pr-2'}`}>
-          {/* Search Everywhere Icon Button */}
-          <button
-            type="button"
-            onClick={() => useWorkbenchStore.getState().setSearchEverywhereOpen(true)}
-            className="flex items-center justify-center rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors cursor-pointer"
-            title={`Search Everywhere (${isMac ? '⌘K' : 'Ctrl+K'} / Double Shift)`}
-            aria-label="Search Everywhere"
-          >
-            <Search className="h-3.5 w-3.5" />
-          </button>
-
-          {/* Settings & Tools Dropdown */}
-          <div className="relative" ref={settingsMenuRef}>
-            <button
-              type="button"
-              onClick={onToggleSettingsMenu}
-              className={`relative flex items-center justify-center rounded-md p-1.5 text-xs cursor-pointer transition-colors ${
-                isSettingsMenuOpen
-                  ? 'text-zinc-100 bg-white/[0.08]'
-                  : 'text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'
-              }`}
-              title={
-                updateInfo?.hasUpdate
-                  ? `Settings & Tools — Update ${updateInfo.latestVersion} available`
-                  : 'Settings & Tools'
-              }
-              aria-label="Settings & Tools"
-              aria-expanded={isSettingsMenuOpen}
-            >
-              <SettingsIcon className="h-3.5 w-3.5" />
-              {updateInfo?.hasUpdate && (
-                <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              )}
-            </button>
-
-            {isSettingsMenuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-md border border-[#373946] bg-[#1a1b22] py-1 shadow-2xl">
+        className="flex flex-1 min-w-0 h-full items-center"
+        onDoubleClick={(e) => {
+          if (e.target === e.currentTarget) {
+            handleToggleMaximize();
+          }
+        }}
+      >
+        <div className="flex items-center gap-3 shrink-0" style={noDragStyle}>
+          {controlsOnLeft && (
+            <>
+              <div className="group/traffic flex items-center gap-2 pr-0.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    onCloseSettingsMenu();
-                    useSettingsStore.getState().openSettings();
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
+                  onClick={handleCloseWindow}
+                  className="flex h-3 w-3 items-center justify-center rounded-full bg-[#ff5f57] hover:bg-[#ff5f57]/90 text-black/80 transition-opacity cursor-pointer"
+                  title="Close"
+                  aria-label="Close window"
                 >
-                  <span className="flex items-center gap-2">
-                    <SettingsIcon className="h-3.5 w-3.5 text-zinc-400" />
-                    <span>Setting</span>
-                  </span>
-                  {updateInfo?.hasUpdate ? (
-                    <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.2 text-[9px] font-semibold text-emerald-300">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      {updateInfo.latestVersion}
-                    </span>
-                  ) : (
-                    <kbd className="text-[10px] text-zinc-500 font-mono">
-                      {isMac ? '⌘I' : 'Ctrl+I'}
-                    </kbd>
-                  )}
+                  <X className="h-2 w-2 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
                 </button>
-
-                <div className="my-1 border-t border-[#292b36]" />
-
                 <button
                   type="button"
-                  onClick={() => {
-                    onCloseSettingsMenu();
-                    onOpenSnippets();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
+                  onClick={handleMinimize}
+                  className="flex h-3 w-3 items-center justify-center rounded-full bg-[#febc2e] hover:bg-[#febc2e]/90 text-black/80 transition-opacity cursor-pointer"
+                  title="Minimize"
+                  aria-label="Minimize window"
                 >
-                  <Bookmark className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Snippets</span>
+                  <Minus className="h-2 w-2 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
                 </button>
-
                 <button
                   type="button"
-                  onClick={() => {
-                    onCloseSettingsMenu();
-                    onOpenSchemaDiff();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
+                  onClick={handleToggleMaximize}
+                  className="flex h-3 w-3 items-center justify-center rounded-full bg-[#28c840] hover:bg-[#28c840]/90 text-black/80 transition-opacity cursor-pointer"
+                  title={isMaximised ? 'Restore' : 'Zoom / Maximize'}
+                  aria-label={isMaximised ? 'Restore window' : 'Maximize window'}
                 >
-                  <GitCompare className="h-3.5 w-3.5 text-blue-400" />
-                  <span>Schema Diff</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    onCloseSettingsMenu();
-                    onOpenHelp('quickstart');
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-300 hover:bg-[#232530] hover:text-white transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
-                    <span>Help</span>
-                  </span>
-                  <kbd className="text-[10px] text-zinc-500 font-mono">
-                    {isMac ? '⌘H' : 'Ctrl+H'}
-                  </kbd>
+                  <Maximize2 className="h-1.5 w-1.5 stroke-[3] opacity-0 group-hover/traffic:opacity-100 transition-opacity" />
                 </button>
               </div>
+              <div className="h-4 w-px bg-[#272932]" />
+            </>
+          )}
+
+          <DHubLogo variant="full" size={24} />
+          <div className="h-4 w-px bg-[#272932]" />
+          <WorkspaceSelector />
+        </div>
+      </div>
+
+      {/* Center: Centered Quick Actions (Search, Snippets, Schema Diff) */}
+      <div className="flex items-center gap-1.5 shrink-0 px-2" style={noDragStyle}>
+        {/* Search Everywhere Icon Button */}
+        <button
+          type="button"
+          onClick={() => useWorkbenchStore.getState().setSearchEverywhereOpen(true)}
+          className="flex items-center justify-center rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors cursor-pointer"
+          title={`Search Everywhere (${isMac ? '⌘P' : 'Ctrl+P'})`}
+          aria-label="Search Everywhere"
+        >
+          <Search className="h-3.5 w-3.5" />
+        </button>
+
+        {/* Snippets Icon Button */}
+        <button
+          type="button"
+          onClick={onOpenSnippets}
+          className="flex items-center justify-center rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors cursor-pointer"
+          title="Snippets"
+          aria-label="Snippets"
+        >
+          <Bookmark className="h-3.5 w-3.5" />
+        </button>
+
+        {/* Schema Diff Icon Button */}
+        <button
+          type="button"
+          onClick={onOpenSchemaDiff}
+          className="flex items-center justify-center rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors cursor-pointer"
+          title="Schema Diff"
+          aria-label="Schema Diff"
+        >
+          <GitCompare className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Right: Help, Settings, Update Pill, and (Windows) Window Controls */}
+      <div
+        className="flex flex-1 min-w-0 h-full items-center justify-end"
+        onDoubleClick={(e) => {
+          if (e.target === e.currentTarget) {
+            handleToggleMaximize();
+          }
+        }}
+      >
+        <div className="flex items-center h-full shrink-0" style={noDragStyle}>
+        <div className={`flex items-center gap-1.5 ${controlsOnLeft ? '' : 'pr-2'}`}>
+
+          {/* Help Icon Button */}
+          <button
+            type="button"
+            onClick={() => onOpenHelp('quickstart')}
+            className="flex items-center justify-center rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors cursor-pointer"
+            title={`Help (${isMac ? '⌘H' : 'Ctrl+H'})`}
+            aria-label="Help"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+          </button>
+
+          {/* Settings Icon Button */}
+          <button
+            type="button"
+            onClick={() => useSettingsStore.getState().openSettings()}
+            className="relative flex items-center justify-center rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 transition-colors cursor-pointer"
+            title={
+              updateInfo?.hasUpdate
+                ? `Settings (${isMac ? '⌘I' : 'Ctrl+I'}) — Update ${updateInfo.latestVersion} available`
+                : `Settings (${isMac ? '⌘I' : 'Ctrl+I'})`
+            }
+            aria-label="Settings"
+          >
+            <SettingsIcon className="h-3.5 w-3.5" />
+            {updateInfo?.hasUpdate && (
+              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
             )}
-          </div>
+          </button>
 
           {/* Update Shortcut Pill (shown when update is detected & modal is dismissed/closed) */}
           {updateInfo?.hasUpdate && !isUpdateModalOpen && (
@@ -330,6 +291,7 @@ export const WorkbenchHeader: React.FC<WorkbenchHeaderProps> = ({
             </button>
           </div>
         )}
+        </div>
       </div>
     </header>
   );

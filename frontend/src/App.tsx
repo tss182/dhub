@@ -297,8 +297,6 @@ export function App() {
   const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
   const [isMockDataOpen, setIsMockDataOpen] = useState(false);
   const [resultViewMode, setResultViewMode] = useState<'table' | 'chart'>('table');
-  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
-  const settingsMenuRef = useRef<HTMLDivElement>(null);
 
   const { updateInfo, isUpdateModalOpen, checkUpdate, openUpdateModal } = useUpdateStore();
   const checkUpdatesPeriodically = useSettingsStore((s) => s.checkUpdatesPeriodically);
@@ -1196,26 +1194,6 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
-
-  useEffect(() => {
-    if (!isSettingsMenuOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) {
-        setIsSettingsMenuOpen(false);
-      }
-    };
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsSettingsMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    window.addEventListener('keydown', handleEscape);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [isSettingsMenuOpen]);
 
   // Listeners to close Tab Context Menu, Tab Overflow Dropdown & escape Rename Modal
   useEffect(() => {
@@ -2274,10 +2252,6 @@ export function App() {
         isMac={isMac}
         updateInfo={updateInfo}
         isUpdateModalOpen={isUpdateModalOpen}
-        isSettingsMenuOpen={isSettingsMenuOpen}
-        settingsMenuRef={settingsMenuRef}
-        onToggleSettingsMenu={() => setIsSettingsMenuOpen((prev) => !prev)}
-        onCloseSettingsMenu={() => setIsSettingsMenuOpen(false)}
         onOpenUpdateModal={openUpdateModal}
         onOpenSnippets={() => setIsSnippetsOpen(true)}
         onOpenSchemaDiff={() => setIsSchemaDiffOpen(true)}
