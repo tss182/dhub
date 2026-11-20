@@ -1,4 +1,4 @@
-import type { CopyFormat, ThemeMode } from '../stores/useSettingsStore';
+import type { AiProvider, CopyFormat, ThemeMode } from '../stores/useSettingsStore';
 
 /**
  * Global application default configuration.
@@ -14,6 +14,11 @@ export const APP_DEFAULTS = {
   editorFontSize: 13,
   wordWrap: false,
   showMinimap: false,
+  showAiChat: true,
+  aiProvider: 'openai' as AiProvider,
+  aiApiKey: '',
+  aiBaseUrl: '',
+  aiModel: 'gpt-4o-mini',
   copyFormat: 'csv' as CopyFormat,
 
   // Updates

@@ -33,8 +33,12 @@ import {
   ShieldCheck,
   AlertCircle,
   Clock,
+  Bot,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
-import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useSettingsStore, type AiProvider } from '../../stores/useSettingsStore';
+import { AI_PROVIDER_DEFAULTS, sendAiChatMessage } from '../../utils/aiClient';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useUpdateStore } from '../../stores/useUpdateStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
@@ -55,6 +59,11 @@ export const SettingsModal: React.FC = () => {
     editorFontSize,
     wordWrap,
     showMinimap,
+    showAiChat,
+    aiProvider,
+    aiApiKey,
+    aiBaseUrl,
+    aiModel,
     copyFormat,
     checkUpdatesOnStartup,
     checkUpdatesPeriodically,
@@ -66,6 +75,11 @@ export const SettingsModal: React.FC = () => {
     setEditorFontSize,
     setWordWrap,
     setShowMinimap,
+    setShowAiChat,
+    setAiProvider,
+    setAiApiKey,
+    setAiBaseUrl,
+    setAiModel,
     setCheckUpdatesOnStartup,
     setCheckUpdatesPeriodically,
     resetToDefaults,
@@ -93,6 +107,9 @@ export const SettingsModal: React.FC = () => {
   } = useUpdateStore();
 
   const [customSizeInput, setCustomSizeInput] = useState<string>(String(defaultPageSize));
+  const [showAiKey, setShowAiKey] = useState<boolean>(false);
+  const [isTestingAi, setIsTestingAi] = useState<boolean>(false);
+  const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Export State
   const [exportSettings, setExportSettings] = useState<boolean>(true);
@@ -421,6 +438,18 @@ export const SettingsModal: React.FC = () => {
             >
               <FileCode className="h-4 w-4" />
               <span>SQL Worksheet</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSettingsTab('ai')}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
+                activeSettingsTab === 'ai'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#20222b]'
+              }`}
+            >
+              <Bot className="h-4 w-4" />
+              <span>AI Assistant</span>
             </button>
 
             <button
@@ -793,6 +822,230 @@ export const SettingsModal: React.FC = () => {
                   >
                     {showMinimap ? 'Minimap: ON' : 'Minimap: OFF'}
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* AI Assistant Tab */}
+            {activeSettingsTab === 'ai' && (
+              <div className="space-y-6">
+                <div>
+                  <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
+                    AI Chat Bubble
+                  </label>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Show or hide the floating AI chat bubble in the bottom-right corner of the workspace.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAiChat(!showAiChat)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                      showAiChat
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {showAiChat ? 'AI Chat Bubble: ON' : 'AI Chat Bubble: OFF'}
+                  </button>
+                </div>
+
+                <div className="h-[1px] bg-[#272932]" />
+
+                {/* Provider Selection */}
+                <div>
+                  <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
+                    AI Provider
+                  </label>
+                  <p className="text-[11px] text-zinc-400 mb-3">
+                    Connect to OpenAI, any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, Groq), or Google Gemini.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {(['openai', 'openai_compatible', 'gemini'] as AiProvider[]).map((prov) => {
+                      const info = AI_PROVIDER_DEFAULTS[prov];
+                      const isSelected = aiProvider === prov;
+                      return (
+                        <button
+                          key={prov}
+                          type="button"
+                          onClick={() => {
+                            setAiProvider(prov);
+                            setAiModel(info.defaultModel);
+                            if (prov === 'openai_compatible' && !aiBaseUrl.trim()) {
+                              setAiBaseUrl(info.defaultBaseUrl);
+                            }
+                            setAiTestResult(null);
+                          }}
+                          className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-blue-600/15 border-blue-500 text-white ring-1 ring-blue-500/40'
+                              : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-300 hover:border-zinc-500'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-semibold">{info.label}</span>
+                            {isSelected && (
+                              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-white">
+                                <Check className="h-2.5 w-2.5 stroke-[3]" />
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-zinc-400 font-mono truncate">
+                            {info.defaultModel}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Base URL (for OpenAI Compatible & optional for OpenAI) */}
+                {aiProvider !== 'gemini' && (
+                  <div>
+                    <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
+                      {aiProvider === 'openai_compatible' ? 'Base URL (Required)' : 'Base URL (Optional)'}
+                    </label>
+                    <p className="text-[11px] text-zinc-400 mb-2">
+                      {aiProvider === 'openai_compatible'
+                        ? 'Example: http://localhost:11434/v1 (Ollama), http://localhost:1234/v1 (LM Studio), or https://openrouter.ai/api/v1'
+                        : 'Leave blank to use https://api.openai.com/v1.'}
+                    </p>
+                    <input
+                      type="text"
+                      value={aiBaseUrl}
+                      onChange={(e) => {
+                        setAiBaseUrl(e.target.value);
+                        setAiTestResult(null);
+                      }}
+                      placeholder={AI_PROVIDER_DEFAULTS[aiProvider].defaultBaseUrl}
+                      className="w-full rounded-lg border border-[#2b2e3a] bg-[#14151a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 font-mono focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                )}
+
+                {/* API Key */}
+                <div>
+                  <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
+                    API Key {aiProvider === 'openai_compatible' ? '(Optional for local servers)' : ''}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showAiKey ? 'text' : 'password'}
+                      value={aiApiKey}
+                      onChange={(e) => {
+                        setAiApiKey(e.target.value);
+                        setAiTestResult(null);
+                      }}
+                      placeholder={
+                        aiProvider === 'gemini'
+                          ? 'AIza...'
+                          : aiProvider === 'openai'
+                          ? 'sk-...'
+                          : 'sk-... (optional for Ollama/LM Studio)'
+                      }
+                      className="w-full rounded-lg border border-[#2b2e3a] bg-[#14151a] pl-3 pr-9 py-2 text-xs text-zinc-100 placeholder-zinc-500 font-mono focus:border-blue-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAiKey((v) => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                      title={showAiKey ? 'Hide API key' : 'Show API key'}
+                    >
+                      {showAiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Model Name + Presets */}
+                <div>
+                  <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
+                    Model
+                  </label>
+                  <input
+                    type="text"
+                    value={aiModel}
+                    onChange={(e) => {
+                      setAiModel(e.target.value);
+                      setAiTestResult(null);
+                    }}
+                    placeholder={AI_PROVIDER_DEFAULTS[aiProvider].defaultModel}
+                    className="w-full rounded-lg border border-[#2b2e3a] bg-[#14151a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 font-mono focus:border-blue-500 focus:outline-none mb-2"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {AI_PROVIDER_DEFAULTS[aiProvider].models.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          setAiModel(preset);
+                          setAiTestResult(null);
+                        }}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors cursor-pointer ${
+                          aiModel === preset
+                            ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                            : 'bg-[#1e2027] border-[#2b2e3a] text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Test Connection */}
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    disabled={isTestingAi}
+                    onClick={async () => {
+                      setIsTestingAi(true);
+                      setAiTestResult(null);
+                      try {
+                        const reply = await sendAiChatMessage({
+                          provider: aiProvider,
+                          apiKey: aiApiKey,
+                          baseUrl: aiBaseUrl,
+                          model: aiModel,
+                          systemPrompt: 'Reply with OK in one word.',
+                          messages: [{ role: 'user', content: 'Say OK' }],
+                        });
+                        setAiTestResult({
+                          ok: true,
+                          message: `Connected! Model replied: "${reply.slice(0, 80)}"`,
+                        });
+                      } catch (err: any) {
+                        setAiTestResult({
+                          ok: false,
+                          message: err?.message || 'Connection failed',
+                        });
+                      } finally {
+                        setIsTestingAi(false);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    {isTestingAi ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    <span>{isTestingAi ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
+
+                  {aiTestResult && (
+                    <span
+                      className={`text-[11px] flex items-center gap-1.5 ${
+                        aiTestResult.ok ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {aiTestResult.ok ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span>{aiTestResult.message}</span>
+                    </span>
+                  )}
                 </div>
               </div>
             )}

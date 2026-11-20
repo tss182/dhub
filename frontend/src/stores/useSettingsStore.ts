@@ -4,7 +4,8 @@ import { APP_DEFAULTS } from '../config/defaults';
 
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'markdown' | 'sql_insert' | 'sql_update' | 'sql_upsert';
-export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'backup' | 'version';
+export type AiProvider = 'openai' | 'openai_compatible' | 'gemini';
+export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'ai' | 'backup' | 'version';
 
 interface SettingsValues {
   theme: ThemeMode;
@@ -12,6 +13,11 @@ interface SettingsValues {
   editorFontSize: number;
   wordWrap: boolean;
   showMinimap: boolean;
+  showAiChat: boolean;
+  aiProvider: AiProvider;
+  aiApiKey: string;
+  aiBaseUrl: string;
+  aiModel: string;
   copyFormat: CopyFormat;
   checkUpdatesOnStartup: boolean;
   checkUpdatesPeriodically: boolean;
@@ -30,6 +36,11 @@ interface SettingsState extends SettingsValues {
   setEditorFontSize: (size: number) => void;
   setWordWrap: (wrap: boolean) => void;
   setShowMinimap: (show: boolean) => void;
+  setShowAiChat: (show: boolean) => void;
+  setAiProvider: (provider: AiProvider) => void;
+  setAiApiKey: (apiKey: string) => void;
+  setAiBaseUrl: (baseUrl: string) => void;
+  setAiModel: (model: string) => void;
   setCopyFormat: (format: CopyFormat) => void;
   setCheckUpdatesOnStartup: (enabled: boolean) => void;
   setCheckUpdatesPeriodically: (enabled: boolean) => void;
@@ -46,6 +57,11 @@ const DEFAULT_SETTINGS: SettingsValues = {
   editorFontSize: APP_DEFAULTS.editorFontSize,
   wordWrap: APP_DEFAULTS.wordWrap,
   showMinimap: APP_DEFAULTS.showMinimap,
+  showAiChat: APP_DEFAULTS.showAiChat,
+  aiProvider: APP_DEFAULTS.aiProvider,
+  aiApiKey: APP_DEFAULTS.aiApiKey,
+  aiBaseUrl: APP_DEFAULTS.aiBaseUrl,
+  aiModel: APP_DEFAULTS.aiModel,
   copyFormat: APP_DEFAULTS.copyFormat,
   checkUpdatesOnStartup: APP_DEFAULTS.checkUpdatesOnStartup,
   checkUpdatesPeriodically: APP_DEFAULTS.checkUpdatesPeriodically,
@@ -87,6 +103,16 @@ function parseSettingsObject(parsed: any): SettingsValues {
     wordWrap: typeof parsed?.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
     showMinimap:
       typeof parsed?.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
+    showAiChat:
+      typeof parsed?.showAiChat === 'boolean' ? parsed.showAiChat : DEFAULT_SETTINGS.showAiChat,
+    aiProvider: ['openai', 'openai_compatible', 'gemini'].includes(parsed?.aiProvider)
+      ? parsed.aiProvider
+      : DEFAULT_SETTINGS.aiProvider,
+    aiApiKey: typeof parsed?.aiApiKey === 'string' ? parsed.aiApiKey : DEFAULT_SETTINGS.aiApiKey,
+    aiBaseUrl: typeof parsed?.aiBaseUrl === 'string' ? parsed.aiBaseUrl : DEFAULT_SETTINGS.aiBaseUrl,
+    aiModel: typeof parsed?.aiModel === 'string' && parsed.aiModel.trim()
+      ? parsed.aiModel.trim()
+      : DEFAULT_SETTINGS.aiModel,
     copyFormat: ['csv', 'json', 'markdown', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed?.copyFormat)
       ? parsed.copyFormat
       : DEFAULT_SETTINGS.copyFormat,
@@ -165,6 +191,31 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setShowMinimap: (show) => {
     persistSettings({ showMinimap: show });
     set({ showMinimap: show });
+  },
+
+  setShowAiChat: (show) => {
+    persistSettings({ showAiChat: show });
+    set({ showAiChat: show });
+  },
+
+  setAiProvider: (aiProvider) => {
+    persistSettings({ aiProvider });
+    set({ aiProvider });
+  },
+
+  setAiApiKey: (aiApiKey) => {
+    persistSettings({ aiApiKey });
+    set({ aiApiKey });
+  },
+
+  setAiBaseUrl: (aiBaseUrl) => {
+    persistSettings({ aiBaseUrl });
+    set({ aiBaseUrl });
+  },
+
+  setAiModel: (aiModel) => {
+    persistSettings({ aiModel });
+    set({ aiModel });
   },
 
   setCopyFormat: (copyFormat) => {

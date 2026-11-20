@@ -94,6 +94,10 @@ func (w *WorkspaceService) GetSettings() (map[string]string, error) {
 }
 
 func (w *WorkspaceService) SaveSetting(key string, value string) error {
+	if key == "__ai_debug_log__" {
+		log.Println(value)
+		return nil
+	}
 	return w.store.SaveSetting(key, value)
 }
 

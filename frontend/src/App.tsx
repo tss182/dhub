@@ -80,6 +80,9 @@ const UserManager = lazy(() =>
 const ActivityMonitor = lazy(() =>
   import('./components/monitor/ActivityMonitor').then((m) => ({ default: m.ActivityMonitor }))
 );
+const AiChatBubble = lazy(() =>
+  import('./components/chat/AiChatBubble').then((m) => ({ default: m.AiChatBubble }))
+);
 import { useAlertStore, alertSuccess, alertError, alertWarning, confirmDialog } from './stores/useAlertStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { APP_DEFAULTS } from './config/defaults';
@@ -1677,6 +1680,104 @@ export function App() {
     }
   }, [activeTabId, splitTabId, tabRefreshTrigger[activeTabId || ''], tabRefreshTrigger[splitTabId || '']]);
 
+  // Allow AI Chat Bubble to open/focus a table tab with optional WHERE filter and sorting
+  useEffect(() => {
+    const handleAiOpenTable = (e: Event) => {
+      const detail = (e as CustomEvent<{
+        connectionId?: string;
+        database?: string;
+        schema?: string;
+        table?: string;
+        whereClause?: string;
+        sortConfigs?: { column: string; direction: 'asc' | 'desc' }[];
+      }>).detail;
+      if (!detail?.table) return;
+
+      const connId =
+        detail.connectionId ||
+        useConnectionStore.getState().activeConnectionId ||
+        useConnectionStore.getState().connections[0]?.id ||
+        '';
+      if (!connId) return;
+
+      const rawTable = detail.table.trim();
+      const dotIdx = rawTable.indexOf('.');
+      const tableSchemaFromName = dotIdx > 0 ? rawTable.slice(0, dotIdx).replace(/[`"\[\]]/g, '') : '';
+      const cleanTableName = (dotIdx > 0 ? rawTable.slice(dotIdx + 1) : rawTable).replace(/[`"\[\]]/g, '');
+
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === connId);
+      const driver = conn?.driver || '';
+      const targetDb =
+        detail.database ||
+        useConnectionStore.getState().activeDatabase ||
+        conn?.databaseName ||
+        (driver === 'sqlite' ? 'main' : '');
+      const targetSchema =
+        tableSchemaFromName ||
+        detail.schema ||
+        (driver === 'postgres'
+          ? useConnectionStore.getState().activeSchema || 'public'
+          : driver === 'mssql'
+          ? 'dbo'
+          : driver === 'oracle'
+          ? ''
+          : targetDb);
+
+      const cleanWhere = (detail.whereClause || '').trim().replace(/^where\s+/i, '').trim();
+      const sortConfigs = Array.isArray(detail.sortConfigs) ? detail.sortConfigs : [];
+      const tabId = `table-${connId}-${targetDb}-${cleanTableName}`;
+
+      const existingTab = useWorkbenchStore.getState().tabs.find((t) => t.id === tabId);
+      const nextViewState = {
+        ...(existingTab?.tableViewState || {}),
+        whereClause: cleanWhere,
+        sortConfigs,
+        page: 1,
+        offset: 0,
+        scrollTop: 0,
+        activeRowIndex: 0,
+      };
+
+      const targetTab: WorkbenchTab = existingTab
+        ? { ...existingTab, tableViewState: nextViewState }
+        : {
+            id: tabId,
+            type: 'table_data',
+            title: cleanTableName,
+            connectionId: connId,
+            driver,
+            database: targetDb,
+            schema: targetSchema,
+            table: cleanTableName,
+            tableViewState: nextViewState,
+          };
+
+      if (existingTab) {
+        useWorkbenchStore.setState({
+          tabs: useWorkbenchStore.getState().tabs.map((t) =>
+            t.id === tabId ? targetTab : t
+          ),
+        });
+      }
+
+      // Clear cached tableData for this tab so loadTableData picks up the new tableViewState
+      setTableDataByTab((prev) => {
+        if (!prev[tabId]) return prev;
+        const next = { ...prev };
+        delete next[tabId];
+        return next;
+      });
+
+      openTab(targetTab);
+      if (existingTab) {
+        useWorkbenchStore.getState().refreshTab(tabId);
+      }
+    };
+
+    window.addEventListener('dhub:open-table', handleAiOpenTable);
+    return () => window.removeEventListener('dhub:open-table', handleAiOpenTable);
+  }, []);
+
   // Free cached rows and query results of closed tabs so they can be garbage collected
   useEffect(() => {
     const openIds = new Set(tabs.map((t) => t.id));
@@ -2982,6 +3083,30 @@ export function App() {
                             onClick={() => {
                               if (!activeTab.connectionId || !activeTab.table) return;
                               const { targetDb, targetSchema } = resolveTableTabMeta(activeTab);
+                              if (!useSettingsStore.getState().showAiChat) {
+                                useSettingsStore.getState().setShowAiChat(true);
+                              }
+                              window.dispatchEvent(
+                                new CustomEvent('dhub:open-ai-chat', {
+                                  detail: {
+                                    connectionId: activeTab.connectionId,
+                                    database: targetDb,
+                                    schema: targetSchema,
+                                    table: activeTab.table,
+                                  },
+                                })
+                              );
+                            }}
+                            className="p-1 rounded text-zinc-400 hover:text-blue-300 hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title="Ask AI about this table"
+                          >
+                            <Sparkles className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!activeTab.connectionId || !activeTab.table) return;
+                              const { targetDb, targetSchema } = resolveTableTabMeta(activeTab);
                               setLeftPanelOpen(true);
                               handleLeftSidebarTabChange('explorer');
                               useConnectionStore.getState().setRevealTarget({
@@ -4245,6 +4370,9 @@ export function App() {
       {(isDraggingLeftResizer || isDraggingRightResizer) && (
         <div className="fixed inset-0 z-50 cursor-col-resize select-none" />
       )}
+
+      {/* Floating AI Chat Bubble */}
+      <AiChatBubble />
 
       {/* Modals */}
       <ConnectionDialog />
