@@ -501,6 +501,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const explainDropdownRef = useRef<HTMLDivElement>(null);
   const [isSyntaxHelpOpen, setIsSyntaxHelpOpen] = useState(false);
   const syntaxHelpRef = useRef<HTMLDivElement>(null);
+  const [isTxDropdownOpen, setIsTxDropdownOpen] = useState(false);
+  const txDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -516,11 +518,18 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       ) {
         setIsSyntaxHelpOpen(false);
       }
+      if (
+        txDropdownRef.current &&
+        !txDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsTxDropdownOpen(false);
+      }
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setIsExplainOpen(false);
         setIsSyntaxHelpOpen(false);
+        setIsTxDropdownOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -1414,18 +1423,59 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
           {/* Transaction Controls */}
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={toggleTxMode}
-              className={`px-2 py-1 rounded border font-mono text-[11px] font-semibold transition-colors cursor-pointer ${
-                txMode === 'manual'
-                  ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
-                  : 'bg-[#22242c] border-[#272932] text-zinc-400 hover:text-zinc-200'
-              }`}
-              title={`Transaction Mode: ${txMode.toUpperCase()} (Click to toggle)`}
-            >
-              Tx: {txMode.toUpperCase()}
-            </button>
+            <div className="relative" ref={txDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setIsTxDropdownOpen((prev) => !prev)}
+                className={`flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-sans font-medium transition-colors cursor-pointer select-none ${
+                  txMode === 'manual'
+                    ? 'bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+                    : isTxDropdownOpen
+                    ? 'bg-[#2b2d38] text-white'
+                    : 'bg-transparent hover:bg-[#2b2d38] text-zinc-300 hover:text-white'
+                }`}
+                title="Transaction Mode"
+              >
+                {txMode === 'manual' && isTxOpen && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse mr-0.5" />
+                )}
+                <span>Tx: {txMode === 'manual' ? 'Manual' : 'Auto'}</span>
+                <ChevronDown className="h-3 w-3 text-zinc-400" />
+              </button>
+
+              {isTxDropdownOpen && (
+                <div className="absolute left-0 top-full mt-1 min-w-[140px] rounded-lg border border-[#2e313d] bg-[#181920]/95 backdrop-blur-md p-1 shadow-2xl z-50 text-[11px] text-zinc-300 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1">
+                    Transaction Mode
+                  </div>
+                  {(
+                    [
+                      { id: 'auto', label: 'Auto' },
+                      { id: 'manual', label: 'Manual' },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        setIsTxDropdownOpen(false);
+                        if (txMode !== opt.id) {
+                          toggleTxMode();
+                        }
+                      }}
+                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-md text-left transition-colors cursor-pointer ${
+                        txMode === opt.id
+                          ? 'bg-blue-600 text-white font-medium'
+                          : 'hover:bg-zinc-800 text-zinc-300'
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      {txMode === opt.id && <Check className="h-3 w-3 text-white ml-2" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {txMode === 'manual' && (
               <div className="flex items-center gap-1">
