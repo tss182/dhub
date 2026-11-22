@@ -20,16 +20,10 @@ export const AI_PROVIDER_DEFAULTS: Record<
   { label: string; defaultModel: string; defaultBaseUrl: string; models: string[] }
 > = {
   openai: {
-    label: 'OpenAI',
+    label: 'OpenAI / Compatible',
     defaultModel: 'gpt-4o-mini',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-4o-mini', 'gpt-4o', 'o4-mini'],
-  },
-  openai_compatible: {
-    label: 'OpenAI Compatible',
-    defaultModel: 'llama3.2',
-    defaultBaseUrl: 'http://localhost:11434/v1',
-    models: ['llama3.2', 'qwen2.5-coder', 'deepseek-chat'],
+    models: ['gpt-4o-mini', 'gpt-4o', 'o4-mini', 'llama3.2', 'qwen2.5-coder', 'deepseek-chat'],
   },
   gemini: {
     label: 'Google Gemini',
@@ -39,12 +33,8 @@ export const AI_PROVIDER_DEFAULTS: Record<
   },
 };
 
-function resolveOpenAiEndpoint(provider: AiProvider, baseUrl?: string): string {
-  const fallback =
-    provider === 'openai'
-      ? AI_PROVIDER_DEFAULTS.openai.defaultBaseUrl
-      : AI_PROVIDER_DEFAULTS.openai_compatible.defaultBaseUrl;
-  const raw = (baseUrl || '').trim() || fallback;
+function resolveOpenAiEndpoint(baseUrl?: string): string {
+  const raw = (baseUrl || '').trim() || AI_PROVIDER_DEFAULTS.openai.defaultBaseUrl;
   const clean = raw.replace(/\/+$/, '');
   if (clean.endsWith('/chat/completions')) {
     return clean;
@@ -178,11 +168,10 @@ export async function sendAiChatMessage(params: SendAiChatParams): Promise<strin
   const effectiveModel =
     model.trim() || AI_PROVIDER_DEFAULTS[provider].defaultModel;
 
-  if (provider === 'openai' && !trimmedKey) {
+  const hasCustomBaseUrl = Boolean((baseUrl || '').trim());
+
+  if (provider === 'openai' && !hasCustomBaseUrl && !trimmedKey) {
     throw new Error('OpenAI API Key belum diisi. Silakan atur di Settings → AI Assistant.');
-  }
-  if (provider === 'openai_compatible' && !(baseUrl || '').trim()) {
-    throw new Error('Base URL untuk OpenAI Compatible API belum diisi. Silakan atur di Settings → AI Assistant.');
   }
   if (provider === 'gemini' && !trimmedKey) {
     throw new Error('Gemini API Key belum diisi. Silakan atur di Settings → AI Assistant.');
@@ -233,7 +222,7 @@ export async function sendAiChatMessage(params: SendAiChatParams): Promise<strin
   }
 
   // OpenAI & OpenAI-compatible
-  const endpoint = resolveOpenAiEndpoint(provider, baseUrl);
+  const endpoint = resolveOpenAiEndpoint(baseUrl);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };

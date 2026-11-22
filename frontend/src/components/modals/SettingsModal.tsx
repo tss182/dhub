@@ -860,8 +860,8 @@ export const SettingsModal: React.FC = () => {
                     Connect to OpenAI, any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, Groq), or Google Gemini.
                   </p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    {(['openai', 'openai_compatible', 'gemini'] as AiProvider[]).map((prov) => {
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {(['openai', 'gemini'] as AiProvider[]).map((prov) => {
                       const info = AI_PROVIDER_DEFAULTS[prov];
                       const isSelected = aiProvider === prov;
                       return (
@@ -871,9 +871,6 @@ export const SettingsModal: React.FC = () => {
                           onClick={() => {
                             setAiProvider(prov);
                             setAiModel(info.defaultModel);
-                            if (prov === 'openai_compatible' && !aiBaseUrl.trim()) {
-                              setAiBaseUrl(info.defaultBaseUrl);
-                            }
                             setAiTestResult(null);
                           }}
                           className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
@@ -899,16 +896,14 @@ export const SettingsModal: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Base URL (for OpenAI Compatible & optional for OpenAI) */}
+                {/* Base URL (for OpenAI & OpenAI-compatible endpoints) */}
                 {aiProvider !== 'gemini' && (
                   <div>
                     <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
-                      {aiProvider === 'openai_compatible' ? 'Base URL (Required)' : 'Base URL (Optional)'}
+                      Base URL (Optional)
                     </label>
                     <p className="text-[11px] text-zinc-400 mb-2">
-                      {aiProvider === 'openai_compatible'
-                        ? 'Example: http://localhost:11434/v1 (Ollama), http://localhost:1234/v1 (LM Studio), or https://openrouter.ai/api/v1'
-                        : 'Leave blank to use https://api.openai.com/v1.'}
+                      Leave blank for https://api.openai.com/v1, or enter any OpenAI-compatible endpoint (e.g. http://localhost:11434/v1 for Ollama, http://localhost:1234/v1 for LM Studio, OpenRouter, Groq).
                     </p>
                     <input
                       type="text"
@@ -926,7 +921,7 @@ export const SettingsModal: React.FC = () => {
                 {/* API Key */}
                 <div>
                   <label className="text-xs font-semibold text-zinc-200 uppercase tracking-wider block mb-1.5">
-                    API Key {aiProvider === 'openai_compatible' ? '(Optional for local servers)' : ''}
+                    API Key {aiProvider === 'openai' && aiBaseUrl.trim() ? '(Optional for local servers)' : ''}
                   </label>
                   <div className="relative">
                     <input
@@ -939,9 +934,9 @@ export const SettingsModal: React.FC = () => {
                       placeholder={
                         aiProvider === 'gemini'
                           ? 'AIza...'
-                          : aiProvider === 'openai'
-                          ? 'sk-...'
-                          : 'sk-... (optional for Ollama/LM Studio)'
+                          : aiBaseUrl.trim()
+                          ? 'sk-... (optional for Ollama/LM Studio)'
+                          : 'sk-...'
                       }
                       className="w-full rounded-lg border border-[#2b2e3a] bg-[#14151a] pl-3 pr-9 py-2 text-xs text-zinc-100 placeholder-zinc-500 font-mono focus:border-blue-500 focus:outline-none"
                     />

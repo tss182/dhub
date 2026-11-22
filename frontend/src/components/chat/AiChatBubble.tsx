@@ -152,10 +152,10 @@ export const AiChatBubble: React.FC = () => {
   const [tableSchemaCache, setTableSchemaCache] = useState<Record<string, TableStructureSummary>>({});
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadSavedChatHistory());
 
-  const missingKey =
-    (aiProvider === 'openai' || aiProvider === 'gemini') && !aiApiKey.trim();
-  const missingBaseUrl = aiProvider === 'openai_compatible' && !aiBaseUrl.trim();
-  const needsConfig = missingKey || missingBaseUrl;
+  const hasCustomBaseUrl = Boolean(aiBaseUrl.trim());
+  const needsConfig =
+    (aiProvider === 'gemini' || (aiProvider === 'openai' && !hasCustomBaseUrl)) &&
+    !aiApiKey.trim();
 
   // Load persisted chat history from backend SQLite on mount if available
   useEffect(() => {
@@ -508,9 +508,7 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
         {
           id: `ai-cfg-${Date.now()}`,
           role: 'assistant',
-          content: missingBaseUrl
-            ? 'Base URL untuk OpenAI Compatible API belum diatur. Buka Settings → AI Assistant untuk mengaturnya.'
-            : `${providerLabel} API Key belum diatur. Buka Settings → AI Assistant untuk memasukkan API key kamu.`,
+          content: `${providerLabel} API Key belum diatur. Buka Settings → AI Assistant untuk memasukkan API key kamu.`,
           needsConfig: true,
           timestamp: formatTime(),
         },
@@ -909,9 +907,7 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
                   <span>Konfigurasi AI belum lengkap</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-amber-100/90">
-                  {missingBaseUrl
-                    ? 'Base URL untuk OpenAI Compatible API belum diatur. Silakan atur terlebih dahulu di Settings → AI Assistant sebelum mulai chat.'
-                    : `${providerLabel} API Key belum diatur. Silakan masukkan API key di Settings → AI Assistant sebelum mulai chat.`}
+                  {`${providerLabel} API Key belum diatur. Silakan masukkan API key di Settings → AI Assistant sebelum mulai chat.`}
                 </p>
                 <button
                   type="button"

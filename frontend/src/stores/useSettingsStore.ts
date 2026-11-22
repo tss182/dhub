@@ -4,7 +4,7 @@ import { APP_DEFAULTS } from '../config/defaults';
 
 export type ThemeMode = 'dark' | 'light';
 export type CopyFormat = 'csv' | 'json' | 'markdown' | 'sql_insert' | 'sql_update' | 'sql_upsert';
-export type AiProvider = 'openai' | 'openai_compatible' | 'gemini';
+export type AiProvider = 'openai' | 'gemini';
 export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'ai' | 'backup' | 'version';
 
 interface SettingsValues {
@@ -105,9 +105,12 @@ function parseSettingsObject(parsed: any): SettingsValues {
       typeof parsed?.showMinimap === 'boolean' ? parsed.showMinimap : DEFAULT_SETTINGS.showMinimap,
     showAiChat:
       typeof parsed?.showAiChat === 'boolean' ? parsed.showAiChat : DEFAULT_SETTINGS.showAiChat,
-    aiProvider: ['openai', 'openai_compatible', 'gemini'].includes(parsed?.aiProvider)
-      ? parsed.aiProvider
-      : DEFAULT_SETTINGS.aiProvider,
+    aiProvider:
+      parsed?.aiProvider === 'gemini'
+        ? 'gemini'
+        : parsed?.aiProvider === 'openai' || parsed?.aiProvider === 'openai_compatible'
+        ? 'openai'
+        : DEFAULT_SETTINGS.aiProvider,
     aiApiKey: typeof parsed?.aiApiKey === 'string' ? parsed.aiApiKey : DEFAULT_SETTINGS.aiApiKey,
     aiBaseUrl: typeof parsed?.aiBaseUrl === 'string' ? parsed.aiBaseUrl : DEFAULT_SETTINGS.aiBaseUrl,
     aiModel: typeof parsed?.aiModel === 'string' && parsed.aiModel.trim()
