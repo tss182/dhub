@@ -179,7 +179,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     }
 
     if (embedCfg.provider === 'gemini') {
-      const modelName = embedCfg.model.trim() || 'text-embedding-004';
+      const modelName = embedCfg.model.trim() || 'gemini-embedding-001';
       const base = endpoint.replace(/\/+$/, '');
       const url = base.includes(':embedContent')
         ? base
@@ -546,7 +546,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                           : 'https://api.openai.com/v1/embeddings',
                       model:
                         p === 'gemini'
-                          ? 'text-embedding-004'
+                          ? 'gemini-embedding-001'
                           : 'text-embedding-3-small',
                     });
                   }}

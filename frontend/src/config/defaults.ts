@@ -14,7 +14,7 @@ export const APP_DEFAULTS = {
   editorFontSize: 13,
   wordWrap: false,
   showMinimap: false,
-  showAiChat: true,
+  showAiChat: false,
   aiProvider: 'openai' as AiProvider,
   aiApiKey: '',
   aiBaseUrl: '',

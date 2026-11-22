@@ -27,9 +27,15 @@ export const AI_PROVIDER_DEFAULTS: Record<
   },
   gemini: {
     label: 'Google Gemini',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.8-flash',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+    models: [
+      'gemini-4-hydrogen',
+      'gemini-4-argon',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-pro-preview',
+    ],
   },
 };
 
