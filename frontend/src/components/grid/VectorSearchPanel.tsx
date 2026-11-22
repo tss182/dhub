@@ -25,7 +25,7 @@ export interface VectorSearchStats {
 }
 
 interface EmbeddingConfig {
-  provider: 'ollama' | 'openai' | 'gemini';
+  provider: 'openai' | 'gemini';
   endpoint: string;
   model: string;
   apiKey: string;
@@ -38,20 +38,24 @@ function loadEmbeddingConfig(): EmbeddingConfig {
     const raw = localStorage.getItem(EMBEDDING_CFG_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      const provider =
-        parsed.provider === 'openai' || parsed.provider === 'gemini' ? parsed.provider : 'ollama';
+      const provider: EmbeddingConfig['provider'] =
+        parsed.provider === 'gemini' ? 'gemini' : 'openai';
+      let endpoint = parsed.endpoint || 'https://api.openai.com/v1/embeddings';
+      if (parsed.provider === 'ollama' && typeof endpoint === 'string' && endpoint.endsWith('/api/embeddings')) {
+        endpoint = endpoint.replace(/\/api\/embeddings$/, '/v1/embeddings');
+      }
       return {
         provider,
-        endpoint: parsed.endpoint || 'http://localhost:11434/api/embeddings',
-        model: parsed.model || 'nomic-embed-text',
+        endpoint,
+        model: parsed.model || (parsed.provider === 'ollama' ? 'nomic-embed-text' : 'text-embedding-3-small'),
         apiKey: parsed.apiKey || '',
       };
     }
   } catch {}
   return {
-    provider: 'ollama',
-    endpoint: 'http://localhost:11434/api/embeddings',
-    model: 'nomic-embed-text',
+    provider: 'openai',
+    endpoint: 'https://api.openai.com/v1/embeddings',
+    model: 'text-embedding-3-small',
     apiKey: '',
   };
 }
@@ -172,21 +176,6 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (embedCfg.apiKey.trim()) {
       headers['Authorization'] = `Bearer ${embedCfg.apiKey.trim()}`;
-    }
-
-    if (embedCfg.provider === 'ollama') {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ model: embedCfg.model.trim() || 'nomic-embed-text', prompt: text }),
-      });
-      if (!res.ok) {
-        throw new Error(`Ollama embedding failed (${res.status}): ${await res.text()}`);
-      }
-      const data = await res.json();
-      if (Array.isArray(data?.embedding)) return data.embedding;
-      if (Array.isArray(data?.embeddings?.[0])) return data.embeddings[0];
-      throw new Error('Unexpected Ollama embedding response format.');
     }
 
     if (embedCfg.provider === 'gemini') {
@@ -545,32 +534,25 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 <select
                   value={embedCfg.provider}
                   onChange={(e) => {
-                    const p =
-                      e.target.value === 'openai' || e.target.value === 'gemini'
-                        ? e.target.value
-                        : 'ollama';
+                    const p: EmbeddingConfig['provider'] =
+                      e.target.value === 'gemini' ? 'gemini' : 'openai';
                     setEmbedTestMsg(null);
                     saveEmbedCfg({
                       ...embedCfg,
                       provider: p,
                       endpoint:
-                        p === 'ollama'
-                          ? 'http://localhost:11434/api/embeddings'
-                          : p === 'gemini'
+                        p === 'gemini'
                           ? 'https://generativelanguage.googleapis.com/v1beta'
                           : 'https://api.openai.com/v1/embeddings',
                       model:
-                        p === 'ollama'
-                          ? 'nomic-embed-text'
-                          : p === 'gemini'
+                        p === 'gemini'
                           ? 'text-embedding-004'
                           : 'text-embedding-3-small',
                     });
                   }}
                   className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200"
                 >
-                  <option value="ollama">Ollama (Local)</option>
-                  <option value="openai">OpenAI / Compatible</option>
+                  <option value="openai">OpenAI / Compatible (Ollama, etc.)</option>
                   <option value="gemini">Google Gemini</option>
                 </select>
               </div>
@@ -579,6 +561,11 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 <input
                   type="text"
                   value={embedCfg.endpoint}
+                  placeholder={
+                    embedCfg.provider === 'gemini'
+                      ? 'https://generativelanguage.googleapis.com/v1beta'
+                      : 'https://api.openai.com/v1/embeddings atau http://localhost:11434/v1/embeddings'
+                  }
                   onChange={(e) => saveEmbedCfg({ ...embedCfg, endpoint: e.target.value })}
                   className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
                 />

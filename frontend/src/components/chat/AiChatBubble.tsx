@@ -152,6 +152,11 @@ export const AiChatBubble: React.FC = () => {
   const [tableSchemaCache, setTableSchemaCache] = useState<Record<string, TableStructureSummary>>({});
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadSavedChatHistory());
 
+  const missingKey =
+    (aiProvider === 'openai' || aiProvider === 'gemini') && !aiApiKey.trim();
+  const missingBaseUrl = aiProvider === 'openai_compatible' && !aiBaseUrl.trim();
+  const needsConfig = missingKey || missingBaseUrl;
+
   // Load persisted chat history from backend SQLite on mount if available
   useEffect(() => {
     WorkspaceService.GetSettings()
@@ -497,11 +502,7 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
     setMessages(nextMessages);
     if (!textOverride) setInput('');
 
-    const missingKey =
-      (aiProvider === 'openai' || aiProvider === 'gemini') && !aiApiKey.trim();
-    const missingBaseUrl = aiProvider === 'openai_compatible' && !aiBaseUrl.trim();
-
-    if (missingKey || missingBaseUrl) {
+    if (needsConfig) {
       setMessages((prev) => [
         ...prev,
         {
@@ -901,6 +902,28 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3.5 space-y-3 select-text">
+            {needsConfig && (
+              <div className="rounded-xl border border-amber-500/35 bg-amber-950/30 p-3 text-xs text-amber-100 space-y-2">
+                <div className="font-semibold text-amber-300 flex items-center gap-1.5">
+                  <SettingsIcon className="h-3.5 w-3.5 shrink-0" />
+                  <span>Konfigurasi AI belum lengkap</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-amber-100/90">
+                  {missingBaseUrl
+                    ? 'Base URL untuk OpenAI Compatible API belum diatur. Silakan atur terlebih dahulu di Settings → AI Assistant sebelum mulai chat.'
+                    : `${providerLabel} API Key belum diatur. Silakan masukkan API key di Settings → AI Assistant sebelum mulai chat.`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => openSettings('ai')}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium transition-colors cursor-pointer"
+                >
+                  <SettingsIcon className="h-3 w-3" />
+                  <span>Buka AI Settings</span>
+                </button>
+              </div>
+            )}
+
             {messages.map((msg) => (
               <div
                 key={msg.id}
@@ -1053,7 +1076,7 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
               </div>
             ))}
 
-            {messages.length <= 1 && (
+            {messages.length <= 1 && !needsConfig && (
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {quickPrompts.map((prompt) => (
                   <button
@@ -1087,6 +1110,7 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
                 ref={textareaRef}
                 rows={1}
                 value={input}
+                disabled={needsConfig}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -1095,18 +1119,20 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
                   }
                 }}
                 placeholder={
-                  attachedTable
+                  needsConfig
+                    ? 'Atur AI Settings terlebih dahulu sebelum mulai chat...'
+                    : attachedTable
                     ? `Tanya atau filter tabel ${attachedTable.table}...`
                     : 'Tanya AI, atau minta buka tabel dengan WHERE...'
                 }
-                className="flex-1 resize-none bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none max-h-24 py-1"
+                className="flex-1 resize-none bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none max-h-24 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <button
                 type="button"
                 onClick={() => handleSend()}
-                disabled={!input.trim() || isThinking}
+                disabled={needsConfig || !input.trim() || isThinking}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white transition-colors cursor-pointer"
-                title="Send message"
+                title={needsConfig ? 'Configure AI Settings first' : 'Send message'}
                 aria-label="Send message"
               >
                 <Send className="h-3.5 w-3.5" />
