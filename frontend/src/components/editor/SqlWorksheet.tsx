@@ -2372,6 +2372,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         <Editor
           height="100%"
           defaultLanguage="sql"
+          language={connection?.driver === 'mongodb' ? 'mongodb' : 'sql'}
           theme={theme === 'light' ? 'vs' : 'vs-dark'}
           value={sql}
           onChange={(v) => onChange(v ?? '')}

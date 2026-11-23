@@ -983,6 +983,134 @@ func (m *MongoDBDriver) executeCollMethod(ctx context.Context, dbName, collName 
 		qr.SourceTable = collName
 		return qr, nil
 
+	case "bulkwrite":
+		if len(args) < 1 {
+			return nil, fmt.Errorf("bulkWrite requires an array of write operations")
+		}
+		opsArr, err := unmarshalExtJSONArray(args[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid operations array in bulkWrite: %w", err)
+		}
+		var models []mongo.WriteModel
+		for _, item := range opsArr {
+			opDoc, ok := item.(bson.D)
+			if !ok {
+				if mDoc, isM := item.(bson.M); isM {
+					for k, v := range mDoc {
+						opDoc = append(opDoc, bson.E{Key: k, Value: v})
+					}
+				}
+			}
+			for _, e := range opDoc {
+				subDoc := e.Value
+				switch strings.ToLower(e.Key) {
+				case "insertone":
+					if d, ok := subDoc.(bson.D); ok {
+						for _, ie := range d {
+							if ie.Key == "document" {
+								models = append(models, mongo.NewInsertOneModel().SetDocument(ie.Value))
+							}
+						}
+					} else if m, ok := subDoc.(bson.M); ok {
+						if doc, exists := m["document"]; exists {
+							models = append(models, mongo.NewInsertOneModel().SetDocument(doc))
+						}
+					}
+				case "updateone", "updatemany":
+					var filterVal, updateVal any
+					var upsertVal bool
+					if d, ok := subDoc.(bson.D); ok {
+						for _, ue := range d {
+							switch ue.Key {
+							case "filter":
+								filterVal = ue.Value
+							case "update":
+								updateVal = ue.Value
+							case "upsert":
+								upsertVal, _ = ue.Value.(bool)
+							}
+						}
+					} else if m, ok := subDoc.(bson.M); ok {
+						filterVal = m["filter"]
+						updateVal = m["update"]
+						upsertVal, _ = m["upsert"].(bool)
+					}
+					if strings.ToLower(e.Key) == "updateone" {
+						models = append(models, mongo.NewUpdateOneModel().SetFilter(filterVal).SetUpdate(updateVal).SetUpsert(upsertVal))
+					} else {
+						models = append(models, mongo.NewUpdateManyModel().SetFilter(filterVal).SetUpdate(updateVal).SetUpsert(upsertVal))
+					}
+				case "replaceone":
+					var filterVal, repVal any
+					var upsertVal bool
+					if d, ok := subDoc.(bson.D); ok {
+						for _, re := range d {
+							switch re.Key {
+							case "filter":
+								filterVal = re.Value
+							case "replacement":
+								repVal = re.Value
+							case "upsert":
+								upsertVal, _ = re.Value.(bool)
+							}
+						}
+					} else if m, ok := subDoc.(bson.M); ok {
+						filterVal = m["filter"]
+						repVal = m["replacement"]
+						upsertVal, _ = m["upsert"].(bool)
+					}
+					models = append(models, mongo.NewReplaceOneModel().SetFilter(filterVal).SetReplacement(repVal).SetUpsert(upsertVal))
+				case "deleteone", "deletemany":
+					var filterVal any
+					if d, ok := subDoc.(bson.D); ok {
+						for _, de := range d {
+							if de.Key == "filter" {
+								filterVal = de.Value
+							}
+						}
+					} else if m, ok := subDoc.(bson.M); ok {
+						filterVal = m["filter"]
+					}
+					if strings.ToLower(e.Key) == "deleteone" {
+						models = append(models, mongo.NewDeleteOneModel().SetFilter(filterVal))
+					} else {
+						models = append(models, mongo.NewDeleteManyModel().SetFilter(filterVal))
+					}
+				}
+			}
+		}
+		ordered := true
+		if len(args) >= 2 && strings.TrimSpace(args[1]) != "" {
+			if optDoc, err := unmarshalExtJSONDoc(args[1]); err == nil {
+				for _, oe := range optDoc {
+					if oe.Key == "ordered" {
+						if b, ok := oe.Value.(bool); ok {
+							ordered = b
+						}
+					}
+				}
+			}
+		}
+		bwRes, err := coll.BulkWrite(ctx, models, options.BulkWrite().SetOrdered(ordered))
+		if err != nil {
+			return nil, err
+		}
+		return &driver.QueryResult{
+			ExecutionID: req.ExecutionID,
+			Columns: []driver.ColumnMeta{
+				{Name: "insertedCount", DataType: "long", RawType: "Int64"},
+				{Name: "matchedCount", DataType: "long", RawType: "Int64"},
+				{Name: "modifiedCount", DataType: "long", RawType: "Int64"},
+				{Name: "deletedCount", DataType: "long", RawType: "Int64"},
+				{Name: "upsertedCount", DataType: "long", RawType: "Int64"},
+			},
+			Rows:         [][]any{{bwRes.InsertedCount, bwRes.MatchedCount, bwRes.ModifiedCount, bwRes.DeletedCount, bwRes.UpsertedCount}},
+			RowsAffected: bwRes.InsertedCount + bwRes.ModifiedCount + bwRes.DeletedCount + bwRes.UpsertedCount,
+			ElapsedMs:    time.Since(start).Milliseconds(),
+			SourceSchema: dbName,
+			SourceTable:  collName,
+		}, nil
+
 	case "createindex":
 		if len(args) < 1 {
 			return nil, fmt.Errorf("createIndex requires a key specification document")

@@ -2871,6 +2871,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
                   } catch {}
                 }
               }}
+              onOpenExplain={(mql) => {
+                useWorkbenchStore.getState().openTab({
+                  id: `mongo-explain-${Date.now()}`,
+                  type: 'worksheet',
+                  title: `${tableName} (Explain).mongo.js`,
+                  connectionId: connectionId || '',
+                  database: database || 'admin',
+                  schema: database || 'admin',
+                  content: mql,
+                });
+              }}
             />
           )}
         </div>

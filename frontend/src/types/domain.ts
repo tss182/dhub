@@ -172,6 +172,7 @@ export interface ObjectSummary {
   sizePretty?: string;
   comment?: string;
   parentTable?: string;
+  engine?: string;
 }
 
 export interface CheckConstraintMeta {

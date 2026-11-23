@@ -3821,6 +3821,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                           >
                                             <Table className="h-3 w-3 shrink-0 text-emerald-400" />
                                             <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                           </div>
                                         );
                                       })}
@@ -3887,6 +3897,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                               >
                                                 <Eye className="h-3 w-3 shrink-0 text-purple-400" />
                                                 <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                               </div>
                                             );
                                           })}
@@ -3955,6 +3975,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                               >
                                                 <Layers className="h-3 w-3 shrink-0 text-blue-400" />
                                                 <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                               </div>
                                             );
                                           })}
@@ -3997,6 +4027,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             >
                                               <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
                                               <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                             </div>
                                           ))}
                                         </>
@@ -4038,6 +4078,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             >
                                               <Hash className="h-3 w-3 shrink-0 text-indigo-400" />
                                               <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                             </div>
                                           ))}
                                         </>
@@ -4079,6 +4129,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             >
                                               <Zap className="h-3 w-3 shrink-0 text-rose-400" />
                                               <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                               {obj.parentTable && (
                                                 <span className="ml-auto text-[9px] text-zinc-500 font-mono truncate max-w-[90px]">
                                                   {obj.parentTable}
@@ -4125,6 +4185,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             >
                                               <Clock className="h-3 w-3 shrink-0 text-cyan-400" />
                                               <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                             </div>
                                           ))}
                                         </>
@@ -4217,6 +4287,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                       <Table className="h-3 w-3 shrink-0 text-emerald-400" />
                                     )}
                                     <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                     {!isView && c.driver === 'redis' && (
                                       <span className="ml-auto text-[9px] font-mono px-1 rounded bg-[#272932] text-zinc-400 uppercase shrink-0">
                                         {obj.type || 'key'}
@@ -4597,6 +4677,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                     >
                                       <Layers className="h-3 w-3 shrink-0 text-blue-400" />
                                       <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                     </div>
                                   ))}
                                 </>
@@ -4638,6 +4728,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                     >
                                       <FileCode className="h-3 w-3 shrink-0 text-amber-400" />
                                       <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                     </div>
                                   ))}
                                 </>
@@ -4679,6 +4779,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                     >
                                       <Hash className="h-3 w-3 shrink-0 text-indigo-400" />
                                       <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                     </div>
                                   ))}
                                 </>
@@ -4720,6 +4830,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                     >
                                       <Zap className="h-3 w-3 shrink-0 text-rose-400" />
                                       <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                       {obj.parentTable && (
                                         <span className="ml-auto text-[9px] text-zinc-500 font-mono truncate max-w-[90px]">
                                           {obj.parentTable}
@@ -4766,6 +4886,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                     >
                                       <Clock className="h-3 w-3 shrink-0 text-cyan-400" />
                                       <span className="truncate">{obj.name}</span>
+                                    {c.driver === 'mongodb' && obj.engine === 'capped' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-300 uppercase shrink-0">
+                                        Capped
+                                      </span>
+                                    )}
+                                    {c.driver === 'mongodb' && obj.engine === 'timeseries' && (
+                                      <span className="ml-auto text-[9px] font-mono px-1 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 uppercase shrink-0">
+                                        TS
+                                      </span>
+                                    )}
                                     </div>
                                   ))}
                                 </>
