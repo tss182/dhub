@@ -252,7 +252,7 @@ const SEARCHABLE_TOPICS: SearchableTopic[] = [
       'Create a connection in Explorer, test connectivity, browse databases & schemas, inspect table rows in the Data Grid, and run queries in the SQL/NoSQL Console.',
     bullets: [
       'Click + in Database Explorer or New Connection on the empty workbench.',
-      'Choose one of the 8 supported drivers (SQLite, PostgreSQL, MySQL, MariaDB, SQL Server, ClickHouse, MongoDB, Redis).',
+      'Choose one of the 11 supported drivers across Relational (SQL), Analytical (OLAP), and NoSQL/Search categories.',
       'Tag your environment as Local, Development (DEV), or Production (PROD) for color-coded safety cues.',
       'Double-click a table or collection to view and edit rows, or right-click to open a Query Console.',
     ],
@@ -270,10 +270,10 @@ const SEARCHABLE_TOPICS: SearchableTopic[] = [
     id: 'db-sql',
     tab: 'databases',
     tabLabel: 'Database Engines',
-    title: 'Relational SQL Engines (PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, ClickHouse)',
-    keywords: ['postgres', 'mysql', 'mariadb', 'sqlite', 'mssql', 'sql server', 'clickhouse', 'sql'],
+    title: 'Relational SQL & Analytical OLAP Engines (PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, ClickHouse)',
+    keywords: ['postgres', 'mysql', 'mariadb', 'sqlite', 'mssql', 'sql server', 'oracle', 'clickhouse', 'sql', 'olap'],
     summary:
-      'Full schema introspection, multi-database browsing, dialect-aware formatting, and explain plans across all 6 SQL drivers.',
+      'Full schema introspection, multi-database browsing, dialect-aware formatting, and explain plans across all relational SQL and analytical OLAP drivers.',
     snippets: SQL_SNIPPETS,
   },
   {
@@ -863,9 +863,10 @@ export const HelpModal: React.FC = () => {
                         { id: 'mssql', name: 'SQL Server', port: '1433', tag: 'SQL' },
                         { id: 'oracle', name: 'Oracle', port: '1521', tag: 'SQL' },
                         { id: 'clickhouse', name: 'ClickHouse', port: '9000', tag: 'OLAP' },
-                        { id: 'mongodb', name: 'MongoDB', port: '27017', tag: 'NoSQL' },
+                        { id: 'mongodb', name: 'MongoDB', port: '27017', tag: 'Document' },
                         { id: 'redis', name: 'Redis', port: '6379', tag: 'Key-Value' },
                         { id: 'qdrant', name: 'Qdrant', port: '6333', tag: 'Vector' },
+                        { id: 'elasticsearch', name: 'Elasticsearch', port: '9200', tag: 'Search' },
                       ].map((drv) => (
                         <div
                           key={drv.id}

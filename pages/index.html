@@ -296,67 +296,96 @@
     <section id="databases" class="section section-alt">
       <div class="container">
         <div class="section-header">
-          <h2 class="section-title" data-i18n="db.title">9 Database Engines Out of the Box</h2>
+          <h2 class="section-title" data-i18n="db.title">11 Database Engines Out of the Box</h2>
           <p class="section-desc" data-i18n="db.subtitle">
-            Connect to relational SQL warehouses and NoSQL stores from a single lightweight workspace.
+            Connect to relational SQL databases, analytical OLAP column stores, and specialized NoSQL &amp; search engines from a single lightweight workspace.
           </p>
         </div>
 
-        <div class="db-grid">
-          <div class="db-card">
-            <div class="db-badge sql">SQL</div>
-            <h4>PostgreSQL</h4>
-            <p data-i18n="db.pg">Multi-DB &amp; schema navigation, pgvector embeddings &amp; HNSW/IVFFlat indexes, EXPLAIN ANALYZE &amp; role privileges.</p>
+        <div class="db-groups">
+          <!-- Group 1: Relational (SQL) -->
+          <div class="db-group">
+            <div class="db-group-header">
+              <span class="db-group-title" data-i18n="db.groupSql">Relational (SQL)</span>
+              <span class="db-group-count">6 engines</span>
+            </div>
+            <div class="db-grid">
+              <div class="db-card">
+                <div class="db-badge sql">SQL</div>
+                <h4>PostgreSQL</h4>
+                <p data-i18n="db.pg">Multi-DB &amp; schema navigation, pgvector embeddings &amp; HNSW/IVFFlat indexes, EXPLAIN ANALYZE &amp; role privileges.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge sql">SQL</div>
+                <h4>MySQL</h4>
+                <p data-i18n="db.mysql">Multi-database browsing, routines, indexes, EXPLAIN &amp; privilege management.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge sql">SQL</div>
+                <h4>MariaDB</h4>
+                <p data-i18n="db.maria">Full MariaDB dialect formatting, ANALYZE plans &amp; user management.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge sql">SQL</div>
+                <h4>SQLite</h4>
+                <p data-i18n="db.sqlite">Zero-config local file databases, schema designer, DDL viewer &amp; inline editing.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge sql">SQL</div>
+                <h4>SQL Server</h4>
+                <p data-i18n="db.mssql">Multi-database &amp; schema browsing, stored procedures &amp; T-SQL execution.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge sql">SQL</div>
+                <h4>Oracle</h4>
+                <p data-i18n="db.oracle">Schema browsing, views, materialized views, routines, triggers, sequences, PL/SQL &amp; privilege management.</p>
+              </div>
+            </div>
           </div>
-          <div class="db-card">
-            <div class="db-badge sql">SQL</div>
-            <h4>MySQL</h4>
-            <p data-i18n="db.mysql">Multi-database browsing, routines, indexes, EXPLAIN &amp; privilege management.</p>
+
+          <!-- Group 2: Analytical & Columnar (OLAP) -->
+          <div class="db-group">
+            <div class="db-group-header">
+              <span class="db-group-title" data-i18n="db.groupOlap">Analytical &amp; Columnar (OLAP)</span>
+              <span class="db-group-count">1 engine</span>
+            </div>
+            <div class="db-grid">
+              <div class="db-card">
+                <div class="db-badge olap">OLAP</div>
+                <h4>ClickHouse</h4>
+                <p data-i18n="db.ch">High-speed column-oriented analytical query execution, system catalog &amp; EXPLAIN PIPELINE.</p>
+              </div>
+            </div>
           </div>
-          <div class="db-card">
-            <div class="db-badge sql">SQL</div>
-            <h4>MariaDB</h4>
-            <p data-i18n="db.maria">Full MariaDB dialect formatting, ANALYZE plans &amp; user management.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge sql">SQL</div>
-            <h4>SQLite</h4>
-            <p data-i18n="db.sqlite">Zero-config local file databases, schema designer, DDL viewer &amp; inline editing.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge sql">SQL</div>
-            <h4>SQL Server</h4>
-            <p data-i18n="db.mssql">Multi-database &amp; schema browsing, stored procedures &amp; T-SQL execution.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge sql">SQL</div>
-            <h4>Oracle</h4>
-            <p data-i18n="db.oracle">Schema browsing, views, materialized views, routines, triggers, sequences, PL/SQL &amp; privilege management.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge olap">OLAP</div>
-            <h4>ClickHouse</h4>
-            <p data-i18n="db.ch">High-speed analytical query execution, system catalog &amp; EXPLAIN PIPELINE.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge nosql">NoSQL</div>
-            <h4>MongoDB</h4>
-            <p data-i18n="db.mongo">BSON schema inference, Mongo Shell methods, SQL-like SELECT &amp; inline editing.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge kv">KV</div>
-            <h4>Redis / Redis Stack</h4>
-            <p data-i18n="db.redis">Logical DB switcher (db0–db15), key scanner with TTL badges, RediSearch vector KNN search &amp; Redis CLI.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge vector">Vector</div>
-            <h4>Qdrant</h4>
-            <p data-i18n="db.qdrant">Collection browsing, vector &amp; payload inspection, REST similarity search &amp; inline point editing.</p>
-          </div>
-          <div class="db-card">
-            <div class="db-badge search">Search</div>
-            <h4>Elasticsearch</h4>
-            <p data-i18n="db.es">Index &amp; dense_vector mapping inspection, Kibana REST DSL, kNN search &amp; native /_sql.</p>
+
+          <!-- Group 3: NoSQL & Search Engines -->
+          <div class="db-group">
+            <div class="db-group-header">
+              <span class="db-group-title" data-i18n="db.groupNosql">NoSQL &amp; Search Engines</span>
+              <span class="db-group-count">4 engines</span>
+            </div>
+            <div class="db-grid">
+              <div class="db-card">
+                <div class="db-badge nosql">Document</div>
+                <h4>MongoDB</h4>
+                <p data-i18n="db.mongo">BSON schema inference, Mongo Shell methods, SQL-like SELECT &amp; inline editing.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge kv">Key-Value</div>
+                <h4>Redis / Redis Stack</h4>
+                <p data-i18n="db.redis">Logical DB switcher (db0–db15), key scanner with TTL badges, RediSearch vector KNN search &amp; Redis CLI.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge vector">Vector</div>
+                <h4>Qdrant</h4>
+                <p data-i18n="db.qdrant">Collection browsing, vector &amp; payload inspection, REST similarity search &amp; inline point editing.</p>
+              </div>
+              <div class="db-card">
+                <div class="db-badge search">Search</div>
+                <h4>Elasticsearch</h4>
+                <p data-i18n="db.es">Index &amp; dense_vector mapping inspection, Kibana REST DSL, kNN search &amp; native /_sql.</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -632,7 +632,41 @@ body {
   border-color: rgba(16, 185, 129, 0.4);
 }
 
-/* Databases Grid */
+/* Databases Grid & Category Groups */
+.db-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.db-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.db-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-group-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.db-group-count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .db-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

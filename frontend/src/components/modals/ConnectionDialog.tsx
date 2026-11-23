@@ -22,7 +22,7 @@ import {
 import { alertError, confirmDialog } from '../../stores/useAlertStore';
 import { ConnectionEnvType, resolveConnectionEnv } from '../../types/domain';
 import { DbDriverIcon } from '../common/DbDriverIcon';
-import { DriverPickerModal, getDriverOption, DriverType } from './DriverPickerModal';
+import { DriverPickerModal, getDriverOption, getDriverTagStyle, DriverType } from './DriverPickerModal';
 
 type DialogTab = 'general' | 'ssh' | 'ssl' | 'advanced';
 
@@ -557,7 +557,11 @@ export const ConnectionDialog: React.FC = () => {
                         <span className="font-semibold text-sm text-zinc-100 truncate">
                           {getDriverOption(driver).name}
                         </span>
-                        <span className="text-[10px] font-mono font-medium uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60 shrink-0">
+                        <span
+                          className={`text-[10px] font-mono font-medium uppercase px-1.5 py-0.5 rounded border shrink-0 ${getDriverTagStyle(
+                            getDriverOption(driver).tag
+                          )}`}
+                        >
                           {getDriverOption(driver).tag}
                         </span>
                       </div>

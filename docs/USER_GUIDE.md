@@ -25,9 +25,13 @@ Welcome to **DHub**, a fast, keyboard-first multi-database desktop IDE for SQL a
 ### Adding Your First Connection
 1. Open the **Explorer** sidebar (`Ctrl+B` / `⌘B` if collapsed) and click **New Connection** (`+`), or click **New Connection** on the empty workbench screen.
 2. Click the **Driver** selector to pick your database engine from the Driver Picker modal:
-   - **Relational (SQL):** SQLite, PostgreSQL, MySQL, MariaDB, SQL Server (MSSQL), ClickHouse
-   - **Document (NoSQL):** MongoDB
-   - **Key-Value (NoSQL):** Redis
+   - **Relational (`SQL`):** SQLite, PostgreSQL, MySQL, MariaDB, SQL Server (MSSQL), Oracle
+   - **Analytical & Columnar (`OLAP`):** ClickHouse
+   - **NoSQL & Search Engines:**
+     - **Document (`Document`):** MongoDB
+     - **Key-Value (`Key-Value`):** Redis / Redis Stack
+     - **Vector (`Vector`):** Qdrant
+     - **Search (`Search`):** Elasticsearch
 3. Fill in the connection parameters:
    - **SQLite:** Browse or enter the `.db` / `.sqlite` file path.
    - **Network Databases:** Enter **Host**, **Port**, **Username**, **Password**, and optional **Database Name**.
@@ -114,8 +118,9 @@ If you execute an `UPDATE` or `DELETE` statement without a `WHERE` clause, DHub 
 
 ## 4. Engine-Specific Query Guides (SQL, MongoDB, Redis)
 
-### Relational SQL Engines
-**PostgreSQL, MySQL, MariaDB, SQLite, SQL Server (MSSQL), ClickHouse**
+### Relational SQL & Analytical OLAP Engines
+**Relational (`SQL`):** PostgreSQL, MySQL, MariaDB, SQLite, SQL Server (MSSQL), Oracle  
+**Analytical & Columnar (`OLAP`):** ClickHouse
 - Use the **Database Dropdown** in the worksheet toolbar to switch the target database for that console.
 - For **PostgreSQL** and **MSSQL**, expand individual schemas (`public`, `dbo`, etc.) in the Explorer tree.
 - Double-click any table in the Explorer to open its data grid, or right-click to inspect DDL, indexes, foreign keys, and constraints.

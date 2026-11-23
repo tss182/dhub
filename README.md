@@ -12,11 +12,11 @@ For full usage instructions, engine-specific query guides, and troubleshooting, 
 
 ---
 
-## Supported Database Engines (9 Drivers)
+## Supported Database Engines (11 Drivers)
 
-DHub supports both relational SQL databases and NoSQL engines out of the box:
+DHub supports relational SQL databases, analytical OLAP column stores, and specialized NoSQL & search engines out of the box:
 
-| Engine | Default Port | Category | Highlights |
+| Engine | Default Port | Category & Tag | Highlights |
 | :--- | :---: | :--- | :--- |
 | **PostgreSQL** | `5432` | Relational (`SQL`) | Multi-database & multi-schema navigation, `pgvector` (`vector(N)` / `halfvec` / `hnsw` & `ivfflat` indexes), tables, views, materialized views, routines, triggers, indexes, `EXPLAIN ANALYZE`, user & role privileges |
 | **MySQL** | `3306` | Relational (`SQL`) | Multi-database browsing, routines, triggers, indexes, `EXPLAIN`, user & privilege management |
@@ -24,11 +24,11 @@ DHub supports both relational SQL databases and NoSQL engines out of the box:
 | **SQLite** | Local file | Relational (`SQL`) | Zero-config local file databases, schema designer, DDL viewer, and inline editing |
 | **SQL Server (MSSQL)** | `1433` | Relational (`SQL`) | Multi-database & multi-schema (`dbo`, etc.) browsing, stored procedures/functions, T-SQL execution |
 | **Oracle** | `1521` | Relational (`SQL`) | Schema browsing, tables, views, materialized views, routines, triggers, sequences, PL/SQL execution, and user/privilege management |
-| **ClickHouse** | `9000` | Column-Oriented (`SQL`) | High-speed OLAP query execution, system catalog inspection, `EXPLAIN PIPELINE` |
-| **MongoDB** | `27017` | Document (`NoSQL`) | Collection browsing, BSON schema & index inference, Mongo Shell methods (`db.<coll>.find()`, `countDocuments()`, `insertOne()`, `deleteOne()`, `deleteMany()`, `drop()`), SQL-like `SELECT` syntax, raw JSON commands, and inline document editing |
-| **Redis** | `6379` | Key-Value / Vector (`NoSQL`) | Logical database switcher (`db0`–`db15`), key scanner with type & TTL badges (`string`, `hash`, `list`, `set`, `zset`), **RediSearch (Redis Stack)** index inspection (`FT._LIST`, `FT.INFO`), `FT.SEARCH` KNN & `VECTOR_RANGE` similarity search, float32 vector decoding, inline document editing, and Redis CLI |
-| **Qdrant** | `6333` | Vector (`NoSQL`) | Collection browsing, vector config & payload schema inspection, REST similarity search (`points/search`, `points/query`, `points/scroll`), pseudo-SQL (`SELECT`), compact vector previews, and inline point editing |
-| **Elasticsearch** | `9200` | Search (`NoSQL`) | Index browsing, `_mapping` & `dense_vector` inspection, Kibana-style REST DSL (`_search`, `knn`), native `/_sql` queries, pseudo-SQL (`SELECT`), and inline document editing |
+| **ClickHouse** | `9000` | Analytical & Columnar (`OLAP`) | High-speed column-oriented OLAP query execution, system catalog inspection, `EXPLAIN PIPELINE` |
+| **MongoDB** | `27017` | Document (`Document`) | Collection browsing, BSON schema & index inference, Mongo Shell methods (`db.<coll>.find()`, `countDocuments()`, `insertOne()`, `deleteOne()`, `deleteMany()`, `drop()`), SQL-like `SELECT` syntax, raw JSON commands, and inline document editing |
+| **Redis** | `6379` | Key-Value / Vector (`Key-Value`) | Logical database switcher (`db0`–`db15`), key scanner with type & TTL badges (`string`, `hash`, `list`, `set`, `zset`), **RediSearch (Redis Stack)** index inspection (`FT._LIST`, `FT.INFO`), `FT.SEARCH` KNN & `VECTOR_RANGE` similarity search, float32 vector decoding, inline document editing, and Redis CLI |
+| **Qdrant** | `6333` | Vector (`Vector`) | Collection browsing, vector config & payload schema inspection, REST similarity search (`points/search`, `points/query`, `points/scroll`), pseudo-SQL (`SELECT`), compact vector previews, and inline point editing |
+| **Elasticsearch** | `9200` | Search (`Search`) | Index browsing, `_mapping` & `dense_vector` inspection, Kibana-style REST DSL (`_search`, `knn`), native `/_sql` queries, pseudo-SQL (`SELECT`), and inline document editing |
 
 ---
 
@@ -155,7 +155,7 @@ docker compose up -d
 ## Project Structure
 
 - `main.go` — Wails v3 application entry point, window setup, event and service registration
-- `internal/driver/` — `DatabaseDriver` interface and implementations for `postgres`, `mysql`, `sqlite`, `mariadb`, `mssql`, `oracle`, `clickhouse`, `mongodb`, and `redis`
+- `internal/driver/` — `DatabaseDriver` interface and implementations for `postgres`, `mysql`, `sqlite`, `mariadb`, `mssql`, `oracle`, `clickhouse`, `mongodb`, `redis`, `qdrant`, and `elasticsearch`
 - `internal/manager/` — Active session and connection pool manager (including SSH tunnel lifecycle)
 - `internal/services/` — Wails RPC services (`ConnectionService`, `SchemaService`, `QueryService`, `WorkspaceService`, `ExportService`, `UpdateService`)
 - `internal/store/` — Local SQLite persistence for connections, folders, worksheets, snippets, query history, workspaces, and schema cache
