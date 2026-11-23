@@ -135,6 +135,88 @@ function parseJsonPlan(raw: string): PlanNode | null {
       return root;
     }
 
+    // MongoDB .explain() JSON format
+    if (parsed?.queryPlanner || parsed?.executionStats || Array.isArray(parsed?.stages)) {
+      const convertMongoStage = (stage: any): PlanNode => {
+        const name = stage.stage || (stage.$cursor ? 'CURSOR' : 'STAGE');
+        const idxName = stage.indexName ? ` [index: ${stage.indexName}]` : '';
+        const isWarn = name === 'COLLSCAN' || (name === 'SORT' && stage.memLimit !== undefined);
+        const detailParts: string[] = [];
+        if (stage.direction) detailParts.push(`dir=${stage.direction}`);
+        if (stage.indexBounds) detailParts.push(`bounds=${JSON.stringify(stage.indexBounds)}`);
+        if (stage.filter) detailParts.push(`filter=${JSON.stringify(stage.filter)}`);
+        if (stage.sortPattern) detailParts.push(`sort=${JSON.stringify(stage.sortPattern)}`);
+
+        const children: PlanNode[] = [];
+        if (stage.inputStage) children.push(convertMongoStage(stage.inputStage));
+        if (Array.isArray(stage.inputStages)) {
+          stage.inputStages.forEach((s: any) => children.push(convertMongoStage(s)));
+        }
+        if (stage.$cursor?.executionStats?.executionStages) {
+          children.push(convertMongoStage(stage.$cursor.executionStats.executionStages));
+        } else if (stage.$cursor?.queryPlanner?.winningPlan) {
+          children.push(convertMongoStage(stage.$cursor.queryPlanner.winningPlan));
+        }
+
+        return {
+          id: `mongo-${counter++}`,
+          title: `${name}${idxName}`,
+          detail: detailParts.join(' | ') || undefined,
+          actualRows: stage.nReturned !== undefined ? String(stage.nReturned) : undefined,
+          actualTime:
+            stage.executionTimeMillisEstimate !== undefined
+              ? `${stage.executionTimeMillisEstimate} ms`
+              : undefined,
+          numericCost: typeof stage.executionTimeMillisEstimate === 'number' ? stage.executionTimeMillisEstimate : undefined,
+          isWarning: isWarn,
+          children,
+        };
+      };
+
+      const execStats = parsed.executionStats;
+      const winningPlan = parsed.queryPlanner?.winningPlan;
+      const rootStage = execStats?.executionStages || winningPlan;
+
+      const rootChildren: PlanNode[] = [];
+      if (rootStage) {
+        rootChildren.push(convertMongoStage(rootStage));
+      } else if (Array.isArray(parsed.stages)) {
+        parsed.stages.forEach((st: any) => rootChildren.push(convertMongoStage(st)));
+      }
+
+      const rejected = parsed.queryPlanner?.rejectedPlans;
+      if (Array.isArray(rejected) && rejected.length > 0) {
+        rootChildren.push({
+          id: `mongo-${counter++}`,
+          title: `Rejected Plans (${rejected.length})`,
+          children: rejected.map((rp: any) => convertMongoStage(rp)),
+        });
+      }
+
+      const kpiParts: string[] = [];
+      if (execStats) {
+        if (execStats.nReturned !== undefined) kpiParts.push(`nReturned=${execStats.nReturned}`);
+        if (execStats.totalDocsExamined !== undefined) kpiParts.push(`docsExamined=${execStats.totalDocsExamined}`);
+        if (execStats.totalKeysExamined !== undefined) kpiParts.push(`keysExamined=${execStats.totalKeysExamined}`);
+        if (execStats.executionTimeMillis !== undefined) kpiParts.push(`time=${execStats.executionTimeMillis}ms`);
+        if (execStats.totalDocsExamined === 0 && (execStats.totalKeysExamined ?? 0) > 0) {
+          kpiParts.push('COVERED');
+        }
+      }
+
+      const ns = parsed.queryPlanner?.namespace ? ` (${parsed.queryPlanner.namespace})` : '';
+      const root: PlanNode = {
+        id: `mongo-${counter++}`,
+        title: `MongoDB Explain${ns}`,
+        detail: kpiParts.join(' • ') || undefined,
+        actualRows: execStats?.nReturned !== undefined ? String(execStats.nReturned) : undefined,
+        actualTime: execStats?.executionTimeMillis !== undefined ? `${execStats.executionTimeMillis} ms` : undefined,
+        children: rootChildren,
+      };
+      markHotspot(root);
+      return root;
+    }
+
     return null;
   } catch {
     return null;

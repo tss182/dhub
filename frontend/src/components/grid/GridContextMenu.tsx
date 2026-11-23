@@ -63,6 +63,10 @@ interface GridContextMenuProps {
   onRemoveESFieldFromDoc?: (globalRowIndex: number, colName: string) => void;
   onOpenESAgg?: (colName: string, colType?: string) => void;
   onFindSimilarDoc?: (globalRowIndex: number) => void;
+  onOpenMongoDocumentModal?: (globalRowIndex: number, mode: 'edit' | 'clone') => void;
+  onUnsetMongoFieldFromDoc?: (globalRowIndex: number, colName: string) => void;
+  onOpenMongoFieldAgg?: (colName: string, colType?: string) => void;
+  onFilterByValue?: (colName: string, val: any) => void;
   onSetSelectedToNull: (vIdx: number, cIdx: number) => void;
   onToggleFreeze: (colName: string) => void;
   onUnfreezeAll: () => void;
@@ -110,6 +114,10 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   onRemoveESFieldFromDoc,
   onOpenESAgg,
   onFindSimilarDoc,
+  onOpenMongoDocumentModal,
+  onUnsetMongoFieldFromDoc,
+  onOpenMongoFieldAgg,
+  onFilterByValue,
   onSetSelectedToNull,
   onToggleFreeze,
   onUnfreezeAll,
@@ -258,6 +266,25 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
               <div className="my-1 border-t border-[#272932]" />
             </>
           )}
+
+        {isMongo && onOpenMongoFieldAgg && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenMongoFieldAgg(col.name, col.dataType);
+              }}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-emerald-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                <span>Field Value Distribution...</span>
+              </div>
+            </button>
+            <div className="my-1 border-t border-[#272932]" />
+          </>
+        )}
 
         <button
           type="button"
@@ -709,6 +736,87 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                     <div className="flex items-center gap-2 min-w-0">
                       <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white shrink-0" />
                       <span className="truncate">Remove Field ({columns[contextMenu.cIdx].name}) from _source</span>
+                    </div>
+                  </button>
+                )}
+
+              {isMongo && !isReadOnly && onOpenMongoDocumentModal && vr && vr.globalRowIndex !== undefined && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rowIdx = vr.globalRowIndex!;
+                      onClose();
+                      onOpenMongoDocumentModal(rowIdx, 'edit');
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-emerald-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Pencil className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                      <span>Edit Document JSON...</span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rowIdx = vr.globalRowIndex!;
+                      onClose();
+                      onOpenMongoDocumentModal(rowIdx, 'clone');
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-cyan-600 hover:text-white text-cyan-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Copy className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                      <span>Clone Document...</span>
+                    </div>
+                  </button>
+                </>
+              )}
+
+              {isMongo &&
+                !isReadOnly &&
+                onUnsetMongoFieldFromDoc &&
+                vr &&
+                vr.globalRowIndex !== undefined &&
+                contextMenu.cIdx !== null &&
+                columns[contextMenu.cIdx] &&
+                columns[contextMenu.cIdx].name !== '_id' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rowIdx = vr.globalRowIndex!;
+                      const colName = columns[contextMenu.cIdx!].name;
+                      onClose();
+                      onUnsetMongoFieldFromDoc(rowIdx, colName);
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white shrink-0" />
+                      <span className="truncate">Unset Field ({columns[contextMenu.cIdx].name}) ($unset)</span>
+                    </div>
+                  </button>
+                )}
+
+              {isMongo &&
+                onFilterByValue &&
+                vr &&
+                vr.globalRowIndex !== undefined &&
+                contextMenu.cIdx !== null &&
+                columns[contextMenu.cIdx] && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const colName = columns[contextMenu.cIdx!].name;
+                      const val = vr.rowData?.[contextMenu.cIdx!];
+                      onClose();
+                      onFilterByValue(colName, val);
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <BarChart3 className="h-3.5 w-3.5 text-blue-400 group-hover:text-white shrink-0" />
+                      <span className="truncate">Filter by Value ({columns[contextMenu.cIdx].name})</span>
                     </div>
                   </button>
                 )}

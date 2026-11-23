@@ -15,6 +15,9 @@ import { QdrantCloneModal } from '../modals/QdrantCloneModal';
 import { ElasticsearchInfoModal } from '../modals/ElasticsearchInfoModal';
 import { ElasticsearchBatchOpsModal } from '../modals/ElasticsearchBatchOpsModal';
 import { ElasticsearchReindexModal } from '../modals/ElasticsearchReindexModal';
+import { MongoAggregationModal } from '../modals/MongoAggregationModal';
+import { MongoBatchOpsModal } from '../modals/MongoBatchOpsModal';
+import { MongoCloneCollectionModal } from '../modals/MongoCloneCollectionModal';
 
 const ExportModal = lazy(() =>
   import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
@@ -293,6 +296,24 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     connectionId: string;
     indexName: string;
   }>({ isOpen: false, connectionId: '', indexName: '' });
+  const [mongoAggModal, setMongoAggModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    collectionName: string;
+  }>({ isOpen: false, connectionId: '', database: 'admin', collectionName: '' });
+  const [mongoBatchOpsModal, setMongoBatchOpsModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    collectionName: string;
+  }>({ isOpen: false, connectionId: '', database: 'admin', collectionName: '' });
+  const [mongoCloneModal, setMongoCloneModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    collectionName: string;
+  }>({ isOpen: false, connectionId: '', database: 'admin', collectionName: '' });
   const [esAliasesByConn, setEsAliasesByConn] = useState<Record<string, Record<string, string[]>>>({});
   const [showESSystemIndicesByConn, setShowESSystemIndicesByConn] = useState<Record<string, boolean>>({});
   const [esSystemIndicesByConn, setEsSystemIndicesByConn] = useState<Record<string, ObjectSummary[]>>({});
@@ -6677,6 +6698,61 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </>
                   )}
 
+                  {contextMenu.connection!.driver === 'mongodb' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const db = contextMenu.database || 'admin';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setMongoAggModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-emerald-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Layers className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                        <span>Aggregation Pipeline Builder...</span>
+                      </button>
+
+                      {!contextMenu.connection!.isReadOnly && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const connId = contextMenu.connection!.id;
+                              const db = contextMenu.database || 'admin';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              setMongoBatchOpsModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                          >
+                            <Layers className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                            <span>Batch Update / Delete by Filter...</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const connId = contextMenu.connection!.id;
+                              const db = contextMenu.database || 'admin';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              setMongoCloneModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                          >
+                            <Copy className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                            <span>Clone / Rename Collection...</span>
+                          </button>
+                        </>
+                      )}
+
+                      <div className="my-1 border-t border-[#272932]" />
+                    </>
+                  )}
+
                   {contextMenu.connection!.driver === 'elasticsearch' && !contextMenu.connection!.isReadOnly && (
                     <>
                       <button
@@ -6706,6 +6782,61 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                         <Copy className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
                         <span>Reindex / Clone Index...</span>
                       </button>
+
+                      <div className="my-1 border-t border-[#272932]" />
+                    </>
+                  )}
+
+                  {contextMenu.connection!.driver === 'mongodb' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const db = contextMenu.database || 'admin';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setMongoAggModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-emerald-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Layers className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                        <span>Aggregation Pipeline Builder...</span>
+                      </button>
+
+                      {!contextMenu.connection!.isReadOnly && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const connId = contextMenu.connection!.id;
+                              const db = contextMenu.database || 'admin';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              setMongoBatchOpsModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                          >
+                            <Layers className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                            <span>Batch Update / Delete by Filter...</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const connId = contextMenu.connection!.id;
+                              const db = contextMenu.database || 'admin';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              setMongoCloneModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                          >
+                            <Copy className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                            <span>Clone / Rename Collection...</span>
+                          </button>
+                        </>
+                      )}
 
                       <div className="my-1 border-t border-[#272932]" />
                     </>
@@ -7260,6 +7391,43 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         connectionId={esReindexModal.connectionId}
         sourceIndex={esReindexModal.indexName}
         onCompleted={() => handleRefreshConnection(esReindexModal.connectionId)}
+      />
+
+      <MongoAggregationModal
+        isOpen={mongoAggModal.isOpen}
+        onClose={() => setMongoAggModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={mongoAggModal.connectionId}
+        database={mongoAggModal.database}
+        collectionName={mongoAggModal.collectionName}
+        onOpenInConsole={(mql) => {
+          openTab({
+            id: `mongo-agg-${Date.now()}`,
+            type: 'worksheet',
+            title: `${mongoAggModal.collectionName} (Agg).mongo.js`,
+            connectionId: mongoAggModal.connectionId,
+            database: mongoAggModal.database,
+            schema: mongoAggModal.database,
+            content: mql,
+          });
+        }}
+      />
+
+      <MongoBatchOpsModal
+        isOpen={mongoBatchOpsModal.isOpen}
+        onClose={() => setMongoBatchOpsModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={mongoBatchOpsModal.connectionId}
+        database={mongoBatchOpsModal.database}
+        collectionName={mongoBatchOpsModal.collectionName}
+        onSuccess={() => handleRefreshDatabase(mongoBatchOpsModal.connectionId, mongoBatchOpsModal.database)}
+      />
+
+      <MongoCloneCollectionModal
+        isOpen={mongoCloneModal.isOpen}
+        onClose={() => setMongoCloneModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={mongoCloneModal.connectionId}
+        database={mongoCloneModal.database}
+        collectionName={mongoCloneModal.collectionName}
+        onSuccess={() => handleRefreshDatabase(mongoCloneModal.connectionId, mongoCloneModal.database)}
       />
     </div>
   );

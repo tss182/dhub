@@ -40,6 +40,8 @@ import { QdrantCreateCollectionModal } from './QdrantCreateCollectionModal';
 import { QdrantCollectionModal } from './QdrantCollectionModal';
 import { ElasticsearchCreateIndexModal } from './ElasticsearchCreateIndexModal';
 import { ElasticsearchIndexModal } from './ElasticsearchIndexModal';
+import { MongoCreateCollectionModal } from './MongoCreateCollectionModal';
+import { MongoCollectionModal } from './MongoCollectionModal';
 
 export interface ColumnDefinition {
   id: string;
@@ -2574,6 +2576,31 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         database={database}
         indexName={initialTableName || ''}
         onUpdated={() => onTableUpdated?.(initialTableName || '')}
+      />
+    );
+  }
+
+  if (driver === 'mongodb' && connection && !isEditMode) {
+    return (
+      <MongoCreateCollectionModal
+        isOpen={isOpen}
+        onClose={onClose}
+        connectionId={connection.id}
+        database={database || 'admin'}
+        onSuccess={(createdName) => onTableCreated?.(createdName)}
+      />
+    );
+  }
+
+  if (driver === 'mongodb' && connection && isEditMode) {
+    return (
+      <MongoCollectionModal
+        isOpen={isOpen}
+        onClose={onClose}
+        connectionId={connection.id}
+        database={database || 'admin'}
+        collectionName={initialTableName || ''}
+        onSuccess={() => onTableUpdated?.(initialTableName || '')}
       />
     );
   }

@@ -26,6 +26,11 @@ import { QdrantPointModal } from '../modals/QdrantPointModal';
 import { QdrantFacetModal } from '../modals/QdrantFacetModal';
 import { ElasticsearchDocumentModal } from '../modals/ElasticsearchDocumentModal';
 import { ElasticsearchAggModal } from '../modals/ElasticsearchAggModal';
+import { MongoDocumentModal } from '../modals/MongoDocumentModal';
+import { MongoFieldAggModal } from '../modals/MongoFieldAggModal';
+import { MongoDocumentListView } from './MongoDocumentListView';
+import { MongoTreeView } from './MongoTreeView';
+import { MongoQueryBar } from './MongoQueryBar';
 import { CopyAsModal } from '../modals/CopyAsModal';
 
 const ExportModal = lazy(() =>
@@ -254,6 +259,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
     initialRow?: any[];
   }>({ isOpen: false, mode: 'insert' });
   const [esAggCol, setEsAggCol] = useState<{ name: string; dataType?: string } | null>(null);
+  const [mongoViewMode, setMongoViewMode] = useState<'table' | 'json' | 'tree'>('table');
+  const [mongoDocModal, setMongoDocModal] = useState<{
+    isOpen: boolean;
+    mode: 'insert' | 'edit' | 'clone';
+    initialDoc?: Record<string, any> | null;
+  }>({ isOpen: false, mode: 'insert' });
+  const [mongoFieldAggCol, setMongoFieldAggCol] = useState<string | null>(null);
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
@@ -2750,6 +2762,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
             ? () => setEsDocModal({ isOpen: true, mode: 'insert' })
             : undefined
         }
+        onOpenMongoAddDocument={
+          isMongo && tableName
+            ? () => setMongoDocModal({ isOpen: true, mode: 'insert', initialDoc: null })
+            : undefined
+        }
         onAddRow={handleAddRow}
         onDeleteActiveRow={handleDeleteActiveRow}
         onCopyRawSql={handleCopyRawSql}
@@ -2808,7 +2825,108 @@ export const DataGrid: React.FC<DataGridProps> = ({
         </div>
       )}
 
+      {isMongo && tableName && (
+        <div className="flex flex-col border-b border-[#22242c] bg-[#13151b]">
+          <div className="flex items-center justify-between px-3 py-1 border-b border-[#1d2029]">
+            <div className="flex items-center gap-1 text-[11px]">
+              <span className="text-zinc-500 mr-1.5">View:</span>
+              {(['table', 'json', 'tree'] as const).map((vm) => (
+                <button
+                  key={vm}
+                  type="button"
+                  onClick={() => setMongoViewMode(vm)}
+                  className={`px-2 py-0.5 rounded font-medium capitalize transition-colors cursor-pointer ${
+                    mongoViewMode === vm
+                      ? 'bg-emerald-600/25 text-emerald-300 border border-emerald-500/40'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1e212b]'
+                  }`}
+                >
+                  {vm === 'json' ? 'JSON' : vm === 'tree' ? 'Tree' : 'Table'}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] font-mono text-zinc-500">
+              {rows.length} document{rows.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          {onApplyWhere && (
+            <MongoQueryBar
+              collectionName={tableName}
+              filter={whereInput}
+              onFilterChange={setWhereInput}
+              onApplyFilter={(f, s) => {
+                setWhereInput(f);
+                onApplyWhere(f);
+                if (s && s.trim().startsWith('{')) {
+                  try {
+                    const parsed = JSON.parse(s);
+                    const nextSorts = Object.entries(parsed).map(([column, dir]) => ({
+                      column,
+                      direction: (Number(dir) === -1 ? 'desc' : 'asc') as 'asc' | 'desc',
+                    }));
+                    if (nextSorts.length > 0) {
+                      setLocalSortConfigs(nextSorts);
+                      onSortChange?.(nextSorts);
+                    }
+                  } catch {}
+                }
+              }}
+            />
+          )}
+        </div>
+      )}
+
       <div className="flex-1 flex min-h-0 relative overflow-hidden">
+        {isMongo && mongoViewMode === 'json' ? (
+          <div className="flex-1 min-h-0">
+            <MongoDocumentListView
+              columns={columns}
+              rows={rows}
+              isReadOnly={isReadOnly}
+              onEditDocument={(_idx, doc) =>
+                setMongoDocModal({ isOpen: true, mode: 'edit', initialDoc: doc })
+              }
+              onCloneDocument={(_idx, doc) =>
+                setMongoDocModal({ isOpen: true, mode: 'clone', initialDoc: doc })
+              }
+              onDeleteDocument={async (_idx, doc) => {
+                if (!connectionId || !tableName || doc._id === undefined) return;
+                const ok = await confirmDialog({
+                  title: 'Delete Document',
+                  message: `Delete document with _id "${doc._id}" from "${tableName}"?`,
+                  confirmLabel: 'Delete',
+                  isDanger: true,
+                });
+                if (!ok) return;
+                const idStr = String(doc._id);
+                const filterExpr = /^[a-fA-F0-9]{24}$/.test(idStr)
+                  ? `{ "_id": ObjectId("${idStr}") }`
+                  : JSON.stringify({ _id: doc._id });
+                await QueryService.ExecuteQuery({
+                  executionId: 'mongo-del-' + Date.now(),
+                  connectionId,
+                  database: database || 'admin',
+                  schema: database || 'admin',
+                  sql: `db.getCollection(${JSON.stringify(tableName)}).deleteOne(${filterExpr});`,
+                  limit: 1,
+                  offset: 0,
+                } as any);
+                onRefresh?.();
+              }}
+            />
+          </div>
+        ) : isMongo && mongoViewMode === 'tree' ? (
+          <div className="flex-1 min-h-0">
+            <MongoTreeView
+              columns={columns}
+              rows={rows}
+              isReadOnly={isReadOnly}
+              onEditDocument={(_idx, doc) =>
+                setMongoDocModal({ isOpen: true, mode: 'edit', initialDoc: doc })
+              }
+            />
+          </div>
+        ) : (
         <div
           ref={containerRef}
           tabIndex={0}
@@ -3223,6 +3341,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
             </div>
           )}
         </div>
+        )}
 
         {(displayedRows.length > 0 || currentPage > 1) && (
           <GridPagination
@@ -3318,6 +3437,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
             ? (colName, colType) => setEsAggCol({ name: colName, dataType: colType })
             : undefined
         }
+        onOpenMongoFieldAgg={
+          isMongo && tableName
+            ? (colName) => setMongoFieldAggCol(colName)
+            : undefined
+        }
         onOpenQdrantEditPoint={
           isQdrant && tableName
             ? (rowIdx) => {
@@ -3333,6 +3457,80 @@ export const DataGrid: React.FC<DataGridProps> = ({
                 const rowInArray = rowIdx >= (startOffset || 0) ? rowIdx - (startOffset || 0) : rowIdx;
                 const targetRow = rows[rowInArray] || rows[rowIdx];
                 setEsDocModal({ isOpen: true, mode, initialRow: targetRow });
+              }
+            : undefined
+        }
+        onOpenMongoDocumentModal={
+          isMongo && tableName
+            ? (rowIdx, mode) => {
+                const rowInArray = rowIdx >= (startOffset || 0) ? rowIdx - (startOffset || 0) : rowIdx;
+                const targetRow = rows[rowInArray] || rows[rowIdx];
+                if (!targetRow) return;
+                const doc: Record<string, any> = {};
+                columns.forEach((c, cIdx) => {
+                  const v = targetRow[cIdx];
+                  if (v === undefined) return;
+                  if (typeof v === 'string' && (v.trim().startsWith('{') || v.trim().startsWith('['))) {
+                    try {
+                      doc[c.name] = JSON.parse(v);
+                      return;
+                    } catch {}
+                  }
+                  doc[c.name] = v;
+                });
+                setMongoDocModal({ isOpen: true, mode, initialDoc: doc });
+              }
+            : undefined
+        }
+        onUnsetMongoFieldFromDoc={
+          isMongo && tableName && connectionId
+            ? async (rowIdx, colName) => {
+                const rowInArray = rowIdx >= (startOffset || 0) ? rowIdx - (startOffset || 0) : rowIdx;
+                const targetRow = rows[rowInArray] || rows[rowIdx];
+                const idColIdx = columns.findIndex((c) => c.name === '_id');
+                const docId = idColIdx !== -1 && targetRow ? targetRow[idColIdx] : undefined;
+                if (docId === undefined || docId === null) {
+                  alertWarning('Cannot unset field: document _id is missing.', 'Missing _id');
+                  return;
+                }
+                const ok = await confirmDialog({
+                  title: 'Unset Field',
+                  message: `Remove field "${colName}" from document (_id: ${docId}) using $unset?`,
+                  confirmLabel: 'Unset Field',
+                  isDanger: true,
+                });
+                if (!ok) return;
+                const idStr = String(docId);
+                const filterExpr = /^[a-fA-F0-9]{24}$/.test(idStr)
+                  ? `{ "_id": ObjectId("${idStr}") }`
+                  : JSON.stringify({ _id: docId });
+                await QueryService.ExecuteQuery({
+                  executionId: 'mongo-unset-' + Date.now(),
+                  connectionId,
+                  database: database || 'admin',
+                  schema: database || 'admin',
+                  sql: `db.getCollection(${JSON.stringify(tableName)}).updateOne(${filterExpr}, { $unset: { ${JSON.stringify(colName)}: "" } });`,
+                  limit: 1,
+                  offset: 0,
+                } as any);
+                onRefresh?.();
+              }
+            : undefined
+        }
+        onFilterByValue={
+          isMongo && onApplyWhere
+            ? (colName, val) => {
+                const filterObj: Record<string, any> = {};
+                if (colName === '_id' && typeof val === 'string' && /^[a-fA-F0-9]{24}$/.test(val)) {
+                  const next = `{ "_id": ObjectId("${val}") }`;
+                  setWhereInput(next);
+                  onApplyWhere(next);
+                  return;
+                }
+                filterObj[colName] = val;
+                const next = JSON.stringify(filterObj);
+                setWhereInput(next);
+                onApplyWhere(next);
               }
             : undefined
         }
@@ -3535,8 +3733,36 @@ export const DataGrid: React.FC<DataGridProps> = ({
           indexName={tableName}
           columns={columns}
           initialRow={esDocModal.initialRow}
-          onClose={() => setEsDocModal({ isOpen: false, mode: 'insert' })}
+        onClose={() => setEsDocModal({ isOpen: false, mode: 'insert' })}
           onSaved={() => onRefresh?.()}
+        />
+      )}
+
+      {isMongo && tableName && (
+        <MongoDocumentModal
+          isOpen={mongoDocModal.isOpen}
+          mode={mongoDocModal.mode}
+          connectionId={connectionId || ''}
+          database={database || 'admin'}
+          collectionName={tableName}
+          initialDocument={mongoDocModal.initialDoc}
+          onClose={() => setMongoDocModal({ isOpen: false, mode: 'insert', initialDoc: null })}
+          onSaved={() => onRefresh?.()}
+        />
+      )}
+
+      {isMongo && tableName && mongoFieldAggCol && (
+        <MongoFieldAggModal
+          isOpen={!!mongoFieldAggCol}
+          onClose={() => setMongoFieldAggCol(null)}
+          connectionId={connectionId || ''}
+          database={database || 'admin'}
+          collectionName={tableName}
+          fieldName={mongoFieldAggCol}
+          onFilterByValue={(filterJson) => {
+            setWhereInput(filterJson);
+            onApplyWhere?.(filterJson);
+          }}
         />
       )}
 
