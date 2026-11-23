@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -78,6 +79,19 @@ func buildRowKey(rowMap map[string]any, keyCols []string) string {
 func normalizeCellForCompare(v any) string {
 	if v == nil {
 		return "<nil>"
+	}
+	if s, ok := v.(string); ok {
+		t := strings.TrimSpace(s)
+		if (strings.HasPrefix(t, "{") && strings.HasSuffix(t, "}")) ||
+			(strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]")) {
+			var parsed any
+			if json.Unmarshal([]byte(t), &parsed) == nil {
+				if canon, err := json.Marshal(parsed); err == nil {
+					return string(canon)
+				}
+			}
+		}
+		return s
 	}
 	return fmt.Sprintf("%v", v)
 }
@@ -157,16 +171,20 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 		return nil, fmt.Errorf("no primary key found on %s or %s; please specify Key Columns", req.SrcTable, req.DstTable)
 	}
 
-	buildOrderBy := func(drvType string) string {
+	buildSelectSQL := func(drvType, db, sch, tbl string) string {
+		qPath := qualifyTableForQuery(drvType, db, sch, tbl)
+		if drvType == "qdrant" {
+			return fmt.Sprintf("SELECT * FROM %s", qPath)
+		}
 		parts := make([]string, len(keyCols))
 		for i, k := range keyCols {
 			parts[i] = quoteIdentifier(drvType, k)
 		}
-		return strings.Join(parts, ", ")
+		return fmt.Sprintf("SELECT * FROM %s ORDER BY %s", qPath, strings.Join(parts, ", "))
 	}
 
-	srcSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY %s", qualifyTableForQuery(srcDriverType, req.SrcDB, req.SrcSchema, req.SrcTable), buildOrderBy(srcDriverType))
-	dstSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY %s", qualifyTableForQuery(dstDriverType, req.DstDB, req.DstSchema, req.DstTable), buildOrderBy(dstDriverType))
+	srcSQL := buildSelectSQL(srcDriverType, req.SrcDB, req.SrcSchema, req.SrcTable)
+	dstSQL := buildSelectSQL(dstDriverType, req.DstDB, req.DstSchema, req.DstTable)
 
 	var srcRes, dstRes *driver.QueryResult
 	var srcExecErr, dstExecErr error

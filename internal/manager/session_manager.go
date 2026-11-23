@@ -116,6 +116,52 @@ func (m *SessionManager) TestConnection(ctx context.Context, cfg store.Connectio
 	return drv.Ping(ctx)
 }
 
+// TestConnectionInfo tests the connection and returns an optional server version string.
+func (m *SessionManager) TestConnectionInfo(ctx context.Context, cfg store.ConnectionConfig) (string, error) {
+	var tun *tunnel.Tunnel
+	var err error
+	targetHost := cfg.Host
+	targetPort := cfg.Port
+
+	if cfg.SSHEnabled {
+		remoteHost, remotePort := resolveSSHRemoteTarget(cfg)
+		tun, err = tunnel.OpenSSHTunnel(tunnel.SSHTunnelConfig{
+			Host:       cfg.SSHHost,
+			Port:       cfg.SSHPort,
+			User:       cfg.SSHUser,
+			AuthType:   cfg.SSHAuthType,
+			Password:   cfg.SSHPassword,
+			KeyPath:    cfg.SSHKeyPath,
+			RemoteHost: remoteHost,
+			RemotePort: remotePort,
+		})
+		if err != nil {
+			return "", fmt.Errorf("ssh tunnel connection failed: %w", err)
+		}
+		defer tun.Close()
+		targetHost = "127.0.0.1"
+		targetPort = tun.LocalPort
+	}
+
+	drv, err := m.createDriver(cfg, targetHost, targetPort)
+	if err != nil {
+		return "", err
+	}
+	defer drv.Close()
+
+	if err := drv.Ping(ctx); err != nil {
+		return "", err
+	}
+	if vp, ok := drv.(interface {
+		ServerVersion(context.Context) (string, error)
+	}); ok {
+		if ver, vErr := vp.ServerVersion(ctx); vErr == nil && ver != "" {
+			return ver, nil
+		}
+	}
+	return "", nil
+}
+
 func (m *SessionManager) disconnectIfSame(connectionID string, target *Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

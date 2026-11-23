@@ -302,7 +302,10 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 
 	// Stream dataset in chunks to avoid loading up to 1M rows into RAM at once.
-	const chunkSize = 5000
+	chunkSize := 5000
+	if driverType == "qdrant" {
+		chunkSize = 500
+	}
 	const maxExportRows = 1000000
 
 	f, err := os.Create(req.FilePath)
@@ -322,7 +325,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize xlsx writer: %w", err)
 		}
-	case "json", "sql_insert", "sql", "markdown", "md":
+	case "json", "jsonl", "ndjson", "sql_insert", "sql", "markdown", "md":
 	default:
 		delimRune := ','
 		if req.Delimiter == ";" {
@@ -440,6 +443,12 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			break
 		}
 
+		// Re-sync column names per chunk so schemaless engines (e.g. Qdrant) with varying payload keys never misalign.
+		chunkColNames := make([]string, len(res.Columns))
+		for i, col := range res.Columns {
+			chunkColNames[i] = col.Name
+		}
+
 		switch format {
 		case "jsonl", "ndjson":
 			for _, row := range res.Rows {
@@ -449,10 +458,10 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 					payload := pt["payload"].(map[string]any)
 					var namedVecs map[string]any
 					for i, val := range row {
-						if i >= len(colNames) {
+						if i >= len(chunkColNames) {
 							continue
 						}
-						col := colNames[i]
+						col := chunkColNames[i]
 						if col == "score" {
 							continue
 						} else if col == "id" {
@@ -475,8 +484,8 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				} else {
 					clear(jsonObj)
 					for i, val := range row {
-						if i < len(colNames) {
-							jsonObj[colNames[i]] = val
+						if i < len(chunkColNames) {
+							jsonObj[chunkColNames[i]] = val
 						}
 					}
 					outRecord = jsonObj
@@ -498,8 +507,8 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			for _, row := range res.Rows {
 				clear(jsonObj)
 				for i, val := range row {
-					if i < len(colNames) {
-						jsonObj[colNames[i]] = val
+					if i < len(chunkColNames) {
+						jsonObj[chunkColNames[i]] = val
 					}
 				}
 				raw, err := json.MarshalIndent(jsonObj, "  ", "  ")
@@ -741,7 +750,8 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 			return nil, fmt.Errorf("invalid JSON file: %w", err)
 		}
 
-		handleObject := func(item map[string]any) error {
+		handleObject := func(rawItem map[string]any) error {
+			item := flattenQdrantPointRecord(rawItem)
 			changes := make(map[string]any, len(req.Mappings))
 			for _, m := range req.Mappings {
 				if m.TableColumn == "" {

@@ -176,3 +176,20 @@ func TestIsReadOnlySafeQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitHTTPOrSQLStatements_ReadOnlyBypassPrevention(t *testing.T) {
+	script := "GET /collections\n\nDELETE /collections/prod"
+	stmts := SplitHTTPOrSQLStatements(script)
+	if len(stmts) != 2 {
+		t.Fatalf("expected 2 statements, got %d: %#v", len(stmts), stmts)
+	}
+	if !IsReadOnlySafeQuery(stmts[0]) {
+		t.Fatalf("expected GET /collections to be read-only safe")
+	}
+	if IsReadOnlySafeQuery(stmts[1]) {
+		t.Fatalf("expected DELETE /collections/prod to be blocked in read-only mode")
+	}
+	if !IsReadOnlySafeQuery("POST /collections/docs/facet\n{\"key\":\"category\"}") {
+		t.Fatalf("expected POST /collections/docs/facet to be read-only safe")
+	}
+}

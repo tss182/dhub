@@ -123,6 +123,21 @@ func (q *QdrantDriver) Ping(ctx context.Context) error {
 	return err
 }
 
+// ServerVersion fetches the Qdrant server version via GET /.
+func (q *QdrantDriver) ServerVersion(ctx context.Context) (string, error) {
+	raw, _, err := q.doRequest(ctx, http.MethodGet, "/", nil)
+	if err != nil {
+		return "", err
+	}
+	var root struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return "", err
+	}
+	return root.Version, nil
+}
+
 func (q *QdrantDriver) Close() error {
 	if q.client != nil {
 		q.client.CloseIdleConnections()
@@ -787,10 +802,20 @@ func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 		if p == "" {
 			continue
 		}
-		// Strip balanced outer parentheses around single condition
+		// Handle balanced outer parentheses (including nested OR / AND like `(a = 1 OR b = 2)`)
 		if strings.HasPrefix(p, "(") && strings.HasSuffix(p, ")") {
 			inner := strings.TrimSpace(p[1 : len(p)-1])
-			if inner != "" && !strings.Contains(p[1:len(p)-1], "(") {
+			if inner != "" {
+				if len(splitKeywordTopLevel(inner, "OR")) > 1 || len(splitKeywordTopLevel(inner, "AND")) > 1 {
+					subFilter, err := parseSimpleWhereToFilter(strings.ReplaceAll(inner, "\x00", "AND"))
+					if err != nil {
+						return nil, err
+					}
+					if subFilter != nil {
+						must = append(must, subFilter)
+					}
+					continue
+				}
 				p = inner
 			}
 		}
@@ -996,87 +1021,19 @@ func toFloat64(v any) (float64, bool) {
 	}
 }
 
-var restMethodLineRe = regexp.MustCompile(`(?i)^(GET|POST|PUT|DELETE|PATCH)\s+/\S*`)
-var sqlStartLineRe = regexp.MustCompile(`(?i)^(SELECT|SHOW|TRUNCATE|DELETE\s+FROM)\b`)
-
-func splitQdrantStatements(raw string) []string {
-	lines := strings.Split(raw, "\n")
-	var stmts []string
-	var cur strings.Builder
-	hasNonComment := false
-	curIsREST := false
-	inSingle := false
-	inDouble := false
-	braceDepth := 0
-	bracketDepth := 0
-
-	flush := func() {
-		s := strings.TrimSpace(cur.String())
-		s = strings.TrimRight(s, "; \t\r\n")
-		if strings.TrimSpace(driver.StripLeadingComments(s)) != "" {
-			stmts = append(stmts, s)
-		}
-		cur.Reset()
-		hasNonComment = false
-		curIsREST = false
+func (q *QdrantDriver) invalidateCursorCache(coll string) {
+	q.cursorMu.Lock()
+	defer q.cursorMu.Unlock()
+	if coll == "" {
+		q.cursorCache = make(map[string]map[int]any)
+		return
 	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		isCommentLine := trimmed == "" || strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#")
-
-		if !inSingle && !inDouble && braceDepth == 0 && bracketDepth == 0 && hasNonComment {
-			if restMethodLineRe.MatchString(trimmed) || (curIsREST && sqlStartLineRe.MatchString(trimmed)) {
-				flush()
-			}
+	prefix := coll + "|"
+	for k := range q.cursorCache {
+		if strings.HasPrefix(k, prefix) {
+			delete(q.cursorCache, k)
 		}
-
-		if !isCommentLine && !hasNonComment {
-			hasNonComment = true
-			if restMethodLineRe.MatchString(trimmed) {
-				curIsREST = true
-			}
-		}
-
-		for i := 0; i < len(line); i++ {
-			ch := line[i]
-			if ch == '\\' && (inSingle || inDouble) && i+1 < len(line) {
-				cur.WriteByte(ch)
-				i++
-				cur.WriteByte(line[i])
-				continue
-			}
-			if ch == '\'' && !inDouble {
-				inSingle = !inSingle
-			} else if ch == '"' && !inSingle {
-				inDouble = !inDouble
-			} else if !inSingle && !inDouble {
-				switch ch {
-				case '{':
-					braceDepth++
-				case '}':
-					if braceDepth > 0 {
-						braceDepth--
-					}
-				case '[':
-					bracketDepth++
-				case ']':
-					if bracketDepth > 0 {
-						bracketDepth--
-					}
-				case ';':
-					if braceDepth == 0 && bracketDepth == 0 && !curIsREST {
-						flush()
-						continue
-					}
-				}
-			}
-			cur.WriteByte(ch)
-		}
-		cur.WriteByte('\n')
 	}
-	flush()
-	return stmts
 }
 
 func (q *QdrantDriver) getCursor(key string, offset int) (int, any) {
@@ -1166,7 +1123,7 @@ func parseSelectProjection(selectExpr string) (selectedCols []string, withPayloa
 
 func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
 	start := time.Now()
-	stmts := splitQdrantStatements(req.SQL)
+	stmts := driver.SplitHTTPOrSQLStatements(req.SQL)
 	if len(stmts) == 0 {
 		return &driver.QueryResult{
 			ExecutionID: req.ExecutionID,
@@ -1293,6 +1250,7 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 		if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/delete?wait=true", body); err != nil {
 			return nil, err
 		}
+		q.invalidateCursorCache(coll)
 		return &driver.QueryResult{
 			ExecutionID:  req.ExecutionID,
 			Columns:      []driver.ColumnMeta{},
@@ -1319,6 +1277,7 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 		if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/delete?wait=true", body); err != nil {
 			return nil, err
 		}
+		q.invalidateCursorCache(coll)
 		return &driver.QueryResult{
 			ExecutionID:  req.ExecutionID,
 			Columns:      []driver.ColumnMeta{},
@@ -1439,6 +1398,92 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 			}
 			cacheKey := fmt.Sprintf("%s|%s|%s|%s", coll, filterKey, sortCol, sortDir)
 
+			// Qdrant order_by uses order_by.start_from (not offset) and always returns next_page_offset: null.
+			if usedServerOrderBy && orderByBody != nil {
+				var startFrom any
+				if offset > 0 {
+					curOff, curVal := q.getCursor(cacheKey, offset)
+					startFrom = curVal
+					for curOff < offset {
+						step := offset - curOff
+						if step > 500 {
+							step = 500
+						}
+						ob := map[string]any{"key": sortCol, "direction": sortDir}
+						if startFrom != nil {
+							ob["start_from"] = startFrom
+						}
+						stepBody := map[string]any{
+							"limit":        step + 1,
+							"order_by":     ob,
+							"with_payload": []string{sortCol},
+							"with_vector":  false,
+						}
+						if filter != nil {
+							stepBody["filter"] = filter
+						}
+						stepBytes, _, stepErr := q.doRequest(ctx, http.MethodPost, scrollEndpoint, stepBody)
+						if stepErr != nil {
+							return nil, stepErr
+						}
+						var stepResp scrollResult
+						if err := json.Unmarshal(stepBytes, &stepResp); err != nil {
+							return nil, err
+						}
+						pts := stepResp.Result.Points
+						if len(pts) <= step {
+							res := pointsToQueryResultWithProjection(req.ExecutionID, coll, nil, time.Since(start).Milliseconds(), len(selectedCols) == 0, selectedCols)
+							if len(selectedCols) == 0 {
+								res.Columns = q.buildEmptyCollectionColumns(ctx, coll, nil)
+							}
+							return res, nil
+						}
+						curOff += step
+						startFrom = pts[step].Payload[sortCol]
+						q.setCursor(cacheKey, curOff, startFrom)
+					}
+				}
+
+				ob := map[string]any{"key": sortCol, "direction": sortDir}
+				if startFrom != nil {
+					ob["start_from"] = startFrom
+				}
+				body := map[string]any{
+					"limit":        limit + 1,
+					"order_by":     ob,
+					"with_payload": withPayload,
+					"with_vector":  withVector,
+				}
+				if filter != nil {
+					body["filter"] = filter
+				}
+				respBytes, _, err := q.doRequest(ctx, http.MethodPost, scrollEndpoint, body)
+				if err != nil {
+					return nil, err
+				}
+				var scrollResp scrollResult
+				if err := json.Unmarshal(respBytes, &scrollResp); err != nil {
+					return nil, err
+				}
+				pts := scrollResp.Result.Points
+				hasMore := len(pts) > limit
+				if hasMore {
+					if limit > 0 && pts[limit-1].Payload != nil {
+						q.setCursor(cacheKey, offset+limit-1, pts[limit-1].Payload[sortCol])
+					}
+					if pts[limit].Payload != nil {
+						q.setCursor(cacheKey, offset+limit, pts[limit].Payload[sortCol])
+					}
+					pts = pts[:limit]
+				}
+				res := pointsToQueryResultWithProjection(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), len(selectedCols) == 0, selectedCols)
+				if len(pts) == 0 && len(selectedCols) == 0 {
+					res.Columns = q.buildEmptyCollectionColumns(ctx, coll, nil)
+				}
+				res.HasMore = hasMore
+				return res, nil
+			}
+
 			var cursor any
 			if offset > 0 {
 				curOff, curVal := q.getCursor(cacheKey, offset)
@@ -1455,9 +1500,6 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 					}
 					if filter != nil {
 						stepBody["filter"] = filter
-					}
-					if orderByBody != nil && usedServerOrderBy {
-						stepBody["order_by"] = orderByBody
 					}
 					if cursor != nil {
 						stepBody["offset"] = cursor
@@ -1492,9 +1534,6 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 			if filter != nil {
 				body["filter"] = filter
 			}
-			if orderByBody != nil && usedServerOrderBy {
-				body["order_by"] = orderByBody
-			}
 			if cursor != nil {
 				body["offset"] = cursor
 			}
@@ -1512,6 +1551,10 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 			hasMore := scrollResp.Result.NextPageOffset != nil
 			if hasMore {
 				q.setCursor(cacheKey, offset+len(pts), scrollResp.Result.NextPageOffset)
+			}
+			// Also cache offset+len(pts)-1 -> pts[last].ID so callers using limit=pageSize+1 (like DataGrid) hit cache on next page!
+			if len(pts) > 1 && pts[len(pts)-1].ID != nil {
+				q.setCursor(cacheKey, offset+len(pts)-1, pts[len(pts)-1].ID)
 			}
 
 			res := pointsToQueryResultWithProjection(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), len(selectedCols) == 0, selectedCols)
@@ -1603,10 +1646,19 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 			}
 		}
 
+		if method != http.MethodGet && !driver.IsReadOnlySafeQuery(rawSQL) {
+			q.invalidateCursorCache(coll)
+		}
+
 		var env struct {
 			Result json.RawMessage `json:"result"`
 		}
 		if json.Unmarshal(respBytes, &env) == nil && len(env.Result) > 0 {
+			// 4a. Single point object (GET /collections/{name}/points/{id})
+			var singlePt qdrantPoint
+			if json.Unmarshal(env.Result, &singlePt) == nil && singlePt.ID != nil {
+				return pointsToQueryResult(req.ExecutionID, coll, []qdrantPoint{singlePt}, time.Since(start).Milliseconds(), coll != ""), nil
+			}
 			// 4a. Standard points array (search/recommend/discover)
 			var pts []qdrantPoint
 			if json.Unmarshal(env.Result, &pts) == nil && pts != nil {
@@ -1824,6 +1876,7 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 }
 
 func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
+	defer q.invalidateCursorCache(table)
 	var totalAffected int64
 	escapedTable := url.PathEscape(table)
 

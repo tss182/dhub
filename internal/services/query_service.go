@@ -54,7 +54,12 @@ func NewQueryService(s *store.LocalStore, sm *manager.SessionManager, appGetter 
 func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResult, error) {
 	cfg, cfgErr := q.store.GetConnection(context.Background(), req.ConnectionID)
 	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
-		statements := driver.SplitStatements(req.SQL)
+		var statements []string
+		if cfg.Driver == "qdrant" || cfg.Driver == "elasticsearch" || cfg.Driver == "es" {
+			statements = driver.SplitHTTPOrSQLStatements(req.SQL)
+		} else {
+			statements = driver.SplitStatements(req.SQL)
+		}
 		for _, stmt := range statements {
 			if !driver.IsReadOnlySafeQuery(stmt) {
 				errMsg := fmt.Sprintf("execution blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(stmt, 60))

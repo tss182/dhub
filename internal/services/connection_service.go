@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"dhub/internal/app"
@@ -90,12 +91,15 @@ func (s *ConnectionService) TestConnection(cfg store.ConnectionConfig) (string, 
 	ctx, cancel := context.WithTimeout(context.Background(), connectionOpTimeout)
 	defer cancel()
 
-	err := s.sessions.TestConnection(ctx, cfg)
+	ver, err := s.sessions.TestConnectionInfo(ctx, cfg)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", fmt.Errorf("connection timed out after %s: %w", connectionOpTimeout, err)
 		}
 		return "", err
+	}
+	if ver != "" {
+		return fmt.Sprintf("Connection successful! (%s v%s)", strings.ToUpper(cfg.Driver), ver), nil
 	}
 	return "Connection successful!", nil
 }

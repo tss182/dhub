@@ -668,9 +668,13 @@ func isReadOnlyHTTPCommand(clean string) bool {
 				"/points/count",
 				"/points/recommend",
 				"/points/recommend/batch",
+				"/points/recommend/groups",
 				"/points/discover",
 				"/points/discover/batch",
-				"/points/facet",
+				"/points/discover/groups",
+				"/points/search/matrix/pairs",
+				"/points/search/matrix/offsets",
+				"/facet",
 				"/points",
 			} {
 				if strings.HasSuffix(lowerPath, suffix) {
@@ -721,5 +725,108 @@ func TruncateSQL(sql string, maxLen int) string {
 		return clean[:maxLen] + "..."
 	}
 	return clean
+}
+
+func isHTTPMethodLine(trimmed string) bool {
+	fields := strings.Fields(trimmed)
+	if len(fields) < 2 {
+		return false
+	}
+	switch strings.ToUpper(fields[0]) {
+	case "GET", "POST", "PUT", "DELETE", "PATCH":
+		return strings.HasPrefix(fields[1], "/")
+	default:
+		return false
+	}
+}
+
+func isSQLStartLine(trimmed string) bool {
+	upper := strings.ToUpper(trimmed)
+	return hasLeadingKeyword(upper, "SELECT") ||
+		hasLeadingKeyword(upper, "SHOW") ||
+		hasLeadingKeyword(upper, "TRUNCATE") ||
+		hasLeadingKeyword(upper, "DELETE")
+}
+
+// SplitHTTPOrSQLStatements splits a script containing REST commands (GET/POST/PUT/DELETE/PATCH /...)
+// and/or pseudo-SQL statements separated by semicolons or top-level HTTP method lines.
+func SplitHTTPOrSQLStatements(raw string) []string {
+	lines := strings.Split(raw, "\n")
+	var stmts []string
+	var cur strings.Builder
+	hasNonComment := false
+	curIsREST := false
+	inSingle := false
+	inDouble := false
+	braceDepth := 0
+	bracketDepth := 0
+
+	flush := func() {
+		s := strings.TrimSpace(cur.String())
+		s = strings.TrimRight(s, "; \t\r\n")
+		if strings.TrimSpace(StripLeadingComments(s)) != "" {
+			stmts = append(stmts, s)
+		}
+		cur.Reset()
+		hasNonComment = false
+		curIsREST = false
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isCommentLine := trimmed == "" || strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#")
+
+		if !inSingle && !inDouble && braceDepth == 0 && bracketDepth == 0 && hasNonComment {
+			if isHTTPMethodLine(trimmed) || (curIsREST && isSQLStartLine(trimmed)) {
+				flush()
+			}
+		}
+
+		if !isCommentLine && !hasNonComment {
+			hasNonComment = true
+			if isHTTPMethodLine(trimmed) {
+				curIsREST = true
+			}
+		}
+
+		for i := 0; i < len(line); i++ {
+			ch := line[i]
+			if ch == '\\' && (inSingle || inDouble) && i+1 < len(line) {
+				cur.WriteByte(ch)
+				i++
+				cur.WriteByte(line[i])
+				continue
+			}
+			if ch == '\'' && !inDouble {
+				inSingle = !inSingle
+			} else if ch == '"' && !inSingle {
+				inDouble = !inDouble
+			} else if !inSingle && !inDouble {
+				switch ch {
+				case '{':
+					braceDepth++
+				case '}':
+					if braceDepth > 0 {
+						braceDepth--
+					}
+				case '[':
+					bracketDepth++
+				case ']':
+					if bracketDepth > 0 {
+						bracketDepth--
+					}
+				case ';':
+					if braceDepth == 0 && bracketDepth == 0 && !curIsREST {
+						flush()
+						continue
+					}
+				}
+			}
+			cur.WriteByte(ch)
+		}
+		cur.WriteByte('\n')
+	}
+	flush()
+	return stmts
 }
 

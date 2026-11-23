@@ -411,3 +411,118 @@ func TestQdrantDriverPhase4Features(t *testing.T) {
 			putPointsCalls, deletePointsCalls, deletePayloadKeysCalls)
 	}
 }
+
+func TestQdrantDriverPhase8Fixes(t *testing.T) {
+	var scrollRequests []map[string]any
+	var putCount int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/":
+			_, _ = w.Write([]byte(`{"title":"qdrant - vector search engine","version":"1.13.4"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/docs/points/42":
+			_, _ = w.Write([]byte(`{"result":{"id":42,"payload":{"title":"forty-two"},"vector":[0.1,0.2]},"status":"ok"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/docs/points":
+			putCount++
+			_, _ = w.Write([]byte(`{"result":{"status":"completed"},"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs/points/scroll":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			scrollRequests = append(scrollRequests, body)
+
+			if ob, ok := body["order_by"].(map[string]any); ok {
+				if ob["start_from"] == float64(80) {
+					_, _ = w.Write([]byte(`{"result":{"points":[{"id":3,"payload":{"views":80}}]},"status":"ok"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"result":{"points":[{"id":1,"payload":{"views":100}},{"id":2,"payload":{"views":90}},{"id":3,"payload":{"views":80}}]},"status":"ok"}`))
+				return
+			}
+
+			if body["offset"] == float64(3) || body["offset"] == "3" {
+				_, _ = w.Write([]byte(`{"result":{"points":[{"id":3,"payload":{"title":"p3"}},{"id":4,"payload":{"title":"p4"}}]},"status":"ok"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{
+				"result": {
+					"points": [
+						{"id": 1, "payload": {"title": "p1"}},
+						{"id": 2, "payload": {"title": "p2"}},
+						{"id": 3, "payload": {"title": "p3"}}
+					],
+					"next_page_offset": 4
+				},
+				"status": "ok"
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	drv, err := NewQdrantDriver(srv.URL, "", nil)
+	if err != nil {
+		t.Fatalf("NewQdrantDriver: %v", err)
+	}
+	defer drv.Close()
+	ctx := context.Background()
+
+	// 1. ServerVersion
+	ver, err := drv.ServerVersion(ctx)
+	if err != nil || ver != "1.13.4" {
+		t.Fatalf("expected version 1.13.4, got %q (err=%v)", ver, err)
+	}
+
+	// 2. Cursor cache hit for limit = pageSize + 1 (DataGrid pattern)
+	p1, err := drv.Execute(ctx, driver.QueryRequest{SQL: `SELECT * FROM docs LIMIT 3 OFFSET 0`})
+	if err != nil || len(p1.Rows) != 3 {
+		t.Fatalf("page 1 failed: %+v, err=%v", p1, err)
+	}
+	p2, err := drv.Execute(ctx, driver.QueryRequest{SQL: `SELECT * FROM docs LIMIT 3 OFFSET 2`})
+	if err != nil || len(p2.Rows) != 2 {
+		t.Fatalf("page 2 failed: %+v, err=%v", p2, err)
+	}
+	// Should be only 2 scroll requests total (page 2 hit cached cursor id=3 directly without advancing!)
+	if len(scrollRequests) != 2 || scrollRequests[1]["offset"] != float64(3) {
+		t.Fatalf("expected 2 scroll requests with cached offset=3, got %#v", scrollRequests)
+	}
+
+	// 3. Cursor cache invalidation after ApplyChanges
+	_, err = drv.ApplyChanges(ctx, "default", "default", "docs", []driver.RowChange{
+		{Type: "insert", Changes: map[string]any{"id": 99, "title": "new"}},
+	})
+	if err != nil || putCount != 1 {
+		t.Fatalf("ApplyChanges failed: %v", err)
+	}
+	if _, cached := drv.getCursor("docs|||", 2); cached != nil {
+		t.Fatalf("expected cursor cache for docs to be invalidated after ApplyChanges")
+	}
+
+	// 4. ORDER BY + start_from pagination
+	scrollRequests = nil
+	ob1, err := drv.Execute(ctx, driver.QueryRequest{SQL: `SELECT * FROM docs ORDER BY views DESC LIMIT 2 OFFSET 0`})
+	if err != nil || !ob1.HasMore || len(ob1.Rows) != 2 {
+		t.Fatalf("ORDER BY page 1 failed: %+v, err=%v", ob1, err)
+	}
+	ob2, err := drv.Execute(ctx, driver.QueryRequest{SQL: `SELECT * FROM docs ORDER BY views DESC LIMIT 2 OFFSET 2`})
+	if err != nil || ob2.HasMore || len(ob2.Rows) != 1 {
+		t.Fatalf("ORDER BY page 2 failed: %+v, err=%v", ob2, err)
+	}
+
+	// 5. Nested parentheses (A OR B) AND C
+	fNested, err := parseSimpleWhereToFilter(`(category = 'ai' OR category = 'ml') AND views >= 10`)
+	if err != nil {
+		t.Fatalf("nested parens WHERE failed: %v", err)
+	}
+	bNested, _ := json.Marshal(fNested)
+	if !strings.Contains(string(bNested), `"should"`) || !strings.Contains(string(bNested), `"gte":10`) {
+		t.Fatalf("unexpected nested filter JSON: %s", string(bNested))
+	}
+
+	// 6. Single point GET /collections/docs/points/42
+	ptRes, err := drv.Execute(ctx, driver.QueryRequest{SQL: `GET /collections/docs/points/42`})
+	if err != nil || len(ptRes.Rows) != 1 || !ptRes.IsEditable || ptRes.Rows[0][0] != int64(42) {
+		t.Fatalf("single point GET parse failed: %+v, err=%v", ptRes, err)
+	}
+}
