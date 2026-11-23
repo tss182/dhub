@@ -139,6 +139,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return false;
   }, [driver, connectionId]);
 
+  const isQdrant = useMemo(() => {
+    if ((driver || '').toLowerCase() === 'qdrant') return true;
+    if (connectionId) {
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
+      if (conn?.driver?.toLowerCase() === 'qdrant') return true;
+    }
+    return false;
+  }, [driver, connectionId]);
+
+  const disableFreeze = isRedis || isQdrant;
+
   const [whereInput, setWhereInput] = useState(whereClause || '');
   const [whereCursorPos, setWhereCursorPos] = useState<number>(0);
   const [showWhereSuggestions, setShowWhereSuggestions] = useState<boolean>(false);
@@ -149,7 +160,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const suggestionListRef = useRef<HTMLDivElement>(null);
   const [localSortConfigs, setLocalSortConfigs] = useState<SortConfig[]>(sortConfigs || []);
   const [frozenColumns, setFrozenColumns] = useState<string[]>(() => {
-    if (isRedis) return [];
+    if (disableFreeze) return [];
     return initialFrozenColumns && initialFrozenColumns.length > 0
       ? initialFrozenColumns
       : Array.from(new Set(columns.filter((c) => c.isPrimaryKey || primaryKeys.includes(c.name)).map((c) => c.name)));
@@ -208,7 +219,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
-    const pks = isRedis
+    const pks = disableFreeze
       ? []
       : columns.filter((c) => c.isPrimaryKey || primaryKeySet.has(c.name)).map((c) => c.name);
     const uniquePKs = Array.from(new Set(pks));
@@ -219,13 +230,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
       setFrozenColumns(uniquePKs);
       hasSampledRowsRef.current = false;
       userHasResizedRef.current = false;
-    } else if (isRedis) {
+    } else if (disableFreeze) {
       setFrozenColumns([]);
     } else if (!hasInitializedPKsRef.current && uniquePKs.length > 0) {
       hasInitializedPKsRef.current = true;
       setFrozenColumns((prev) => Array.from(new Set([...prev, ...uniquePKs])));
     }
-  }, [tabId, tableName, columns, primaryKeysKey, primaryKeySet, isRedis]);
+  }, [tabId, tableName, columns, primaryKeysKey, primaryKeySet, disableFreeze]);
 
   useEffect(() => {
     if (!isTableTab || !connectionId || !database || !tableName || isRedis) {
@@ -579,7 +590,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const handleToggleFreeze = (colName: string) => {
-    if (isRedis) return;
+    if (disableFreeze) return;
     setFrozenColumns((prev) => {
       const next = prev.includes(colName) ? prev.filter((c) => c !== colName) : [...prev, colName];
       onFrozenColumnsChange?.(next);
@@ -2744,7 +2755,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                       onContextMenu={(e) => handleColHeaderContextMenu(e, cIdx)}
                       onClick={(e) => {
                         if (isResizingRef.current) return;
-                        if (e.altKey && !isRedis) {
+                        if (e.altKey && !disableFreeze) {
                           handleToggleFreeze(col.name);
                         }
                       }}
@@ -2798,7 +2809,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
-                          {!isRedis && (
+                          {!disableFreeze && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -3088,6 +3099,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         copyFormat={copyFormat}
         isCopyAsSubmenuOpen={isCopyAsSubmenuOpen}
         isRedis={isRedis}
+        disableFreeze={disableFreeze}
         columns={columns}
         visualRows={visualRows}
         stagedChanges={stagedChanges}

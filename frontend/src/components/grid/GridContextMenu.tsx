@@ -32,6 +32,7 @@ interface GridContextMenuProps {
   copyFormat: CopyFormat;
   isCopyAsSubmenuOpen: boolean;
   isRedis: boolean;
+  disableFreeze?: boolean;
   columns: ColumnMeta[];
   visualRows: VisualRow[];
   stagedChanges: Record<number, StagedRowChange>;
@@ -67,6 +68,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   copyFormat,
   isCopyAsSubmenuOpen,
   isRedis,
+  disableFreeze,
   columns,
   visualRows,
   stagedChanges,
@@ -148,7 +150,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
           <div className="my-1 border-t border-[#272932]" />
         )}
 
-        {!isRedis && (
+        {!(disableFreeze ?? isRedis) && (
           <>
             <button
               type="button"
@@ -491,7 +493,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 </button>
               )}
 
-              {!isRedis && (
+              {!(disableFreeze ?? isRedis) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -534,7 +536,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 </button>
               )}
 
-              {!isRedis && (
+              {!(disableFreeze ?? isRedis) && (
                 <>
                   <button
                     type="button"
