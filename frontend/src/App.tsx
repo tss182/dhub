@@ -3040,24 +3040,28 @@ export function App() {
                           effectiveTabDriver === 'elasticsearch' || effectiveTabDriver === 'es';
                         return (
                         <>
-                          {!isElasticsearchTab && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                                openEditTableModal(
-                                  conn,
-                                  activeTab.database || 'main',
-                                  activeTab.schema || 'main',
-                                  activeTab.table
-                                );
-                              }}
-                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                              title={isQdrantTab ? 'Manage Collection, Indexes & Snapshots' : 'Edit Table Structure'}
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                              openEditTableModal(
+                                conn,
+                                activeTab.database || 'main',
+                                activeTab.schema || 'main',
+                                activeTab.table
+                              );
+                            }}
+                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title={
+                              isQdrantTab
+                                ? 'Manage Collection, Indexes & Snapshots'
+                                : isElasticsearchTab
+                                ? 'Manage Index (Mappings, Settings, Aliases & Shards)'
+                                : 'Edit Table Structure'
+                            }
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
                           <button
                             type="button"
                             onClick={() => {

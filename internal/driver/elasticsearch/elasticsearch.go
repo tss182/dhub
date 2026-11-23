@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,15 +24,21 @@ import (
 
 // ElasticsearchDriver implements driver.DatabaseDriver over Elasticsearch/OpenSearch's HTTP REST API.
 type ElasticsearchDriver struct {
-	baseURL  string
-	username string
-	password string
-	client   *http.Client
+	baseURL    string
+	username   string
+	password   string
+	hostHeader string
+	client     *http.Client
 
 	mu                 sync.Mutex
 	distro             string // "elasticsearch" | "opensearch"
 	version            string
 	keywordSubfieldMap map[string]map[string]bool // index -> field -> has .keyword subfield
+}
+
+// SetHostHeader overrides the HTTP Host header (used when connecting through an SSH local port forward).
+func (e *ElasticsearchDriver) SetHostHeader(host string) {
+	e.hostHeader = strings.TrimSpace(host)
 }
 
 // NewElasticsearchDriver creates an Elasticsearch driver targeting baseURL (e.g. http://127.0.0.1:9200).
@@ -114,6 +121,9 @@ func (e *ElasticsearchDriver) doRequest(ctx context.Context, method, path string
 	if err != nil {
 		return nil, 0, err
 	}
+	if e.hostHeader != "" {
+		req.Host = e.hostHeader
+	}
 	if body != nil {
 		if ndjson {
 			req.Header.Set("Content-Type", "application/x-ndjson")
@@ -121,13 +131,36 @@ func (e *ElasticsearchDriver) doRequest(ctx context.Context, method, path string
 			req.Header.Set("Content-Type", "application/json")
 		}
 	}
-	if e.username != "" {
-		req.SetBasicAuth(e.username, e.password)
-	} else if e.password != "" {
-		if strings.HasPrefix(e.password, "ApiKey ") || strings.HasPrefix(e.password, "Bearer ") {
-			req.Header.Set("Authorization", e.password)
+	uTrim := strings.TrimSpace(e.username)
+	pTrim := strings.TrimSpace(e.password)
+	switch {
+	case strings.EqualFold(uTrim, "__apikey__"):
+		if pTrim != "" {
+			if strings.HasPrefix(pTrim, "ApiKey ") {
+				req.Header.Set("Authorization", pTrim)
+			} else if strings.Contains(pTrim, ":") {
+				req.Header.Set("Authorization", "ApiKey "+base64.StdEncoding.EncodeToString([]byte(pTrim)))
+			} else {
+				req.Header.Set("Authorization", "ApiKey "+pTrim)
+			}
+		}
+	case strings.EqualFold(uTrim, "__bearer__"):
+		if pTrim != "" {
+			if strings.HasPrefix(pTrim, "Bearer ") {
+				req.Header.Set("Authorization", pTrim)
+			} else {
+				req.Header.Set("Authorization", "Bearer "+pTrim)
+			}
+		}
+	case uTrim != "":
+		req.SetBasicAuth(uTrim, e.password)
+	case pTrim != "":
+		if strings.HasPrefix(pTrim, "ApiKey ") || strings.HasPrefix(pTrim, "Bearer ") {
+			req.Header.Set("Authorization", pTrim)
+		} else if strings.Contains(pTrim, ":") {
+			req.Header.Set("Authorization", "ApiKey "+base64.StdEncoding.EncodeToString([]byte(pTrim)))
 		} else {
-			req.Header.Set("Authorization", "ApiKey "+e.password)
+			req.Header.Set("Authorization", "ApiKey "+pTrim)
 		}
 	}
 

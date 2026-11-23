@@ -2,8 +2,11 @@ package manager
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/url"
@@ -514,7 +517,14 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		if tlsErr != nil {
 			return nil, tlsErr
 		}
-		return elasticsearch.NewElasticsearchDriver(baseURL, cfg.Username, cfg.Password, tlsCfg)
+		drv, err := elasticsearch.NewElasticsearchDriver(baseURL, cfg.Username, cfg.Password, tlsCfg)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.SSHEnabled && origHostname != "" {
+			drv.SetHostHeader(origHostname)
+		}
+		return drv, nil
 	case "clickhouse":
 		connStr := strings.TrimSpace(cfg.Host)
 		if strings.HasPrefix(connStr, "clickhouse://") || strings.HasPrefix(connStr, "http://") || strings.HasPrefix(connStr, "https://") {
@@ -617,12 +627,54 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 	}
 	if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "qdrant") {
 		remotePort = 6333
+	} else if remotePort <= 0 && (strings.EqualFold(strings.TrimSpace(cfg.Driver), "elasticsearch") || strings.EqualFold(strings.TrimSpace(cfg.Driver), "es")) {
+		remotePort = 9200
 	}
 	return remoteHost, remotePort
 }
 
+func decodeElasticCloudID(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	colonIdx := strings.IndexByte(trimmed, ':')
+	if colonIdx <= 0 || strings.Contains(trimmed, "://") {
+		return "", false
+	}
+	b64Part := trimmed[colonIdx+1:]
+	decoded, err := base64.StdEncoding.DecodeString(b64Part)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(b64Part)
+		if err != nil {
+			return "", false
+		}
+	}
+	parts := strings.Split(string(decoded), "$")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", false
+	}
+	domain := parts[0]
+	esUUID := parts[1]
+	return fmt.Sprintf("https://%s.%s:443", esUUID, domain), true
+}
+
+func isHexSHA256Fingerprint(s string) (string, bool) {
+	clean := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(s), ":", ""), " ", ""))
+	if len(clean) != 64 {
+		return "", false
+	}
+	for i := 0; i < len(clean); i++ {
+		c := clean[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return "", false
+		}
+	}
+	return clean, true
+}
+
 func resolveHTTPBaseURL(cfg store.ConnectionConfig, host string, port, defaultPort int) (baseURL, origHostname string) {
 	rawHost := strings.TrimSpace(cfg.Host)
+	if decodedURL, ok := decodeElasticCloudID(rawHost); ok {
+		rawHost = decodedURL
+	}
 	wantTLS := cfg.SSLMode != "" && cfg.SSLMode != "disable"
 	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
 		if u, err := url.Parse(rawHost); err == nil {
@@ -671,16 +723,21 @@ func buildHTTPDriverTLSConfig(cfg store.ConnectionConfig, baseURL, origHostname 
 	if cfg.SSHEnabled && origHostname != "" {
 		tlsCfg.ServerName = origHostname
 	}
+	var pinnedCAHex string
 	if cfg.SSLCAPath != "" {
-		pem, err := os.ReadFile(cfg.SSLCAPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read SSL CA file %q: %w", cfg.SSLCAPath, err)
+		if fpHex, isFP := isHexSHA256Fingerprint(cfg.SSLCAPath); isFP {
+			pinnedCAHex = fpHex
+		} else {
+			pem, err := os.ReadFile(cfg.SSLCAPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read SSL CA file %q: %w", cfg.SSLCAPath, err)
+			}
+			rootCertPool := x509.NewCertPool()
+			if !rootCertPool.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("failed to parse SSL CA certificates from %q", cfg.SSLCAPath)
+			}
+			tlsCfg.RootCAs = rootCertPool
 		}
-		rootCertPool := x509.NewCertPool()
-		if !rootCertPool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("failed to parse SSL CA certificates from %q", cfg.SSLCAPath)
-		}
-		tlsCfg.RootCAs = rootCertPool
 	}
 	if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
 		cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath)
@@ -688,6 +745,19 @@ func buildHTTPDriverTLSConfig(cfg store.ConnectionConfig, baseURL, origHostname 
 			return nil, fmt.Errorf("failed to load SSL client certificate/key: %w", err)
 		}
 		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	if pinnedCAHex != "" {
+		tlsCfg.InsecureSkipVerify = true
+		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			for _, cert := range cs.PeerCertificates {
+				sum := sha256.Sum256(cert.Raw)
+				if strings.EqualFold(hex.EncodeToString(sum[:]), pinnedCAHex) {
+					return nil
+				}
+			}
+			return fmt.Errorf("TLS certificate SHA-256 fingerprint mismatch (expected %s)", pinnedCAHex)
+		}
+		return tlsCfg, nil
 	}
 	switch cfg.SSLMode {
 	case "require", "required":

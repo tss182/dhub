@@ -12,6 +12,7 @@ import { RedisInfoModal } from '../modals/RedisInfoModal';
 import { QdrantInfoModal } from '../modals/QdrantInfoModal';
 import { QdrantBatchOpsModal } from '../modals/QdrantBatchOpsModal';
 import { QdrantCloneModal } from '../modals/QdrantCloneModal';
+import { ElasticsearchInfoModal } from '../modals/ElasticsearchInfoModal';
 
 const ExportModal = lazy(() =>
   import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
@@ -274,6 +275,125 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     collectionName: string;
   }>({ isOpen: false, connectionId: '', collectionName: '' });
   const [qdrantAliasesByConn, setQdrantAliasesByConn] = useState<Record<string, Record<string, string[]>>>({});
+
+  const [esInfoModal, setEsInfoModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    connectionName: string;
+  }>({ isOpen: false, connectionId: '', connectionName: '' });
+  const [esAliasesByConn, setEsAliasesByConn] = useState<Record<string, Record<string, string[]>>>({});
+  const [showESSystemIndicesByConn, setShowESSystemIndicesByConn] = useState<Record<string, boolean>>({});
+  const [esSystemIndicesByConn, setEsSystemIndicesByConn] = useState<Record<string, ObjectSummary[]>>({});
+
+  const fetchESAliases = React.useCallback(async (connId: string) => {
+    try {
+      const res = await QueryService.ExecuteQuery({
+        executionId: `es-aliases-${Date.now()}`,
+        connectionId: connId,
+        database: 'default',
+        schema: 'default',
+        sql: 'GET /_cat/aliases?format=json',
+        limit: 500,
+        offset: 0,
+      } as any);
+      const cols = (res?.columns || []).map((c: any) => c.name);
+      const map: Record<string, string[]> = {};
+      if (cols.includes('index') && cols.includes('alias')) {
+        const idxCol = cols.indexOf('index');
+        const aliasCol = cols.indexOf('alias');
+        for (const r of res?.rows || []) {
+          if (!r) continue;
+          const idxName = String(r[idxCol] ?? '');
+          const aliasName = String(r[aliasCol] ?? '');
+          if (idxName && aliasName) {
+            map[idxName] = map[idxName] || [];
+            if (!map[idxName].includes(aliasName)) {
+              map[idxName].push(aliasName);
+            }
+          }
+        }
+      } else {
+        const raw = res?.rows?.[0]?.[0];
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsed)) {
+          for (const a of parsed) {
+            if (a?.index && a?.alias) {
+              map[a.index] = map[a.index] || [];
+              if (!map[a.index].includes(a.alias)) {
+                map[a.index].push(a.alias);
+              }
+            }
+          }
+        }
+      }
+      setEsAliasesByConn((prev) => ({ ...prev, [connId]: map }));
+    } catch {}
+  }, []);
+
+  const fetchESSystemIndices = React.useCallback(async (connId: string) => {
+    try {
+      const res = await QueryService.ExecuteQuery({
+        executionId: `es-sys-indices-${Date.now()}`,
+        connectionId: connId,
+        database: 'default',
+        schema: 'default',
+        sql: 'GET /_cat/indices?format=json&h=index,docs.count,store.size,health,status',
+        limit: 500,
+        offset: 0,
+      } as any);
+      const cols = (res?.columns || []).map((c: any) => c.name);
+      const sysList: ObjectSummary[] = [];
+      const addEntry = (idx: string, docsCount: string, storeSize: string, health: string, status: string) => {
+        if (!idx || !idx.startsWith('.')) return;
+        const rowEst = docsCount && !isNaN(Number(docsCount)) ? Number(docsCount) : -1;
+        let comment = (health || '').trim();
+        if (status) {
+          comment = comment ? `${comment} (${status})` : status;
+        }
+        sysList.push({
+          schema: 'default',
+          name: idx,
+          type: 'table',
+          rowEstimate: rowEst,
+          sizePretty: storeSize || '',
+          comment,
+        } as ObjectSummary);
+      };
+      if (cols.includes('index')) {
+        const iIdx = cols.indexOf('index');
+        const dIdx = cols.indexOf('docs.count');
+        const sIdx = cols.indexOf('store.size');
+        const hIdx = cols.indexOf('health');
+        const stIdx = cols.indexOf('status');
+        for (const r of res?.rows || []) {
+          if (!r) continue;
+          addEntry(
+            String(r[iIdx] ?? ''),
+            dIdx !== -1 ? String(r[dIdx] ?? '') : '',
+            sIdx !== -1 ? String(r[sIdx] ?? '') : '',
+            hIdx !== -1 ? String(r[hIdx] ?? '') : '',
+            stIdx !== -1 ? String(r[stIdx] ?? '') : ''
+          );
+        }
+      } else {
+        const raw = res?.rows?.[0]?.[0];
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsed)) {
+          for (const e of parsed) {
+            addEntry(
+              String(e?.index ?? ''),
+              String(e?.['docs.count'] ?? ''),
+              String(e?.['store.size'] ?? ''),
+              String(e?.health ?? ''),
+              String(e?.status ?? '')
+            );
+          }
+        }
+      }
+      sysList.sort((a, b) => a.name.localeCompare(b.name));
+      setEsSystemIndicesByConn((prev) => ({ ...prev, [connId]: sysList }));
+    } catch {}
+  }, []);
 
   const fetchQdrantAliases = React.useCallback(async (connId: string) => {
     try {
@@ -1285,6 +1405,10 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           setActiveConnection(connId, 'default', 'default');
           const objs = (await SchemaService.GetObjects(connId, 'default', 'default')) ?? [];
           setTreeObjects(`${connId}:default:default`, objs as any);
+          fetchESAliases(connId);
+          if (showESSystemIndicesByConn[connId]) {
+            fetchESSystemIndices(connId);
+          }
         } else {
           const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
           const redisDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
@@ -1454,6 +1578,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       setTreeObjects(`${connId}:${currentDb}:${targetSchema}`, objects as any);
       if (isQdrant) {
         fetchQdrantAliases(connId);
+      }
+      if (isElasticsearch) {
+        fetchESAliases(connId);
+        if (showESSystemIndicesByConn[connId]) {
+          fetchESSystemIndices(connId);
+        }
       }
     } catch (e: any) {
       console.error('Failed to refresh connection:', e);
@@ -3049,10 +3179,14 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
             ) : isElasticsearch ? (
               (() => {
                 const schemaKey = `${c.id}:default:default`;
-                const allObjects = treeObjects[schemaKey] || [];
+                const userObjects = treeObjects[schemaKey] || [];
+                const showSystem = Boolean(showESSystemIndicesByConn[c.id]);
+                const sysObjects = showSystem ? esSystemIndicesByConn[c.id] || [] : [];
+                const allObjects = showSystem ? [...userObjects, ...sysObjects] : userObjects;
                 const objects = allObjects.filter((o) =>
                   !filterText ? true : o.name.toLowerCase().includes(filterText.toLowerCase())
                 );
+                const connAliases = esAliasesByConn[c.id] || {};
                 return (
                   <div>
                     <div className="text-[11px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
@@ -3060,14 +3194,48 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                         <Folder className="h-3 w-3" />
                         <span>indices ({objects.length})</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => handleRefreshConnection(c.id, e)}
-                        className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                        title="Refresh Indices"
-                      >
-                        <RefreshCw className={`h-3 w-3 ${isConnLoading ? 'animate-spin' : ''}`} />
-                      </button>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = !showSystem;
+                            setShowESSystemIndicesByConn((prev) => ({ ...prev, [c.id]: next }));
+                            if (next) {
+                              fetchESSystemIndices(c.id);
+                            }
+                          }}
+                          className={`p-0.5 rounded transition-opacity cursor-pointer text-[9px] font-mono px-1 ${
+                            showSystem
+                              ? 'opacity-100 bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'opacity-0 group-hover/tbl:opacity-100 text-zinc-400 hover:text-white hover:bg-[#2c303c]'
+                          }`}
+                          title={showSystem ? 'Hide System Indices (.*)' : 'Show System Indices (.*)'}
+                        >
+                          .*
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleRefreshConnection(c.id, e)}
+                          className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                          title="Refresh Indices"
+                        >
+                          <RefreshCw className={`h-3 w-3 ${isConnLoading ? 'animate-spin' : ''}`} />
+                        </button>
+                        {!c.isReadOnly && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenCreateTable(c, 'default', 'default');
+                            }}
+                            className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                            title="Create New Index"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {objects.length === 0 && !isConnLoading ? (
                       <div className="text-[11px] text-zinc-500 italic py-1 px-1">
@@ -3084,6 +3252,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                           ? 'bg-rose-500'
                           : '';
                         const isClosed = commentLower.includes('(close)');
+                        const aliases = connAliases[obj.name] || [];
                         return (
                           <div
                             key={obj.name}
@@ -3104,8 +3273,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                               handleItemMouseEnter(e, {
                                 kind: 'table',
                                 title: obj.name,
-                                badge: 'INDEX',
-                                subtitle: `${c.name}${obj.comment ? ` • ${obj.comment}` : ''}${obj.sizePretty ? ` • ${obj.sizePretty}` : ''}`,
+                                badge: obj.name.startsWith('.') ? 'SYSTEM INDEX' : 'INDEX',
+                                subtitle: `${c.name}${obj.comment ? ` • ${obj.comment}` : ''}${obj.sizePretty ? ` • ${obj.sizePretty}` : ''}${aliases.length > 0 ? ` • Aliases: ${aliases.join(', ')}` : ''}`,
                               })
                             }
                             onMouseLeave={handleItemMouseLeave}
@@ -3118,7 +3287,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                             }`}
                           >
                             <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                              <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                              <Table className={`h-3.5 w-3.5 shrink-0 ${obj.name.startsWith('.') ? 'text-amber-400/80' : 'text-emerald-400'}`} />
                               {healthColor && (
                                 <span
                                   className={`h-1.5 w-1.5 rounded-full shrink-0 ${healthColor}`}
@@ -3130,12 +3299,21 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                               </span>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
+                              {aliases.length > 0 && (
+                                <span
+                                  className="text-[9px] font-mono px-1 rounded bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 shrink-0 truncate max-w-[90px]"
+                                  title={`Aliases: ${aliases.join(', ')}`}
+                                >
+                                  → {aliases[0]}
+                                  {aliases.length > 1 ? ` +${aliases.length - 1}` : ''}
+                                </span>
+                              )}
                               {isClosed && (
                                 <span className="text-[9px] font-mono uppercase px-1 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
                                   closed
                                 </span>
                               )}
-                              {typeof obj.rowEstimate === 'number' && !isClosed && (
+                              {typeof obj.rowEstimate === 'number' && obj.rowEstimate >= 0 && !isClosed && (
                                 <span className="text-[9px] font-mono text-zinc-500">
                                   {obj.rowEstimate.toLocaleString()}
                                 </span>
@@ -5063,7 +5241,21 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>New Collection...</span>
                   </button>
                 )
-              ) : contextMenu.connection.driver === 'elasticsearch' ? null : (
+              ) : contextMenu.connection.driver === 'elasticsearch' ? (
+                !contextMenu.connection.isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleOpenCreateTable(contextMenu.connection!, 'default', 'default');
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                    <span>New Index...</span>
+                  </button>
+                )
+              ) : (
                 <button
                   type="button"
                   onClick={() => {
@@ -5259,6 +5451,26 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 >
                   <Activity className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
                   <span>Server &amp; Cluster Info...</span>
+                </button>
+              )}
+
+              {contextMenu.connection.driver === 'elasticsearch' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const connId = contextMenu.connection!.id;
+                    const connName = contextMenu.connection!.name;
+                    closeContextMenu();
+                    setEsInfoModal({
+                      isOpen: true,
+                      connectionId: connId,
+                      connectionName: connName,
+                    });
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Activity className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                  <span>Cluster Health &amp; Info...</span>
                 </button>
               )}
 
@@ -6021,28 +6233,28 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </span>
                   </button>
 
-                  {contextMenu.connection!.driver !== 'elasticsearch' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        closeContextMenu();
-                        handleEditTableStructure(
-                          contextMenu.connection!,
-                          contextMenu.database || 'main',
-                          contextMenu.schema || 'main',
-                          contextMenu.table!.name
-                        );
-                      }}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                    >
-                      <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                      <span>
-                        {contextMenu.connection!.driver === 'qdrant'
-                          ? 'Manage Collection & Indexes...'
-                          : 'Edit Table Structure...'}
-                      </span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleEditTableStructure(
+                        contextMenu.connection!,
+                        contextMenu.database || 'main',
+                        contextMenu.schema || 'main',
+                        contextMenu.table!.name
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                    <span>
+                      {contextMenu.connection!.driver === 'qdrant'
+                        ? 'Manage Collection & Indexes...'
+                        : contextMenu.connection!.driver === 'elasticsearch'
+                        ? 'Manage Index (Mappings, Settings & Shards)...'
+                        : 'Edit Table Structure...'}
+                    </span>
+                  </button>
 
                   <button
                     type="button"
@@ -6925,6 +7137,15 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         connectionId={qdrantCloneModal.connectionId}
         sourceCollection={qdrantCloneModal.collectionName}
         onCloned={() => handleRefreshConnection(qdrantCloneModal.connectionId)}
+      />
+
+      <ElasticsearchInfoModal
+        isOpen={esInfoModal.isOpen}
+        onClose={() => setEsInfoModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={esInfoModal.connectionId}
+        connectionName={esInfoModal.connectionName}
+        isReadOnly={Boolean(connections.find((c) => c.id === esInfoModal.connectionId)?.isReadOnly)}
+        onAliasesChanged={() => fetchESAliases(esInfoModal.connectionId)}
       />
     </div>
   );

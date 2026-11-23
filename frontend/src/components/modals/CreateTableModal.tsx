@@ -38,6 +38,8 @@ import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { QdrantCreateCollectionModal } from './QdrantCreateCollectionModal';
 import { QdrantCollectionModal } from './QdrantCollectionModal';
+import { ElasticsearchCreateIndexModal } from './ElasticsearchCreateIndexModal';
+import { ElasticsearchIndexModal } from './ElasticsearchIndexModal';
 
 export interface ColumnDefinition {
   id: string;
@@ -2525,6 +2527,31 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         connection={connection}
         database={database}
         collectionName={initialTableName || ''}
+        onUpdated={() => onTableUpdated?.(initialTableName || '')}
+      />
+    );
+  }
+
+  if (driver === 'elasticsearch' && !isEditMode) {
+    return (
+      <ElasticsearchCreateIndexModal
+        isOpen={isOpen}
+        onClose={onClose}
+        connection={connection}
+        database={database}
+        onIndexCreated={onTableCreated}
+      />
+    );
+  }
+
+  if (driver === 'elasticsearch' && isEditMode) {
+    return (
+      <ElasticsearchIndexModal
+        isOpen={isOpen}
+        onClose={onClose}
+        connection={connection}
+        database={database}
+        indexName={initialTableName || ''}
         onUpdated={() => onTableUpdated?.(initialTableName || '')}
       />
     );

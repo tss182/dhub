@@ -5,8 +5,8 @@ import { useSettingsStore, CopyFormat } from '../../stores/useSettingsStore';
 import { APP_DEFAULTS } from '../../config/defaults';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
-import { useAlertStore, alertWarning } from '../../stores/useAlertStore';
-import { SchemaService } from '../../../bindings/dhub/internal/services';
+import { useAlertStore, alertWarning, alertSuccess, alertError, confirmDialog } from '../../stores/useAlertStore';
+import { SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
 import { ForeignKeyMeta } from '../../types/domain';
 import { quoteSqlIdentifier } from '../../utils/sqlIdentifier';
 import {
@@ -24,6 +24,7 @@ import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
 import { QdrantPointModal } from '../modals/QdrantPointModal';
 import { QdrantFacetModal } from '../modals/QdrantFacetModal';
+import { ElasticsearchDocumentModal } from '../modals/ElasticsearchDocumentModal';
 import { CopyAsModal } from '../modals/CopyAsModal';
 
 const ExportModal = lazy(() =>
@@ -235,6 +236,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     initialRow?: any[];
   }>({ isOpen: false, mode: 'insert' });
   const [qdrantFacetCol, setQdrantFacetCol] = useState<string | null>(null);
+  const [esDocModal, setEsDocModal] = useState<{
+    isOpen: boolean;
+    mode: 'insert' | 'edit' | 'clone';
+    initialRow?: any[];
+  }>({ isOpen: false, mode: 'insert' });
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
@@ -2692,6 +2698,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
             ? () => setQdrantPointModal({ isOpen: true, mode: 'insert' })
             : undefined
         }
+        onOpenESAddDocument={
+          isElasticsearch && tableName
+            ? () => setEsDocModal({ isOpen: true, mode: 'insert' })
+            : undefined
+        }
         onAddRow={handleAddRow}
         onDeleteActiveRow={handleDeleteActiveRow}
         onCopyRawSql={handleCopyRawSql}
@@ -3262,6 +3273,58 @@ export const DataGrid: React.FC<DataGridProps> = ({
               }
             : undefined
         }
+        onOpenESDocumentModal={
+          isElasticsearch && tableName
+            ? (rowIdx, mode) => {
+                const rowInArray = rowIdx >= (startOffset || 0) ? rowIdx - (startOffset || 0) : rowIdx;
+                const targetRow = rows[rowInArray] || rows[rowIdx];
+                setEsDocModal({ isOpen: true, mode, initialRow: targetRow });
+              }
+            : undefined
+        }
+        onRemoveESFieldFromDoc={
+          isElasticsearch && tableName && connectionId
+            ? async (rowIdx, colName) => {
+                const rowInArray = rowIdx >= (startOffset || 0) ? rowIdx - (startOffset || 0) : rowIdx;
+                const targetRow = rows[rowInArray] || rows[rowIdx];
+                const idColIdx = columns.findIndex((c) => c.name === '_id');
+                const docId = idColIdx !== -1 && targetRow ? String(targetRow[idColIdx] ?? '') : '';
+                if (!docId) {
+                  alertWarning('Cannot remove field: document _id is missing.', 'Missing _id');
+                  return;
+                }
+                const ok = await confirmDialog({
+                  title: 'Remove Field from Document',
+                  message: `Remove field "${colName}" from document "${docId}" in index "${tableName}" via Painless script?`,
+                  confirmLabel: 'Remove Field',
+                  isDanger: true,
+                });
+                if (!ok) return;
+                try {
+                  const scriptPayload = {
+                    script: {
+                      source: 'ctx._source.remove(params.f)',
+                      lang: 'painless',
+                      params: { f: colName },
+                    },
+                  };
+                  await QueryService.ExecuteQuery({
+                    executionId: `es-rm-field-${Date.now()}`,
+                    connectionId,
+                    database: database || 'default',
+                    schema: schema || 'default',
+                    sql: `POST /${encodeURIComponent(tableName)}/_update/${encodeURIComponent(docId)}?refresh=wait_for\n${JSON.stringify(scriptPayload)}`,
+                    limit: 10,
+                    offset: 0,
+                  } as any);
+                  alertSuccess(`Removed field "${colName}" from document "${docId}".`, 'Document Updated');
+                  onRefresh?.();
+                } catch (e: any) {
+                  alertError(e?.message || String(e), 'Remove Field Failed');
+                }
+              }
+            : undefined
+        }
         onSetSelectedToNull={handleSetSelectedToNull}
         onToggleFreeze={handleToggleFreeze}
         onUnfreezeAll={() => setFrozenColumns([])}
@@ -3405,6 +3468,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
             setWhereInput(whereExpr);
             onApplyWhere?.(whereExpr);
           }}
+        />
+      )}
+
+      {isElasticsearch && tableName && (
+        <ElasticsearchDocumentModal
+          isOpen={esDocModal.isOpen}
+          mode={esDocModal.mode}
+          connectionId={connectionId || ''}
+          database={database || 'default'}
+          schema={schema || 'default'}
+          indexName={tableName}
+          columns={columns}
+          initialRow={esDocModal.initialRow}
+          onClose={() => setEsDocModal({ isOpen: false, mode: 'insert' })}
+          onSaved={() => onRefresh?.()}
         />
       )}
 

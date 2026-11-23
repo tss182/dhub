@@ -365,7 +365,7 @@ export const ConnectionDialog: React.FC = () => {
       setConnections(updated as any);
       moveConnectionToFolder(id, folderId || null);
       setPendingFolderIdForNewConn(null);
-      const defaultDb = driver === 'qdrant' ? 'default' : 'main';
+      const defaultDb = driver === 'qdrant' || driver === 'elasticsearch' ? 'default' : 'main';
       setActiveConnection(id, databaseName || defaultDb, defaultDb);
       setConnectionDialogOpen(false);
     } catch (e: any) {
@@ -392,7 +392,8 @@ export const ConnectionDialog: React.FC = () => {
       setConnections(updated as any);
       if (activeConnectionId === editingConnectionId) {
         if (updated && updated.length > 0) {
-          const nextDb = updated[0].driver === 'qdrant' ? 'default' : 'main';
+          const nextDb =
+            updated[0].driver === 'qdrant' || updated[0].driver === 'elasticsearch' ? 'default' : 'main';
           setActiveConnection(updated[0].id, updated[0].databaseName || nextDb, nextDb);
         } else {
           setActiveConnection('', '', '');
@@ -684,7 +685,7 @@ export const ConnectionDialog: React.FC = () => {
                         {driver === 'qdrant'
                           ? 'Host / Qdrant URL'
                           : driver === 'elasticsearch'
-                          ? 'Host / Elasticsearch URL'
+                          ? 'Host / Elasticsearch URL / Cloud ID'
                           : 'Host'}
                       </label>
                       <input
@@ -693,7 +694,7 @@ export const ConnectionDialog: React.FC = () => {
                           driver === 'qdrant'
                             ? 'localhost or https://xxx.cloud.qdrant.io:6333'
                             : driver === 'elasticsearch'
-                            ? 'localhost or https://xxx.es.cloud.es.io:9200'
+                            ? 'localhost, https://xxx.es.cloud.es.io:9200, or cluster:dXMt...'
                             : undefined
                         }
                         value={host}
@@ -719,6 +720,24 @@ export const ConnectionDialog: React.FC = () => {
                                 setSslMode('disable');
                               }
                             } catch {}
+                          } else if (
+                            driver === 'elasticsearch' &&
+                            val.includes(':') &&
+                            !val.includes('://')
+                          ) {
+                            // Detect Elastic Cloud ID (<name>:<base64(domain$es_uuid$...)>)
+                            const colonIdx = val.indexOf(':');
+                            const b64 = val.slice(colonIdx + 1).trim();
+                            if (b64.length > 16) {
+                              try {
+                                const decoded = atob(b64);
+                                const parts = decoded.split('$');
+                                if (parts.length >= 2 && parts[0].includes('.')) {
+                                  setPort(443);
+                                  if (sslMode === 'disable') setSslMode('verify-full');
+                                }
+                              } catch {}
+                            }
                           } else if (
                             (driver === 'qdrant' || driver === 'elasticsearch') &&
                             !val.includes('://') &&
@@ -754,16 +773,125 @@ export const ConnectionDialog: React.FC = () => {
                         className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
                       />
                     </div>
+                  ) : driver === 'elasticsearch' ? (
+                    (() => {
+                      const esAuthMode =
+                        username === '__apikey__'
+                          ? 'apikey'
+                          : username === '__bearer__'
+                          ? 'bearer'
+                          : !username && !password
+                          ? 'none'
+                          : 'basic';
+                      return (
+                        <div className="space-y-2.5">
+                          <div>
+                            <label className="block text-[11px] text-zinc-400 mb-1">
+                              Authentication Mode
+                            </label>
+                            <div className="grid grid-cols-4 gap-1.5">
+                              {(
+                                [
+                                  { id: 'basic', label: 'Basic Auth' },
+                                  { id: 'apikey', label: 'API Key' },
+                                  { id: 'bearer', label: 'Bearer Token' },
+                                  { id: 'none', label: 'No Auth' },
+                                ] as const
+                              ).map((m) => (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onClick={() => {
+                                    if (m.id === 'basic') {
+                                      setUsername(username.startsWith('__') || !username ? 'elastic' : username);
+                                    } else if (m.id === 'apikey') {
+                                      setUsername('__apikey__');
+                                    } else if (m.id === 'bearer') {
+                                      setUsername('__bearer__');
+                                    } else {
+                                      setUsername('');
+                                      setPassword('');
+                                    }
+                                  }}
+                                  className={`py-1.5 px-2 rounded border text-[11px] font-medium transition-colors cursor-pointer ${
+                                    esAuthMode === m.id
+                                      ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                                      : 'border-[#272932] bg-[#121317] text-zinc-400 hover:border-zinc-600'
+                                  }`}
+                                >
+                                  {m.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {esAuthMode === 'basic' && (
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[11px] text-zinc-400 mb-1">Username</label>
+                                <input
+                                  type="text"
+                                  placeholder="elastic"
+                                  value={username.startsWith('__') ? '' : username}
+                                  onChange={(e) => setUsername(e.target.value)}
+                                  className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] text-zinc-400 mb-1">Password</label>
+                                <input
+                                  type="password"
+                                  placeholder="••••••••"
+                                  value={password}
+                                  onChange={(e) => setPassword(e.target.value)}
+                                  className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {esAuthMode === 'apikey' && (
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">
+                                Encoded API Key or <code className="text-zinc-300">id:api_key</code>
+                              </label>
+                              <input
+                                type="password"
+                                placeholder="Base64 encoded key or key_id:secret_key"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                              />
+                            </div>
+                          )}
+
+                          {esAuthMode === 'bearer' && (
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">
+                                Bearer / Service Account Token
+                              </label>
+                              <input
+                                type="password"
+                                placeholder="AAEAAWVsYXN0aWM..."
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
                   ) : (
                     <>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="block text-[11px] text-zinc-400 mb-1">
-                            User {(driver === 'redis' || driver === 'elasticsearch') && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
+                            User {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
                           </label>
                           <input
                             type="text"
-                            placeholder={driver === 'redis' ? 'default (optional)' : driver === 'elasticsearch' ? 'elastic (or empty for API Key)' : 'e.g. root'}
+                            placeholder={driver === 'redis' ? 'default (optional)' : 'e.g. root'}
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
@@ -771,9 +899,8 @@ export const ConnectionDialog: React.FC = () => {
                         </div>
                         <div>
                           <label className="block text-[11px] text-zinc-400 mb-1">
-                            {driver === 'elasticsearch' ? 'Password / API Key' : 'Password'}{' '}
+                            Password{' '}
                             {driver === 'redis' && <span className="text-zinc-500 text-[10px] lowercase">(AUTH)</span>}
-                            {driver === 'elasticsearch' && <span className="text-zinc-500 text-[10px] lowercase">(optional)</span>}
                           </label>
                           <input
                             type="password"
@@ -785,8 +912,7 @@ export const ConnectionDialog: React.FC = () => {
                         </div>
                       </div>
 
-                      {driver !== 'elasticsearch' && (
-                        <div>
+                      <div>
                         <label className="block text-[11px] text-zinc-400 mb-1">
                           {driver === 'redis' ? 'Database Index' : driver === 'oracle' ? 'Service Name' : 'Database Name'}{' '}
                           {(driver === 'mysql' || driver === 'mariadb') && (
@@ -811,14 +937,13 @@ export const ConnectionDialog: React.FC = () => {
                               ? 'default'
                               : driver === 'oracle'
                               ? 'e.g. ORCL or FREEPDB1'
-                          : 'e.g. postgres'
-                      }
-                      value={databaseName}
-                      onChange={(e) => setDatabaseName(e.target.value)}
-                      className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
-                    />
-                  </div>
-                      )}
+                              : 'e.g. postgres'
+                          }
+                          value={databaseName}
+                          onChange={(e) => setDatabaseName(e.target.value)}
+                          className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                        />
+                      </div>
                     </>
                   )}
                 </div>
@@ -968,11 +1093,19 @@ export const ConnectionDialog: React.FC = () => {
               {sslMode !== 'disable' && (
                 <div className="space-y-3 pt-1">
                   <div>
-                    <label className="block text-[11px] text-zinc-400 mb-1">CA Certificate (Optional)</label>
+                    <label className="block text-[11px] text-zinc-400 mb-1">
+                      {driver === 'elasticsearch'
+                        ? 'CA Certificate File Path or SHA-256 Fingerprint (Optional)'
+                        : 'CA Certificate (Optional)'}
+                    </label>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
-                        placeholder="/path/to/server-ca.pem"
+                        placeholder={
+                          driver === 'elasticsearch'
+                            ? '/path/to/http_ca.crt or 64-char SHA-256 hex fingerprint'
+                            : '/path/to/server-ca.pem'
+                        }
                         value={sslCaPath}
                         onChange={(e) => setSslCaPath(e.target.value)}
                         className="flex-1 rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 font-mono text-[11px] focus:border-blue-500 focus:outline-none"
