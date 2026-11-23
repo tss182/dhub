@@ -115,9 +115,11 @@ func (s *LocalStore) SaveSchemaCacheBatch(ctx context.Context, items []CachedObj
 }
 
 func (s *LocalStore) GetCachedObjects(ctx context.Context, connectionID, databaseName, schemaName string) ([]CachedObject, error) {
-	query := `SELECT connection_id, database_name, schema_name, object_type, object_name, columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
-		FROM schema_cache WHERE connection_id = ? AND database_name = ? AND schema_name = ?
-		ORDER BY object_type, object_name`
+	query := `SELECT sc.connection_id, sc.database_name, sc.schema_name, sc.object_type, sc.object_name, sc.columns_json, sc.indexes_json, sc.foreign_keys_json, sc.row_estimate, sc.synced_at, COALESCE(c.driver, '')
+		FROM schema_cache sc
+		LEFT JOIN connections c ON c.id = sc.connection_id
+		WHERE sc.connection_id = ? AND sc.database_name = ? AND sc.schema_name = ?
+		ORDER BY sc.object_type, sc.object_name`
 
 	rows, err := s.db.QueryContext(ctx, query, connectionID, databaseName, schemaName)
 	if err != nil {
@@ -129,14 +131,15 @@ func (s *LocalStore) GetCachedObjects(ctx context.Context, connectionID, databas
 	seenKeys := make(map[string]bool)
 	for rows.Next() {
 		var o CachedObject
-		var colJSON, idxJSON, fkJSON string
-		if err := rows.Scan(&o.ConnectionID, &o.DatabaseName, &o.SchemaName, &o.ObjectType, &o.ObjectName, &colJSON, &idxJSON, &fkJSON, &o.RowEstimate, &o.SyncedAt); err != nil {
+		var colJSON, idxJSON, fkJSON, drvName string
+		if err := rows.Scan(&o.ConnectionID, &o.DatabaseName, &o.SchemaName, &o.ObjectType, &o.ObjectName, &colJSON, &idxJSON, &fkJSON, &o.RowEstimate, &o.SyncedAt, &drvName); err != nil {
 			continue
 		}
 
-		// Normalize schema for deduplication so duplicate variations (e.g. "", "main", or database_name) collapse
+		// Normalize schema for deduplication so duplicate variations (e.g. "", "main", or database_name for single-schema engines) collapse
 		normSchema := o.SchemaName
-		if normSchema == o.DatabaseName || normSchema == "main" {
+		isMultiSchema := drvName == "postgres" || drvName == "mssql" || drvName == "sqlserver" || drvName == "oracle"
+		if normSchema == "main" || (!isMultiSchema && normSchema == o.DatabaseName) {
 			normSchema = ""
 		}
 		dedupKey := fmt.Sprintf("%s:%s:%s:%s:%s", o.ConnectionID, o.DatabaseName, normSchema, o.ObjectType, o.ObjectName)
@@ -175,33 +178,37 @@ func (s *LocalStore) SearchEverywhere(ctx context.Context, connectionID, querySt
 	var err error
 
 	if connectionID != "" {
-		query := `SELECT connection_id, database_name, schema_name, object_type, object_name, columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
-			FROM schema_cache WHERE connection_id = ? AND (object_name LIKE ? OR columns_json LIKE ?)
+		query := `SELECT sc.connection_id, sc.database_name, sc.schema_name, sc.object_type, sc.object_name, sc.columns_json, sc.indexes_json, sc.foreign_keys_json, sc.row_estimate, sc.synced_at, COALESCE(c.driver, '')
+			FROM schema_cache sc
+			LEFT JOIN connections c ON c.id = sc.connection_id
+			WHERE sc.connection_id = ? AND (sc.object_name LIKE ? OR sc.schema_name LIKE ? OR sc.columns_json LIKE ?)
 			ORDER BY
 				CASE
-					WHEN LOWER(object_name) = LOWER(?) THEN 0
-					WHEN LOWER(object_name) LIKE LOWER(?) THEN 1
-					WHEN LOWER(object_name) LIKE LOWER(?) THEN 2
+					WHEN LOWER(sc.object_name) = LOWER(?) THEN 0
+					WHEN LOWER(sc.object_name) LIKE LOWER(?) THEN 1
+					WHEN LOWER(sc.object_name) LIKE LOWER(?) THEN 2
 					ELSE 3
 				END,
-				LENGTH(object_name) ASC,
-				object_name ASC
+				LENGTH(sc.object_name) ASC,
+				sc.object_name ASC
 			LIMIT ?`
-		rows, err = s.db.QueryContext(ctx, query, connectionID, likeQuery, likeQuery, queryStr, prefixQuery, likeQuery, limit)
+		rows, err = s.db.QueryContext(ctx, query, connectionID, likeQuery, likeQuery, likeQuery, queryStr, prefixQuery, likeQuery, limit)
 	} else {
-		query := `SELECT connection_id, database_name, schema_name, object_type, object_name, columns_json, indexes_json, foreign_keys_json, row_estimate, synced_at
-			FROM schema_cache WHERE (object_name LIKE ? OR columns_json LIKE ?)
+		query := `SELECT sc.connection_id, sc.database_name, sc.schema_name, sc.object_type, sc.object_name, sc.columns_json, sc.indexes_json, sc.foreign_keys_json, sc.row_estimate, sc.synced_at, COALESCE(c.driver, '')
+			FROM schema_cache sc
+			LEFT JOIN connections c ON c.id = sc.connection_id
+			WHERE (sc.object_name LIKE ? OR sc.schema_name LIKE ? OR sc.columns_json LIKE ?)
 			ORDER BY
 				CASE
-					WHEN LOWER(object_name) = LOWER(?) THEN 0
-					WHEN LOWER(object_name) LIKE LOWER(?) THEN 1
-					WHEN LOWER(object_name) LIKE LOWER(?) THEN 2
+					WHEN LOWER(sc.object_name) = LOWER(?) THEN 0
+					WHEN LOWER(sc.object_name) LIKE LOWER(?) THEN 1
+					WHEN LOWER(sc.object_name) LIKE LOWER(?) THEN 2
 					ELSE 3
 				END,
-				LENGTH(object_name) ASC,
-				object_name ASC
+				LENGTH(sc.object_name) ASC,
+				sc.object_name ASC
 			LIMIT ?`
-		rows, err = s.db.QueryContext(ctx, query, likeQuery, likeQuery, queryStr, prefixQuery, likeQuery, limit)
+		rows, err = s.db.QueryContext(ctx, query, likeQuery, likeQuery, likeQuery, queryStr, prefixQuery, likeQuery, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -212,14 +219,15 @@ func (s *LocalStore) SearchEverywhere(ctx context.Context, connectionID, querySt
 	seenKeys := make(map[string]bool)
 	for rows.Next() {
 		var o CachedObject
-		var colJSON, idxJSON, fkJSON string
-		if err := rows.Scan(&o.ConnectionID, &o.DatabaseName, &o.SchemaName, &o.ObjectType, &o.ObjectName, &colJSON, &idxJSON, &fkJSON, &o.RowEstimate, &o.SyncedAt); err != nil {
+		var colJSON, idxJSON, fkJSON, drvName string
+		if err := rows.Scan(&o.ConnectionID, &o.DatabaseName, &o.SchemaName, &o.ObjectType, &o.ObjectName, &colJSON, &idxJSON, &fkJSON, &o.RowEstimate, &o.SyncedAt, &drvName); err != nil {
 			continue
 		}
 
-		// Normalize schema for deduplication so duplicate variations (e.g. "", "main", or database_name) collapse
+		// Normalize schema for deduplication so duplicate variations (e.g. "", "main", or database_name for single-schema engines) collapse
 		normSchema := o.SchemaName
-		if normSchema == o.DatabaseName || normSchema == "main" {
+		isMultiSchema := drvName == "postgres" || drvName == "mssql" || drvName == "sqlserver" || drvName == "oracle"
+		if normSchema == "main" || (!isMultiSchema && normSchema == o.DatabaseName) {
 			normSchema = ""
 		}
 		dedupKey := fmt.Sprintf("%s:%s:%s:%s:%s", o.ConnectionID, o.DatabaseName, normSchema, o.ObjectType, o.ObjectName)

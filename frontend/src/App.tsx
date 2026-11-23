@@ -842,14 +842,28 @@ export function App() {
     if (conn?.isReadOnly || driver === 'redis') return;
 
     const isView = objectType === 'view';
+    const isMatView = objectType === 'materialized_view';
     const isQdrant = driver === 'qdrant';
     const isElasticsearch = driver === 'elasticsearch' || driver === 'es';
     const isMongo = driver === 'mongodb' || driver === 'mongo';
-    const keyword = isQdrant || isMongo ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
+    const keyword =
+      isQdrant || isMongo
+        ? 'COLLECTION'
+        : isElasticsearch
+        ? 'INDEX'
+        : isMatView
+        ? 'MATERIALIZED VIEW'
+        : isView
+        ? 'VIEW'
+        : 'TABLE';
     const tableName = tab.table;
 
     const ok = await confirmDialog({
-      title: isQdrant ? 'Drop Collection' : isElasticsearch ? 'Delete Index' : `Drop ${isView ? 'View' : 'Table'}`,
+      title: isQdrant
+        ? 'Drop Collection'
+        : isElasticsearch
+        ? 'Delete Index'
+        : `Drop ${isMatView ? 'Materialized View' : isView ? 'View' : 'Table'}`,
       message: isElasticsearch
         ? `Are you sure you want to delete index "${tableName}"? All documents and mappings in this index will be permanently lost. This action cannot be undone.`
         : `Are you sure you want to DROP ${keyword.toLowerCase()} "${tableName}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
@@ -857,7 +871,7 @@ export function App() {
         database: targetDb,
         schema: targetSchema,
         targetName: tableName,
-        targetLabel: isQdrant ? 'Collection' : isElasticsearch ? 'Index' : isView ? 'View' : 'Table',
+        targetLabel: isQdrant ? 'Collection' : isElasticsearch ? 'Index' : isMatView ? 'Materialized View' : isView ? 'View' : 'Table',
       }),
       confirmLabel: isElasticsearch ? 'Delete Index' : `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
@@ -1911,7 +1925,11 @@ export function App() {
     }
   }, [activeTab?.id, activeTab?.database, activeTab?.schema, activeTab?.connectionId]);
 
-  const handleExecuteQuery = async (sql: string, explicitDb?: string) => {
+  const handleExecuteQuery = async (
+    sql: string,
+    explicitDb?: string,
+    targetBottomTab: 'result' | 'explain' = 'result'
+  ) => {
     const currentTab = useWorkbenchStore
       .getState()
       .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
@@ -1988,7 +2006,7 @@ export function App() {
           `[${targetDb}] Completed in ${res?.elapsedMs || 0}ms (${res?.rowsAffected || res?.rows?.length || 0} rows)`
         );
       }
-      setActiveBottomTab('result');
+      setActiveBottomTab(targetBottomTab);
     } catch (e: any) {
       setStatusMessage(`[${targetDb}] Error: ${e?.message || String(e)}`);
       setQueryResult({
@@ -3008,8 +3026,7 @@ export function App() {
                     onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || effectiveDb)}
                     onCancel={() => handleCancelQuery(activeTab.id)}
                     onExplain={(explainSql) => {
-                      handleExecuteQuery(explainSql, effectiveDb);
-                      setActiveBottomTab('explain');
+                      handleExecuteQuery(explainSql, effectiveDb, 'explain');
                     }}
                     txStatus={txStatusByTab[activeTab.id]}
                     onTxStatusChange={(st) => {
@@ -3087,10 +3104,12 @@ export function App() {
                             type="button"
                             onClick={() => {
                               const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                              const fallbackDb = conn?.driver === 'postgres' ? 'postgres' : 'main';
+                              const fallbackSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : 'main';
                               openEditTableModal(
                                 conn,
-                                activeTab.database || 'main',
-                                activeTab.schema || 'main',
+                                activeTab.database || fallbackDb,
+                                activeTab.schema || fallbackSchema,
                                 activeTab.table
                               );
                             }}
@@ -3109,11 +3128,13 @@ export function App() {
                             type="button"
                             onClick={() => {
                               const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                              const fallbackDb = conn?.driver === 'postgres' ? 'postgres' : 'main';
+                              const fallbackSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : 'main';
                               openDdlModal({
                                 scope: 'table',
                                 conn,
-                                database: activeTab.database || 'main',
-                                schema: activeTab.schema || 'main',
+                                database: activeTab.database || fallbackDb,
+                                schema: activeTab.schema || fallbackSchema,
                                 tableName: activeTab.table,
                               });
                             }}
@@ -3266,7 +3287,7 @@ export function App() {
                       <Download className="h-3.5 w-3.5 text-blue-400" />
                     </button>
 
-                    {activeTab.table && !tableConn?.isReadOnly && (
+                    {activeTab.table && !tableConn?.isReadOnly && resolveTableTabMeta(activeTab).objectType !== 'view' && resolveTableTabMeta(activeTab).objectType !== 'materialized_view' && (
                       <>
                         <button
                           type="button"
@@ -3315,7 +3336,7 @@ export function App() {
                   {tableDataByTab[activeTab.id]?.isLoading && (!tableDataByTab[activeTab.id]?.rows || tableDataByTab[activeTab.id]?.rows.length === 0) && !tableDataByTab[activeTab.id]?.error ? (
                     <div className="flex h-full items-center justify-center text-xs text-zinc-400 gap-2">
                       <RefreshCw className="h-4 w-4 animate-spin text-blue-400" />
-                      <span>Loading rows from `{activeTab.table}`...</span>
+                      <span>Loading rows from "{activeTab.table}"...</span>
                     </div>
                   ) : (() => {
                     const rawColumns = tableDataByTab[activeTab.id]?.columns || [];

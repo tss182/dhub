@@ -39,7 +39,13 @@ export const useGridEditStore = create<GridEditState>((set, get) => ({
         };
       } else {
         const updatedChanges = { ...(existing?.changes || {}), [column]: newValue };
-        if (originalRow[column] === newValue) {
+        const orig = originalRow[column];
+        const isSameScalar =
+          orig === newValue ||
+          ((typeof orig === 'number' || typeof orig === 'boolean') &&
+            typeof newValue === 'string' &&
+            String(orig) === newValue);
+        if (isSameScalar) {
           delete updatedChanges[column];
         }
         if (Object.keys(updatedChanges).length === 0) {

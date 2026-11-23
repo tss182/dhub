@@ -3,6 +3,7 @@ package driver
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -70,10 +71,36 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 		return nil
 	}
 	if b, ok := v.([]byte); ok {
+		if dialect == "postgres" && strings.EqualFold(dataType, "BYTEA") {
+			return `\x` + hex.EncodeToString(b)
+		}
 		return string(b)
 	}
 	if t, ok := v.(time.Time); ok {
 		lowerType := strings.ToLower(dataType)
+		if dialect == "postgres" {
+			if lowerType == "date" {
+				return t.Format("2006-01-02")
+			}
+			if lowerType == "timestamptz" {
+				if t.Nanosecond() != 0 {
+					return t.Format("2006-01-02 15:04:05.999999Z07:00")
+				}
+				return t.Format("2006-01-02 15:04:05Z07:00")
+			}
+			if lowerType == "timetz" {
+				if t.Nanosecond() != 0 {
+					return t.Format("15:04:05.999999Z07:00")
+				}
+				return t.Format("15:04:05Z07:00")
+			}
+			if lowerType == "time" {
+				if t.Nanosecond() != 0 {
+					return t.Format("15:04:05.999999")
+				}
+				return t.Format("15:04:05")
+			}
+		}
 		if t.Nanosecond() != 0 {
 			return t.Format("2006-01-02 15:04:05.000000")
 		}
@@ -83,7 +110,7 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 		}
 		return t.Format("2006-01-02 15:04:05")
 	}
-	if dialect == "clickhouse" {
+	if dialect == "clickhouse" || dialect == "postgres" {
 		const maxSafeJSInt = int64(9007199254740991)
 		const maxSafeJSUint = uint64(9007199254740991)
 		switch val := v.(type) {
@@ -129,7 +156,7 @@ func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest
 // ExecuteStatementsWithDialect executes statements with dialect-specific pagination support.
 func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req QueryRequest, dialect string) (*QueryResult, error) {
 	start := time.Now()
-	statements := SplitStatements(req.SQL)
+	statements := SplitStatementsForDialect(req.SQL, dialect)
 	if len(statements) == 0 {
 		return &QueryResult{
 			ExecutionID: req.ExecutionID,
@@ -227,6 +254,10 @@ func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req Q
 					rowValues[vIdx] = normalizeScannedValue(v, columns[vIdx].DataType, dialect)
 				}
 				resultRows = append(resultRows, rowValues)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("error in statement %d: %w\nSQL: %s", i+1, err, TruncateSQL(stmt, 100))
 			}
 			rows.Close()
 

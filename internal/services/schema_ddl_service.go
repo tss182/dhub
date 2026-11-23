@@ -86,11 +86,19 @@ func (s *SchemaService) GetDatabaseDDL(connectionID, database, schema string) (s
 		}
 
 		for _, obj := range ordered {
-			tStruct, structErr := drv.GetTableStructure(ctx, database, sch, obj.Name)
-			if structErr != nil || tStruct == nil {
-				continue
+			var ddl string
+			if driverName == "postgres" && (obj.Type == "view" || obj.Type == "materialized_view") {
+				objDDL, dErr := s.GetObjectDDL(connectionID, database, sch, obj.Type, obj.Name)
+				if dErr == nil {
+					ddl = strings.TrimSpace(objDDL)
+				}
+			} else {
+				tStruct, structErr := drv.GetTableStructure(ctx, database, sch, obj.Name)
+				if structErr != nil || tStruct == nil {
+					continue
+				}
+				ddl = strings.TrimSpace(tStruct.DDL)
 			}
-			ddl := strings.TrimSpace(tStruct.DDL)
 			if ddl == "" {
 				continue
 			}
@@ -230,13 +238,15 @@ func (s *SchemaService) GetObjectDDL(connectionID, database, schema, objectType,
 			q := fmt.Sprintf(`SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '%s' AND t.tgname = '%s' LIMIT 1`, escLit(sch), escLit(objName))
 			return execSingleCell(q, 0)
 		case "view", "materialized_view":
-			q := fmt.Sprintf(`SELECT pg_get_viewdef('"%s"."%s"'::regclass, true)`, escLit(sch), escLit(objName))
+			escIdent := func(v string) string {
+				return strings.ReplaceAll(v, `"`, `""`)
+			}
+			q := fmt.Sprintf(`SELECT pg_get_viewdef('"%s"."%s"'::regclass, true)`, escLit(escIdent(sch)), escLit(escIdent(objName)))
 			if ddl, err := execSingleCell(q, 0); err == nil && ddl != "" {
-				kw := "VIEW"
 				if objType == "materialized_view" {
-					kw = "MATERIALIZED VIEW"
+					return fmt.Sprintf("CREATE MATERIALIZED VIEW %s.%s AS\n%s", quoteIdentifier(drvName, sch), quoteIdentifier(drvName, objName), ddl), nil
 				}
-				return fmt.Sprintf("CREATE OR REPLACE %s %s.%s AS\n%s", kw, quoteIdentifier(drvName, sch), quoteIdentifier(drvName, objName), ddl), nil
+				return fmt.Sprintf("CREATE OR REPLACE VIEW %s.%s AS\n%s", quoteIdentifier(drvName, sch), quoteIdentifier(drvName, objName), ddl), nil
 			}
 		case "sequence":
 			q := fmt.Sprintf(`SELECT 'CREATE SEQUENCE ' || quote_ident(schemaname) || '.' || quote_ident(sequencename) || ' INCREMENT BY ' || increment_by || ' MINVALUE ' || min_value || ' MAXVALUE ' || max_value || ' START WITH ' || start_value || ';' FROM pg_sequences WHERE schemaname = '%s' AND sequencename = '%s' LIMIT 1`, escLit(sch), escLit(objName))

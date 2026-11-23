@@ -254,23 +254,38 @@ export function generateMockValue(
   if (t.includes('bool')) {
     return rowIdx % 2 === 0;
   }
-  if (t === 'objectid' || t === 'oid') {
+  if ((col as any).enumValues && Array.isArray((col as any).enumValues) && (col as any).enumValues.length > 0) {
+    const vals = (col as any).enumValues as string[];
+    return vals[rowIdx % vals.length];
+  }
+  if (t === 'objectid') {
     const ts = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
     const rand = Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
     return `${ts}${rand}`;
+  }
+  if (t === 'oid') {
+    return 10000 + rowIdx;
   }
   if (t === 'point_id' || t.includes('uuid')) {
     return crypto.randomUUID
       ? crypto.randomUUID()
       : `00000000-0000-4000-8000-${String(rowIdx + 1).padStart(12, '0')}`;
   }
+  if (t.startsWith('sparsevec')) {
+    const dimMatch = t.match(/sparsevec\s*\(\s*(\d+)/);
+    const dims = dimMatch ? Math.max(4, Number(dimMatch[1])) : 10;
+    const i1 = (rowIdx % Math.max(1, dims - 1)) + 1;
+    const i2 = ((rowIdx + 1) % Math.max(1, dims - 1)) + 1;
+    if (i1 === i2) return `{${i1}:0.5}/${dims}`;
+    return `{${Math.min(i1, i2)}:0.45,${Math.max(i1, i2)}:0.75}/${dims}`;
+  }
   if (t === 'sparse_vector' || t.includes('sparse')) {
     const indices = Array.from({ length: 4 }, (_, i) => (rowIdx * 7 + i * 13 + 1) % 1000);
     const values = indices.map(() => Number((Math.random() * 0.9 + 0.1).toFixed(4)));
     return JSON.stringify({ indices, values });
   }
-  if (t.startsWith('vector') || (col.rawType || '').toLowerCase() === 'vector') {
-    const dimMatch = t.match(/vector\s*\(\s*(\d+)/);
+  if (t.startsWith('vector') || t.startsWith('halfvec') || (col.rawType || '').toLowerCase() === 'vector' || (col.rawType || '').toLowerCase() === 'halfvec') {
+    const dimMatch = t.match(/(?:vector|halfvec)\s*\(\s*(\d+)/);
     const dims = dimMatch ? Math.max(1, Number(dimMatch[1])) : 4;
     const genNormVec = () => {
       if (t.includes('uint8')) {
@@ -285,21 +300,47 @@ export function generateMockValue(
     }
     return JSON.stringify(genNormVec());
   }
+  if (t.endsWith('[]') || t === 'array') {
+    const rt = (col.rawType || '').toLowerCase();
+    if (rt.startsWith('_int') || t.includes('int')) return `{${rowIdx + 1},${rowIdx + 2}}`;
+    if (rt === '_bool' || t.includes('bool')) return `{${rowIdx % 2 === 0 ? 'true' : 'false'}}`;
+    if (rt === '_uuid' || t.includes('uuid')) {
+      const u = crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(rowIdx + 1).padStart(12, '0')}`;
+      return `{${u}}`;
+    }
+    if (t === 'array' && !rt.startsWith('_')) {
+      return [`tag_${(rowIdx % 5) + 1}`, `item_${rowIdx + 1}`];
+    }
+    return `{tag_${(rowIdx % 5) + 1},item_${rowIdx + 1}}`;
+  }
+  if (t === 'interval') {
+    return `${(rowIdx % 24) + 1} hours`;
+  }
+  if (t === 'point') {
+    return `(${(rowIdx % 50) + 0.5},${(rowIdx % 50) + 1.5})`;
+  }
+  if (t === 'inet' || t === 'cidr' || t === 'ip') {
+    return `192.168.${(rowIdx % 254) + 1}.${((rowIdx * 7) % 253) + 1}`;
+  }
+  if (t === 'macaddr' || t === 'macaddr8') {
+    const b = (n: number) => (n % 256).toString(16).padStart(2, '0');
+    return `02:00:00:${b(rowIdx >> 16)}:${b(rowIdx >> 8)}:${b(rowIdx)}`;
+  }
+  if (t === 'bytea') {
+    return `\\x${(rowIdx + 1).toString(16).padStart(4, '0')}`;
+  }
+  if (t.startsWith('bit') || t.startsWith('varbit')) {
+    const m = t.match(/\((\d+)\)/);
+    const bits = m ? Math.min(32, Math.max(1, Number(m[1]))) : 4;
+    return (rowIdx % (1 << Math.min(bits, 8))).toString(2).padStart(bits, '0').slice(0, bits);
+  }
   if (
-    t.includes('int') ||
-    t.includes('serial') ||
-    t.includes('number') ||
-    t.includes('numeric') ||
-    t.includes('decimal') ||
-    t.includes('float') ||
-    t.includes('double') ||
-    t === 'long' ||
-    t === 'unsigned_long' ||
-    t === 'short' ||
-    t === 'byte'
+    /\b(int|int2|int4|int8|smallint|integer|bigint|serial|bigserial|smallserial|number|numeric|decimal|float|float4|float8|double|real|long|unsigned_long|short|byte|money)\b/.test(t)
   ) {
+    const isIntegerOnly = /\b(int|int2|int4|int8|smallint|integer|bigint|serial|bigserial|smallserial|long|unsigned_long|short|byte)\b/.test(t);
     if (name.includes('age')) return 18 + (rowIdx % 50);
-    if (name.includes('price') || name.includes('amount')) return Number(((rowIdx + 1) * 12.5).toFixed(2));
+    if (!isIntegerOnly && (name.includes('price') || name.includes('amount'))) return Number(((rowIdx + 1) * 12.5).toFixed(2));
+    if (t.includes('smallint') || t === 'int2') return (rowIdx % 30000) + 1;
     return Math.floor(Math.random() * 10000) + rowIdx;
   }
   if (t === 'geo_point') {
@@ -308,24 +349,25 @@ export function generateMockValue(
       lon: Number((-122.4194 + (rowIdx % 50) * 0.01).toFixed(4)),
     });
   }
-  if (t === 'ip') {
-    return `192.168.${(rowIdx % 254) + 1}.${((rowIdx * 7) % 253) + 1}`;
-  }
   if (t === 'decimal128') {
     return Number(((rowIdx + 1) * 12.5).toFixed(2));
-  }
-  if (t === 'array') {
-    return [`tag_${(rowIdx % 5) + 1}`, `item_${rowIdx + 1}`];
   }
   if (t === 'object') {
     return { sample: true, index: rowIdx + 1 };
   }
   if (t === 'date') {
-    return new Date(Date.now() - rowIdx * 3600 * 1000).toISOString();
+    return new Date(Date.now() - rowIdx * 86400 * 1000).toISOString().slice(0, 10);
+  }
+  if (t.includes('time') && !t.includes('stamp')) {
+    return new Date(Date.now() - rowIdx * 60000).toISOString().slice(11, 19);
   }
   if (t.includes('timestamp') || t.includes('datetime')) {
     const jitterMs = Math.floor(Math.random() * 3600 * 1000);
-    return new Date(Date.now() - rowIdx * 3600 * 1000 - jitterMs).toISOString().slice(0, 19).replace('T', ' ');
+    const iso = new Date(Date.now() - rowIdx * 3600 * 1000 - jitterMs).toISOString();
+    if (t.includes('with time zone') || t === 'timestamptz') {
+      return iso;
+    }
+    return iso.slice(0, 19).replace('T', ' ');
   }
   if (t.includes('date')) {
     return new Date(Date.now() - rowIdx * 86400 * 1000).toISOString().slice(0, 10);

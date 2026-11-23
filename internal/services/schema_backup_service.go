@@ -664,16 +664,19 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			"-U", user,
 			"--no-owner",
 			"--no-acl",
-			"-f", filePath,
 		}
 
 		lowerPath := strings.ToLower(filePath)
+		isPlainGzip := false
 		if opts.Format == "custom" || strings.HasSuffix(lowerPath, ".dump") || strings.HasSuffix(lowerPath, ".backup") {
-			args = append(args, "-F", "c")
+			args = append(args, "-F", "c", "-f", filePath)
 		} else if opts.Format == "tar" || strings.HasSuffix(lowerPath, ".tar") {
-			args = append(args, "-F", "t")
-		} else {
+			args = append(args, "-F", "t", "-f", filePath)
+		} else if strings.HasSuffix(lowerPath, ".gz") {
 			args = append(args, "-F", "p")
+			isPlainGzip = true
+		} else {
+			args = append(args, "-F", "p", "-f", filePath)
 		}
 
 		switch opts.Mode {
@@ -701,18 +704,50 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 
 		cmd := exec.CommandContext(ctx, binPath, args...)
 		cmd.Env = os.Environ()
+		cmd.Env = append(cmd.Env, "PGCONNECT_TIMEOUT=10")
 		if conn.Password != "" {
 			cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
 		}
 		if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
 			cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
 		}
-		if out, err := cmd.CombinedOutput(); err != nil {
-			msg := strings.TrimSpace(string(out))
-			if msg == "" {
-				msg = err.Error()
+		if strings.TrimSpace(conn.SSLCAPath) != "" {
+			cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+conn.SSLCAPath)
+		}
+		if strings.TrimSpace(conn.SSLCertPath) != "" {
+			cmd.Env = append(cmd.Env, "PGSSLCERT="+conn.SSLCertPath)
+		}
+		if strings.TrimSpace(conn.SSLKeyPath) != "" {
+			cmd.Env = append(cmd.Env, "PGSSLKEY="+conn.SSLKeyPath)
+		}
+		if isPlainGzip {
+			outFile, createErr := os.Create(filePath)
+			if createErr != nil {
+				return "", emitErr(fmt.Errorf("failed to create backup file: %w", createErr))
 			}
-			return "", emitErr(fmt.Errorf("pg_dump failed: %s", msg))
+			gz := gzip.NewWriter(outFile)
+			var stderrBuf bytes.Buffer
+			cmd.Stdout = gz
+			cmd.Stderr = &stderrBuf
+			runErr := cmd.Run()
+			_ = gz.Close()
+			_ = outFile.Close()
+			if runErr != nil {
+				_ = os.Remove(filePath)
+				msg := strings.TrimSpace(stderrBuf.String())
+				if msg == "" {
+					msg = runErr.Error()
+				}
+				return "", emitErr(fmt.Errorf("pg_dump failed: %s", msg))
+			}
+		} else {
+			if out, err := cmd.CombinedOutput(); err != nil {
+				msg := strings.TrimSpace(string(out))
+				if msg == "" {
+					msg = err.Error()
+				}
+				return "", emitErr(fmt.Errorf("pg_dump failed: %s", msg))
+			}
 		}
 
 	case "sqlite":
@@ -1107,9 +1142,12 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 
 		if isCustomFormat {
-			binPath, _, err := resolveBackupToolPathWithDriver("postgres", opts.ToolPath, "please install postgresql-client, or click 'Download Tool' in the Restore modal", "pg_restore")
+			binPath, _, err := resolveBackupToolPathWithDriver("postgres", opts.ToolPath, "please install postgresql-client, or select a native pg_restore binary in the Restore modal", "pg_restore")
 			if err != nil {
 				return "", emitErr(err)
+			}
+			if isDHubPortableTool(binPath) {
+				return "", emitErr(fmt.Errorf("binary backup formats (.dump/.tar/.backup) require a native pg_restore executable; DHub Portable SQL Engine only supports plain .sql/.sql.gz files"))
 			}
 			s.emitRestoreProgress(app.BackupProgressEvent{
 				ConnectionID: connectionID,
@@ -1130,11 +1168,21 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			}
 			cmd := exec.CommandContext(ctx, binPath, args...)
 			cmd.Env = os.Environ()
+			cmd.Env = append(cmd.Env, "PGCONNECT_TIMEOUT=10")
 			if conn.Password != "" {
 				cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
 			}
 			if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
 				cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
+			}
+			if strings.TrimSpace(conn.SSLCAPath) != "" {
+				cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+conn.SSLCAPath)
+			}
+			if strings.TrimSpace(conn.SSLCertPath) != "" {
+				cmd.Env = append(cmd.Env, "PGSSLCERT="+conn.SSLCertPath)
+			}
+			if strings.TrimSpace(conn.SSLKeyPath) != "" {
+				cmd.Env = append(cmd.Env, "PGSSLKEY="+conn.SSLKeyPath)
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
 				msg := strings.TrimSpace(string(out))
@@ -1167,15 +1215,42 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 				"-p", strconv.Itoa(port),
 				"-U", user,
 				"-d", database,
-				"-f", filePath,
+				"-v", "ON_ERROR_STOP=1",
+			}
+			isGz := strings.HasSuffix(strings.ToLower(filePath), ".gz")
+			if !isGz {
+				args = append(args, "-f", filePath)
 			}
 			cmd := exec.CommandContext(ctx, binPath, args...)
+			if isGz {
+				sqlFile, openErr := os.Open(filePath)
+				if openErr != nil {
+					return "", emitErr(fmt.Errorf("failed to open .gz SQL file: %w", openErr))
+				}
+				defer sqlFile.Close()
+				gzReader, gzErr := gzip.NewReader(sqlFile)
+				if gzErr != nil {
+					return "", emitErr(fmt.Errorf("failed to decompress .gz SQL file: %w", gzErr))
+				}
+				defer gzReader.Close()
+				cmd.Stdin = gzReader
+			}
 			cmd.Env = os.Environ()
+			cmd.Env = append(cmd.Env, "PGCONNECT_TIMEOUT=10")
 			if conn.Password != "" {
 				cmd.Env = append(cmd.Env, "PGPASSWORD="+conn.Password)
 			}
 			if mode := strings.TrimSpace(conn.SSLMode); mode != "" {
 				cmd.Env = append(cmd.Env, "PGSSLMODE="+mode)
+			}
+			if strings.TrimSpace(conn.SSLCAPath) != "" {
+				cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+conn.SSLCAPath)
+			}
+			if strings.TrimSpace(conn.SSLCertPath) != "" {
+				cmd.Env = append(cmd.Env, "PGSSLCERT="+conn.SSLCertPath)
+			}
+			if strings.TrimSpace(conn.SSLKeyPath) != "" {
+				cmd.Env = append(cmd.Env, "PGSSLKEY="+conn.SSLKeyPath)
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
 				msg := strings.TrimSpace(string(out))

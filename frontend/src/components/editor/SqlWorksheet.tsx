@@ -211,14 +211,98 @@ function extractTableAliases(sqlText: string): ParsedQueryTables {
   return { aliasToTable, tableToAlias, tables };
 }
 
-function detectSqlParameters(sqlText: string): string[] {
+function stripSqlCommentsAndStrings(sqlText: string): string {
+  let out = '';
+  let i = 0;
+  const n = sqlText.length;
+  while (i < n) {
+    const ch = sqlText[i];
+    const next = sqlText[i + 1];
+    // Line comment
+    if (ch === '-' && next === '-') {
+      while (i < n && sqlText[i] !== '\n') i++;
+      out += ' ';
+      continue;
+    }
+    // Block comment (supports nested /* */)
+    if (ch === '/' && next === '*') {
+      let depth = 1;
+      i += 2;
+      while (i < n && depth > 0) {
+        if (sqlText[i] === '/' && sqlText[i + 1] === '*') {
+          depth++;
+          i += 2;
+        } else if (sqlText[i] === '*' && sqlText[i + 1] === '/') {
+          depth--;
+          i += 2;
+        } else {
+          i++;
+        }
+      }
+      out += ' ';
+      continue;
+    }
+    // Single-quoted string
+    if (ch === "'") {
+      i++;
+      while (i < n) {
+        if (sqlText[i] === "'" && sqlText[i + 1] === "'") {
+          i += 2;
+        } else if (sqlText[i] === "'") {
+          i++;
+          break;
+        } else {
+          i++;
+        }
+      }
+      out += ' ';
+      continue;
+    }
+    // Double-quoted identifier
+    if (ch === '"') {
+      i++;
+      while (i < n) {
+        if (sqlText[i] === '"' && sqlText[i + 1] === '"') {
+          i += 2;
+        } else if (sqlText[i] === '"') {
+          i++;
+          break;
+        } else {
+          i++;
+        }
+      }
+      out += ' ';
+      continue;
+    }
+    // Dollar-quoted string ($tag$...$tag$)
+    if (ch === '$') {
+      const rest = sqlText.slice(i);
+      const tagMatch = rest.match(/^\$([A-Za-z_][A-Za-z0-9_]*)?\$/);
+      if (tagMatch) {
+        const tag = tagMatch[0];
+        const endIdx = sqlText.indexOf(tag, i + tag.length);
+        if (endIdx !== -1) {
+          i = endIdx + tag.length;
+          out += ' ';
+          continue;
+        }
+      }
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+function detectSqlParameters(sqlText: string, driver?: string): string[] {
   const params: string[] = [];
   const seen = new Set<string>();
+  const stripped = stripSqlCommentsAndStrings(sqlText);
 
   // Match :paramName (ensure not ::type cast by checking preceding char is not :)
   const namedRegex = /(?<!:):([a-zA-Z][a-zA-Z0-9_]*)\b/g;
   let match: RegExpExecArray | null;
-  while ((match = namedRegex.exec(sqlText)) !== null) {
+  while ((match = namedRegex.exec(stripped)) !== null) {
     const p = match[0];
     if (!seen.has(p)) {
       seen.add(p);
@@ -228,7 +312,7 @@ function detectSqlParameters(sqlText: string): string[] {
 
   // Match $1, $2
   const posRegex = /\$([0-9]+)\b/g;
-  while ((match = posRegex.exec(sqlText)) !== null) {
+  while ((match = posRegex.exec(stripped)) !== null) {
     const p = match[0];
     if (!seen.has(p)) {
       seen.add(p);
@@ -236,10 +320,10 @@ function detectSqlParameters(sqlText: string): string[] {
     }
   }
 
-  // Match ? (only if no named or $ params were found)
-  if (params.length === 0 && sqlText.includes('?')) {
+  // Match ? (only if no named or $ params were found; skip for PostgreSQL where ? / ?| / ?& are JSONB operators)
+  if (driver !== 'postgres' && params.length === 0 && stripped.includes('?')) {
     let qIdx = 1;
-    const qMatches = sqlText.match(/\?/g);
+    const qMatches = stripped.match(/\?/g);
     if (qMatches) {
       qMatches.forEach(() => {
         const name = `?${qIdx++}`;
@@ -365,7 +449,8 @@ function splitSemicolonSegments(fullText: string): Array<{ start: number; end: n
   let inDouble = false;
   let inBacktick = false;
   let inLineComment = false;
-  let inBlockComment = false;
+  let blockCommentDepth = 0;
+  let dollarTag: string | null = null;
 
   for (let i = 0; i < fullText.length; i++) {
     const ch = fullText[i];
@@ -375,10 +460,20 @@ function splitSemicolonSegments(fullText: string): Array<{ start: number; end: n
       if (ch === '\n') inLineComment = false;
       continue;
     }
-    if (inBlockComment) {
-      if (ch === '*' && next === '/') {
-        inBlockComment = false;
+    if (blockCommentDepth > 0) {
+      if (ch === '/' && next === '*') {
+        blockCommentDepth++;
         i++;
+      } else if (ch === '*' && next === '/') {
+        blockCommentDepth--;
+        i++;
+      }
+      continue;
+    }
+    if (dollarTag !== null) {
+      if (ch === '$' && fullText.startsWith(dollarTag, i)) {
+        i += dollarTag.length - 1;
+        dollarTag = null;
       }
       continue;
     }
@@ -413,7 +508,7 @@ function splitSemicolonSegments(fullText: string): Array<{ start: number; end: n
       inLineComment = true;
       i++;
     } else if (ch === '/' && next === '*') {
-      inBlockComment = true;
+      blockCommentDepth = 1;
       i++;
     } else if (ch === "'") {
       inSingle = true;
@@ -421,6 +516,12 @@ function splitSemicolonSegments(fullText: string): Array<{ start: number; end: n
       inDouble = true;
     } else if (ch === '`') {
       inBacktick = true;
+    } else if (ch === '$') {
+      const tagMatch = fullText.slice(i).match(/^\$([A-Za-z_][A-Za-z0-9_]*)?\$/);
+      if (tagMatch) {
+        dollarTag = tagMatch[0];
+        i += dollarTag.length - 1;
+      }
     } else if (ch === ';') {
       segments.push({ start: segStart, end: i, hasSemi: true });
       segStart = i + 1;
@@ -1113,7 +1214,12 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
           });
 
           // 3. SQL Functions
+          const pgExcludedFunctions =
+            driver === 'postgres'
+              ? new Set(['GROUP_CONCAT', 'IFNULL', 'DATEDIFF', 'DATE_ADD', 'DATE_SUB', 'JSON_EXTRACT', 'JSON_UNQUOTE'])
+              : null;
           SQL_FUNCTIONS.forEach((fn) => {
+            if (pgExcludedFunctions && pgExcludedFunctions.has(fn.label)) return;
             suggestions.push({
               label: fn.label,
               kind: monaco.languages.CompletionItemKind.Function,
@@ -1133,12 +1239,16 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               : null;
           SQL_KEYWORDS.forEach((kw) => {
             if (nonRelationalExclude && nonRelationalExclude.test(kw.label)) return;
+            let insertText = kw.snippet || kw.label;
+            if (driver === 'postgres' && kw.label === 'CREATE TABLE') {
+              insertText = 'CREATE TABLE ${1:table_name} (\n  ${2:id} BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  ${3:name} TEXT NOT NULL\n);';
+            }
             suggestions.push({
               label: kw.label,
               kind: kw.snippet && kw.snippet.includes('${') ? monaco.languages.CompletionItemKind.Snippet : monaco.languages.CompletionItemKind.Keyword,
               detail: kw.detail,
               filterText: `${kw.label.toLowerCase()} ${kw.label}`,
-              insertText: kw.snippet || kw.label,
+              insertText,
               insertTextRules: kw.snippet && kw.snippet.includes('${') ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
               sortText: `4_${kw.label}`,
               range,
@@ -1550,7 +1660,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         drvLower !== 'redis' &&
         !isRestCmd
       ) {
-        const params = detectSqlParameters(trimmed);
+        const params = detectSqlParameters(trimmed, drvLower);
         if (params.length > 0) {
           setPendingParams({
             parameters: params,
@@ -1674,8 +1784,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     let prefix = 'EXPLAIN ';
     if (drv === 'postgres') {
       prefix = isAnalyze
-        ? 'EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS) '
-        : 'EXPLAIN (COSTS, VERBOSE) ';
+        ? 'EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) '
+        : 'EXPLAIN (COSTS, VERBOSE, FORMAT JSON) ';
     } else if (drv === 'mysql') {
       prefix = isAnalyze ? 'EXPLAIN ANALYZE ' : 'EXPLAIN ';
     } else if (drv === 'mariadb') {
@@ -2431,6 +2541,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       <DangerousQueryModal
         isOpen={pendingDangerous !== null}
         sql={pendingDangerous?.sql || ''}
+        driver={connection?.driver}
         isProduction={connEnv === 'prod'}
         onClose={() => setPendingDangerous(null)}
         onConfirm={() => {

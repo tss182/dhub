@@ -71,6 +71,18 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
     ? getBackupCliTool(drv)
     : getRestoreCliTool(drv, backupRestoreModal.filePath);
 
+  const prevActiveToolRef = React.useRef(activeTool);
+  useEffect(() => {
+    if (prevActiveToolRef.current !== activeTool) {
+      prevActiveToolRef.current = activeTool;
+      const savedPath = activeTool ? (useSettingsStore.getState().backupToolPaths?.[activeTool] || '') : '';
+      setBackupRestoreModal((prev) => ({
+        ...prev,
+        toolPath: savedPath || '',
+      }));
+    }
+  }, [activeTool, setBackupRestoreModal]);
+
   useEffect(() => {
     if (!backupRestoreModal.isOpen || !drv || drv === 'clickhouse') {
       setToolStatus(null);
@@ -432,7 +444,10 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
 
                 {(toolStatus as any)?.isPortable && (
                   <p className="text-[11px] text-cyan-300/80 bg-cyan-950/30 border border-cyan-500/20 rounded-lg px-2.5 py-1.5">
-                    Using <strong>DHub Portable SQL Engine</strong> (supports Schema, Data, Views, Triggers, and <code>.sql.gz</code>). For Stored Routines/Events, select a native <code>{activeTool}</code> binary.
+                    Using <strong>DHub Portable SQL Engine</strong> (supports Schema, Data, Views, Triggers, and <code>.sql.gz</code>).{' '}
+                    {drv === 'postgres'
+                      ? `For binary .dump/.tar formats or Stored Routines, select a native ${activeTool} binary.`
+                      : `For Stored Routines/Events, select a native ${activeTool} binary.`}
                   </p>
                 )}
 
@@ -531,7 +546,8 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                 </div>
               </div>
 
-              {/* Stored Programs & Options */}
+              {/* Stored Programs & Options (MySQL / MariaDB) */}
+              {(drv === 'mysql' || drv === 'mariadb') && (
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
                   Stored Programs & Options
@@ -567,42 +583,39 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                     />
                     <span>Include Routines (Procedures/Functions)</span>
                   </label>
-                  {(drv === 'mysql' || drv === 'mariadb') && (
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={backupRestoreModal.includeEvents}
-                        disabled={backupRestoreModal.isProcessing}
-                        onChange={(e) =>
-                          setBackupRestoreModal((prev) => ({
-                            ...prev,
-                            includeEvents: e.target.checked,
-                          }))
-                        }
-                        className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
-                      />
-                      <span>Include Events</span>
-                    </label>
-                  )}
-                  {(drv === 'mysql' || drv === 'mariadb') && (
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={backupRestoreModal.singleTransaction}
-                        disabled={backupRestoreModal.isProcessing}
-                        onChange={(e) =>
-                          setBackupRestoreModal((prev) => ({
-                            ...prev,
-                            singleTransaction: e.target.checked,
-                          }))
-                        }
-                        className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
-                      />
-                      <span>Single Transaction</span>
-                    </label>
-                  )}
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={backupRestoreModal.includeEvents}
+                      disabled={backupRestoreModal.isProcessing}
+                      onChange={(e) =>
+                        setBackupRestoreModal((prev) => ({
+                          ...prev,
+                          includeEvents: e.target.checked,
+                        }))
+                      }
+                      className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
+                    />
+                    <span>Include Events</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={backupRestoreModal.singleTransaction}
+                      disabled={backupRestoreModal.isProcessing}
+                      onChange={(e) =>
+                        setBackupRestoreModal((prev) => ({
+                          ...prev,
+                          singleTransaction: e.target.checked,
+                        }))
+                      }
+                      className="rounded border-[#3a3d4d] bg-[#1a1b22] text-blue-500 focus:ring-0"
+                    />
+                    <span>Single Transaction</span>
+                  </label>
                 </div>
               </div>
+              )}
               </>
               )}
 

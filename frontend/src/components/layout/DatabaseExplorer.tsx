@@ -1180,8 +1180,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             ]
           : [
               {
-                DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
-                Pattern: '*.sql;*.sql.gz;*.gz',
+                DisplayName: 'SQL / PostgreSQL Backup (*.sql, *.sql.gz, *.dump, *.backup, *.tar)',
+                Pattern: '*.sql;*.sql.gz;*.gz;*.dump;*.backup;*.tar',
               },
             ],
       });
@@ -1214,8 +1214,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             ]
           : [
               {
-                DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
-                Pattern: '*.sql;*.sql.gz;*.gz',
+                DisplayName: 'SQL / PostgreSQL Backup (*.sql, *.sql.gz, *.dump, *.backup, *.tar)',
+                Pattern: '*.sql;*.sql.gz;*.gz;*.dump;*.backup;*.tar',
               },
             ],
       });
@@ -1272,8 +1272,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             ]
           : [
               {
-                DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
-                Pattern: '*.sql;*.sql.gz;*.gz',
+                DisplayName: 'SQL / PostgreSQL Backup (*.sql, *.sql.gz, *.dump, *.backup, *.tar)',
+                Pattern: '*.sql;*.sql.gz;*.gz;*.dump;*.backup;*.tar',
               },
             ],
       });
@@ -1575,26 +1575,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const conn = connections.find((c) => c.id === connId);
 
     if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
-      try {
-        let schemas = treeSchemas[nodeKey];
-        const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
-        if (!schemas || schemas.length === 0) {
-          schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
-          if (schemas.length === 0) schemas = [defaultSchema];
-          setTreeSchemas((prev) => ({ ...prev, [nodeKey]: schemas }));
-        }
-        const activeS = schemas.includes(defaultSchema) ? defaultSchema : schemas[0] || defaultSchema;
-        setActiveConnection(connId, dbName, activeS);
-        // Pre-fetch objects for discovered schemas
-        for (const s of schemas) {
-          const sKey = `${connId}:${dbName}:${s}`;
-          if (!treeObjects[sKey]) {
-            const objs = (await SchemaService.GetObjects(connId, dbName, s)) ?? [];
-            setTreeObjects(sKey, objs as any);
+      if (!expandedNodes[nodeKey]) {
+        try {
+          let schemas = treeSchemas[nodeKey];
+          const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
+          if (!schemas || schemas.length === 0) {
+            schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
+            if (schemas.length === 0) schemas = [defaultSchema];
+            setTreeSchemas((prev) => ({ ...prev, [nodeKey]: schemas }));
           }
+          const activeS = schemas.includes(defaultSchema) ? defaultSchema : schemas[0] || defaultSchema;
+          setActiveConnection(connId, dbName, activeS);
+          // Pre-fetch objects for discovered schemas
+          for (const s of schemas) {
+            const sKey = `${connId}:${dbName}:${s}`;
+            if (!treeObjects[sKey]) {
+              const objs = (await SchemaService.GetObjects(connId, dbName, s)) ?? [];
+              setTreeObjects(sKey, objs as any);
+            }
+          }
+        } catch (e) {
+          console.error(`Failed to load schemas for ${dbName}:`, e);
         }
-      } catch (e) {
-        console.error(`Failed to load schemas for ${dbName}:`, e);
       }
     } else {
       const targetSchema = dbName;
@@ -1875,9 +1877,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         schemaName: '',
         authorization: '',
       });
-      alertSuccess(`Collection / Schema "${schemaName}" created successfully.`, 'Collection Created');
+      alertSuccess(`Schema "${schemaName}" created successfully.`, 'Schema Created');
     } catch (err: any) {
-      alertError(err?.message || String(err), 'Failed to Create Collection');
+      alertError(err?.message || String(err), 'Failed to Create Schema');
     }
   };
 
@@ -1886,9 +1888,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     try {
       const objects = (await SchemaService.GetObjects(connId, dbName, schemaName)) ?? [];
       setTreeObjects(schemaKey, objects as any);
-      alertSuccess(`Collection / Schema "${schemaName}" refreshed.`, 'Refreshed');
+      alertSuccess(`Schema "${schemaName}" refreshed.`, 'Refreshed');
     } catch (err: any) {
-      alertError(err?.message || String(err), 'Failed to Refresh Collection');
+      alertError(err?.message || String(err), 'Failed to Refresh Schema');
     }
   };
 
@@ -1898,8 +1900,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       return;
     }
     const ok = await confirmDialog({
-      title: 'Drop Collection / Schema',
-      message: `Are you sure you want to DROP collection/schema "${schemaName}" in database "${dbName}"? All tables, views, and data in this collection will be permanently deleted (CASCADE). This action cannot be undone.`,
+      title: 'Drop Schema',
+      message: `Are you sure you want to DROP schema "${schemaName}" in database "${dbName}"? All tables, views, and data in this schema will be permanently deleted (CASCADE). This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: dbName,
         targetName: schemaName,
@@ -1926,7 +1928,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       const schemas = (await SchemaService.GetSchemas(conn.id, dbName)) ?? [];
       const safeSchemas = schemas.length > 0 ? schemas : ['public'];
       setTreeSchemas((prev) => ({ ...prev, [nodeKey]: safeSchemas }));
-      alertSuccess(`Collection / Schema "${schemaName}" dropped successfully.`, 'Schema Dropped');
+      alertSuccess(`Schema "${schemaName}" dropped successfully.`, 'Schema Dropped');
     } catch (err: any) {
       alertError(err?.message || String(err), 'Failed to Drop Schema');
     }
@@ -2202,8 +2204,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   // Table handlers
   const handleTableClick = (connId: string, db: string, schema: string, tableName: string) => {
     const conn = connections.find((c) => c.id === connId);
+    const effectiveSchema = schema || (conn?.driver === 'postgres' ? 'public' : db);
     openTab({
-      id: `table-${connId}-${db}-${tableName}`,
+      id: `table-${connId}-${db}-${effectiveSchema}-${tableName}`,
       type: 'table_data',
       title: tableName,
       connectionId: connId,
@@ -2238,7 +2241,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       const objects = (await SchemaService.GetObjects(connId, db, schema)) ?? [];
       setTreeObjects(`${connId}:${db}:${schema}`, objects as any);
       // Trigger grid refresh if table tab is open
-      refreshTab(`table-${connId}-${db}-${tableName}`);
+      refreshTab(`table-${connId}-${db}-${schema || 'public'}-${tableName}`);
     } catch (err: any) {
       console.warn('Failed to refresh table:', err);
     }
@@ -2254,11 +2257,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const isQdrant = conn.driver === 'qdrant';
     const isElasticsearch = conn.driver === 'elasticsearch';
     const isMongo = conn.driver === 'mongodb';
+    const isMatView = obj.type === 'materialized_view';
     const isView = obj.type === 'view';
-    const keyword = isRedis ? 'KEY' : isQdrant || isMongo ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
+    const keyword = isRedis ? 'KEY' : isQdrant || isMongo ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isMatView ? 'MATERIALIZED VIEW' : isView ? 'VIEW' : 'TABLE';
+    const label = isRedis ? 'Key' : isQdrant || isMongo ? 'Collection' : isElasticsearch ? 'Index' : isMatView ? 'Materialized View' : isView ? 'View' : 'Table';
 
     const ok = await confirmDialog({
-      title: isRedis ? 'Delete Key' : isQdrant || isMongo ? 'Drop Collection' : isElasticsearch ? 'Delete Index' : `Drop ${isView ? 'View' : 'Table'}`,
+      title: isRedis ? 'Delete Key' : isQdrant || isMongo ? 'Drop Collection' : isElasticsearch ? 'Delete Index' : `Drop ${label}`,
       message: isRedis
         ? `Are you sure you want to delete key "${obj.name}" from ${db}? This action cannot be undone.`
         : isElasticsearch
@@ -2268,7 +2273,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         database: db,
         schema,
         targetName: obj.name,
-        targetLabel: isRedis ? 'Key' : isQdrant || isMongo ? 'Collection' : isElasticsearch ? 'Index' : isView ? 'View' : 'Table',
+        targetLabel: label,
       }),
       confirmLabel: isRedis ? 'Delete Key' : isElasticsearch ? 'Delete Index' : `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
@@ -2308,7 +2313,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
       const schemaKey = `${conn.id}:${db}:${schema}`;
       removeTreeObject(schemaKey, obj.name);
-      closeTab(`table-${conn.id}-${db}-${obj.name}`);
+      closeTab(`table-${conn.id}-${db}-${schema || 'public'}-${obj.name}`);
 
       // Background refresh
       SchemaService.GetObjects(conn.id, db, schema)
@@ -2791,7 +2796,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     conn: ConnectionConfig,
     db: string,
     schema: string,
-    triggerName: string
+    triggerName: string,
+    parentTable?: string
   ) => {
     const ok = await confirmDialog({
       title: 'Drop Trigger',
@@ -2813,16 +2819,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     } else if (conn.driver === 'mssql') {
       sql = `DROP TRIGGER IF EXISTS [${schema}].[${triggerName}];`;
     } else if (conn.driver === 'postgres') {
-      openTab({
-        id: `drop-trigger-${Date.now()}`,
-        type: 'worksheet',
-        title: `drop_${triggerName}.sql`,
-        connectionId: conn.id,
-        database: db,
-        schema: schema,
-        content: `-- PostgreSQL requires the table name to drop a trigger:\nDROP TRIGGER IF EXISTS "${triggerName}" ON "${schema}"."<table_name>";\n`,
-      });
-      return;
+      if (parentTable) {
+        sql = `DROP TRIGGER IF EXISTS "${triggerName}" ON "${schema}"."${parentTable}";`;
+      } else {
+        openTab({
+          id: `drop-trigger-${Date.now()}`,
+          type: 'worksheet',
+          title: `drop_${triggerName}.sql`,
+          connectionId: conn.id,
+          database: db,
+          schema: schema,
+          content: `-- PostgreSQL requires the table name to drop a trigger:\nDROP TRIGGER IF EXISTS "${triggerName}" ON "${schema}"."<table_name>";\n`,
+        });
+        return;
+      }
     } else {
       sql = `DROP TRIGGER IF EXISTS "${triggerName}";`;
     }
@@ -4149,7 +4159,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                         </>
                                       )}
 
-                                      {sEvents.length > 0 && (
+                                      {c.driver !== 'postgres' && sEvents.length > 0 && (
                                         <>
                                           <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
                                             <Folder className="h-2.5 w-2.5" />
@@ -5348,7 +5358,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
               {contextMenu.type === 'folder' && `Folder: ${contextMenu.folder?.name}`}
               {contextMenu.type === 'connection' && `Connection: ${contextMenu.connection?.name}`}
               {contextMenu.type === 'database' && `Database: ${contextMenu.database}`}
-              {contextMenu.type === 'schema' && `Collection / Schema: ${contextMenu.schema}`}
+              {contextMenu.type === 'schema' && `${contextMenu.connection?.driver === 'postgres' ? 'Schema' : 'Collection / Schema'}: ${contextMenu.schema}`}
               {contextMenu.type === 'table' &&
                 `${
                   contextMenu.connection?.driver === 'redis'
@@ -5509,8 +5519,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     closeContextMenu();
                     handleOpenERDiagram(
                       contextMenu.connection!.id,
-                      contextMenu.database!,
-                      contextMenu.schema || contextMenu.database!
+                      contextMenu.database || (contextMenu.connection!.driver === 'postgres' ? 'postgres' : ''),
+                      contextMenu.schema || (contextMenu.connection!.driver === 'postgres' ? 'public' : contextMenu.database || '')
                     );
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -5887,7 +5897,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
                 >
                   <Layers className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
-                  <span>New Collection / Schema...</span>
+                  <span>New Schema...</span>
                 </button>
               )}
 
@@ -5928,8 +5938,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     closeContextMenu();
                     handleOpenERDiagram(
                       contextMenu.connection!.id,
-                      contextMenu.database!,
-                      contextMenu.schema || contextMenu.database!
+                      contextMenu.database || (contextMenu.connection!.driver === 'postgres' ? 'postgres' : ''),
+                      contextMenu.schema || (contextMenu.connection!.driver === 'postgres' ? 'public' : contextMenu.database || '')
                     );
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -6084,7 +6094,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
               >
                 <Layers className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
-                <span>New Collection / Schema...</span>
+                <span>New Schema...</span>
               </button>
 
               <button
@@ -6128,7 +6138,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Refresh Collection / Schema</span>
+                <span>Refresh Schema</span>
               </button>
 
               <button
@@ -6176,7 +6186,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
                   >
                     <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                    <span>Drop Collection / Schema...</span>
+                    <span>Drop Schema...</span>
                   </button>
                 </>
               )}
@@ -6318,9 +6328,10 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       closeContextMenu();
                       handleDeleteTrigger(
                         contextMenu.connection!,
-                        contextMenu.database || 'main',
-                        contextMenu.schema || 'main',
-                        contextMenu.table!.name
+                        contextMenu.database || (contextMenu.connection!.driver === 'postgres' ? 'postgres' : 'main'),
+                        contextMenu.schema || (contextMenu.connection!.driver === 'postgres' ? 'public' : 'main'),
+                        contextMenu.table!.name,
+                        contextMenu.table!.parentTable
                       );
                     }}
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
@@ -6647,7 +6658,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                     >
                       <ArrowRightLeft className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
-                      <span>Move to Another {contextMenu.connection!.driver === 'postgres' ? 'Collection / Schema' : 'Database'}...</span>
+                      <span>Move to Another {contextMenu.connection!.driver === 'postgres' ? 'Schema' : 'Database'}...</span>
                     </button>
                   )}
 
@@ -7124,7 +7135,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                           ? 'Drop Collection...'
                           : contextMenu.connection!.driver === 'elasticsearch'
                           ? 'Delete Index...'
-                          : `Drop ${contextMenu.table!.type === 'view' ? 'View' : 'Table'}...`}
+                          : `Drop ${contextMenu.table!.type === 'materialized_view' ? 'Materialized View' : contextMenu.table!.type === 'view' ? 'View' : 'Table'}...`}
                       </span>
                     </button>
                   )}

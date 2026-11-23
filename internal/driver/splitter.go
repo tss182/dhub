@@ -128,6 +128,12 @@ func parseDelimiterLine(runes []rune, lineStart int) (delim string, lineEnd int,
 // accurately ignoring delimiters inside strings, comments, identifier quotes,
 // client DELIMITER blocks, and compound BEGIN ... END blocks (procedures/functions/triggers/events).
 func SplitStatements(sql string) []string {
+	return SplitStatementsForDialect(sql, "")
+}
+
+// SplitStatementsForDialect splits a multi-statement SQL script using dialect-aware quoting and comment rules.
+func SplitStatementsForDialect(sql, dialect string) []string {
+	isPostgres := strings.EqualFold(strings.TrimSpace(dialect), "postgres")
 	var statements []string
 	var current strings.Builder
 	runes := []rune(sql)
@@ -136,13 +142,14 @@ func SplitStatements(sql string) []string {
 	delim := []rune{';'}
 
 	var inSingleQuote bool
+	var singleQuoteEscape bool
 	var inDoubleQuote bool
 	var inBacktick bool
 	var inBracket bool
 	var inDollarQuote bool
 	var dollarTag []rune
 	var inLineComment bool
-	var inBlockComment bool
+	var blockCommentDepth int
 
 	var atLineStart = true
 	var stmtStarted bool
@@ -163,7 +170,7 @@ func SplitStatements(sql string) []string {
 		r := runes[i]
 
 		// Handle client DELIMITER directive at line start when not inside quotes/comments
-		if atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !inDollarQuote && !inLineComment && !inBlockComment {
+		if atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !inDollarQuote && !inLineComment && blockCommentDepth == 0 {
 			if newDelim, nextIdx, ok := parseDelimiterLine(runes, i); ok {
 				delim = []rune(newDelim)
 				i = nextIdx - 1
@@ -184,13 +191,17 @@ func SplitStatements(sql string) []string {
 			continue
 		}
 
-		// Check block comment end
-		if inBlockComment {
+		// Check block comment end (supports nested /* ... */ in PostgreSQL)
+		if blockCommentDepth > 0 {
 			current.WriteRune(r)
-			if r == '*' && i+1 < n && runes[i+1] == '/' {
+			if isPostgres && r == '/' && i+1 < n && runes[i+1] == '*' {
+				current.WriteRune('*')
+				i++
+				blockCommentDepth++
+			} else if r == '*' && i+1 < n && runes[i+1] == '/' {
 				current.WriteRune('/')
 				i++
-				inBlockComment = false
+				blockCommentDepth--
 			}
 			atLineStart = (r == '\n')
 			continue
@@ -199,7 +210,7 @@ func SplitStatements(sql string) []string {
 		// Check single quote end
 		if inSingleQuote {
 			current.WriteRune(r)
-			if r == '\\' && i+1 < n {
+			if singleQuoteEscape && r == '\\' && i+1 < n {
 				current.WriteRune(runes[i+1])
 				i++
 			} else if r == '\'' {
@@ -209,6 +220,7 @@ func SplitStatements(sql string) []string {
 					i++
 				} else {
 					inSingleQuote = false
+					singleQuoteEscape = false
 				}
 			}
 			atLineStart = (r == '\n')
@@ -218,7 +230,7 @@ func SplitStatements(sql string) []string {
 		// Check double quote end
 		if inDoubleQuote {
 			current.WriteRune(r)
-			if r == '\\' && i+1 < n {
+			if !isPostgres && r == '\\' && i+1 < n {
 				current.WriteRune(runes[i+1])
 				i++
 			} else if r == '"' {
@@ -283,7 +295,7 @@ func SplitStatements(sql string) []string {
 			atLineStart = false
 			continue
 		}
-		if r == '#' {
+		if r == '#' && !isPostgres {
 			current.WriteRune(r)
 			inLineComment = true
 			atLineStart = false
@@ -293,12 +305,16 @@ func SplitStatements(sql string) []string {
 			current.WriteRune(r)
 			current.WriteRune('*')
 			i++
-			inBlockComment = true
+			blockCommentDepth = 1
 			atLineStart = false
 			continue
 		}
 		if r == '\'' {
 			inSingleQuote = true
+			singleQuoteEscape = !isPostgres
+			if isPostgres && i > 0 && (runes[i-1] == 'e' || runes[i-1] == 'E') && (i == 1 || !isIdentChar(runes[i-2])) {
+				singleQuoteEscape = true
+			}
 			stmtStarted = true
 			current.WriteRune(r)
 			atLineStart = false
@@ -311,14 +327,14 @@ func SplitStatements(sql string) []string {
 			atLineStart = false
 			continue
 		}
-		if r == '`' {
+		if r == '`' && !isPostgres {
 			inBacktick = true
 			stmtStarted = true
 			current.WriteRune(r)
 			atLineStart = false
 			continue
 		}
-		if r == '[' {
+		if r == '[' && !isPostgres {
 			inBracket = true
 			stmtStarted = true
 			current.WriteRune(r)
@@ -375,7 +391,8 @@ func SplitStatements(sql string) []string {
 
 			if word == "BEGIN" {
 				nextWord := peekNextWord(runes, j)
-				isStandaloneTx := nextWord == ";" || nextWord == "" || nextWord == "TRANSACTION" || nextWord == "WORK"
+				isStandaloneTx := nextWord == ";" || nextWord == "" || nextWord == "TRANSACTION" || nextWord == "WORK" ||
+					(isPostgres && (nextWord == "ISOLATION" || nextWord == "READ" || nextWord == "DEFERRABLE" || nextWord == "NOT"))
 				if pendingCompoundBody || beginDepth > 0 || !isStandaloneTx {
 					beginDepth++
 					pendingCompoundBody = false
@@ -629,6 +646,8 @@ func IsQueryReturningRows(sql string) bool {
 		hasLeadingKeyword(upper, "PRAGMA") ||
 		hasLeadingKeyword(upper, "WITH") ||
 		hasLeadingKeyword(upper, "VALUES") ||
+		hasLeadingKeyword(upper, "TABLE") ||
+		hasLeadingKeyword(upper, "FETCH") ||
 		hasLeadingKeyword(upper, "EXISTS") ||
 		hasLeadingKeyword(upper, "OPTIMIZE") ||
 		hasLeadingKeyword(upper, "CHECK") ||
@@ -731,15 +750,21 @@ func IsReadOnlySafeQuery(sql string) bool {
 		return true
 	}
 	upper := strings.ToUpper(clean)
+	isAnalyzeSelect := false
+	if hasLeadingKeyword(upper, "ANALYZE") {
+		rest := strings.TrimSpace(upper[len("ANALYZE"):])
+		isAnalyzeSelect = strings.HasPrefix(rest, "SELECT") || strings.HasPrefix(rest, "FORMAT")
+	}
 	isReadLeading := hasLeadingKeyword(upper, "SELECT") ||
 		hasLeadingKeyword(upper, "SHOW") ||
 		hasLeadingKeyword(upper, "DESCRIBE") ||
 		hasLeadingKeyword(upper, "DESC") ||
 		hasLeadingKeyword(upper, "EXPLAIN") ||
-		hasLeadingKeyword(upper, "ANALYZE") ||
+		isAnalyzeSelect ||
 		hasLeadingKeyword(upper, "PRAGMA") ||
 		hasLeadingKeyword(upper, "WITH") ||
 		hasLeadingKeyword(upper, "VALUES") ||
+		hasLeadingKeyword(upper, "TABLE") ||
 		hasLeadingKeyword(upper, "EXISTS") ||
 		hasLeadingKeyword(upper, "CHECK") ||
 		(hasLeadingKeyword(upper, "FROM") && strings.Contains(clean, "|")) ||
@@ -750,9 +775,13 @@ func IsReadOnlySafeQuery(sql string) bool {
 	sanitizedUpper := strings.ToUpper(stripStringsAndComments(clean))
 	if containsStandaloneWord(sanitizedUpper,
 		"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
-		"TRUNCATE", "REPLACE", "MERGE", "GRANT", "REVOKE",
+		"TRUNCATE", "MERGE", "GRANT", "REVOKE",
 		"SYSTEM", "KILL", "OPTIMIZE", "ATTACH", "DETACH",
 		"EXCHANGE", "RENAME", "BACKUP", "RESTORE", "SET",
+		"VACUUM", "REINDEX", "CLUSTER", "REFRESH", "COPY",
+		"PG_TERMINATE_BACKEND", "PG_CANCEL_BACKEND", "PG_RELOAD_CONF",
+		"PG_ROTATE_LOGFILE", "SETVAL", "LO_UNLINK", "LO_EXPORT", "LO_IMPORT",
+		"PG_CREATE_RESTORE_POINT",
 	) {
 		return false
 	}

@@ -23,6 +23,8 @@ export interface ColumnMeta {
     "isAutoIncrement": boolean;
     "defaultValue": string;
     "comment": string;
+    "defaultKind"?: string;
+    "enumValues"?: string[] | null;
 }
 
 export interface ForeignKeyMeta {

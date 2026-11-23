@@ -23,7 +23,7 @@ function formatCleanTableDdl(tableName: string, struct: any, driver?: string): s
   if (normDriver === 'qdrant' || normDriver === 'elasticsearch' || normDriver === 'mongodb' || normDriver === 'mongo' || rawDdl.startsWith('{')) {
     return rawDdl;
   }
-  if (normDriver === 'clickhouse' && rawDdl) {
+  if ((normDriver === 'clickhouse' || normDriver === 'postgres') && rawDdl) {
     return rawDdl;
   }
 
@@ -134,7 +134,7 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
       const targetDb =
         database ||
         connection.databaseName ||
-        (connection.driver === 'clickhouse' ? 'default' : 'main');
+        (connection.driver === 'postgres' ? 'postgres' : connection.driver === 'clickhouse' ? 'default' : 'main');
       const targetSchema =
         schema ||
         (connection.driver === 'postgres'
@@ -164,7 +164,7 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
             connection.driver === 'qdrant' ||
             connection.driver === 'elasticsearch' ||
             resultDdl.trim().startsWith('{');
-          setDdl(isJsonConfig || resultDdl.endsWith(';') ? resultDdl : `${resultDdl};`);
+          setDdl(isJsonConfig || resultDdl.trim().endsWith(';') ? resultDdl : `${resultDdl};`);
         }
       } else {
         const schemaArg = scope === 'schema' ? targetSchema : '';
@@ -173,8 +173,9 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
           targetDb,
           schemaArg
         );
-        const isCh = connection.driver?.toLowerCase() === 'clickhouse';
-        setDdl(resultDdl ? (isCh ? resultDdl : stripTableOptionsFromDdl(resultDdl)) : '');
+        const rawDriver = connection.driver?.toLowerCase();
+        const preserveRaw = rawDriver === 'clickhouse' || rawDriver === 'postgres';
+        setDdl(resultDdl ? (preserveRaw ? resultDdl : stripTableOptionsFromDdl(resultDdl)) : '');
       }
     } catch (err: any) {
       setError(err?.message || String(err) || 'Failed to load DDL');
@@ -233,7 +234,7 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
     scope === 'table'
       ? isQdrant || isElasticsearch
         ? `${connection?.name || ''}`
-        : `${connection?.name || ''} • ${database}${schema && schema !== database ? `.${schema}` : ''}`
+        : `${connection?.name || ''} • ${database}${schema && (connection?.driver === 'postgres' || schema !== database) ? `.${schema}` : ''}`
       : `${connection?.name || ''} • Structure only (no data)`;
 
   const defaultFileName = (() => {

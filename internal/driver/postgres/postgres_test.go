@@ -120,3 +120,72 @@ func TestGeneratePostgresDDLIncludesPgvectorColumnsAndIndexes(t *testing.T) {
 	}
 }
 
+func TestFormatSQLVal(t *testing.T) {
+	if got := formatSQLVal(nil); got != "NULL" {
+		t.Errorf("nil = %q, want NULL", got)
+	}
+	if got := formatSQLVal("O'Reilly"); got != "'O''Reilly'" {
+		t.Errorf("string = %q, want 'O''Reilly'", got)
+	}
+	if got := formatSQLVal(true); got != "TRUE" {
+		t.Errorf("bool = %q, want TRUE", got)
+	}
+	if got := formatSQLVal(int64(42)); got != "42" {
+		t.Errorf("int64 = %q, want 42", got)
+	}
+	if got := formatSQLVal([]byte{0xde, 0xad, 0xbe, 0xef}); got != `'\xdeadbeef'::bytea` {
+		t.Errorf("bytes = %q, want '\\xdeadbeef'::bytea", got)
+	}
+}
+
+func TestGeneratePostgresDDL_IdentityGeneratedCompositeFKAndGinIndex(t *testing.T) {
+	s := &driver.TableStructure{
+		Columns: []driver.ColumnMeta{
+			{Name: "tenant_id", DataType: "bigint"},
+			{Name: "id", DataType: "bigint", DefaultKind: "IDENTITY_ALWAYS"},
+			{Name: "full_name", DataType: "text", DefaultKind: "GENERATED_STORED", DefaultValue: "(first_name || ' ' || last_name)", IsNullable: true},
+			{Name: "status", DataType: "order_status", EnumValues: []string{"pending", "paid"}},
+		},
+		PrimaryKeys: []string{"tenant_id", "id"},
+		ForeignKeys: []driver.ForeignKeyMeta{
+			{
+				ConstraintName: "fk_orders_customer",
+				ColumnName:     "tenant_id",
+				RefSchema:      "crm",
+				RefTable:       "customers",
+				RefColumn:      "tenant_id",
+				OnDelete:       "CASCADE",
+			},
+			{
+				ConstraintName: "fk_orders_customer",
+				ColumnName:     "id",
+				RefSchema:      "crm",
+				RefTable:       "customers",
+				RefColumn:      "id",
+				OnDelete:       "CASCADE",
+			},
+		},
+		Indexes: []driver.IndexMeta{
+			{
+				Name:       "idx_orders_lower_status",
+				Method:     "gin",
+				Definition: "CREATE INDEX idx_orders_lower_status ON public.orders USING gin (payload) WHERE (deleted_at IS NULL)",
+			},
+		},
+	}
+
+	ddl := generatePostgresDDL("public", "orders", s)
+	for _, want := range []string{
+		`"id" bigint NOT NULL GENERATED ALWAYS AS IDENTITY`,
+		`"full_name" text GENERATED ALWAYS AS ((first_name || ' ' || last_name)) STORED`,
+		`"status" order_status NOT NULL`,
+		`PRIMARY KEY ("tenant_id", "id")`,
+		`CONSTRAINT "fk_orders_customer" FOREIGN KEY ("tenant_id", "id") REFERENCES "crm"."customers" ("tenant_id", "id") ON DELETE CASCADE`,
+		`CREATE INDEX idx_orders_lower_status ON public.orders USING gin (payload) WHERE (deleted_at IS NULL);`,
+	} {
+		if !strings.Contains(ddl, want) {
+			t.Errorf("DDL missing %q\n%s", want, ddl)
+		}
+	}
+}
+

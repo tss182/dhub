@@ -197,7 +197,7 @@ export const CreateSchemaModal: React.FC<{
               <Layers className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-zinc-100">Create New Collection / Schema</h3>
+              <h3 className="text-base font-semibold text-zinc-100">Create New Schema</h3>
               <p className="text-[11px] text-zinc-400">
                 Database: <span className="font-mono text-cyan-300 font-medium">{createSchemaModal.database}</span>
               </p>
@@ -215,7 +215,7 @@ export const CreateSchemaModal: React.FC<{
         <form onSubmit={handleConfirmCreateSchema} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-              Collection / Schema Name <span className="text-rose-400">*</span>
+              Schema Name <span className="text-rose-400">*</span>
             </label>
             <input
               type="text"
@@ -243,7 +243,7 @@ export const CreateSchemaModal: React.FC<{
               className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-cyan-500 focus:outline-none font-mono transition-colors"
             />
             <p className="mt-1 text-[11px] text-zinc-500">
-              Leave empty to create the collection under current logged-in user.
+              Leave empty to create the schema under current logged-in user.
             </p>
           </div>
 
@@ -260,7 +260,7 @@ export const CreateSchemaModal: React.FC<{
               disabled={!createSchemaModal.schemaName.trim()}
               className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
             >
-              Create Collection
+              Create Schema
             </button>
           </div>
         </form>
@@ -294,8 +294,8 @@ export const MoveTableModal: React.FC<{
             </div>
             <div>
               <h3 className="text-base font-semibold text-zinc-100">
-                Move {moveTableModal.objectType === 'view' ? 'View' : 'Table'} to Another{' '}
-                {isMysqlLike ? 'Database' : 'Collection'}
+                Move {moveTableModal.objectType === 'view' ? 'View' : moveTableModal.objectType === 'materialized_view' ? 'Materialized View' : 'Table'} to Another{' '}
+                {isMysqlLike ? 'Database' : 'Schema'}
               </h3>
               <p className="text-[11px] text-zinc-400">
                 Database: <span className="font-mono text-zinc-200">{moveTableModal.database}</span>
@@ -318,7 +318,7 @@ export const MoveTableModal: React.FC<{
               <span className="font-mono text-zinc-100 font-semibold">{moveTableModal.tableName}</span>
             </div>
             <div className="flex items-center justify-between text-xs">
-              <span className="text-zinc-400">Current {isMysqlLike ? 'Database' : 'Collection'}:</span>
+              <span className="text-zinc-400">Current {isMysqlLike ? 'Database' : 'Schema'}:</span>
               <span className="font-mono text-cyan-300 bg-cyan-950/50 border border-cyan-800/50 px-2 py-0.5 rounded text-[11px]">
                 {moveTableModal.sourceSchema}
               </span>
@@ -327,7 +327,7 @@ export const MoveTableModal: React.FC<{
 
           <div>
             <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-              Target {isMysqlLike ? 'Database' : 'Collection / Schema'} <span className="text-rose-400">*</span>
+              Target {isMysqlLike ? 'Database' : 'Schema'} <span className="text-rose-400">*</span>
             </label>
             <div className="space-y-2">
               <select
@@ -336,7 +336,7 @@ export const MoveTableModal: React.FC<{
                 className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 focus:border-cyan-500 focus:outline-none font-mono transition-colors"
               >
                 <option value="" disabled>
-                  -- Select a target {isMysqlLike ? 'database' : 'schema / collection'} --
+                  -- Select a target {isMysqlLike ? 'database' : 'schema'} --
                 </option>
                 {moveTableModal.availableSchemas.map((s) => (
                   <option key={s} value={s} disabled={s === moveTableModal.sourceSchema}>
@@ -359,7 +359,7 @@ export const MoveTableModal: React.FC<{
             <p className="mt-1.5 text-[11px] text-zinc-500 font-mono">
               {isMysqlLike
                 ? `RENAME TABLE \`${moveTableModal.sourceSchema}\`.\`${moveTableModal.tableName}\` TO \`${moveTableModal.targetSchema || '...'}\`.\`${moveTableModal.tableName}\`;`
-                : `ALTER TABLE "${moveTableModal.sourceSchema}"."${moveTableModal.tableName}" SET SCHEMA "${moveTableModal.targetSchema || '...'}"`}
+                : `ALTER ${moveTableModal.objectType === 'view' ? 'VIEW' : moveTableModal.objectType === 'materialized_view' ? 'MATERIALIZED VIEW' : 'TABLE'} "${moveTableModal.sourceSchema}"."${moveTableModal.tableName}" SET SCHEMA "${moveTableModal.targetSchema || '...'}"`}
             </p>
           </div>
 
@@ -379,7 +379,7 @@ export const MoveTableModal: React.FC<{
               }
               className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer transition-colors shadow-sm"
             >
-              Move Table
+              Move {moveTableModal.objectType === 'view' ? 'View' : moveTableModal.objectType === 'materialized_view' ? 'Materialized View' : 'Table'}
             </button>
           </div>
         </form>

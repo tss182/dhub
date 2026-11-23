@@ -692,22 +692,35 @@ func (s *SchemaService) backupDatabaseNativeSQL(
 
 	driverLower := strings.ToLower(strings.TrimSpace(driverType))
 	targetSchema := strings.TrimSpace(opts.Schema)
-	if targetSchema == "" {
-		switch driverLower {
-		case "postgres":
-			targetSchema = "public"
-		case "mssql":
-			targetSchema = "dbo"
-		case "oracle":
-			targetSchema = ""
-		default:
-			targetSchema = database
+	var objs []driver.ObjectSummary
+	if driverLower == "postgres" && (targetSchema == "" || targetSchema == "all") {
+		targetSchema = "public"
+		schemas, sErr := drv.ListSchemas(ctx, database)
+		if sErr != nil || len(schemas) == 0 {
+			schemas = []string{"public"}
 		}
-	}
-
-	objs, err := drv.ListObjects(ctx, database, targetSchema)
-	if err != nil {
-		return fmt.Errorf("failed to list database objects: %w", err)
+		for _, sch := range schemas {
+			if schObjs, lErr := drv.ListObjects(ctx, database, sch); lErr == nil {
+				objs = append(objs, schObjs...)
+			}
+		}
+	} else {
+		if targetSchema == "" {
+			switch driverLower {
+			case "postgres":
+				targetSchema = "public"
+			case "mssql":
+				targetSchema = "dbo"
+			case "oracle":
+				targetSchema = ""
+			default:
+				targetSchema = database
+			}
+		}
+		objs, err = drv.ListObjects(ctx, database, targetSchema)
+		if err != nil {
+			return fmt.Errorf("failed to list database objects: %w", err)
+		}
 	}
 
 	selectedSet := make(map[string]bool, len(opts.Tables))
@@ -976,8 +989,15 @@ func (s *SchemaService) backupDatabaseNativeSQL(
 			if vwSchema == "" {
 				vwSchema = targetSchema
 			}
-			if vStruct, vErr := drv.GetTableStructure(ctx, database, vwSchema, vw.Name); vErr == nil && vStruct != nil && strings.TrimSpace(vStruct.DDL) != "" {
-				ddl := strings.TrimSpace(vStruct.DDL)
+			var ddl string
+			if driverLower == "postgres" {
+				if objDDL, dErr := s.GetObjectDDL(connectionID, database, vwSchema, vw.Type, vw.Name); dErr == nil {
+					ddl = strings.TrimSpace(objDDL)
+				}
+			} else if vStruct, vErr := drv.GetTableStructure(ctx, database, vwSchema, vw.Name); vErr == nil && vStruct != nil {
+				ddl = strings.TrimSpace(vStruct.DDL)
+			}
+			if ddl != "" {
 				if !strings.HasSuffix(ddl, ";") {
 					ddl += ";"
 				}
@@ -1242,7 +1262,7 @@ func streamSQLStatements(r io.Reader, driverType string, onStmt func(stmt string
 
 		if inSingleQuote {
 			buf.WriteByte(ch)
-			if ch == '\\' {
+			if ch == '\\' && !strings.EqualFold(driverType, "postgres") {
 				if nb, neof, nerr := readByte(); nerr != nil {
 					return nerr
 				} else if !neof {

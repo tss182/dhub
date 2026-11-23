@@ -228,3 +228,93 @@ func TestElasticsearchReadOnlyAndSplitter(t *testing.T) {
 		t.Fatalf("expected 2 statements, got %d: %#v", len(stmts), stmts)
 	}
 }
+
+func TestSplitStatementsForDialect_Postgres(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want []string
+	}{
+		{
+			name: "jsonb hash operator not treated as comment",
+			sql:  "SELECT data #>> '{a,b}' FROM docs; SELECT 1;",
+			want: []string{
+				"SELECT data #>> '{a,b}' FROM docs",
+				"SELECT 1",
+			},
+		},
+		{
+			name: "array literal brackets not treated as mssql identifier",
+			sql:  "SELECT ARRAY['a;b', 'c'] FROM t; SELECT 2;",
+			want: []string{
+				"SELECT ARRAY['a;b', 'c'] FROM t",
+				"SELECT 2",
+			},
+		},
+		{
+			name: "standard conforming string backslash before closing quote",
+			sql:  `SELECT 'C:\'; SELECT 2;`,
+			want: []string{
+				`SELECT 'C:\'`,
+				"SELECT 2",
+			},
+		},
+		{
+			name: "nested block comments",
+			sql:  "/* outer /* inner ; */ still comment */ SELECT 1; /* second */ SELECT 2;",
+			want: []string{
+				"/* outer /* inner ; */ still comment */ SELECT 1",
+				"/* second */ SELECT 2",
+			},
+		},
+		{
+			name: "dollar quoted DO block preserved",
+			sql:  "DO $$ BEGIN PERFORM 1; PERFORM 2; END $$; SELECT 3;",
+			want: []string{
+				"DO $$ BEGIN PERFORM 1; PERFORM 2; END $$",
+				"SELECT 3",
+			},
+		},
+		{
+			name: "BEGIN ISOLATION LEVEL kept as single statement",
+			sql:  "BEGIN ISOLATION LEVEL SERIALIZABLE; SELECT 1; COMMIT;",
+			want: []string{
+				"BEGIN ISOLATION LEVEL SERIALIZABLE",
+				"SELECT 1",
+				"COMMIT",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SplitStatementsForDialect(tc.sql, "postgres")
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d statements (%#v), want %d (%#v)", len(got), got, len(tc.want), tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("stmt[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestIsReadOnlySafeQuery_PostgresEdgeCases(t *testing.T) {
+	if !IsReadOnlySafeQuery("SELECT replace('hello', 'l', 'x')") {
+		t.Errorf("expected SELECT replace(...) to be read-only safe")
+	}
+	if !IsReadOnlySafeQuery("TABLE public.users") {
+		t.Errorf("expected TABLE public.users to be read-only safe")
+	}
+	for _, unsafe := range []string{
+		"ANALYZE public.users",
+		"SELECT pg_terminate_backend(1234)",
+		"SELECT pg_reload_conf()",
+	} {
+		if IsReadOnlySafeQuery(unsafe) {
+			t.Errorf("expected %q to be blocked in read-only mode", unsafe)
+		}
+	}
+}

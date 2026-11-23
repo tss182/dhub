@@ -97,7 +97,7 @@ export const TableSqlModal: React.FC<TableSqlModalProps> = ({
                 )}
               </div>
               <p className="text-[11px] text-zinc-400 font-mono truncate">
-                {tableName} ({database || 'main'})
+                {tableName} ({database || (connection?.driver === 'postgres' ? 'postgres' : 'main')})
               </p>
             </div>
           </div>

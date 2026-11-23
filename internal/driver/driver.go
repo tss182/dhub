@@ -30,8 +30,9 @@ type ColumnMeta struct {
 	IsAutoIncr     bool   `json:"isAutoIncrement"`
 	DefaultValue   string `json:"defaultValue"`
 	Comment        string `json:"comment"`
-	DefaultKind    string `json:"defaultKind,omitempty"`    // e.g. "DEFAULT", "MATERIALIZED", "ALIAS", "EPHEMERAL"
-	Codec          string `json:"codec,omitempty"`          // e.g. "CODEC(ZSTD(1))"
+	DefaultKind    string   `json:"defaultKind,omitempty"`    // e.g. "DEFAULT", "IDENTITY_ALWAYS", "IDENTITY_BY_DEFAULT", "GENERATED_STORED", "MATERIALIZED", "ALIAS", "EPHEMERAL"
+	EnumValues     []string `json:"enumValues,omitempty"`     // PostgreSQL enum labels
+	Codec          string   `json:"codec,omitempty"`          // e.g. "CODEC(ZSTD(1))"
 	IsSortingKey   bool   `json:"isSortingKey,omitempty"`
 	IsPartitionKey bool   `json:"isPartitionKey,omitempty"`
 	TTL            string `json:"ttl,omitempty"`

@@ -20,12 +20,16 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const isRestCommand = /^(?:DELETE|POST|PUT|PATCH)\s+\//i.test(sql.trim());
+  const drv = (driver || '').toLowerCase();
+  const isRestDriver = drv === 'qdrant' || drv === 'elasticsearch' || drv === 'es';
+  const isRestCommand = (isRestDriver || !drv) && /^(?:DELETE|POST|PUT|PATCH)\s+\/(?!\*)/i.test(sql.trim());
   const isMongoDestructive =
-    driver?.toLowerCase() === 'mongodb' ||
-    /\bdb\s*\.\s*(?:dropDatabase\s*\(|(?:[a-zA-Z0-9_$-]+|getCollection\([^)]+\))\s*\.\s*(?:drop\s*\(|deleteMany\s*\(\s*\{\s*\}\s*\)|updateMany\s*\(\s*\{\s*\}\s*,))/i.test(
-      sql.trim()
-    );
+    drv === 'mongodb' ||
+    drv === 'mongo' ||
+    (!drv &&
+      /\bdb\s*\.\s*(?:dropDatabase\s*\(|(?:[a-zA-Z0-9_$-]+|getCollection\([^)]+\))\s*\.\s*(?:drop\s*\(|deleteMany\s*\(\s*\{\s*\}\s*\)|updateMany\s*\(\s*\{\s*\}\s*,))/i.test(
+        sql.trim()
+      ));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">

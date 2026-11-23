@@ -248,7 +248,10 @@ func (e *ExportService) PreviewImportFile(filePath, delimiter string, hasHeader 
 		}
 
 		if count == 0 && hasHeader {
-			columns = record
+			columns = make([]string, len(record))
+			for i, h := range record {
+				columns[i] = strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))
+			}
 		} else {
 			if len(columns) == 0 {
 				for i := range record {
@@ -310,13 +313,15 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 
 	// Prepare query SQL
+	driverLower := strings.ToLower(strings.TrimSpace(driverType))
 	querySQL := req.SQL
 	if strings.TrimSpace(querySQL) == "" {
 		if req.Table == "" {
 			return nil, fmt.Errorf("either table name or SQL query must be provided for export")
 		}
 		quotedTable := quoteIdentifier(driverType, req.Table)
-		if req.Schema != "" && req.Schema != "main" && req.Schema != req.Database {
+		isMultiSchema := driverLower == "postgres" || driverLower == "mssql" || driverLower == "sqlserver" || driverLower == "oracle"
+		if req.Schema != "" && req.Schema != "main" && (isMultiSchema || req.Schema != req.Database) {
 			quotedSchema := quoteIdentifier(driverType, req.Schema)
 			querySQL = fmt.Sprintf("SELECT * FROM %s.%s", quotedSchema, quotedTable)
 		} else {
@@ -325,7 +330,6 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 
 	// Stream dataset in chunks to avoid loading up to 1M rows into RAM at once.
-	driverLower := strings.ToLower(strings.TrimSpace(driverType))
 	isSchemalessExport := driverLower == "qdrant" || driverLower == "elasticsearch" || driverLower == "es" || driverLower == "mongodb" || driverLower == "mongo"
 	chunkSize := 5000
 	if driverLower == "qdrant" {
@@ -434,6 +438,10 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 					sqlTargetTable = "exported_table"
 				} else {
 					sqlTargetTable = quoteIdentifier(driverType, sqlTargetTable)
+					isMultiSchema := driverLower == "postgres" || driverLower == "mssql" || driverLower == "sqlserver" || driverLower == "oracle"
+					if isMultiSchema && req.Schema != "" && req.Schema != "main" {
+						sqlTargetTable = quoteIdentifier(driverType, req.Schema) + "." + sqlTargetTable
+					}
 				}
 				quotedCols := make([]string, len(colNames))
 				for i, colName := range colNames {
@@ -479,9 +487,11 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 
 		// Re-sync column names per chunk so schemaless engines (e.g. Qdrant) with varying payload keys never misalign.
 		chunkColNames := make([]string, len(res.Columns))
+		chunkColTypes := make([]string, len(res.Columns))
 		chunkColIdx := make(map[string]int, len(res.Columns))
 		for i, col := range res.Columns {
 			chunkColNames[i] = col.Name
+			chunkColTypes[i] = strings.ToLower(col.DataType)
 			chunkColIdx[col.Name] = i
 		}
 		alignRow := func(row []any) []any {
@@ -603,7 +613,11 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 					clear(jsonObj)
 					for i, val := range row {
 						if i < len(chunkColNames) {
-							jsonObj[chunkColNames[i]] = val
+							if driverLower == "postgres" && (chunkColTypes[i] == "json" || chunkColTypes[i] == "jsonb") {
+								jsonObj[chunkColNames[i]] = parseJSONIfPossible(val)
+							} else {
+								jsonObj[chunkColNames[i]] = val
+							}
 						}
 					}
 					outRecord = jsonObj
@@ -630,6 +644,8 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 							if (driverLower == "elasticsearch" || driverLower == "es") && chunkColNames[i] == "_score" {
 								continue
 							}
+							jsonObj[chunkColNames[i]] = parseJSONIfPossible(val)
+						} else if driverLower == "postgres" && (chunkColTypes[i] == "json" || chunkColTypes[i] == "jsonb") {
 							jsonObj[chunkColNames[i]] = parseJSONIfPossible(val)
 						} else {
 							jsonObj[chunkColNames[i]] = val
@@ -992,7 +1008,7 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 		}
 		headerMap = make(map[string]int, len(header))
 		for i, h := range header {
-			headerMap[strings.TrimSpace(h)] = i
+			headerMap[strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))] = i
 		}
 	}
 
@@ -1159,18 +1175,39 @@ func extractESBulkActionID(item map[string]any) (string, bool) {
 func flattenQdrantPointRecord(item map[string]any) map[string]any {
 	if srcRaw, hasSource := item["_source"]; hasSource {
 		if srcMap, ok := srcRaw.(map[string]any); ok {
-			flat := make(map[string]any, len(srcMap)+1)
-			for k, v := range srcMap {
-				flat[k] = v
+			isESDoc := true
+			for k := range item {
+				switch k {
+				case "_index", "_id", "_score", "_source", "_type", "_version", "_seq_no", "_primary_term", "found", "fields", "sort":
+				default:
+					isESDoc = false
+				}
 			}
-			if id, exists := item["_id"]; exists && id != nil {
-				flat["_id"] = id
+			if isESDoc {
+				flat := make(map[string]any, len(srcMap)+1)
+				for k, v := range srcMap {
+					flat[k] = v
+				}
+				if id, exists := item["_id"]; exists && id != nil {
+					flat["_id"] = id
+				}
+				return flat
 			}
-			return flat
 		}
 	}
 	payloadRaw, hasPayload := item["payload"]
 	if !hasPayload {
+		return item
+	}
+	isQdrantPt := true
+	for k := range item {
+		switch k {
+		case "id", "payload", "vector", "score", "version", "shard_key", "order_value":
+		default:
+			isQdrantPt = false
+		}
+	}
+	if !isQdrantPt {
 		return item
 	}
 	var payloadMap map[string]any

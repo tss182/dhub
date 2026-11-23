@@ -3342,7 +3342,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-xs"
                       >
                         <option value="NORMAL">NORMAL</option>
-                        <option value="VIRTUAL">VIRTUAL</option>
+                        {driver !== 'postgres' && <option value="VIRTUAL">VIRTUAL</option>}
                         <option value="STORED">STORED</option>
                       </select>
                     </div>
@@ -3367,17 +3367,19 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       />
                     </div>
 
-                    {/* Hidden */}
-                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
-                      <div />
-                      <label className="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
-                        />
-                        <span className="text-[#dfe1e5]">Hidden</span>
-                      </label>
-                    </div>
+                    {/* Hidden (MySQL / MariaDB only) */}
+                    {(driver === 'mysql' || driver === 'mariadb') && (
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                        <div />
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 rounded border-[#393b40] bg-[#2b2d30] text-[#3574f0] focus:ring-0 cursor-pointer accent-[#3574f0]"
+                          />
+                          <span className="text-[#dfe1e5]">Hidden</span>
+                        </label>
+                      </div>
+                    )}
 
                     {/* On Update (MySQL / MariaDB) */}
                     {(driver === 'mysql' || driver === 'mariadb') && (
@@ -3393,11 +3395,12 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                       </div>
                     )}
 
-                    {/* Collation */}
-                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
-                      <label className="text-[#999ca3] font-medium">Collation</label>
-                      <select
-                        value={collation}
+                    {/* Collation (MySQL / MariaDB only) */}
+                    {(driver === 'mysql' || driver === 'mariadb') && (
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                        <label className="text-[#999ca3] font-medium">Collation</label>
+                        <select
+                          value={collation}
                         onChange={(e) => setCollation(e.target.value)}
                         className="w-full h-7 px-2 rounded bg-[#2b2d30] border border-[#393b40] focus:border-[#3574f0] focus:outline-none text-[#dfe1e5] font-mono text-xs"
                       >
@@ -3414,6 +3417,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <option value="utf8_general_ci">utf8_general_ci</option>
                       </select>
                     </div>
+                    )}
                   </div>
                 </div>
               )}

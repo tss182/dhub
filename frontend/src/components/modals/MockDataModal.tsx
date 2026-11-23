@@ -66,6 +66,8 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
             init[c.name] = false;
           } else if (isMongo && c.name === '_id') {
             init[c.name] = false;
+          } else if ((c as any).defaultKind === 'GENERATED_STORED') {
+            init[c.name] = false;
           } else {
             init[c.name] = !c.isAutoIncrement;
           }

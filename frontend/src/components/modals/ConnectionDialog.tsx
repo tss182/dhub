@@ -224,9 +224,13 @@ export const ConnectionDialog: React.FC = () => {
       }
     } else if (d === 'postgres') {
       setPort(5432);
-      if (username === 'root' || username === 'sa') setUsername('postgres');
-      if (!databaseName || databaseName === 'master' || databaseName === '0') setDatabaseName('postgres');
-      if (sslMode === 'preferred') {
+      if (!username || ['root', 'sa', 'admin', 'default', 'system', 'elastic', '__apikey__', '__bearer__'].includes(username)) {
+        setUsername('postgres');
+      }
+      if (!databaseName || ['master', '0', 'default', 'admin', 'ORCL', 'main'].includes(databaseName)) {
+        setDatabaseName('postgres');
+      }
+      if (!['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'].includes(sslMode)) {
         setSslMode('disable');
       }
     } else if (d === 'mssql') {
@@ -400,8 +404,18 @@ export const ConnectionDialog: React.FC = () => {
       setConnections(updated as any);
       moveConnectionToFolder(id, folderId || null);
       setPendingFolderIdForNewConn(null);
-      const defaultDb = driver === 'qdrant' || driver === 'elasticsearch' ? 'default' : 'main';
-      setActiveConnection(id, databaseName || defaultDb, defaultDb);
+      const defaultDb =
+        driver === 'postgres'
+          ? 'postgres'
+          : driver === 'qdrant' || driver === 'elasticsearch'
+          ? 'default'
+          : driver === 'mssql'
+          ? 'master'
+          : driver === 'mongodb'
+          ? 'admin'
+          : 'main';
+      const defaultSchema = driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : defaultDb;
+      setActiveConnection(id, databaseName || defaultDb, defaultSchema);
       setConnectionDialogOpen(false);
     } catch (e: any) {
       alertError(e?.message || String(e), 'Failed to Save Connection');
@@ -427,9 +441,19 @@ export const ConnectionDialog: React.FC = () => {
       setConnections(updated as any);
       if (activeConnectionId === editingConnectionId) {
         if (updated && updated.length > 0) {
+          const nextConn = updated[0];
           const nextDb =
-            updated[0].driver === 'qdrant' || updated[0].driver === 'elasticsearch' ? 'default' : 'main';
-          setActiveConnection(updated[0].id, updated[0].databaseName || nextDb, nextDb);
+            nextConn.driver === 'postgres'
+              ? 'postgres'
+              : nextConn.driver === 'qdrant' || nextConn.driver === 'elasticsearch'
+              ? 'default'
+              : nextConn.driver === 'mssql'
+              ? 'master'
+              : nextConn.driver === 'mongodb'
+              ? 'admin'
+              : 'main';
+          const nextSchema = nextConn.driver === 'postgres' ? 'public' : nextConn.driver === 'mssql' ? 'dbo' : nextDb;
+          setActiveConnection(nextConn.id, nextConn.databaseName || nextDb, nextSchema);
         } else {
           setActiveConnection('', '', '');
         }
@@ -926,7 +950,7 @@ export const ConnectionDialog: React.FC = () => {
                           </label>
                           <input
                             type="text"
-                            placeholder={driver === 'redis' ? 'default (optional)' : 'e.g. root'}
+                            placeholder={driver === 'redis' ? 'default (optional)' : driver === 'postgres' ? 'e.g. postgres' : 'e.g. root'}
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
@@ -1113,23 +1137,35 @@ export const ConnectionDialog: React.FC = () => {
 
                   {sshAuthType === 'key' ? (
                     <div>
-                      <label className="block text-[11px] text-zinc-400 mb-1">Private Key File Path</label>
-                      <div className="flex items-center gap-2">
+                      <div className="mb-2">
+                        <label className="block text-[11px] text-zinc-400 mb-1">Private Key File Path</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder="~/.ssh/id_rsa or /home/.../key.pem"
+                            value={sshKeyPath}
+                            onChange={(e) => setSshKeyPath(e.target.value)}
+                            className="flex-1 rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 font-mono text-[11px] focus:border-blue-500 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleBrowseSshKey}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#22242c] hover:bg-[#2e313d] border border-[#3b3e4f] text-zinc-200 hover:text-white transition-colors cursor-pointer shrink-0 font-medium"
+                          >
+                            <FileKey className="h-3.5 w-3.5 text-amber-400" />
+                            <span>Browse...</span>
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-zinc-400 mb-1">Key Passphrase (optional)</label>
                         <input
-                          type="text"
-                          placeholder="~/.ssh/id_rsa or /home/.../key.pem"
-                          value={sshKeyPath}
-                          onChange={(e) => setSshKeyPath(e.target.value)}
-                          className="flex-1 rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 font-mono text-[11px] focus:border-blue-500 focus:outline-none"
+                          type="password"
+                          placeholder="Leave blank if key has no passphrase"
+                          value={sshPassword}
+                          onChange={(e) => setSshPassword(e.target.value)}
+                          className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
                         />
-                        <button
-                          type="button"
-                          onClick={handleBrowseSshKey}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#22242c] hover:bg-[#2e313d] border border-[#3b3e4f] text-zinc-200 hover:text-white transition-colors cursor-pointer shrink-0 font-medium"
-                        >
-                          <FileKey className="h-3.5 w-3.5 text-amber-400" />
-                          <span>Browse...</span>
-                        </button>
                       </div>
                     </div>
                   ) : sshAuthType === 'agent' ? (
@@ -1166,7 +1202,15 @@ export const ConnectionDialog: React.FC = () => {
                   className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-2 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                 >
                   <option value="disable">disable (No encryption)</option>
-                  {driver === 'postgres' || driver === 'qdrant' || driver === 'elasticsearch' || driver === 'mongodb' ? (
+                  {driver === 'postgres' ? (
+                    <>
+                      <option value="allow">allow (Try non-SSL, fallback to SSL)</option>
+                      <option value="prefer">prefer (Try SSL, fallback to non-SSL)</option>
+                      <option value="require">require (Encrypt without CA verification)</option>
+                      <option value="verify-ca">verify-ca (Verify server CA)</option>
+                      <option value="verify-full">verify-full (Verify server CA & hostname)</option>
+                    </>
+                  ) : driver === 'qdrant' || driver === 'elasticsearch' || driver === 'mongodb' ? (
                     <>
                       <option value="require">require (Encrypt without CA verification)</option>
                       <option value="verify-ca">verify-ca (Verify server CA)</option>

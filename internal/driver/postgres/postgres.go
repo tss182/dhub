@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -117,6 +119,36 @@ func (p *PostgresDriver) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
 
+// ServerVersion returns the PostgreSQL server version string.
+func (p *PostgresDriver) ServerVersion(ctx context.Context) (string, error) {
+	var ver string
+	if err := p.db.QueryRowContext(ctx, `SHOW server_version;`).Scan(&ver); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(ver), nil
+}
+
+// CloseDatabasePool closes and evicts any cached connection pool for the given database
+// so administrative operations such as DROP DATABASE are not blocked by DHub's own pool.
+func (p *PostgresDriver) CloseDatabasePool(database string) {
+	database = strings.TrimSpace(database)
+	if database == "" || database == p.defaultDB {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if pool, ok := p.pools[database]; ok {
+		_ = pool.Close()
+		delete(p.pools, database)
+	}
+	for i := 0; i < len(p.poolOrder); i++ {
+		if p.poolOrder[i] == database {
+			p.poolOrder = append(p.poolOrder[:i], p.poolOrder[i+1:]...)
+			break
+		}
+	}
+}
+
 func (p *PostgresDriver) Close() error {
 	p.mu.Lock()
 	for name, pool := range p.pools {
@@ -165,9 +197,11 @@ func (p *PostgresDriver) ListSchemas(ctx context.Context, database string) ([]st
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT schema_name FROM information_schema.schemata
-		WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-		ORDER BY schema_name;`
+	query := `SELECT nspname FROM pg_catalog.pg_namespace
+		WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+			AND nspname NOT LIKE 'pg_temp_%'
+			AND nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY nspname;`
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -282,18 +316,33 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 		}
 	}
 
-	// 3. Routines (Functions & Stored Procedures)
-	routineQuery := `SELECT routine_name FROM information_schema.routines WHERE routine_schema = $1 ORDER BY routine_name;`
+	// 3. Routines (Functions & Stored Procedures with signature & kind)
+	routineQuery := `
+		SELECT
+			p.proname,
+			CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS kind,
+			pg_catalog.pg_get_function_identity_arguments(p.oid) AS args,
+			COALESCE(d.description, '') AS comment
+		FROM pg_catalog.pg_proc p
+		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+		LEFT JOIN pg_catalog.pg_description d ON d.objoid = p.oid AND d.classoid = 'pg_proc'::regclass
+		WHERE n.nspname = $1
+		ORDER BY p.proname, args;`
 	if routineRows, rErr := db.QueryContext(ctx, routineQuery, schema); rErr == nil {
 		defer routineRows.Close()
 		for routineRows.Next() {
-			var rName string
-			if err := routineRows.Scan(&rName); err == nil {
+			var rName, kind, args, rComment string
+			if err := routineRows.Scan(&rName, &kind, &args, &rComment); err == nil {
+				sig := fmt.Sprintf("[%s] (%s)", kind, args)
+				if rComment != "" {
+					sig += " " + rComment
+				}
 				objects = append(objects, driver.ObjectSummary{
 					Schema:      schema,
 					Name:        rName,
 					Type:        "routine",
 					RowEstimate: -1,
+					Comment:     strings.TrimSpace(sig),
 				})
 			}
 		}
@@ -371,15 +420,16 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		Indexes:     []driver.IndexMeta{},
 	}
 
-	// 1. Get Primary Keys (ordered by position in the key)
+	// 1. Get Primary Keys (ordered by position in the key via pg_constraint)
 	pkQuery := `
-		SELECT kcu.column_name
-		FROM information_schema.table_constraints tc
-		JOIN information_schema.key_column_usage kcu
-			ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-		WHERE tc.constraint_type = 'PRIMARY KEY'
-			AND tc.table_schema = $1 AND tc.table_name = $2
-		ORDER BY kcu.ordinal_position;`
+		SELECT a.attname
+		FROM pg_catalog.pg_constraint con
+		JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
+		JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+		JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_catalog.pg_attribute a ON a.attrelid = cl.oid AND a.attnum = k.attnum
+		WHERE con.contype = 'p' AND n.nspname = $1 AND cl.relname = $2
+		ORDER BY k.ord;`
 	pkRows, err := db.QueryContext(ctx, pkQuery, schema, table)
 	if err == nil {
 		defer pkRows.Close()
@@ -396,127 +446,119 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		pkSet[pk] = true
 	}
 
-	// 2. Get Columns (including pg_catalog.format_type for parameterized UDTs like vector(1536))
+	// 2. Get Columns via pg_catalog (preserves exact format_type, identity/generated flags, and enum labels)
 	colQuery := `
 		SELECT
-			c.column_name,
-			c.data_type,
-			c.udt_name,
-			c.is_nullable,
-			c.column_default,
-			c.is_identity,
-			COALESCE(pg_catalog.format_type(a.atttypid, a.atttypmod), '') AS formatted_type
-		FROM information_schema.columns c
-		LEFT JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
-		LEFT JOIN pg_catalog.pg_class cl ON cl.relnamespace = n.oid AND cl.relname = c.table_name
-		LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = cl.oid AND a.attname = c.column_name AND NOT a.attisdropped
-		WHERE c.table_schema = $1 AND c.table_name = $2
-		ORDER BY c.ordinal_position;`
+			a.attname,
+			pg_catalog.format_type(a.atttypid, a.atttypmod) AS formatted_type,
+			t.typname AS udt_name,
+			NOT a.attnotnull AS is_nullable,
+			COALESCE(pg_catalog.pg_get_expr(ad.adbin, ad.adrelid), '') AS column_default,
+			a.attidentity::text,
+			a.attgenerated::text,
+			COALESCE(pg_catalog.col_description(cl.oid, a.attnum), '') AS col_comment,
+			COALESCE((
+				SELECT string_agg(e.enumlabel, E'\x1f' ORDER BY e.enumsortorder)
+				FROM pg_catalog.pg_enum e
+				WHERE e.enumtypid = a.atttypid
+			), '') AS enum_labels
+		FROM pg_catalog.pg_attribute a
+		JOIN pg_catalog.pg_class cl ON cl.oid = a.attrelid
+		JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+		JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+		LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+		WHERE n.nspname = $1 AND cl.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+		ORDER BY a.attnum;`
 	rows, err := db.QueryContext(ctx, colQuery, schema, table)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	colIndex := make(map[string]int)
-	var enumMap map[string]string
-	enumLoaded := false
 	for rows.Next() {
-		var name, dataType, udtName, isNullable, formattedType string
-		var dflt, isIdentity *string
-		if err := rows.Scan(&name, &dataType, &udtName, &isNullable, &dflt, &isIdentity, &formattedType); err == nil {
-			defVal := ""
-			if dflt != nil {
-				defVal = *dflt
+		var name, formattedType, udtName, defVal, attIdentity, attGenerated, colComment, enumLabelsRaw string
+		var isNullable bool
+		if err := rows.Scan(&name, &formattedType, &udtName, &isNullable, &defVal, &attIdentity, &attGenerated, &colComment, &enumLabelsRaw); err == nil {
+			defaultKind := ""
+			switch attIdentity {
+			case "a":
+				defaultKind = "IDENTITY_ALWAYS"
+			case "d":
+				defaultKind = "IDENTITY_BY_DEFAULT"
+			}
+			if attGenerated == "s" {
+				defaultKind = "GENERATED_STORED"
+			} else if defaultKind == "" && defVal != "" {
+				defaultKind = "DEFAULT"
 			}
 			isAuto := strings.HasPrefix(strings.ToLower(defVal), "nextval(") ||
-				(isIdentity != nil && strings.EqualFold(*isIdentity, "YES"))
-			colIndex[name] = len(structure.Columns)
+				attIdentity == "a" || attIdentity == "d"
 
-			effectiveType := dataType
-			if strings.EqualFold(dataType, "USER-DEFINED") {
-				effectiveType = udtName
-				if formattedType != "" {
-					effectiveType = formattedType
-				}
-				if !enumLoaded {
-					enumLoaded = true
-					enumMap = make(map[string]string)
-					enumQuery := `
-						SELECT t.typname, string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
-						FROM pg_enum e
-						JOIN pg_type t ON t.oid = e.enumtypid
-						JOIN pg_namespace n ON n.oid = t.typnamespace
-						WHERE n.nspname = $1 OR n.nspname = 'public'
-						GROUP BY t.typname;`
-					if eRows, eErr := db.QueryContext(ctx, enumQuery, schema); eErr == nil {
-						for eRows.Next() {
-							var tName, labels string
-							if sErr := eRows.Scan(&tName, &labels); sErr == nil && labels != "" {
-								enumMap[tName] = labels
-							}
-						}
-						eRows.Close()
-					}
-				}
-				if labels, ok := enumMap[udtName]; ok && labels != "" {
-					effectiveType = fmt.Sprintf("%s (%s)", udtName, labels)
-				}
+			var enumValues []string
+			if enumLabelsRaw != "" {
+				enumValues = strings.Split(enumLabelsRaw, "\x1f")
 			}
 
 			structure.Columns = append(structure.Columns, driver.ColumnMeta{
 				Name:         name,
-				DataType:     effectiveType,
+				DataType:     formattedType,
 				RawType:      udtName,
-				IsNullable:   isNullable == "YES",
+				IsNullable:   isNullable,
 				IsPrimaryKey: pkSet[name],
 				IsAutoIncr:   isAuto,
 				DefaultValue: defVal,
+				DefaultKind:  defaultKind,
+				EnumValues:   enumValues,
+				Comment:      colComment,
 			})
 		}
 	}
 
-	// 2b. Column & table comments (best effort)
-	cmtQuery := `
-		SELECT a.attnum, COALESCE(a.attname, ''), d.description
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-		JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = COALESCE(a.attnum, 0)
-		WHERE n.nspname = $1 AND c.relname = $2;`
-	if cRows, cErr := db.QueryContext(ctx, cmtQuery, schema, table); cErr == nil {
-		defer cRows.Close()
-		for cRows.Next() {
-			var attnum int
-			var attname string
-			var desc *string
-			if err := cRows.Scan(&attnum, &attname, &desc); err != nil || desc == nil {
-				continue
-			}
-			if attnum == 0 {
-				structure.Comment = *desc
-			} else if idx, ok := colIndex[attname]; ok {
-				structure.Columns[idx].Comment = *desc
-			}
-		}
+	// 2b. Table comment
+	var tblComment *string
+	_ = db.QueryRowContext(ctx, `
+		SELECT pg_catalog.obj_description(c.oid, 'pg_class')
+		FROM pg_catalog.pg_class c
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relname = $2;`, schema, table).Scan(&tblComment)
+	if tblComment != nil {
+		structure.Comment = *tblComment
 	}
 
-	// 3. Get Foreign Keys (with ON UPDATE / ON DELETE rules)
+	// 3. Get Foreign Keys via pg_constraint (supports cross-schema and composite FKs accurately)
 	fkQuery := `
 		SELECT
-			tc.constraint_name, kcu.column_name,
-			ccu.table_schema AS foreign_table_schema,
-			ccu.table_name AS foreign_table_name,
-			ccu.column_name AS foreign_column_name,
-			rc.update_rule, rc.delete_rule
-		FROM information_schema.table_constraints AS tc
-		JOIN information_schema.key_column_usage AS kcu
-			ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-		JOIN information_schema.constraint_column_usage AS ccu
-			ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-		JOIN information_schema.referential_constraints AS rc
-			ON rc.constraint_name = tc.constraint_name AND rc.constraint_schema = tc.table_schema
-		WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1 AND tc.table_name = $2;`
+			con.conname,
+			src_a.attname AS col_name,
+			ref_n.nspname AS ref_schema,
+			ref_c.relname AS ref_table,
+			ref_a.attname AS ref_column,
+			CASE con.confupdtype
+				WHEN 'a' THEN 'NO ACTION'
+				WHEN 'r' THEN 'RESTRICT'
+				WHEN 'c' THEN 'CASCADE'
+				WHEN 'n' THEN 'SET NULL'
+				WHEN 'd' THEN 'SET DEFAULT'
+				ELSE 'NO ACTION'
+			END AS on_update,
+			CASE con.confdeltype
+				WHEN 'a' THEN 'NO ACTION'
+				WHEN 'r' THEN 'RESTRICT'
+				WHEN 'c' THEN 'CASCADE'
+				WHEN 'n' THEN 'SET NULL'
+				WHEN 'd' THEN 'SET DEFAULT'
+				ELSE 'NO ACTION'
+			END AS on_delete
+		FROM pg_catalog.pg_constraint con
+		JOIN pg_catalog.pg_class src_c ON src_c.oid = con.conrelid
+		JOIN pg_catalog.pg_namespace src_n ON src_n.oid = src_c.relnamespace
+		JOIN pg_catalog.pg_class ref_c ON ref_c.oid = con.confrelid
+		JOIN pg_catalog.pg_namespace ref_n ON ref_n.oid = ref_c.relnamespace
+		JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS k(src_attnum, ref_attnum, ord) ON true
+		JOIN pg_catalog.pg_attribute src_a ON src_a.attrelid = src_c.oid AND src_a.attnum = k.src_attnum
+		JOIN pg_catalog.pg_attribute ref_a ON ref_a.attrelid = ref_c.oid AND ref_a.attnum = k.ref_attnum
+		WHERE con.contype = 'f' AND src_n.nspname = $1 AND src_c.relname = $2
+		ORDER BY con.conname, k.ord;`
 	fkRows, err := db.QueryContext(ctx, fkQuery, schema, table)
 	if err == nil {
 		defer fkRows.Close()
@@ -536,16 +578,16 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		}
 	}
 
-	// 4. Get Indexes (composite indexes grouped by name, columns in key order, plus full definition for vector/GIN/GiST indexes)
+	// 4. Get Indexes (includes expression indexes where attnum = 0 via LEFT JOIN)
 	idxQuery := `
-		SELECT i.relname, ix.indisunique, ix.indisprimary, am.amname, a.attname, COALESCE(pg_get_indexdef(i.oid), '')
-		FROM pg_class t
-		JOIN pg_namespace n ON n.oid = t.relnamespace
-		JOIN pg_index ix ON ix.indrelid = t.oid
-		JOIN pg_class i ON i.oid = ix.indexrelid
-		JOIN pg_am am ON am.oid = i.relam
+		SELECT i.relname, ix.indisunique, ix.indisprimary, am.amname, COALESCE(a.attname, ''), COALESCE(pg_catalog.pg_get_indexdef(i.oid), '')
+		FROM pg_catalog.pg_class t
+		JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+		JOIN pg_catalog.pg_index ix ON ix.indrelid = t.oid
+		JOIN pg_catalog.pg_class i ON i.oid = ix.indexrelid
+		JOIN pg_catalog.pg_am am ON am.oid = i.relam
 		JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
-		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND k.attnum > 0
 		WHERE n.nspname = $1 AND t.relname = $2
 		ORDER BY i.relname, k.ord;`
 	if idxRows, idxErr := db.QueryContext(ctx, idxQuery, schema, table); idxErr == nil {
@@ -571,7 +613,9 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 					Definition: idxDef,
 				})
 			}
-			structure.Indexes[pos].Columns = append(structure.Indexes[pos].Columns, colName)
+			if colName != "" {
+				structure.Indexes[pos].Columns = append(structure.Indexes[pos].Columns, colName)
+			}
 		}
 	}
 
@@ -634,11 +678,19 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 	var defs []string
 	for _, c := range s.Columns {
 		def := fmt.Sprintf("  %s %s", quoteIdent(c.Name), c.DataType)
-		if !c.IsNullable {
-			def += " NOT NULL"
-		}
-		if c.DefaultValue != "" {
-			def += " DEFAULT " + c.DefaultValue
+		if c.DefaultKind == "GENERATED_STORED" && c.DefaultValue != "" {
+			def += fmt.Sprintf(" GENERATED ALWAYS AS (%s) STORED", c.DefaultValue)
+		} else {
+			if !c.IsNullable {
+				def += " NOT NULL"
+			}
+			if c.DefaultKind == "IDENTITY_ALWAYS" {
+				def += " GENERATED ALWAYS AS IDENTITY"
+			} else if c.DefaultKind == "IDENTITY_BY_DEFAULT" {
+				def += " GENERATED BY DEFAULT AS IDENTITY"
+			} else if c.DefaultValue != "" {
+				def += " DEFAULT " + c.DefaultValue
+			}
 		}
 		defs = append(defs, def)
 	}
@@ -651,18 +703,46 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 		defs = append(defs, fmt.Sprintf("  CONSTRAINT %s PRIMARY KEY (%s)", quoteIdent(table+"_pkey"), strings.Join(pkCols, ", ")))
 	}
 
+	// Group composite Foreign Keys by constraint name while preserving order
+	type fkGroup struct {
+		name     string
+		cols     []string
+		refCols  []string
+		refSch   string
+		refTbl   string
+		onUpdate string
+		onDelete string
+	}
+	var fkGroups []*fkGroup
+	fkByName := make(map[string]*fkGroup)
 	for _, fk := range s.ForeignKeys {
 		cName := fk.ConstraintName
 		if cName == "" {
 			cName = fmt.Sprintf("%s_%s_fkey", table, fk.ColumnName)
 		}
-		def := fmt.Sprintf("  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
-			quoteIdent(cName), quoteIdent(fk.ColumnName), qualifiedName(fk.RefSchema, fk.RefTable), quoteIdent(fk.RefColumn))
-		if fk.OnUpdate != "" && !strings.EqualFold(fk.OnUpdate, "NO ACTION") {
-			def += " ON UPDATE " + fk.OnUpdate
+		g, ok := fkByName[cName]
+		if !ok {
+			g = &fkGroup{
+				name:     cName,
+				refSch:   fk.RefSchema,
+				refTbl:   fk.RefTable,
+				onUpdate: fk.OnUpdate,
+				onDelete: fk.OnDelete,
+			}
+			fkByName[cName] = g
+			fkGroups = append(fkGroups, g)
 		}
-		if fk.OnDelete != "" && !strings.EqualFold(fk.OnDelete, "NO ACTION") {
-			def += " ON DELETE " + fk.OnDelete
+		g.cols = append(g.cols, quoteIdent(fk.ColumnName))
+		g.refCols = append(g.refCols, quoteIdent(fk.RefColumn))
+	}
+	for _, g := range fkGroups {
+		def := fmt.Sprintf("  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+			quoteIdent(g.name), strings.Join(g.cols, ", "), qualifiedName(g.refSch, g.refTbl), strings.Join(g.refCols, ", "))
+		if g.onUpdate != "" && !strings.EqualFold(g.onUpdate, "NO ACTION") {
+			def += " ON UPDATE " + g.onUpdate
+		}
+		if g.onDelete != "" && !strings.EqualFold(g.onDelete, "NO ACTION") {
+			def += " ON DELETE " + g.onDelete
 		}
 		defs = append(defs, def)
 	}
@@ -692,7 +772,7 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 		if idx.IsPrimary {
 			continue
 		}
-		if idx.Definition != "" && (strings.EqualFold(idx.Method, "hnsw") || strings.EqualFold(idx.Method, "ivfflat")) {
+		if idx.Definition != "" {
 			def := strings.TrimRight(strings.TrimSpace(idx.Definition), ";")
 			sb.WriteString(fmt.Sprintf("\n\n%s;", def))
 			continue
@@ -728,10 +808,15 @@ func (p *PostgresDriver) Execute(ctx context.Context, req driver.QueryRequest) (
 	defer conn.Close()
 
 	if req.Schema != "" && req.Schema != "main" {
-		_, _ = conn.ExecContext(ctx, fmt.Sprintf(`SET search_path TO %s, public`, quoteIdent(req.Schema)))
+		if _, sErr := conn.ExecContext(ctx, fmt.Sprintf(`SET search_path TO %s, public`, quoteIdent(req.Schema))); sErr != nil {
+			return nil, fmt.Errorf("failed to set search_path to %q: %w", req.Schema, sErr)
+		}
+		defer func() {
+			_, _ = conn.ExecContext(context.Background(), `RESET search_path`)
+		}()
 	}
 
-	return driver.ExecuteStatements(ctx, conn, req)
+	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "postgres")
 }
 
 func (p *PostgresDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
@@ -812,30 +897,76 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, tab
 	prefix := qualifiedName(schema, table)
 
 	var totalAffected int64
-	for _, c := range changes {
+	const insertBatchSize = 100
+	for i := 0; i < len(changes); i++ {
+		c := changes[i]
 		switch c.Type {
 		case "insert":
-			cols := []string{}
-			placeholders := []string{}
-			vals := []any{}
-			idx := 1
-			for _, k := range sortedKeys(c.Changes) {
-				cols = append(cols, quoteIdent(k))
-				placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
-				vals = append(vals, c.Changes[k])
-				idx++
-			}
-			stmt := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`, prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
+			cols := sortedKeys(c.Changes)
 			if len(cols) == 0 {
-				stmt = fmt.Sprintf(`INSERT INTO %s DEFAULT VALUES`, prefix)
+				stmt := fmt.Sprintf(`INSERT INTO %s DEFAULT VALUES`, prefix)
+				res, err := tx.ExecContext(ctx, stmt)
+				if err != nil {
+					return 0, err
+				}
+				ra, _ := res.RowsAffected()
+				totalAffected += ra
+				continue
 			}
+
+			// Batch consecutive homogeneous INSERTs for remote/SSH performance
+			batchEnd := i + 1
+			for batchEnd < len(changes) && (batchEnd-i) < insertBatchSize {
+				next := changes[batchEnd]
+				if next.Type != "insert" {
+					break
+				}
+				nextCols := sortedKeys(next.Changes)
+				if len(nextCols) != len(cols) {
+					break
+				}
+				same := true
+				for k := range cols {
+					if cols[k] != nextCols[k] {
+						same = false
+						break
+					}
+				}
+				if !same {
+					break
+				}
+				batchEnd++
+			}
+
+			qCols := make([]string, len(cols))
+			for k, col := range cols {
+				qCols[k] = quoteIdent(col)
+			}
+			var tupleStrs []string
+			var vals []any
+			paramIdx := 1
+			for b := i; b < batchEnd; b++ {
+				rowChanges := changes[b].Changes
+				placeholders := make([]string, len(cols))
+				for k, col := range cols {
+					placeholders[k] = fmt.Sprintf("$%d", paramIdx)
+					vals = append(vals, rowChanges[col])
+					paramIdx++
+				}
+				tupleStrs = append(tupleStrs, "("+strings.Join(placeholders, ", ")+")")
+			}
+			stmt := fmt.Sprintf(`INSERT INTO %s (%s) VALUES %s`, prefix, strings.Join(qCols, ", "), strings.Join(tupleStrs, ", "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
 			if err != nil {
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
 			totalAffected += ra
+			i = batchEnd - 1
 		case "update":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot update row without primary key")
+			}
 			sets := []string{}
 			vals := []any{}
 			idx := 1
@@ -862,6 +993,9 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, tab
 			ra, _ := res.RowsAffected()
 			totalAffected += ra
 		case "delete":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot delete row without primary key")
+			}
 			where := []string{}
 			vals := []any{}
 			idx := 1
@@ -895,9 +1029,25 @@ func formatSQLVal(v any) string {
 		return "NULL"
 	}
 	switch val := v.(type) {
+	case bool:
+		if val {
+			return "TRUE"
+		}
+		return "FALSE"
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprintf("%v", val)
+	case []byte:
+		return fmt.Sprintf("'\\x%s'::bytea", hex.EncodeToString(val))
+	case time.Time:
+		return "'" + val.Format("2006-01-02 15:04:05.999999Z07:00") + "'"
 	case string:
 		return "'" + strings.ReplaceAll(val, "'", "''") + "'"
+	case map[string]any, []any:
+		if b, err := json.Marshal(val); err == nil {
+			return "'" + strings.ReplaceAll(string(b), "'", "''") + "'"
+		}
+		return "'" + strings.ReplaceAll(fmt.Sprintf("%v", val), "'", "''") + "'"
 	default:
-		return fmt.Sprintf("%v", val)
+		return "'" + strings.ReplaceAll(fmt.Sprintf("%v", val), "'", "''") + "'"
 	}
 }

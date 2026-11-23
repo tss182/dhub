@@ -20,13 +20,16 @@ type TxSession struct {
 	TabID        string
 	ConnectionID string
 	Database     string
+	Driver       string
 	Tx           *sql.Tx
 	StartedAt    time.Time
 	Count        int
+	IsAborted    bool
 }
 
 type TxStatus struct {
 	IsOpen          bool   `json:"isOpen"`
+	IsAborted       bool   `json:"isAborted"`
 	ConnectionID    string `json:"connectionId"`
 	Database        string `json:"database"`
 	StartedAt       int64  `json:"startedAt"`
@@ -144,14 +147,42 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 	var res *driver.QueryResult
 	var execErr error
 
+	drvDialect := ""
+	if cfg != nil {
+		drvDialect = strings.ToLower(strings.TrimSpace(cfg.Driver))
+	}
+
 	if activeTxSession != nil {
-		res, execErr = driver.ExecuteStatements(ctx, activeTxSession.Tx, req)
+		res, execErr = driver.ExecuteStatementsWithDialect(ctx, activeTxSession.Tx, req, drvDialect)
+		q.mu.Lock()
 		if execErr == nil {
-			q.mu.Lock()
 			activeTxSession.Count++
-			q.mu.Unlock()
+		} else if drvDialect == "postgres" {
+			activeTxSession.IsAborted = true
 		}
+		q.mu.Unlock()
 	} else {
+		if drvDialect == "postgres" {
+			cleanUpper := strings.ToUpper(strings.TrimSpace(driver.StripLeadingComments(req.SQL)))
+			if strings.HasPrefix(cleanUpper, "DROP DATABASE") {
+				if poolCloser, ok := drv.(interface{ CloseDatabasePool(string) }); ok {
+					// Evict any cached pool for the target database so PG does not reject DROP DATABASE
+					fields := strings.Fields(strings.TrimRight(cleanUpper, ";"))
+					if len(fields) >= 3 {
+						target := strings.Trim(fields[len(fields)-1], `"';`)
+						if strings.EqualFold(target, "FORCE)") || strings.EqualFold(target, "WITH") {
+							for idx := 2; idx < len(fields); idx++ {
+								if fields[idx] != "IF" && fields[idx] != "EXISTS" {
+									target = strings.Trim(fields[idx], `"';`)
+									break
+								}
+							}
+						}
+						poolCloser.CloseDatabasePool(target)
+					}
+				}
+			}
+		}
 		res, execErr = drv.Execute(ctx, req)
 	}
 
@@ -212,6 +243,7 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 		q.mu.Unlock()
 		return &TxStatus{
 			IsOpen:          true,
+			IsAborted:       existing.IsAborted,
 			ConnectionID:    existing.ConnectionID,
 			Database:        existing.Database,
 			StartedAt:       existing.StartedAt.UnixMilli(),
@@ -219,6 +251,12 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 		}, nil
 	}
 	q.mu.Unlock()
+
+	cfg, _ := q.store.GetConnection(context.Background(), connectionID)
+	drvName := ""
+	if cfg != nil {
+		drvName = strings.ToLower(strings.TrimSpace(cfg.Driver))
+	}
 
 	drv, err := q.sessions.GetOrConnect(context.Background(), connectionID)
 	if err != nil {
@@ -237,6 +275,7 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 		TabID:        tabID,
 		ConnectionID: connectionID,
 		Database:     database,
+		Driver:       drvName,
 		Tx:           tx,
 		StartedAt:    time.Now(),
 		Count:        0,
@@ -248,6 +287,7 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 
 	return &TxStatus{
 		IsOpen:          true,
+		IsAborted:       false,
 		ConnectionID:    connectionID,
 		Database:        database,
 		StartedAt:       session.StartedAt.UnixMilli(),
@@ -261,6 +301,10 @@ func (q *QueryService) CommitTransaction(tabID string) error {
 	if !ok || session == nil {
 		q.mu.Unlock()
 		return fmt.Errorf("no active transaction found for tab %s", tabID)
+	}
+	if session.IsAborted {
+		q.mu.Unlock()
+		return fmt.Errorf("cannot commit an aborted PostgreSQL transaction (SQLSTATE 25P02); please Rollback the transaction")
 	}
 	delete(q.activeTx, tabID)
 	q.mu.Unlock()
@@ -314,6 +358,7 @@ func (q *QueryService) GetTransactionStatus(tabID string) *TxStatus {
 	if session, ok := q.activeTx[tabID]; ok && session != nil {
 		return &TxStatus{
 			IsOpen:          true,
+			IsAborted:       session.IsAborted,
 			ConnectionID:    session.ConnectionID,
 			Database:        session.Database,
 			StartedAt:       session.StartedAt.UnixMilli(),

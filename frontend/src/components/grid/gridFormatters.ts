@@ -19,14 +19,27 @@ export function parseColumnTypeDetails(dataType?: string) {
 export function formatSqlLiteral(val: any, dataType?: string, driver?: string): string {
   if (val === null || val === undefined) return 'NULL';
   const rawType = (dataType || '').toLowerCase();
-  const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
-  if (isNum && !isNaN(Number(val)) && String(val).trim() !== '') {
+  const isNonScalarNumericName =
+    rawType.includes('[]') ||
+    rawType === 'array' ||
+    rawType.includes('interval') ||
+    rawType.includes('point') ||
+    rawType.includes('range') ||
+    rawType.includes('bit') ||
+    rawType.includes('inet') ||
+    rawType.includes('cidr') ||
+    rawType.includes('macaddr') ||
+    rawType.includes('json') ||
+    rawType.includes('xml') ||
+    rawType.includes('uuid');
+  const isNum = !isNonScalarNumericName && /\b(int|int2|int4|int8|smallint|integer|bigint|float|float4|float8|double|decimal|numeric|real|serial|bigserial|smallserial|number)\b/.test(rawType);
+  if (isNum && typeof val !== 'object' && String(val).trim() !== '' && Number.isFinite(Number(val))) {
     return String(val);
   }
   if (typeof val === 'boolean') {
     return val ? 'TRUE' : 'FALSE';
   }
-  const str = String(val);
+  const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
   if ((driver || '').toLowerCase() === 'clickhouse') {
     return `'${str.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
   }
@@ -42,6 +55,17 @@ export function getColumnInputType(dataType?: string): 'date' | 'datetime-local'
     (unwrapped.startsWith('Nullable(') && unwrapped.endsWith(')'))
   ) {
     unwrapped = unwrapped.slice(unwrapped.indexOf('(') + 1, -1).trim();
+  }
+  const upperRaw = unwrapped.toUpperCase();
+  // PostgreSQL arrays, timestamptz, and timetz must use text input so array syntax, timezones, and microseconds are preserved
+  if (
+    upperRaw.endsWith('[]') ||
+    upperRaw === 'ARRAY' ||
+    upperRaw.includes('WITH TIME ZONE') ||
+    upperRaw === 'TIMESTAMPTZ' ||
+    upperRaw === 'TIMETZ'
+  ) {
+    return 'text';
   }
   const { baseType } = parseColumnTypeDetails(unwrapped);
   const upper = baseType.toUpperCase();
@@ -63,8 +87,11 @@ export function formatToDateInputValue(
   type: 'date' | 'datetime-local' | 'time' | 'text'
 ): string {
   if (val === null || val === undefined) return '';
-  const str = String(val).trim();
+  const rawStr = String(val);
+  if (type === 'text') return rawStr;
+  const str = rawStr.trim();
   if (!str) return '';
+  if (/^-?infinity$/i.test(str) || /\bBC$/i.test(str)) return str;
 
   if (type === 'date') {
     const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -95,7 +122,7 @@ export function formatToDateInputValue(
     return '';
   }
 
-  return str;
+  return rawStr;
 }
 
 export function normalizeDateCommitValue(
@@ -103,8 +130,12 @@ export function normalizeDateCommitValue(
   inputType: 'date' | 'datetime-local' | 'time' | 'text'
 ): string | null {
   if (val === null || val === undefined) return null;
+  if (inputType === 'text') {
+    return val;
+  }
   const trimmed = String(val).trim();
   if (!trimmed) return null;
+  if (/^-?infinity$/i.test(trimmed) || /\bBC$/i.test(trimmed)) return trimmed;
 
   if (inputType === 'datetime-local') {
     let s = trimmed.replace('T', ' ').replace(/Z$/, '').trim();
@@ -379,8 +410,8 @@ export function cleanPastedValue(val: any, dataType?: string): any {
     return null;
   }
 
-  const upperType = (dataType || '').toUpperCase();
-  if (upperType.includes('BOOL') || upperType.includes('BIT')) {
+  const upperType = (dataType || '').toUpperCase().trim();
+  if (upperType === 'BOOL' || upperType === 'BOOLEAN') {
     if (str === 'true' || str === 't' || str === '1') return true;
     if (str === 'false' || str === 'f' || str === '0') return false;
   }

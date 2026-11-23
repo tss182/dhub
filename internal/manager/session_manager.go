@@ -292,27 +292,62 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 		return sqlite.NewSQLiteDriver(targetPath)
 	case "postgres":
-		sslMode := cfg.SSLMode
+		sslMode := strings.TrimSpace(cfg.SSLMode)
 		if sslMode == "" {
 			sslMode = "disable"
 		}
-		dbName := strings.TrimSpace(cfg.DatabaseName)
-		if dbName == "" {
-			dbName = "postgres"
-		}
-		if !strings.HasPrefix(dbName, "/") {
-			dbName = "/" + dbName
-		}
-		// postgres://user:password@host:port/dbname?sslmode=disable
-		u := url.URL{
-			Scheme: "postgres",
-			User:   url.UserPassword(cfg.Username, cfg.Password),
-			Host:   fmt.Sprintf("%s:%d", host, port),
-			Path:   dbName,
+		rawHost := strings.TrimSpace(cfg.Host)
+		var u url.URL
+		if strings.HasPrefix(rawHost, "postgres://") || strings.HasPrefix(rawHost, "postgresql://") {
+			parsed, perr := url.Parse(rawHost)
+			if perr != nil {
+				return nil, fmt.Errorf("invalid PostgreSQL URI: %w", perr)
+			}
+			u = *parsed
+			u.Scheme = "postgres"
+			if cfg.SSHEnabled && host != "" && port > 0 {
+				u.Host = fmt.Sprintf("%s:%d", host, port)
+			}
+			if u.User == nil && (cfg.Username != "" || cfg.Password != "") {
+				u.User = url.UserPassword(cfg.Username, cfg.Password)
+			}
+			if (u.Path == "" || u.Path == "/") && strings.TrimSpace(cfg.DatabaseName) != "" {
+				u.Path = "/" + strings.TrimSpace(cfg.DatabaseName)
+			}
+			if u.Path == "" || u.Path == "/" {
+				u.Path = "/postgres"
+			}
+		} else {
+			if port <= 0 {
+				port = 5432
+			}
+			if host == "" {
+				host = "127.0.0.1"
+			}
+			dbName := strings.TrimSpace(cfg.DatabaseName)
+			if dbName == "" {
+				dbName = "postgres"
+			}
+			if !strings.HasPrefix(dbName, "/") {
+				dbName = "/" + dbName
+			}
+			u = url.URL{
+				Scheme: "postgres",
+				User:   url.UserPassword(cfg.Username, cfg.Password),
+				Host:   fmt.Sprintf("%s:%d", host, port),
+				Path:   dbName,
+			}
 		}
 		q := u.Query()
-		q.Set("sslmode", sslMode)
-		q.Set("connect_timeout", "10")
+		if q.Get("sslmode") == "" || cfg.SSLMode != "" {
+			q.Set("sslmode", sslMode)
+		}
+		if q.Get("connect_timeout") == "" {
+			q.Set("connect_timeout", "10")
+		}
+		if q.Get("application_name") == "" {
+			q.Set("application_name", "DHub")
+		}
 		if cfg.SSLCAPath != "" {
 			q.Set("sslrootcert", cfg.SSLCAPath)
 		}
@@ -321,6 +356,31 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 		if cfg.SSLKeyPath != "" {
 			q.Set("sslkey", cfg.SSLKeyPath)
+		}
+		if cfg.IsReadOnly {
+			q.Set("default_transaction_read_only", "on")
+		}
+		if strings.TrimSpace(cfg.OptionsJSON) != "" {
+			var pgOpts struct {
+				ApplicationName string `json:"applicationName"`
+				SearchPath      string `json:"searchPath"`
+				StatementTimout string `json:"statementTimeout"`
+				ExecMode        string `json:"defaultQueryExecMode"`
+			}
+			if json.Unmarshal([]byte(cfg.OptionsJSON), &pgOpts) == nil {
+				if strings.TrimSpace(pgOpts.ApplicationName) != "" {
+					q.Set("application_name", strings.TrimSpace(pgOpts.ApplicationName))
+				}
+				if strings.TrimSpace(pgOpts.SearchPath) != "" {
+					q.Set("search_path", strings.TrimSpace(pgOpts.SearchPath))
+				}
+				if strings.TrimSpace(pgOpts.StatementTimout) != "" {
+					q.Set("statement_timeout", strings.TrimSpace(pgOpts.StatementTimout))
+				}
+				if strings.TrimSpace(pgOpts.ExecMode) != "" {
+					q.Set("default_query_exec_mode", strings.TrimSpace(pgOpts.ExecMode))
+				}
+			}
 		}
 		u.RawQuery = q.Encode()
 		return postgres.NewPostgresDriver(u.String())
@@ -603,7 +663,7 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 	rawHost := strings.TrimSpace(cfg.Host)
 	remoteHost := rawHost
 	remotePort := cfg.Port
-	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") || strings.HasPrefix(rawHost, "clickhouse://") || strings.HasPrefix(rawHost, "mongodb://") {
+	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") || strings.HasPrefix(rawHost, "clickhouse://") || strings.HasPrefix(rawHost, "mongodb://") || strings.HasPrefix(rawHost, "postgres://") || strings.HasPrefix(rawHost, "postgresql://") {
 		if u, err := url.Parse(rawHost); err == nil && u.Hostname() != "" {
 			remoteHost = u.Hostname()
 			if pStr := u.Port(); pStr != "" {
@@ -619,11 +679,15 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 					remotePort = 9000
 				} else if u.Scheme == "mongodb" {
 					remotePort = 27017
+				} else if u.Scheme == "postgres" || u.Scheme == "postgresql" {
+					remotePort = 5432
 				}
 			}
 		}
 	}
-	if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "qdrant") {
+	if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "postgres") {
+		remotePort = 5432
+	} else if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "qdrant") {
 		remotePort = 6333
 	} else if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "clickhouse") {
 		remotePort = 9000

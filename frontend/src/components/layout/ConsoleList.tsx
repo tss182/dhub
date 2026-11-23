@@ -242,13 +242,20 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
         ? dbs.filter((db) => visibleList.includes(db) || visibleList.some((v) => v.toLowerCase() === db.toLowerCase()))
         : dbs;
 
-    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+    const { activeConnectionId, activeDatabase, activeSchema } = useConnectionStore.getState();
+    const isActiveConn = conn.id === activeConnectionId;
+    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys', 'template0', 'template1', 'rdsadmin', 'cloudsqladmin', 'azure_maintenance', 'azure_sys'];
     const nonSystemDb = effectiveDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
+    const fallbackDb = conn.driver === 'postgres' ? 'postgres' : conn.driver === 'sqlite' ? 'main' : 'default';
     const targetDb =
+      (isActiveConn && activeDatabase && activeDatabase !== 'main' ? activeDatabase : '') ||
       (conn.databaseName && (!visibleList || visibleList.includes(conn.databaseName) || visibleList.some((v) => v.toLowerCase() === conn.databaseName.toLowerCase())) ? conn.databaseName : '') ||
       nonSystemDb ||
-      (effectiveDbs.length > 0 ? effectiveDbs[0] : (conn.driver === 'sqlite' ? 'main' : 'default'));
-    const targetSchema = conn.driver === 'postgres' ? 'public' : targetDb;
+      (effectiveDbs.length > 0 ? effectiveDbs[0] : fallbackDb);
+    const targetSchema =
+      conn.driver === 'postgres'
+        ? (isActiveConn && activeSchema && activeSchema !== 'main' ? activeSchema : 'public')
+        : targetDb;
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
     const title = `${conn.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_console_${count}.sql`;
@@ -559,6 +566,8 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                                 subtitle:
                                   conn.driver === 'elasticsearch' || conn.driver === 'qdrant'
                                     ? conn.name
+                                    : conn.driver === 'postgres'
+                                    ? `${conn.name} / ${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''}`
                                     : `${conn.name} / ${record.database || 'main'}`,
                               })
                             }
@@ -566,6 +575,8 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                             title={
                               conn.driver === 'elasticsearch' || conn.driver === 'qdrant'
                                 ? record.title
+                                : conn.driver === 'postgres'
+                                ? `${record.title} (${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''})`
                                 : `${record.title} (${record.database || 'main'})`
                             }
                             className={`group flex flex-col p-2 rounded cursor-pointer border transition-colors ${
@@ -626,9 +637,15 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                                 <Database className="h-2.5 w-2.5 text-blue-400 shrink-0" />
                                 <span
                                   className="font-mono text-zinc-400 truncate"
-                                  title={record.database || 'main'}
+                                  title={
+                                    conn.driver === 'postgres'
+                                      ? `${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''}`
+                                      : record.database || 'main'
+                                  }
                                 >
-                                  {record.database || 'main'}
+                                  {conn.driver === 'postgres'
+                                    ? `${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''}`
+                                    : record.database || 'main'}
                                 </span>
                               </div>
                             )}

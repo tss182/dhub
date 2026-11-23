@@ -70,13 +70,20 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
         ? dbs.filter((db) => visibleList.includes(db) || visibleList.some((v) => v.toLowerCase() === db.toLowerCase()))
         : dbs;
 
-    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+    const { activeDatabase, activeSchema } = useConnectionStore.getState();
+    const isActiveConn = conn.id === activeConnectionId;
+    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys', 'template0', 'template1', 'rdsadmin', 'cloudsqladmin', 'azure_maintenance', 'azure_sys'];
     const nonSystemDb = effectiveDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
+    const fallbackDb = conn.driver === 'postgres' ? 'postgres' : conn.driver === 'sqlite' ? 'main' : 'default';
     const targetDb =
+      (isActiveConn && activeDatabase && activeDatabase !== 'main' ? activeDatabase : '') ||
       (conn.databaseName && (!visibleList || visibleList.includes(conn.databaseName) || visibleList.some((v) => v.toLowerCase() === conn.databaseName.toLowerCase())) ? conn.databaseName : '') ||
       nonSystemDb ||
-      (effectiveDbs.length > 0 ? effectiveDbs[0] : (conn.driver === 'sqlite' ? 'main' : 'default'));
-    const targetSchema = conn.driver === 'postgres' ? 'public' : targetDb;
+      (effectiveDbs.length > 0 ? effectiveDbs[0] : fallbackDb);
+    const targetSchema =
+      conn.driver === 'postgres'
+        ? (isActiveConn && activeSchema && activeSchema !== 'main' ? activeSchema : 'public')
+        : targetDb;
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
     const title = `${conn.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_console_${count}.sql`;

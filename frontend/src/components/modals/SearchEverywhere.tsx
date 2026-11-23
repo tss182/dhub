@@ -337,7 +337,7 @@ export const SearchEverywhere: React.FC = () => {
           if (!isMultiSchema) {
             effectiveSchema = driver === 'sqlite' ? 'main' : (item.databaseName || '');
           } else {
-            if (!effectiveSchema || effectiveSchema === 'main' || effectiveSchema === item.databaseName) {
+            if (!effectiveSchema || effectiveSchema === 'main') {
               effectiveSchema = driver === 'mssql' ? 'dbo' : driver === 'oracle' ? '' : 'public';
             }
           }
@@ -505,11 +505,19 @@ export const SearchEverywhere: React.FC = () => {
     }
 
     if (item.kind === 'table' || item.kind === 'view') {
+      const conn = connections.find((c) => c.id === item.connectionId);
+      const drv = conn?.driver;
+      const isMultiSchema = drv === 'postgres' || drv === 'mssql' || drv === 'oracle';
+      const tabId =
+        isMultiSchema && item.schema
+          ? `table-${item.connectionId}-${item.database}-${item.schema}-${item.table}`
+          : `table-${item.connectionId}-${item.database}-${item.table}`;
       openTab({
-        id: `table-${item.connectionId}-${item.database}-${item.table}`,
+        id: tabId,
         type: 'table_data',
         title: item.title,
         connectionId: item.connectionId || '',
+        driver: drv,
         database: item.database || '',
         schema: item.schema || '',
         table: item.table || '',
@@ -520,8 +528,17 @@ export const SearchEverywhere: React.FC = () => {
     if (item.kind === 'connection' && item.connectionId) {
       const conn = connections.find((c) => c.id === item.connectionId);
       if (conn) {
-        const defaultDb = conn.driver === 'qdrant' || conn.driver === 'elasticsearch' ? 'default' : conn.driver === 'mongodb' ? 'admin' : 'main';
-        setActiveConnection(conn.id, conn.databaseName || defaultDb, conn.driver === 'postgres' ? 'public' : defaultDb);
+        const defaultDb =
+          conn.driver === 'postgres'
+            ? 'postgres'
+            : conn.driver === 'qdrant' || conn.driver === 'elasticsearch'
+            ? 'default'
+            : conn.driver === 'mongodb'
+            ? 'admin'
+            : conn.driver === 'mssql'
+            ? 'master'
+            : 'main';
+        setActiveConnection(conn.id, conn.databaseName || defaultDb, conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : defaultDb);
       }
     }
   };

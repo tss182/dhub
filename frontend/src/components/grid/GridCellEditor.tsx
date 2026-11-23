@@ -32,13 +32,13 @@ export const GridCellEditor: React.FC<GridCellEditorProps> = ({
       step={colInputType === 'datetime-local' || colInputType === 'time' ? '1' : undefined}
       autoFocus
       ref={(el) => {
-        if (el) {
+        if (el && isFirstEditRenderRef.current) {
+          isFirstEditRenderRef.current = false;
           if (colInputType !== 'text') {
             try {
               el?.showPicker?.();
             } catch {}
-          } else if (isFirstEditRenderRef.current) {
-            isFirstEditRenderRef.current = false;
+          } else {
             try {
               const len = el.value.length;
               el.setSelectionRange(len, len);

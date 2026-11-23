@@ -19,27 +19,34 @@ export interface DriverCapabilities {
   queryLanguageLabel: string;
   // Schema & DDL
   hasSeparateSchemas: boolean;
+  systemSchemas: string[];
   supportsTableEngines: boolean;
   supportsForeignKeys: boolean;
   supportsTriggers: boolean;
   supportsAutoIncrement: boolean;
+  supportsIdentityColumns: boolean;
   supportsCollation: boolean;
   supportsRelationalIndexes: boolean;
   supportsDocumentIndexes: boolean;
   supportsSkippingIndexes: boolean;
   supportsProjections: boolean;
   supportsPartitions: boolean;
+  supportsExtensions: boolean;
+  supportsSequences: boolean;
+  supportsCustomTypes: boolean;
   supportsMaterializedViews: boolean;
   supportsDictionaries: boolean;
   supportsSchemaValidation: boolean;
   // Query & Execution
   supportsTransactions: boolean;
+  supportsSavepoints: boolean;
   supportsStandardUpdate: boolean;
   supportsAlterTableMutations: boolean;
   supportsUpsertOnDuplicateKey: boolean;
   supportsFinalModifier: boolean;
   supportsPrewhere: boolean;
   supportsSqlExplain: boolean;
+  supportsExplainJson: boolean;
   supportsNativeExplain: boolean;
   supportsSqlParameters: boolean;
   // UI & Tools
@@ -50,6 +57,7 @@ export interface DriverCapabilities {
   supportsDocumentView: boolean;
   supportsAggregationPipeline: boolean;
   supportsVectorSearch: boolean;
+  supportsVacuumAnalyze: boolean;
   backupToolLabel: string;
 }
 
@@ -59,6 +67,7 @@ const DEFAULT_RELATIONAL: DriverCapabilities = {
   defaultPort: 5432,
   identifierQuote: '"',
   systemDatabases: [],
+  systemSchemas: [],
   entityLabel: 'Table',
   entityPluralLabel: 'Tables',
   recordLabel: 'Row',
@@ -69,22 +78,28 @@ const DEFAULT_RELATIONAL: DriverCapabilities = {
   supportsForeignKeys: true,
   supportsTriggers: true,
   supportsAutoIncrement: true,
+  supportsIdentityColumns: false,
   supportsCollation: true,
   supportsRelationalIndexes: true,
   supportsDocumentIndexes: false,
   supportsSkippingIndexes: false,
   supportsProjections: false,
   supportsPartitions: false,
+  supportsExtensions: false,
+  supportsSequences: false,
+  supportsCustomTypes: false,
   supportsMaterializedViews: false,
   supportsDictionaries: false,
   supportsSchemaValidation: false,
   supportsTransactions: true,
+  supportsSavepoints: false,
   supportsStandardUpdate: true,
   supportsAlterTableMutations: false,
   supportsUpsertOnDuplicateKey: false,
   supportsFinalModifier: false,
   supportsPrewhere: false,
   supportsSqlExplain: true,
+  supportsExplainJson: false,
   supportsNativeExplain: false,
   supportsSqlParameters: true,
   supportsErDiagram: true,
@@ -94,11 +109,13 @@ const DEFAULT_RELATIONAL: DriverCapabilities = {
   supportsDocumentView: false,
   supportsAggregationPipeline: false,
   supportsVectorSearch: false,
+  supportsVacuumAnalyze: false,
   backupToolLabel: 'SQL',
 };
 
 const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
   clickhouse: {
+    ...DEFAULT_RELATIONAL,
     category: 'olap',
     defaultDatabase: 'default',
     defaultPort: 9000,
@@ -146,9 +163,20 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     defaultDatabase: 'postgres',
     defaultPort: 5432,
     hasSeparateSchemas: true,
-    systemDatabases: ['information_schema', 'pg_catalog', 'pg_toast'],
+    systemDatabases: ['template0', 'template1', 'rdsadmin', 'cloudsqladmin', 'azure_maintenance', 'azure_sys'],
+    systemSchemas: ['information_schema', 'pg_catalog', 'pg_toast'],
+    supportsAutoIncrement: false,
+    supportsIdentityColumns: true,
+    supportsCollation: false,
+    supportsPartitions: true,
+    supportsExtensions: true,
+    supportsSequences: true,
+    supportsCustomTypes: true,
     supportsMaterializedViews: true,
+    supportsSavepoints: true,
+    supportsExplainJson: true,
     supportsVectorSearch: true,
+    supportsVacuumAnalyze: true,
     backupToolLabel: 'pg_dump',
   },
   mysql: {
@@ -312,4 +340,40 @@ export function getDriverCapabilities(driver?: string | null): DriverCapabilitie
 
 export function isClickHouseDriver(driver?: string | null): boolean {
   return (driver || '').toLowerCase().trim() === 'clickhouse';
+}
+
+export function getDefaultDatabase(driver?: string | null): string {
+  const d = (driver || '').toLowerCase().trim();
+  if (d === 'postgres') return 'postgres';
+  if (d === 'sqlite') return 'main';
+  if (d === 'mssql' || d === 'sqlserver') return 'master';
+  if (d === 'oracle') return 'ORCL';
+  if (d === 'mongodb' || d === 'mongo') return 'admin';
+  if (d === 'redis') return 'db0';
+  if (d === 'clickhouse' || d === 'qdrant' || d === 'elasticsearch' || d === 'es') return 'default';
+  return 'main';
+}
+
+export function getDefaultSchema(driver?: string | null, database?: string): string {
+  const d = (driver || '').toLowerCase().trim();
+  if (d === 'postgres') return 'public';
+  if (d === 'mssql' || d === 'sqlserver') return 'dbo';
+  if (d === 'oracle') return '';
+  if (d === 'sqlite') return 'main';
+  return database || getDefaultDatabase(d);
+}
+
+export function buildTableTabId(
+  connectionId: string,
+  database: string,
+  schema: string,
+  table: string,
+  driver?: string | null
+): string {
+  const d = (driver || '').toLowerCase().trim();
+  const isMultiSchema = d === 'postgres' || d === 'mssql' || d === 'sqlserver' || d === 'oracle' || Boolean(schema);
+  if (isMultiSchema && schema) {
+    return `table-${connectionId}-${database}-${schema}-${table}`;
+  }
+  return `table-${connectionId}-${database}-${table}`;
 }

@@ -368,9 +368,16 @@ export const DataGrid: React.FC<DataGridProps> = ({
         if (colNameLower === '_score') return false;
         if (colNameLower === '_id') return isInsert;
       }
+      if (!isInsert && !isRedis && !isQdrant && !isElasticsearch && !isMongo && primaryKeys.length === 0) {
+        return false;
+      }
+      const colMeta = columns.find((c) => c.name === colName);
+      if ((colMeta as any)?.defaultKind === 'GENERATED_STORED') {
+        return false;
+      }
       return true;
     },
-    [isReadOnly, isRedis, isQdrant, isElasticsearch]
+    [isReadOnly, isRedis, isQdrant, isElasticsearch, isMongo, primaryKeys, columns]
   );
 
   const isCellEditable = useCallback(
@@ -381,14 +388,6 @@ export const DataGrid: React.FC<DataGridProps> = ({
       return isColumnEditable(col.name, rowIndex < 0);
     },
     [isReadOnly, columns, isColumnEditable]
-  );
-
-  const getRowByGlobalIndex = useCallback(
-    (globalIdx: number) => {
-      const rowInArray = globalIdx >= (startOffset || 0) ? globalIdx - (startOffset || 0) : globalIdx;
-      return rows[rowInArray] || rows[globalIdx];
-    },
-    [rows, startOffset]
   );
 
   const buildRowMetaMaps = useCallback(
@@ -516,8 +515,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const after = whereInput.slice(token.end);
 
     let insertText = item.name;
-    if (item.type === 'column' && /[^a-zA-Z0-9_]/.test(insertText)) {
-      insertText = isElasticsearch || isQdrant ? `"${insertText}"` : `\`${insertText}\``;
+    if (item.type === 'column' && (/[^a-zA-Z0-9_]/.test(insertText) || (driver === 'postgres' && /[A-Z]/.test(insertText)))) {
+      insertText = isElasticsearch || isQdrant ? `"${insertText}"` : quoteSqlIdentifier(insertText, driver || 'sqlite');
     }
 
     const needsSpaceAfter = !after.startsWith(' ');
@@ -1100,6 +1099,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
     });
   }, [rows, localSortConfigs, onSortChange, columns, colIndexMap]);
 
+  const getRowByGlobalIndex = useCallback(
+    (globalIdx: number) => {
+      const source = !onSortChange && localSortConfigs.length > 0 ? sortedRows : rows;
+      const rowInArray = globalIdx >= (startOffset || 0) ? globalIdx - (startOffset || 0) : globalIdx;
+      return source[rowInArray] || source[globalIdx];
+    },
+    [rows, sortedRows, onSortChange, localSortConfigs.length, startOffset]
+  );
+
   const isMultiPageInMemory = sortedRows.length > localPageSize;
   const displayedRows = isMultiPageInMemory
     ? sortedRows.slice((currentPage - 1) * localPageSize, currentPage * localPageSize)
@@ -1234,8 +1242,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const openUpdateQueryInTab = (rowIndex: number, colName: string, newVal: any) => {
-    const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
-    const targetRow = rows[rowInArray] || rows[rowIndex];
+    const targetRow = getRowByGlobalIndex(rowIndex);
     const sql = buildUpdateSql({ driver, tableName, columns, primaryKeys, targetRow, colName, newVal });
     const cleanTable = tableName || 'table';
     const consoleTitle = isQdrant
@@ -1377,8 +1384,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     if (rowIndex < 0) {
       stageCellUpdate(tabId, rowIndex, {}, {}, col.name, finalVal);
     } else {
-      const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
-      const targetRow = rows[rowInArray] || rows[rowIndex];
+      const targetRow = getRowByGlobalIndex(rowIndex);
       const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
       stageCellUpdate(tabId, rowIndex, pkMap, originalRowValues, col.name, finalVal);
     }
@@ -1780,7 +1786,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const getFormattedCopyText = (fmt?: CopyFormat) => {
-    const targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
+    let targetFormat = fmt || useSettingsStore.getState().copyFormat || copyFormat || 'csv';
+    const drv = (driver || '').toLowerCase();
+    const isNoSql = drv === 'redis' || drv === 'mongodb' || drv === 'mongo' || drv === 'qdrant' || drv === 'elasticsearch' || drv === 'es';
+    if (!isNoSql && (targetFormat === 'mongo_insert' || targetFormat === 'mongo_ejson' || targetFormat === 'qdrant_upsert' || targetFormat === 'es_bulk')) {
+      targetFormat = 'json';
+    }
     return formatSelectedCells({
       targetFormat,
       allSelectionRanges,
@@ -1828,7 +1839,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const handlePasteData = (text: string) => {
-    if (!text || columns.length === 0) return;
+    if (!text || columns.length === 0 || editingCell) return;
     if (isReadOnly) {
       alertWarning('Cannot paste: this connection or table is in Read-Only mode.', 'Read-Only Mode');
       return;
@@ -2227,8 +2238,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         stageRowDelete(tabId, idx, {}, {});
         return;
       }
-      const rowInArray = idx >= (startOffset || 0) ? idx - (startOffset || 0) : idx;
-      const targetRow = rows[rowInArray] || rows[idx];
+      const targetRow = getRowByGlobalIndex(idx);
       const { originalRowValues, pkMap } = buildRowMetaMaps(targetRow);
       stageRowDelete(tabId, idx, pkMap, originalRowValues);
     });
@@ -3688,22 +3698,26 @@ export const DataGrid: React.FC<DataGridProps> = ({
         />
       )}
 
-      <RedisAddKeyModal
-        isOpen={redisAddKeyOpen}
-        onClose={() => setRedisAddKeyOpen(false)}
-        connectionId={connectionId || ''}
-        database={database || 'db0'}
-        onSuccess={() => onRefresh?.()}
-      />
+      {isRedis && (
+        <>
+          <RedisAddKeyModal
+            isOpen={redisAddKeyOpen}
+            onClose={() => setRedisAddKeyOpen(false)}
+            connectionId={connectionId || ''}
+            database={database || 'db0'}
+            onSuccess={() => onRefresh?.()}
+          />
 
-      <RedisRenameKeyModal
-        isOpen={redisRenameModal.isOpen}
-        onClose={() => setRedisRenameModal({ isOpen: false, oldKeyName: '' })}
-        connectionId={connectionId || ''}
-        database={database || 'db0'}
-        oldKeyName={redisRenameModal.oldKeyName}
-        onSuccess={() => onRefresh?.()}
-      />
+          <RedisRenameKeyModal
+            isOpen={redisRenameModal.isOpen}
+            onClose={() => setRedisRenameModal({ isOpen: false, oldKeyName: '' })}
+            connectionId={connectionId || ''}
+            database={database || 'db0'}
+            oldKeyName={redisRenameModal.oldKeyName}
+            onSuccess={() => onRefresh?.()}
+          />
+        </>
+      )}
 
       {isQdrant && tableName && (
         <QdrantPointModal

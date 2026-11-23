@@ -98,7 +98,9 @@ export const ColumnHoverPopover: React.FC<{
       {hoveredCol.col.isAutoIncrement && (
         <div className="flex items-center justify-between gap-3">
           <span className="text-zinc-500">Extra:</span>
-          <span className="font-mono text-emerald-400 text-[10px]">auto_increment</span>
+          <span className="font-mono text-emerald-400 text-[10px]">
+            {String(hoveredCol.col.defaultValue || '').toLowerCase().includes('nextval') ? 'serial / sequence' : 'identity / auto'}
+          </span>
         </div>
       )}
 
