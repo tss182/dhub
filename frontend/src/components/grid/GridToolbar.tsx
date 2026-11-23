@@ -17,6 +17,7 @@ import {
   ArrowDownAZ,
   ArrowDownZA,
   Shield,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { SortConfig, WhereSuggestionItem, isMac, modKey } from './gridTypes';
 
@@ -107,6 +108,11 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
 }) => {
   const [copiedDml, setCopiedDml] = useState(false);
   const copyDmlTimerRef = useRef<number | null>(null);
+  const [pillContextMenu, setPillContextMenu] = useState<{
+    type: 'sort' | 'frozen';
+    x: number;
+    y: number;
+  } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -115,6 +121,20 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!pillContextMenu) return;
+    const handleClose = () => setPillContextMenu(null);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPillContextMenu(null);
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [pillContextMenu]);
 
   const handleCopyDmlClick = async () => {
     if (!onCopyDml) return;
@@ -397,7 +417,15 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
         {(localSortConfigs.length > 0 || frozenColumns.length > 0) && (
           <div className="flex items-center gap-2 shrink-0">
             {localSortConfigs.length > 0 && (
-              <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-[#2b2e3a] text-[11px] font-mono select-none">
+              <div
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setPillContextMenu({ type: 'sort', x: e.clientX, y: e.clientY });
+                }}
+                className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-[#2b2e3a] text-[11px] font-mono select-none"
+                title="Right-click to manage sorted columns"
+              >
                 <div className="flex items-center gap-1">
                   {localSortConfigs.slice(0, 2).map((sc, idx) => (
                     <span
@@ -450,7 +478,15 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
             )}
 
             {frozenColumns.length > 0 && (
-              <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-cyan-800/40 text-[11px] font-mono select-none">
+              <div
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setPillContextMenu({ type: 'frozen', x: e.clientX, y: e.clientY });
+                }}
+                className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-[#101115] border border-cyan-800/40 text-[11px] font-mono select-none"
+                title="Right-click to manage frozen columns"
+              >
                 <div className="flex items-center gap-1">
                   {frozenColumns.slice(0, 2).map((colName) => (
                     <span
@@ -496,6 +532,57 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
           </div>
         )}
       </div>
+
+      {pillContextMenu && (
+        <div
+          style={{
+            left: Math.min(pillContextMenu.x, window.innerWidth - 220),
+            top: Math.min(pillContextMenu.y, window.innerHeight - 100),
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="fixed z-50 min-w-[200px] rounded-lg border border-[#2d303d] bg-[#181920] p-1 text-xs shadow-2xl"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const t = pillContextMenu.type;
+              setPillContextMenu(null);
+              if (t === 'sort') {
+                onShowAllSorts();
+              } else {
+                onShowAllFrozen();
+              }
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-200 transition-colors text-left cursor-pointer group"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5 text-blue-400 group-hover:text-white shrink-0" />
+            <span>
+              {pillContextMenu.type === 'sort'
+                ? `Manage Sort (${localSortConfigs.length})`
+                : `Manage Frozen (${frozenColumns.length})`}
+            </span>
+          </button>
+          <div className="my-1 border-t border-[#272932]" />
+          <button
+            type="button"
+            onClick={() => {
+              const t = pillContextMenu.type;
+              setPillContextMenu(null);
+              if (t === 'sort') {
+                onClearAllSort();
+              } else {
+                onClearAllFrozen();
+              }
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-300 transition-colors text-left cursor-pointer group"
+          >
+            <X className="h-3.5 w-3.5 text-rose-400 group-hover:text-white shrink-0" />
+            <span>
+              {pillContextMenu.type === 'sort' ? 'Clear All Sorting' : 'Unfreeze All Columns'}
+            </span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };
