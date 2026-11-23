@@ -204,9 +204,13 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
       : 'bg-[#14151a] border-[#272932]';
 
   const isQdrant = connection?.driver === 'qdrant';
+  const isElasticsearch = connection?.driver === 'elasticsearch';
+  const isJsonSchema = (isQdrant || isElasticsearch) && scope === 'table';
   const title =
     isQdrant && scope === 'table'
       ? `Collection Config (JSON) — ${tableName}`
+      : isElasticsearch && scope === 'table'
+      ? `Index Mapping (JSON) — ${tableName}`
       : scope === 'table'
       ? `Table DDL — ${tableName}`
       : scope === 'schema'
@@ -215,7 +219,9 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
 
   const subtitle =
     scope === 'table'
-      ? `${connection?.name || ''} • ${database}${schema && schema !== database ? `.${schema}` : ''}`
+      ? isQdrant || isElasticsearch
+        ? `${connection?.name || ''}`
+        : `${connection?.name || ''} • ${database}${schema && schema !== database ? `.${schema}` : ''}`
       : `${connection?.name || ''} • Structure only (no data)`;
 
   const defaultFileName = (() => {
@@ -226,7 +232,11 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
         ? `${database}_${schema || 'schema'}`
         : database || 'database';
     const safe = base.replace(/[^a-zA-Z0-9_-]+/g, '_');
-    return isQdrant && scope === 'table' ? `${safe}_config.json` : `${safe}_ddl.sql`;
+    return isQdrant && scope === 'table'
+      ? `${safe}_config.json`
+      : isElasticsearch && scope === 'table'
+      ? `${safe}_mapping.json`
+      : `${safe}_ddl.sql`;
   })();
 
   const handleCopy = async () => {
@@ -235,9 +245,9 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
       await navigator.clipboard.writeText(ddl);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-      alertSuccess('DDL copied to clipboard');
+      alertSuccess(isJsonSchema ? 'JSON schema copied to clipboard' : 'DDL copied to clipboard');
     } catch (err: any) {
-      alertError('Failed to copy DDL: ' + (err?.message || String(err)));
+      alertError('Failed to copy: ' + (err?.message || String(err)));
     }
   };
 
@@ -246,13 +256,18 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
     setIsSaving(true);
     try {
       const chosen = await Dialogs.SaveFile({
-        Title: 'Save DDL Script',
+        Title: isJsonSchema ? 'Save JSON Schema' : 'Save DDL Script',
         Filename: defaultFileName,
         CanCreateDirectories: true,
-        Filters: [
-          { DisplayName: 'SQL Files (*.sql)', Pattern: '*.sql' },
-          { DisplayName: 'All Files (*.*)', Pattern: '*.*' },
-        ],
+        Filters: isJsonSchema
+          ? [
+              { DisplayName: 'JSON Files (*.json)', Pattern: '*.json' },
+              { DisplayName: 'All Files (*.*)', Pattern: '*.*' },
+            ]
+          : [
+              { DisplayName: 'SQL Files (*.sql)', Pattern: '*.sql' },
+              { DisplayName: 'All Files (*.*)', Pattern: '*.*' },
+            ],
       });
       if (chosen && typeof chosen === 'string' && chosen.trim()) {
         await SchemaService.SaveDDLFile(chosen.trim(), ddl);

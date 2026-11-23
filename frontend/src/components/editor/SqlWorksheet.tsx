@@ -279,6 +279,25 @@ function isDangerousQuery(sqlText: string): boolean {
       } catch {}
     }
   }
+  // Elasticsearch destructive REST commands: DELETE /<index> (not /<index>/_doc/<id>) or POST /<index>/_delete_by_query with match_all
+  if (
+    /^DELETE\s+\/[a-zA-Z0-9_.*,-]+(?:\?[^\s]*)?$/i.test(clean) &&
+    !/^DELETE\s+\/collections\//i.test(clean) &&
+    !/\/_doc\//i.test(clean) &&
+    !/\/_create\//i.test(clean)
+  ) {
+    return true;
+  }
+  if (/^POST\s+\/[^\s]+\/_delete_by_query/i.test(clean)) {
+    const bodyMatch = clean.match(/\{[\s\S]*\}/);
+    if (!bodyMatch) return true;
+    try {
+      const parsed = JSON.parse(bodyMatch[0]);
+      if (!parsed?.query || parsed.query.match_all !== undefined || Object.keys(parsed.query).length === 0) {
+        return true;
+      }
+    } catch {}
+  }
   return false;
 }
 
@@ -1033,10 +1052,16 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         // 1. Tables and Views
         tableMap.forEach((tbl) => {
           const isView = tbl.type === 'view';
+          const objLabel =
+            driver === 'elasticsearch'
+              ? 'Elasticsearch Index'
+              : driver === 'qdrant'
+              ? 'Qdrant Collection'
+              : `${isView ? 'View' : 'Table'} (${schema || database || 'db'})`;
           suggestions.push({
             label: tbl.name,
             kind: isView ? monaco.languages.CompletionItemKind.Class : monaco.languages.CompletionItemKind.Struct,
-            detail: `${isView ? 'View' : 'Table'} (${schema || database || 'db'})${tbl.columns.length > 0 ? ` • ${tbl.columns.length} columns` : ''}`,
+            detail: `${objLabel}${tbl.columns.length > 0 ? ` • ${tbl.columns.length} fields` : ''}`,
             insertText: tbl.name,
             sortText: isTableContext ? `0_${tbl.name}` : `2_${tbl.name}`,
             range,
@@ -1081,8 +1106,13 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             });
           });
 
-          // 4. SQL Keywords & Snippets
+          // 4. SQL Keywords & Snippets (filter out relational DDL/JOIN keywords for Qdrant & Elasticsearch)
+          const nonRelationalExclude =
+            driver === 'elasticsearch' || driver === 'qdrant'
+              ? /^(?:JOIN|INNER JOIN|LEFT JOIN|RIGHT JOIN|FULL OUTER JOIN|CROSS JOIN|ON|USING|FOREIGN KEY|REFERENCES|PRIMARY KEY|CREATE TABLE|ALTER TABLE|ADD COLUMN|DROP TABLE|TRUNCATE TABLE|CREATE INDEX|CREATE VIEW|UNION|UNION ALL|HAVING)$/i
+              : null;
           SQL_KEYWORDS.forEach((kw) => {
+            if (nonRelationalExclude && nonRelationalExclude.test(kw.label)) return;
             suggestions.push({
               label: kw.label,
               kind: kw.snippet && kw.snippet.includes('${') ? monaco.languages.CompletionItemKind.Snippet : monaco.languages.CompletionItemKind.Keyword,
@@ -1271,6 +1301,20 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 range,
               });
             });
+
+            // Index name autocomplete after HTTP method + /
+            if (/\b(?:GET|POST|PUT|DELETE|HEAD)\s+\/[a-zA-Z0-9_.-]*$/i.test(textUntilPosition)) {
+              tableMap.forEach((tbl) => {
+                suggestions.push({
+                  label: tbl.name,
+                  kind: monaco.languages.CompletionItemKind.Struct,
+                  detail: 'Elasticsearch Index',
+                  insertText: tbl.name,
+                  sortText: `0_idx_${tbl.name}`,
+                  range,
+                });
+              });
+            }
           }
 
           // 8. RediSearch (Redis Stack) snippets
@@ -1406,9 +1450,9 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       const trimmed = statementText.trim();
       if (!trimmed) return;
 
-      // Check parameters (skip for Qdrant or REST HTTP commands where `?wait=true` is a query string)
-      const isRestCmd = /^(GET|POST|PUT|DELETE|PATCH)\s+\//i.test(trimmed);
-      if (connection?.driver !== 'qdrant' && !isRestCmd) {
+      // Check parameters (skip for Qdrant, Elasticsearch, or REST HTTP commands where `?wait=true` is a query string)
+      const isRestCmd = /^(GET|POST|PUT|DELETE|PATCH|HEAD)\s+\//i.test(trimmed);
+      if (connection?.driver !== 'qdrant' && connection?.driver !== 'elasticsearch' && !isRestCmd) {
         const params = detectSqlParameters(trimmed);
         if (params.length > 0) {
           setPendingParams({
@@ -1709,8 +1753,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             </button>
           )}
 
-          {/* Explain Split Button (hidden for Qdrant) */}
-          {connection?.driver !== 'qdrant' && (
+          {/* Explain Split Button (hidden for Qdrant & Elasticsearch) */}
+          {connection?.driver !== 'qdrant' && connection?.driver !== 'elasticsearch' && (
           <div className="relative" ref={explainDropdownRef}>
             <div className="flex items-center rounded bg-[#22242c] border border-[#272932]">
               <button
@@ -1761,11 +1805,11 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             <AlignLeft className="h-3.5 w-3.5 text-zinc-400" />
           </button>
 
-          <div className="h-4 w-[1px] bg-[#272932] mx-1" />
-
-          {/* Transaction Controls (hidden for Qdrant) */}
-          {connection?.driver !== 'qdrant' && (
-          <div className="flex items-center gap-1.5">
+          {/* Transaction Controls (hidden for Qdrant & Elasticsearch) */}
+          {connection?.driver !== 'qdrant' && connection?.driver !== 'elasticsearch' && (
+            <>
+              <div className="h-4 w-[1px] bg-[#272932] mx-1" />
+              <div className="flex items-center gap-1.5">
             <div className="relative" ref={txDropdownRef}>
               <button
                 type="button"
@@ -1851,7 +1895,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 </button>
               </div>
             )}
-          </div>
+              </div>
+            </>
           )}
 
           <div className="h-4 w-[1px] bg-[#272932] mx-1" />
@@ -1882,61 +1927,65 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             </span>
           </div>
 
-          <span className="text-zinc-600 font-mono">/</span>
+          {connection?.driver !== 'qdrant' && connection?.driver !== 'elasticsearch' && (
+            <>
+              <span className="text-zinc-600 font-mono">/</span>
 
-          {/* High-Contrast Custom Database Dropdown */}
-          <div className="relative" ref={dbDropdownRef}>
-            <button
-              type="button"
-              onClick={() => setIsDbOpen(!isDbOpen)}
-              className="flex items-center gap-2 px-2.5 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-amber-300 font-mono text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-              title={database ? `${database} (Click to switch database)` : 'Click to select database'}
-            >
-              <Database className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              <span className="truncate max-w-[160px]">{database || 'Select Database'}</span>
-              <ChevronDown
-                className={`h-3 w-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
-                  isDbOpen ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+              {/* High-Contrast Custom Database Dropdown */}
+              <div className="relative" ref={dbDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsDbOpen(!isDbOpen)}
+                  className="flex items-center gap-2 px-2.5 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-amber-300 font-mono text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+                  title={database ? `${database} (Click to switch database)` : 'Click to select database'}
+                >
+                  <Database className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                  <span className="truncate max-w-[160px]">{database || 'Select Database'}</span>
+                  <ChevronDown
+                    className={`h-3 w-3 text-zinc-400 shrink-0 transition-transform duration-150 ${
+                      isDbOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
 
-            {isDbOpen && (
-              <div className="absolute top-full left-0 mt-1 min-w-[210px] max-w-[320px] max-h-64 overflow-auto rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1 flex items-center justify-between">
-                  <span>Databases</span>
-                  <span className="font-mono text-zinc-500">{displayedDatabases.length}</span>
-                </div>
+                {isDbOpen && (
+                  <div className="absolute top-full left-0 mt-1 min-w-[210px] max-w-[320px] max-h-64 overflow-auto rounded-md border border-[#3b3e4f] bg-[#191a20] shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                    <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 border-b border-[#272932] mb-1 flex items-center justify-between">
+                      <span>Databases</span>
+                      <span className="font-mono text-zinc-500">{displayedDatabases.length}</span>
+                    </div>
 
-                {displayedDatabases.length === 0 ? (
-                  <div className="px-2.5 py-2 text-[11px] text-zinc-500 italic">No databases found</div>
-                ) : (
-                  displayedDatabases.map((db) => {
-                    const isSelected = db === database;
-                    return (
-                      <div
-                        key={db}
-                        onClick={() => {
-                          databaseRef.current = db;
-                          onDatabaseChange?.(db);
-                          setIsDbOpen(false);
-                        }}
-                        title={db}
-                        className={`flex items-center justify-between px-2.5 py-1.5 rounded cursor-pointer font-mono text-xs transition-colors ${
-                          isSelected
-                            ? 'bg-blue-600 text-white font-bold'
-                            : 'text-zinc-200 hover:bg-[#2c303c] hover:text-white'
-                        }`}
-                      >
-                        <span className="truncate">{db}</span>
-                        {isSelected && <Check className="h-3.5 w-3.5 text-white shrink-0 ml-2" />}
-                      </div>
-                    );
-                  })
+                    {displayedDatabases.length === 0 ? (
+                      <div className="px-2.5 py-2 text-[11px] text-zinc-500 italic">No databases found</div>
+                    ) : (
+                      displayedDatabases.map((db) => {
+                        const isSelected = db === database;
+                        return (
+                          <div
+                            key={db}
+                            onClick={() => {
+                              databaseRef.current = db;
+                              onDatabaseChange?.(db);
+                              setIsDbOpen(false);
+                            }}
+                            title={db}
+                            className={`flex items-center justify-between px-2.5 py-1.5 rounded cursor-pointer font-mono text-xs transition-colors ${
+                              isSelected
+                                ? 'bg-blue-600 text-white font-bold'
+                                : 'text-zinc-200 hover:bg-[#2c303c] hover:text-white'
+                            }`}
+                          >
+                            <span className="truncate">{db}</span>
+                            {isSelected && <Check className="h-3.5 w-3.5 text-white shrink-0 ml-2" />}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2.5 text-zinc-400">
@@ -1960,6 +2009,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               const isMongo = drv === 'mongodb';
               const isRedis = drv === 'redis';
               const isQdrant = drv === 'qdrant';
+              const isElasticsearch = drv === 'elasticsearch' || drv === 'es';
 
               const title = isMongo
                 ? 'MongoDB Query Cheat-Sheet'
@@ -1967,6 +2017,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 ? 'Redis Command Cheat-Sheet'
                 : isQdrant
                 ? 'Qdrant Vector & REST Cheat-Sheet'
+                : isElasticsearch
+                ? 'Elasticsearch Query & REST Cheat-Sheet'
                 : 'SQL Worksheet Tips & Syntax';
 
               const subtitle = isMongo
@@ -1975,6 +2027,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 ? 'Click a Redis CLI or pseudo-SQL example to insert'
                 : isQdrant
                 ? 'Click a Qdrant pseudo-SQL or REST API command to insert'
+                : isElasticsearch
+                ? 'Click a Kibana REST command or SQL query to insert'
                 : 'Dynamic parameters (:param, $1, ?), FK joins & formatting';
 
               const examples = isMongo
@@ -2013,6 +2067,27 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                       code: 'PUT /collections/collection_name/index?wait=true\n{\n  "field_name": "category",\n  "field_schema": "keyword"\n}',
                     },
                   ]
+                : isElasticsearch
+                ? [
+                    { label: 'List All Indices', code: 'GET /_cat/indices?format=json' },
+                    { label: 'Browse Documents (SQL)', code: 'SELECT * FROM "index_name" LIMIT 50;' },
+                    {
+                      label: 'Full-Text Match Search',
+                      code: 'POST /index_name/_search\n{\n  "query": {\n    "match": {\n      "title": "search term"\n    }\n  },\n  "size": 20\n}',
+                    },
+                    {
+                      label: 'kNN Vector Search',
+                      code: 'POST /index_name/_search\n{\n  "knn": {\n    "field": "embedding",\n    "query_vector": [0.1, 0.2, 0.3],\n    "k": 10,\n    "num_candidates": 50\n  }\n}',
+                    },
+                    {
+                      label: 'Terms Aggregation (Buckets)',
+                      code: 'POST /index_name/_search\n{\n  "size": 0,\n  "aggs": {\n    "by_status": {\n      "terms": { "field": "status.keyword" }\n    }\n  }\n}',
+                    },
+                    {
+                      label: 'Index Document (REST)',
+                      code: 'POST /index_name/_doc?refresh=wait_for\n{\n  "title": "Hello Elasticsearch",\n  "status": "published"\n}',
+                    },
+                  ]
                 : [
                     { label: 'Named Parameter (:param)', code: 'SELECT * FROM table_name WHERE id = :id;' },
                     { label: 'Positional Parameter ($1)', code: 'SELECT * FROM table_name WHERE id = $1;' },
@@ -2033,7 +2108,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                     <div className="text-[10px] text-zinc-400 mt-0.5">{subtitle}</div>
                   </div>
 
-                  {!isMongo && !isRedis && !isQdrant && (
+                  {!isMongo && !isRedis && !isQdrant && !isElasticsearch && (
                     <ul className="mb-2.5 space-y-1 text-[10px] text-zinc-400 bg-[#14151a] border border-[#272932] rounded p-2">
                       <li>• <strong className="text-zinc-200">FK Join Autocomplete:</strong> Type <code>JOIN </code> after a table to get foreign-key <code>ON</code> hints.</li>
                       <li>• <strong className="text-zinc-200">Transactions:</strong> Click <code>Tx: AUTO</code> to toggle manual Commit/Rollback.</li>

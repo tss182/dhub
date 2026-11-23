@@ -55,9 +55,17 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
       .then((res) => {
         const cols = (res?.columns || []) as ColumnMeta[];
         setColumns(cols);
+        const isES = activeConn?.driver === 'elasticsearch';
+        const isQdrant = activeConn?.driver === 'qdrant';
         const init: Record<string, boolean> = {};
         cols.forEach((c) => {
-          init[c.name] = !c.isAutoIncrement;
+          if (isES && (c.name === '_id' || c.name === '_score')) {
+            init[c.name] = false;
+          } else if (isQdrant && c.name === 'score') {
+            init[c.name] = false;
+          } else {
+            init[c.name] = !c.isAutoIncrement;
+          }
         });
         setSelectedCols(init);
       })

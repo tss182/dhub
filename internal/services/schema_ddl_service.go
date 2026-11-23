@@ -102,6 +102,13 @@ func (s *SchemaService) GetDatabaseDDL(connectionID, database, schema string) (s
 				objectCount++
 				continue
 			}
+			if driverName == "elasticsearch" || driverName == "es" {
+				sb.WriteString(fmt.Sprintf("-- INDEX: %s\n", obj.Name))
+				sb.WriteString(buildElasticsearchIndexMigration(obj.Name, ddl))
+				sb.WriteString("\n\n")
+				objectCount++
+				continue
+			}
 			if !strings.HasSuffix(ddl, ";") {
 				ddl += ";"
 			}

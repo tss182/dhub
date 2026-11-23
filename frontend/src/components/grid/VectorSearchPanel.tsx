@@ -712,26 +712,27 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     }
 
     if (driver === 'elasticsearch') {
+      const knnClause: Record<string, any> = {
+        field: activeVectorCol,
+        query_vector: vec,
+        k,
+        num_candidates: Math.max(k * 5, 50),
+      };
+      if (filter) {
+        if (filter.startsWith('{')) {
+          try {
+            knnClause.filter = JSON.parse(filter);
+          } catch {}
+        } else {
+          knnClause.filter = { query_string: { query: filter } };
+        }
+      }
       const body: Record<string, any> = {
-        knn: {
-          field: activeVectorCol,
-          query_vector: vec,
-          k,
-          num_candidates: Math.max(k * 5, 50),
-        },
+        knn: knnClause,
         size: k,
       };
       if (threshold !== null) {
         body.min_score = threshold;
-      }
-      if (filter) {
-        if (filter.startsWith('{')) {
-          try {
-            body.query = JSON.parse(filter);
-          } catch {}
-        } else {
-          body.query = { query_string: { query: filter } };
-        }
       }
       return `POST /${encodeURIComponent(tableName)}/_search\n${JSON.stringify(body, null, 2)}`;
     }
@@ -893,7 +894,13 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 title="Copy generated search query"
               >
                 {copiedRest ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                <span>{copiedRest ? 'Copied!' : driver === 'qdrant' ? 'Copy REST' : 'Copy SQL'}</span>
+                <span>
+                  {copiedRest
+                    ? 'Copied!'
+                    : driver === 'qdrant' || driver === 'elasticsearch'
+                    ? 'Copy REST'
+                    : 'Copy SQL'}
+                </span>
               </button>
               <button
                 type="button"
@@ -904,7 +911,9 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                     activeTab?.connectionId || '',
                     activeTab?.database || '',
                     activeTab?.schema || '',
-                    `search_${tableName || 'vector'}.${driver === 'qdrant' ? 'qdrant' : 'sql'}`,
+                    `search_${tableName || 'vector'}.${
+                      driver === 'qdrant' ? 'qdrant' : driver === 'elasticsearch' ? 'es' : 'sql'
+                    }`,
                     searchStats.querySql
                   );
                 }}

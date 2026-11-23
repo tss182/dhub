@@ -287,11 +287,24 @@ export function generateMockValue(
     t.includes('numeric') ||
     t.includes('decimal') ||
     t.includes('float') ||
-    t.includes('double')
+    t.includes('double') ||
+    t === 'long' ||
+    t === 'unsigned_long' ||
+    t === 'short' ||
+    t === 'byte'
   ) {
     if (name.includes('age')) return 18 + (rowIdx % 50);
     if (name.includes('price') || name.includes('amount')) return Number(((rowIdx + 1) * 12.5).toFixed(2));
     return Math.floor(Math.random() * 10000) + rowIdx;
+  }
+  if (t === 'geo_point') {
+    return JSON.stringify({
+      lat: Number((37.7749 + (rowIdx % 50) * 0.01).toFixed(4)),
+      lon: Number((-122.4194 + (rowIdx % 50) * 0.01).toFixed(4)),
+    });
+  }
+  if (t === 'ip') {
+    return `192.168.${(rowIdx % 254) + 1}.${((rowIdx * 7) % 253) + 1}`;
   }
   if (t.includes('timestamp') || t.includes('datetime')) {
     const jitterMs = Math.floor(Math.random() * 3600 * 1000);

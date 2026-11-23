@@ -58,7 +58,11 @@ export const DmlPreviewModal: React.FC<DmlPreviewModalProps> = ({
       <div className="w-[600px] rounded-lg bg-[#191a20] border border-[#272932] overflow-hidden text-xs text-zinc-300 shadow-2xl">
         <div className={`flex items-center justify-between border-b px-4 py-3 ${headerClass}`}>
           <span className="font-semibold text-sm text-zinc-100">
-            {connection?.driver === 'qdrant' ? 'Pending Qdrant REST Operations' : 'Pending DML Statements'}
+            {connection?.driver === 'qdrant'
+              ? 'Pending Qdrant REST Operations'
+              : connection?.driver === 'elasticsearch'
+              ? 'Pending Elasticsearch REST Operations'
+              : 'Pending DML Statements'}
           </span>
           <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer">
             <X className="h-4 w-4" />
@@ -83,7 +87,11 @@ export const DmlPreviewModal: React.FC<DmlPreviewModalProps> = ({
               ) : (
                 <>
                   <Copy className="h-3.5 w-3.5" />
-                  <span>{connection?.driver === 'qdrant' ? 'Copy REST' : 'Copy Query'}</span>
+                  <span>
+                    {connection?.driver === 'qdrant' || connection?.driver === 'elasticsearch'
+                      ? 'Copy REST'
+                      : 'Copy Query'}
+                  </span>
                 </>
               )}
             </button>

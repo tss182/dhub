@@ -26,7 +26,7 @@ const PALETTE = [
 
 function isNumericColumn(col: ColumnMeta, rows: any[][], colIdx: number): boolean {
   const dt = (col.rawType || col.dataType || '').toLowerCase();
-  if (/int|float|double|decimal|numeric|real|serial|number|bigint|smallint|tinyint/.test(dt)) {
+  if (/int|float|double|decimal|numeric|real|serial|number|bigint|smallint|tinyint|long|short|byte|half_float|scaled_float|unsigned_long/.test(dt)) {
     return true;
   }
   let validCount = 0;

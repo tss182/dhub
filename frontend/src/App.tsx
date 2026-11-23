@@ -729,19 +729,22 @@ export function App() {
     }
 
     const tableName = tab.table;
+    const isQdrant = driver === 'qdrant';
+    const isElasticsearch = driver === 'elasticsearch' || driver === 'es';
     const ok = await confirmDialog({
-      title: driver === 'qdrant' ? 'Clear All Points' : 'Truncate Table',
-      message:
-        driver === 'qdrant'
-          ? `Are you sure you want to delete all points in collection "${tableName}"? The collection schema and indexes will be preserved. This action cannot be undone.`
-          : `Are you sure you want to TRUNCATE table "${tableName}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
+      title: isQdrant ? 'Clear All Points' : isElasticsearch ? 'Clear All Documents' : 'Truncate Table',
+      message: isQdrant
+        ? `Are you sure you want to delete all points in collection "${tableName}"? The collection schema and indexes will be preserved. This action cannot be undone.`
+        : isElasticsearch
+        ? `Are you sure you want to delete all documents in index "${tableName}"? The index and its field mappings will remain intact. This action cannot be undone.`
+        : `Are you sure you want to TRUNCATE table "${tableName}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: targetDb,
         schema: targetSchema,
         targetName: tableName,
-        targetLabel: driver === 'qdrant' ? 'Collection' : 'Table',
+        targetLabel: isQdrant ? 'Collection' : isElasticsearch ? 'Index' : 'Table',
       }),
-      confirmLabel: driver === 'qdrant' ? 'Clear All Points' : 'Truncate Table',
+      confirmLabel: isQdrant ? 'Clear All Points' : isElasticsearch ? 'Clear All Documents' : 'Truncate Table',
       isDanger: true,
     });
     if (!ok) return;
@@ -755,10 +758,10 @@ export function App() {
       sql = `DELETE FROM ${quoteSqlIdentifier(driver, tableName)}; DELETE FROM sqlite_sequence WHERE name = '${escapedLiteral}';`;
     } else if (driver === 'mongodb') {
       sql = `db.${tableName}.deleteMany({});`;
-    } else if (driver === 'qdrant') {
+    } else if (isQdrant) {
       sql = `POST /collections/${encodeURIComponent(tableName)}/points/delete?wait=true\n{"filter":{}}`;
-    } else if (driver === 'elasticsearch') {
-      sql = `POST /${encodeURIComponent(tableName)}/_delete_by_query\n{"query":{"match_all":{}}}`;
+    } else if (isElasticsearch) {
+      sql = `POST /${encodeURIComponent(tableName)}/_delete_by_query?refresh=true&conflicts=proceed\n{"query":{"match_all":{}}}`;
     } else {
       sql = `TRUNCATE TABLE ${fullTablePath};`;
     }
@@ -786,9 +789,19 @@ export function App() {
         .catch(() => {});
 
       loadTableData(tab);
-      alertSuccess(`Table "${tableName}" was truncated successfully.`, 'Table Truncated');
+      alertSuccess(
+        isQdrant
+          ? `All points in collection "${tableName}" were cleared.`
+          : isElasticsearch
+          ? `All documents in index "${tableName}" were cleared.`
+          : `Table "${tableName}" was truncated successfully.`,
+        isQdrant ? 'Collection Cleared' : isElasticsearch ? 'Index Cleared' : 'Table Truncated'
+      );
     } catch (err: any) {
-      alertError(err?.message || String(err), 'Failed to Truncate Table');
+      alertError(
+        err?.message || String(err),
+        isQdrant ? 'Failed to Clear Collection' : isElasticsearch ? 'Failed to Clear Index' : 'Failed to Truncate Table'
+      );
     }
   };
 
@@ -798,19 +811,23 @@ export function App() {
     if (conn?.isReadOnly || driver === 'redis') return;
 
     const isView = objectType === 'view';
-    const keyword = isView ? 'VIEW' : 'TABLE';
+    const isQdrant = driver === 'qdrant';
+    const isElasticsearch = driver === 'elasticsearch' || driver === 'es';
+    const keyword = isQdrant ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
     const tableName = tab.table;
 
     const ok = await confirmDialog({
-      title: `Drop ${isView ? 'View' : 'Table'}`,
-      message: `Are you sure you want to DROP ${keyword.toLowerCase()} "${tableName}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
+      title: isQdrant ? 'Drop Collection' : isElasticsearch ? 'Delete Index' : `Drop ${isView ? 'View' : 'Table'}`,
+      message: isElasticsearch
+        ? `Are you sure you want to delete index "${tableName}"? All documents and mappings in this index will be permanently lost. This action cannot be undone.`
+        : `Are you sure you want to DROP ${keyword.toLowerCase()} "${tableName}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: targetDb,
         schema: targetSchema,
         targetName: tableName,
-        targetLabel: isView ? 'View' : 'Table',
+        targetLabel: isQdrant ? 'Collection' : isElasticsearch ? 'Index' : isView ? 'View' : 'Table',
       }),
-      confirmLabel: `Drop ${keyword.toLowerCase()}`,
+      confirmLabel: isElasticsearch ? 'Delete Index' : `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
     });
     if (!ok) return;
@@ -818,9 +835,9 @@ export function App() {
     let sql = '';
     if (driver === 'mongodb') {
       sql = `db.${tableName}.drop();`;
-    } else if (driver === 'qdrant') {
+    } else if (isQdrant) {
       sql = `DELETE /collections/${encodeURIComponent(tableName)}`;
-    } else if (driver === 'elasticsearch') {
+    } else if (isElasticsearch) {
       sql = `DELETE /${encodeURIComponent(tableName)}`;
     } else {
       const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tableName);
@@ -852,9 +869,12 @@ export function App() {
         })
         .catch(() => {});
 
-      alertSuccess(`Dropped ${keyword.toLowerCase()} "${tableName}".`, `${keyword} Dropped`);
+      alertSuccess(
+        isElasticsearch ? `Deleted index "${tableName}".` : `Dropped ${keyword.toLowerCase()} "${tableName}".`,
+        isElasticsearch ? 'Index Deleted' : `${keyword} Dropped`
+      );
     } catch (err: any) {
-      alertError(err?.message || String(err), `Failed to Drop ${keyword}`);
+      alertError(err?.message || String(err), isElasticsearch ? 'Failed to Delete Index' : `Failed to Drop ${keyword}`);
     }
   };
 
@@ -2012,6 +2032,12 @@ export function App() {
         const coll = fromMatch?.[1] || (restMatch?.[1] ? decodeURIComponent(restMatch[1]) : '');
         if (!coll) return;
         countSql = `SELECT COUNT(*) FROM "${coll}"`;
+      } else if (conn?.driver === 'elasticsearch') {
+        const fromMatch = cleanSql.match(/\bFROM\s+[`"\[]?([a-zA-Z0-9_.*,-]+)[`"\]]?/i);
+        const restMatch = cleanSql.match(/^(?:GET|POST)\s+\/([^\/\s?]+)\/_search/i);
+        const idx = fromMatch?.[1] || (restMatch?.[1] ? decodeURIComponent(restMatch[1]) : '');
+        if (!idx || idx.startsWith('_')) return;
+        countSql = `SELECT COUNT(*) FROM "${idx}"`;
       }
       const countRes = await QueryService.ExecuteQuery({
         executionId: 'exec-qcount-' + Date.now(),
@@ -3010,24 +3036,28 @@ export function App() {
                           ''
                         ).toLowerCase();
                         const isQdrantTab = effectiveTabDriver === 'qdrant';
+                        const isElasticsearchTab =
+                          effectiveTabDriver === 'elasticsearch' || effectiveTabDriver === 'es';
                         return (
                         <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                              openEditTableModal(
-                                conn,
-                                activeTab.database || 'main',
-                                activeTab.schema || 'main',
-                                activeTab.table
-                              );
-                            }}
-                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                            title={isQdrantTab ? 'Manage Collection, Indexes & Snapshots' : 'Edit Table Structure'}
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
+                          {!isElasticsearchTab && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                                openEditTableModal(
+                                  conn,
+                                  activeTab.database || 'main',
+                                  activeTab.schema || 'main',
+                                  activeTab.table
+                                );
+                              }}
+                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                              title={isQdrantTab ? 'Manage Collection, Indexes & Snapshots' : 'Edit Table Structure'}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -3041,11 +3071,17 @@ export function App() {
                               });
                             }}
                             className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                            title={isQdrantTab ? 'View Collection Config (JSON)' : 'View Table DDL'}
+                            title={
+                              isQdrantTab
+                                ? 'View Collection Config (JSON)'
+                                : isElasticsearchTab
+                                ? 'View Index Mapping (JSON)'
+                                : 'View Table DDL'
+                            }
                           >
-                            {isQdrantTab ? 'JSON' : 'DDL'}
+                            {isQdrantTab || isElasticsearchTab ? 'JSON' : 'DDL'}
                           </button>
-                          {!isQdrantTab && (
+                          {!isQdrantTab && !isElasticsearchTab && (
                             <button
                               type="button"
                               onClick={() => {
@@ -3135,13 +3171,17 @@ export function App() {
                         </>
                         );
                       })()}
-                    <span className="text-zinc-600 shrink-0">/</span>
-                    <span
-                      className="font-mono text-[11px] text-zinc-400 truncate max-w-[200px]"
-                      title={activeTab.database || 'main'}
-                    >
-                      {activeTab.database || 'main'}
-                    </span>
+                    {tableConn?.driver !== 'qdrant' && tableConn?.driver !== 'elasticsearch' && (
+                      <>
+                        <span className="text-zinc-600 shrink-0">/</span>
+                        <span
+                          className="font-mono text-[11px] text-zinc-400 truncate max-w-[200px]"
+                          title={activeTab.database || 'main'}
+                        >
+                          {activeTab.database || 'main'}
+                        </span>
+                      </>
+                    )}
                     <span className="text-zinc-600 shrink-0">•</span>
                     <span className="text-[11px] text-zinc-500 font-mono shrink-0">
                       {tableDataByTab[activeTab.id]?.rows?.length ?? 0} rows
@@ -3162,7 +3202,10 @@ export function App() {
                       </button>
                     )}
 
-                    <CopyFormatSelector />
+                    <CopyFormatSelector
+                      isQdrant={tableConn?.driver === 'qdrant'}
+                      isElasticsearch={tableConn?.driver === 'elasticsearch'}
+                    />
 
                     <button
                       type="button"
@@ -3715,16 +3758,26 @@ export function App() {
                         >
                           Query History
                         </button>
-                        <button
-                          onClick={() => setActiveBottomTab('explain')}
-                          className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
-                            activeBottomTab === 'explain'
-                              ? 'border-zinc-400 text-white font-semibold'
-                              : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                          }`}
-                        >
-                          Explain Plan
-                        </button>
+                        {(() => {
+                          const activeDrv =
+                            connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.driver ||
+                            activeTab?.driver;
+                          if (activeDrv === 'qdrant' || activeDrv === 'elasticsearch' || activeDrv === 'es') {
+                            return null;
+                          }
+                          return (
+                            <button
+                              onClick={() => setActiveBottomTab('explain')}
+                              className={`text-xs pb-1 border-b-2 font-medium cursor-pointer whitespace-nowrap ${
+                                activeBottomTab === 'explain'
+                                  ? 'border-zinc-400 text-white font-semibold'
+                                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                              }`}
+                            >
+                              Explain Plan
+                            </button>
+                          );
+                        })()}
                       </div>
 
                       {/* Table / Chart View Toggle & Raw Query Preview */}
@@ -3763,7 +3816,17 @@ export function App() {
                           <div className="flex items-center gap-1.5 min-w-0 bg-[#101115] border border-[#272932] rounded px-2 py-0.5 shadow-xs">
                             <Terminal className="h-3 w-3 text-amber-400 shrink-0" />
                             <span className="text-[10px] text-zinc-500 font-bold uppercase shrink-0 font-sans tracking-wider">
-                              SQL:
+                              {(() => {
+                                const activeDrv =
+                                  connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))?.driver ||
+                                  activeTab?.driver;
+                                return activeDrv === 'qdrant' ||
+                                  activeDrv === 'elasticsearch' ||
+                                  activeDrv === 'redis' ||
+                                  activeDrv === 'mongodb'
+                                  ? 'QUERY:'
+                                  : 'SQL:';
+                              })()}
                             </span>
                             <span
                               className="font-mono text-[11px] text-zinc-300 truncate select-all cursor-pointer hover:text-white transition-colors"
@@ -3911,6 +3974,10 @@ export function App() {
                                 key={`result-grid-${queryResult?.executionId || ''}-${safeResultIdx}`}
                             tabId={resultGridTabId}
                             connectionId={activeTab?.connectionId || activeConnectionId || undefined}
+                            driver={
+                              connections.find((c) => c.id === (activeTab?.connectionId || activeConnectionId))
+                                ?.driver || activeTab?.driver
+                            }
                             database={resultSource?.database ?? activeTab?.database}
                             schema={resultSource?.schema ?? activeTab?.schema}
                             tableName={resultSource?.table}
@@ -4256,14 +4323,14 @@ export function App() {
               </div>
               <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px] text-zinc-400 font-mono">
                 <span className="px-1.5 py-0.2 rounded bg-[#22242c] border border-[#2e313d] uppercase text-zinc-300">
-                  {hoveredTab.tab.type === 'worksheet' ? 'SQL Console' : hoveredTab.tab.type === 'users' ? 'User Management' : 'Table'}
+                  {hoveredTab.tab.type === 'worksheet' ? 'Query Console' : hoveredTab.tab.type === 'users' ? 'User Management' : 'Table'}
                 </span>
                 {hoveredTab.connName && (
                   <span className="text-zinc-400 truncate max-w-[140px]">
                     {hoveredTab.connName}
                   </span>
                 )}
-                {hoveredTab.tab.database && (
+                {hoveredTab.tab.database && hoveredTab.tab.database !== 'default' && (
                   <span className="text-amber-300/90 truncate max-w-[140px]">
                     /{hoveredTab.tab.database}
                   </span>

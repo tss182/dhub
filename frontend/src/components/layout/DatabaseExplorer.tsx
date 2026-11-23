@@ -417,18 +417,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
       setNodeExpanded(connectionId, true);
 
-      const targetDb = database || conn.databaseName || 'main';
+      const isES = conn.driver === 'elasticsearch';
+      const targetDb = isES ? 'default' : database || conn.databaseName || 'main';
       const isSchemaDriver =
         conn.driver === 'postgres' || conn.driver === 'mssql' || conn.driver === 'oracle';
-      const defaultSchema =
-        conn.driver === 'postgres'
+      const defaultSchema = isES
+        ? 'default'
+        : conn.driver === 'postgres'
           ? 'public'
           : conn.driver === 'mssql'
           ? 'dbo'
           : conn.driver === 'oracle'
           ? (conn.username || 'SYSTEM').toUpperCase()
           : targetDb;
-      const targetSchema = schema || defaultSchema;
+      const targetSchema = isES ? 'default' : schema || defaultSchema;
 
       try {
         if (!treeDatabases[connectionId] || treeDatabases[connectionId].length === 0) {
@@ -1276,63 +1278,72 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         });
         const conn = connections.find((c) => c.id === connId);
         const isRedis = conn?.driver?.toLowerCase() === 'redis';
-        const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
-        const redisDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
-        let safeDbs =
-          dbs.length > 0
-            ? dbs
-            : isRedis
-            ? redisDbs
-            : conn?.databaseName
-            ? [conn.databaseName]
-            : ['main'];
-        if (isRedis) {
-          const filtered = safeDbs.filter((d) => d !== 'default' && d !== 'main');
-          safeDbs = filtered.length > 0 ? filtered : redisDbs;
-        }
-        setTreeDatabases(connId, safeDbs);
+        const isElasticsearch =
+          conn?.driver?.toLowerCase() === 'elasticsearch' || conn?.driver?.toLowerCase() === 'es';
+        if (isElasticsearch) {
+          setTreeDatabases(connId, ['default']);
+          setActiveConnection(connId, 'default', 'default');
+          const objs = (await SchemaService.GetObjects(connId, 'default', 'default')) ?? [];
+          setTreeObjects(`${connId}:default:default`, objs as any);
+        } else {
+          const dbs = (await SchemaService.GetDatabases(connId)) ?? [];
+          const redisDbs = Array.from({ length: 16 }, (_, i) => `db${i}`);
+          let safeDbs =
+            dbs.length > 0
+              ? dbs
+              : isRedis
+              ? redisDbs
+              : conn?.databaseName
+              ? [conn.databaseName]
+              : ['main'];
+          if (isRedis) {
+            const filtered = safeDbs.filter((d) => d !== 'default' && d !== 'main');
+            safeDbs = filtered.length > 0 ? filtered : redisDbs;
+          }
+          setTreeDatabases(connId, safeDbs);
 
-        const currentVisibleList = useConnectionStore.getState().visibleDatabases[connId];
-        const prefetchedDbs =
-          currentVisibleList !== undefined && currentVisibleList.length > 0
-            ? safeDbs.filter((d) => currentVisibleList.includes(d))
-            : safeDbs;
+          const currentVisibleList = useConnectionStore.getState().visibleDatabases[connId];
+          const prefetchedDbs =
+            currentVisibleList !== undefined && currentVisibleList.length > 0
+              ? safeDbs.filter((d) => currentVisibleList.includes(d))
+              : safeDbs;
 
-        const currentDb =
-          conn?.databaseName && prefetchedDbs.includes(conn.databaseName)
-            ? conn.databaseName
-            : prefetchedDbs[0] || conn?.databaseName || 'main';
-        const currentSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || '').toUpperCase() : currentDb;
-        setActiveConnection(connId, currentDb, currentSchema);
+          const currentDb =
+            conn?.databaseName && prefetchedDbs.includes(conn.databaseName)
+              ? conn.databaseName
+              : prefetchedDbs[0] || conn?.databaseName || 'main';
+          const currentSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || '').toUpperCase() : currentDb;
+          setActiveConnection(connId, currentDb, currentSchema);
 
-        // Pre-fetch objects for visible databases in background
-        for (const dbName of prefetchedDbs) {
-          if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
-            SchemaService.GetSchemas(connId, dbName)
-              .then((schemas) => {
-                const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
-                const safeSchemas = schemas && schemas.length > 0 ? schemas : [defaultSchema];
-                setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
-                for (const s of safeSchemas) {
-                  const sKey = `${connId}:${dbName}:${s}`;
-                  SchemaService.GetObjects(connId, dbName, s)
-                    .then((objs) => {
-                      if (objs) setTreeObjects(sKey, objs as any);
-                    })
-                    .catch(() => {});
-                }
-              })
-              .catch(() => {});
-          } else {
-            const targetSchema = dbName;
-            const sKey = `${connId}:${dbName}:${targetSchema}`;
-            SchemaService.GetObjects(connId, dbName, targetSchema)
-              .then((objs) => {
-                if (objs) {
-                  setTreeObjects(sKey, objs as any);
-                }
-              })
-              .catch(() => {});
+          // Pre-fetch objects for visible databases in background
+          for (const dbName of prefetchedDbs) {
+            if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
+              SchemaService.GetSchemas(connId, dbName)
+                .then((schemas) => {
+                  const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
+                  const safeSchemas = schemas && schemas.length > 0 ? schemas : [defaultSchema];
+                  setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
+                  for (const s of safeSchemas) {
+                    const sKey = `${connId}:${dbName}:${s}`;
+                    SchemaService.GetObjects(connId, dbName, s)
+                      .then((objs) => {
+                        if (objs) setTreeObjects(sKey, objs as any);
+                      })
+                      .catch(() => {});
+                  }
+                })
+                .catch(() => {});
+            } else {
+              const targetSchema = dbName;
+              const sKey = `${connId}:${dbName}:${targetSchema}`;
+              SchemaService.GetObjects(connId, dbName, targetSchema)
+                .then((objs) => {
+                  if (objs) {
+                    setTreeObjects(sKey, objs as any);
+                  }
+                })
+                .catch(() => {});
+            }
           }
         }
       } catch (e: any) {
@@ -1428,14 +1439,17 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
       // Refresh currently selected database objects
       const isQdrant = conn?.driver?.toLowerCase() === 'qdrant';
-      const currentDb = isQdrant ? 'default' : activeDatabase || safeDbs[0];
-      const targetSchema = isQdrant
-        ? 'default'
-        : conn?.driver === 'postgres'
-        ? 'public'
-        : conn?.driver === 'mssql'
-        ? 'dbo'
-        : currentDb;
+      const isElasticsearch =
+        conn?.driver?.toLowerCase() === 'elasticsearch' || conn?.driver?.toLowerCase() === 'es';
+      const currentDb = isQdrant || isElasticsearch ? 'default' : activeDatabase || safeDbs[0];
+      const targetSchema =
+        isQdrant || isElasticsearch
+          ? 'default'
+          : conn?.driver === 'postgres'
+          ? 'public'
+          : conn?.driver === 'mssql'
+          ? 'dbo'
+          : currentDb;
       const objects = (await SchemaService.GetObjects(connId, currentDb, targetSchema)) ?? [];
       setTreeObjects(`${connId}:${currentDb}:${targetSchema}`, objects as any);
       if (isQdrant) {
@@ -2023,21 +2037,25 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     obj: ObjectSummary
   ) => {
     const isRedis = conn.driver === 'redis';
+    const isQdrant = conn.driver === 'qdrant';
+    const isElasticsearch = conn.driver === 'elasticsearch';
     const isView = obj.type === 'view';
-    const keyword = isRedis ? 'KEY' : isView ? 'VIEW' : 'TABLE';
+    const keyword = isRedis ? 'KEY' : isQdrant ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
 
     const ok = await confirmDialog({
-      title: isRedis ? 'Delete Key' : `Drop ${isView ? 'View' : 'Table'}`,
+      title: isRedis ? 'Delete Key' : isQdrant ? 'Drop Collection' : isElasticsearch ? 'Delete Index' : `Drop ${isView ? 'View' : 'Table'}`,
       message: isRedis
         ? `Are you sure you want to delete key "${obj.name}" from ${db}? This action cannot be undone.`
+        : isElasticsearch
+        ? `Are you sure you want to delete index "${obj.name}"? All documents and mappings in this index will be permanently lost. This action cannot be undone.`
         : `Are you sure you want to DROP ${keyword.toLowerCase()} "${obj.name}"? All data in this ${keyword.toLowerCase()} will be permanently lost. This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: db,
         schema,
         targetName: obj.name,
-        targetLabel: isRedis ? 'Key' : isView ? 'View' : 'Table',
+        targetLabel: isRedis ? 'Key' : isQdrant ? 'Collection' : isElasticsearch ? 'Index' : isView ? 'View' : 'Table',
       }),
-      confirmLabel: isRedis ? 'Delete Key' : `Drop ${keyword.toLowerCase()}`,
+      confirmLabel: isRedis ? 'Delete Key' : isElasticsearch ? 'Delete Index' : `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
     });
     if (!ok) return;
@@ -2085,11 +2103,18 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         .catch(() => {});
 
       alertSuccess(
-        isRedis ? `Deleted key "${obj.name}".` : `Dropped ${keyword.toLowerCase()} "${obj.name}".`,
-        isRedis ? 'Key Deleted' : `${keyword} Dropped`
+        isRedis
+          ? `Deleted key "${obj.name}".`
+          : isElasticsearch
+          ? `Deleted index "${obj.name}".`
+          : `Dropped ${keyword.toLowerCase()} "${obj.name}".`,
+        isRedis ? 'Key Deleted' : isElasticsearch ? 'Index Deleted' : `${keyword} Dropped`
       );
     } catch (err: any) {
-      alertError(err?.message || String(err), isRedis ? 'Failed to Delete Key' : `Failed to Drop ${keyword}`);
+      alertError(
+        err?.message || String(err),
+        isRedis ? 'Failed to Delete Key' : isElasticsearch ? 'Failed to Delete Index' : `Failed to Drop ${keyword}`
+      );
     }
   };
 
@@ -2104,16 +2129,23 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       return;
     }
 
+    const isQdrant = conn.driver === 'qdrant';
+    const isElasticsearch = conn.driver === 'elasticsearch';
+
     const ok = await confirmDialog({
-      title: 'Truncate Table',
-      message: `Are you sure you want to TRUNCATE table "${obj.name}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
+      title: isQdrant ? 'Clear All Points' : isElasticsearch ? 'Clear All Documents' : 'Truncate Table',
+      message: isQdrant
+        ? `Are you sure you want to delete all points in collection "${obj.name}"? The collection and vector config will remain intact. This action cannot be undone.`
+        : isElasticsearch
+        ? `Are you sure you want to delete all documents in index "${obj.name}"? The index and its field mappings will remain intact. This action cannot be undone.`
+        : `Are you sure you want to TRUNCATE table "${obj.name}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: db,
         schema,
         targetName: obj.name,
-        targetLabel: 'Table',
+        targetLabel: isQdrant ? 'Collection' : isElasticsearch ? 'Index' : 'Table',
       }),
-      confirmLabel: 'Truncate Table',
+      confirmLabel: isQdrant ? 'Clear All Points' : isElasticsearch ? 'Clear All Documents' : 'Truncate Table',
       isDanger: true,
     });
     if (!ok) return;
@@ -2134,8 +2166,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       sql = `db.${obj.name}.deleteMany({});`;
     } else if (conn.driver === 'qdrant') {
       sql = `POST /collections/${encodeURIComponent(obj.name)}/points/delete?wait=true\n{"filter":{}}`;
-    } else if (conn.driver === 'elasticsearch') {
-      sql = `POST /${encodeURIComponent(obj.name)}/_delete_by_query\n{"query":{"match_all":{}}}`;
+    } else if (isElasticsearch) {
+      sql = `POST /${encodeURIComponent(obj.name)}/_delete_by_query?refresh=true&conflicts=proceed\n{"query":{"match_all":{}}}`;
     } else {
       sql = `TRUNCATE TABLE "${obj.name}";`;
     }
@@ -2160,9 +2192,19 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         })
         .catch(() => {});
 
-      alertSuccess(`Table "${obj.name}" was truncated successfully.`, 'Table Truncated');
+      alertSuccess(
+        isQdrant
+          ? `All points in collection "${obj.name}" were cleared.`
+          : isElasticsearch
+          ? `All documents in index "${obj.name}" were cleared.`
+          : `Table "${obj.name}" was truncated successfully.`,
+        isQdrant ? 'Collection Cleared' : isElasticsearch ? 'Index Cleared' : 'Table Truncated'
+      );
     } catch (err: any) {
-      alertError(err?.message || String(err), 'Failed to Truncate Table');
+      alertError(
+        err?.message || String(err),
+        isQdrant ? 'Failed to Clear Collection' : isElasticsearch ? 'Failed to Clear Index' : 'Failed to Truncate Table'
+      );
     }
   };
 
@@ -2594,8 +2636,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
   const handleNewConsole = (connId: string, dbName?: string, schema?: string, tableName?: string) => {
     const conn = connections.find((c) => c.id === connId);
-    const targetDb = dbName || conn?.databaseName || 'main';
-    const targetSchema = schema || (conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : targetDb);
+    const isES = conn?.driver === 'elasticsearch';
+    const targetDb = isES || conn?.driver === 'qdrant' ? 'default' : dbName || conn?.databaseName || 'main';
+    const targetSchema = isES || conn?.driver === 'qdrant' ? 'default' : schema || (conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : targetDb);
     const count = tabs.filter((t) => t.type === 'worksheet').length + 1;
 
     const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
@@ -2618,6 +2661,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
       content = `-- MongoDB Query Console for ${targetDb}\n-- Run Mongo shell syntax or SQL:\n-- e.g. db.${tableName || 'collection'}.find() or SELECT * FROM ${tableName || 'collection'}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `db.${tableName}.find()` : `show collections`};\n`;
     } else if (conn?.driver === 'qdrant') {
       content = `-- Qdrant Query Console\n-- Run pseudo-SQL (SELECT * FROM collection LIMIT 50, SHOW COLLECTIONS) or REST API commands\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `SELECT * FROM "${tableName}" LIMIT 50;` : `SHOW COLLECTIONS;`}\n`;
+    } else if (isES) {
+      content = `-- Elasticsearch Query Console\n-- Run REST commands (GET /_cat/indices, POST /index/_search) or SQL (SELECT * FROM "index" LIMIT 50)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `POST /${tableName}/_search\n{\n  "query": {\n    "match_all": {}\n  },\n  "size": 50\n}` : `GET /_cat/indices?format=json`}\n`;
     } else if (tableName) {
       const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb' || conn?.driver === 'clickhouse') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
       content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : conn?.driver === 'oracle' ? `SELECT * FROM ${quoted} FETCH FIRST 100 ROWS ONLY;\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
@@ -2703,9 +2748,12 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         : allKnownDbs;
 
     const isSQLite = c.driver === 'sqlite';
+    const isElasticsearch =
+      c.driver?.toLowerCase() === 'elasticsearch' || c.driver?.toLowerCase() === 'es';
+    const isQdrant = c.driver?.toLowerCase() === 'qdrant';
     const connSubtitle = isSQLite
       ? (c.filePath || c.databaseName || 'SQLite File')
-      : `${c.host || 'localhost'}${c.port ? `:${c.port}` : ''}${c.databaseName ? ` / ${c.databaseName}` : ''}`;
+      : `${c.host || 'localhost'}${c.port ? `:${c.port}` : ''}${!isElasticsearch && !isQdrant && c.databaseName ? ` / ${c.databaseName}` : ''}`;
 
     const isBeingDragged = draggedItem?.type === 'connection' && draggedItem.id === c.id;
     const isDropTargetBefore =
@@ -2829,7 +2877,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
               )}
             </div>
             <span className={`truncate ${isConnFailed ? 'text-red-400 font-medium' : ''}`}>{c.name}</span>
-            {!isSQLite && (
+            {!isSQLite && !isElasticsearch && !isQdrant && (
               <button
                 type="button"
                 onMouseEnter={(e) => {
@@ -2895,7 +2943,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
             )}
 
             {/* Users Node (Yellow with User icon, placed at the top) */}
-            {c.driver?.toLowerCase() !== 'redis' && c.driver?.toLowerCase() !== 'qdrant' && (
+            {c.driver?.toLowerCase() !== 'redis' &&
+              c.driver?.toLowerCase() !== 'qdrant' &&
+              !isElasticsearch && (
               <div
                 onClick={() => {
                   handleItemMouseLeave();
@@ -2924,7 +2974,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
               </div>
             )}
 
-            {/* SQLite Direct Mode */}
+            {/* SQLite / Elasticsearch Direct Mode */}
             {isSQLite ? (
               (() => {
                 const schemaKey = `${c.id}:main:main`;
@@ -2993,6 +3043,108 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                         <span className="truncate">{obj.name}</span>
                       </div>
                     ))}
+                  </div>
+                );
+              })()
+            ) : isElasticsearch ? (
+              (() => {
+                const schemaKey = `${c.id}:default:default`;
+                const allObjects = treeObjects[schemaKey] || [];
+                const objects = allObjects.filter((o) =>
+                  !filterText ? true : o.name.toLowerCase().includes(filterText.toLowerCase())
+                );
+                return (
+                  <div>
+                    <div className="text-[11px] text-zinc-500 flex items-center justify-between py-0.5 group/tbl">
+                      <div className="flex items-center gap-1">
+                        <Folder className="h-3 w-3" />
+                        <span>indices ({objects.length})</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => handleRefreshConnection(c.id, e)}
+                        className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                        title="Refresh Indices"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${isConnLoading ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                    {objects.length === 0 && !isConnLoading ? (
+                      <div className="text-[11px] text-zinc-500 italic py-1 px-1">
+                        No indices found
+                      </div>
+                    ) : (
+                      objects.map((obj) => {
+                        const commentLower = (obj.comment || '').toLowerCase();
+                        const healthColor = commentLower.includes('green')
+                          ? 'bg-emerald-400'
+                          : commentLower.includes('yellow')
+                          ? 'bg-amber-400'
+                          : commentLower.includes('red')
+                          ? 'bg-rose-500'
+                          : '';
+                        const isClosed = commentLower.includes('(close)');
+                        return (
+                          <div
+                            key={obj.name}
+                            onClick={() => {
+                              handleItemMouseLeave();
+                              handleTableClick(c.id, 'default', 'default', obj.name);
+                            }}
+                            onContextMenu={(e) => {
+                              handleItemMouseLeave();
+                              openContextMenu(e, 'table', {
+                                connection: c,
+                                database: 'default',
+                                schema: 'default',
+                                table: obj,
+                              });
+                            }}
+                            onMouseEnter={(e) =>
+                              handleItemMouseEnter(e, {
+                                kind: 'table',
+                                title: obj.name,
+                                badge: 'INDEX',
+                                subtitle: `${c.name}${obj.comment ? ` • ${obj.comment}` : ''}${obj.sizePretty ? ` • ${obj.sizePretty}` : ''}`,
+                              })
+                            }
+                            onMouseLeave={handleItemMouseLeave}
+                            data-explorer-table={`${c.id}:default:default:${obj.name}`}
+                            title={obj.name}
+                            className={`flex items-center justify-between gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white transition-colors ${
+                              highlightedRevealKey === `${c.id}:default:default:${obj.name}`
+                                ? 'bg-blue-600/25 text-white ring-1 ring-blue-400/70'
+                                : ''
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                              <Table className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                              {healthColor && (
+                                <span
+                                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${healthColor}`}
+                                  title={obj.comment || ''}
+                                />
+                              )}
+                              <span className={`truncate ${isClosed ? 'line-through text-zinc-500' : ''}`}>
+                                {obj.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isClosed && (
+                                <span className="text-[9px] font-mono uppercase px-1 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                                  closed
+                                </span>
+                              )}
+                              {typeof obj.rowEstimate === 'number' && !isClosed && (
+                                <span className="text-[9px] font-mono text-zinc-500">
+                                  {obj.rowEstimate.toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 );
               })()
@@ -4911,7 +5063,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>New Collection...</span>
                   </button>
                 )
-              ) : (
+              ) : contextMenu.connection.driver === 'elasticsearch' ? null : (
                 <button
                   type="button"
                   onClick={() => {
@@ -4937,7 +5089,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>New Query Console</span>
               </button>
 
-              {contextMenu.connection.driver !== 'qdrant' && contextMenu.connection.driver !== 'redis' && (
+              {contextMenu.connection.driver !== 'qdrant' &&
+                contextMenu.connection.driver !== 'redis' &&
+                contextMenu.connection.driver !== 'elasticsearch' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -4979,7 +5133,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>Refresh Connection</span>
               </button>
 
-              {contextMenu.connection.driver !== 'sqlite' && contextMenu.connection.driver !== 'qdrant' && (
+              {contextMenu.connection.driver !== 'sqlite' &&
+                contextMenu.connection.driver !== 'qdrant' &&
+                contextMenu.connection.driver !== 'elasticsearch' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -4994,7 +5150,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
-              {contextMenu.connection.driver !== 'sqlite' && contextMenu.connection.driver !== 'qdrant' && (
+              {contextMenu.connection.driver !== 'sqlite' &&
+                contextMenu.connection.driver !== 'qdrant' &&
+                contextMenu.connection.driver !== 'elasticsearch' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5009,7 +5167,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
-              {contextMenu.connection.driver !== 'sqlite' && contextMenu.connection.driver !== 'qdrant' && (
+              {contextMenu.connection.driver !== 'sqlite' &&
+                contextMenu.connection.driver !== 'qdrant' &&
+                contextMenu.connection.driver !== 'elasticsearch' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5855,30 +6015,34 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>
                       {contextMenu.connection!.driver === 'qdrant'
                         ? 'Browse Points (Open Collection)'
+                        : contextMenu.connection!.driver === 'elasticsearch'
+                        ? 'Browse Documents (Open Index)'
                         : 'Edit Data (Open Table)'}
                     </span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeContextMenu();
-                      handleEditTableStructure(
-                        contextMenu.connection!,
-                        contextMenu.database || 'main',
-                        contextMenu.schema || 'main',
-                        contextMenu.table!.name
-                      );
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                    <span>
-                      {contextMenu.connection!.driver === 'qdrant'
-                        ? 'Manage Collection & Indexes...'
-                        : 'Edit Table Structure...'}
-                    </span>
-                  </button>
+                  {contextMenu.connection!.driver !== 'elasticsearch' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeContextMenu();
+                        handleEditTableStructure(
+                          contextMenu.connection!,
+                          contextMenu.database || 'main',
+                          contextMenu.schema || 'main',
+                          contextMenu.table!.name
+                        );
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Pencil className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                      <span>
+                        {contextMenu.connection!.driver === 'qdrant'
+                          ? 'Manage Collection & Indexes...'
+                          : 'Edit Table Structure...'}
+                      </span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -5897,7 +6061,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>New Query Console</span>
                   </button>
 
-                  {contextMenu.connection!.driver !== 'qdrant' && (
+                  {contextMenu.connection!.driver !== 'qdrant' && contextMenu.connection!.driver !== 'elasticsearch' && (
                     <button
                       type="button"
                       onClick={() => {
@@ -5930,7 +6094,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   >
                     <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                     <span>
-                      {contextMenu.connection!.driver === 'qdrant' ? 'Refresh Collection' : 'Refresh Table'}
+                      {contextMenu.connection!.driver === 'qdrant'
+                        ? 'Refresh Collection'
+                        : contextMenu.connection!.driver === 'elasticsearch'
+                        ? 'Refresh Index'
+                        : 'Refresh Table'}
                     </span>
                   </button>
 
@@ -5941,7 +6109,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   >
                     <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                     <span>
-                      {contextMenu.connection!.driver === 'qdrant' ? 'Copy Collection Name' : 'Copy Table Name'}
+                      {contextMenu.connection!.driver === 'qdrant'
+                        ? 'Copy Collection Name'
+                        : contextMenu.connection!.driver === 'elasticsearch'
+                        ? 'Copy Index Name'
+                        : 'Copy Table Name'}
                     </span>
                   </button>
 
@@ -5968,6 +6140,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       <span>
                         {contextMenu.connection!.driver === 'qdrant'
                           ? 'View Collection Config (JSON)'
+                          : contextMenu.connection!.driver === 'elasticsearch'
+                          ? 'View Index Mapping (JSON)'
                           : `View ${contextMenu.table!.type === 'view' ? 'View' : 'Table'} DDL`}
                       </span>
                     </button>
@@ -5988,6 +6162,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       <span>
                         {contextMenu.connection!.driver === 'qdrant'
                           ? 'Copy Collection Config (JSON)'
+                          : contextMenu.connection!.driver === 'elasticsearch'
+                          ? 'Copy Index Mapping (JSON)'
                           : 'Copy Table Schema (DDL)'}
                       </span>
                     </button>
@@ -6054,7 +6230,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                     >
                       <Upload className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                      <span>Import Data (CSV)...</span>
+                      <span>
+                        {contextMenu.connection!.driver === 'qdrant' || contextMenu.connection!.driver === 'elasticsearch'
+                          ? 'Import Data (CSV / JSON / JSONL)...'
+                          : 'Import Data (CSV)...'}
+                      </span>
                     </button>
                   )}
 
@@ -6240,6 +6420,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       <span>
                         {contextMenu.connection!.driver === 'qdrant'
                           ? 'Clear All Points...'
+                          : contextMenu.connection!.driver === 'elasticsearch'
+                          ? 'Clear All Documents...'
                           : 'Truncate Table...'}
                       </span>
                     </button>
@@ -6263,6 +6445,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       <span>
                         {contextMenu.connection!.driver === 'qdrant'
                           ? 'Drop Collection...'
+                          : contextMenu.connection!.driver === 'elasticsearch'
+                          ? 'Delete Index...'
                           : `Drop ${contextMenu.table!.type === 'view' ? 'View' : 'Table'}...`}
                       </span>
                     </button>

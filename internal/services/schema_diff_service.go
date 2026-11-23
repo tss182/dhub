@@ -124,6 +124,8 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 			mig := fmt.Sprintf("-- Table %s exists only in target (review before dropping):\n-- DROP TABLE %s;", name, qTable)
 			if dstDriverType == "qdrant" {
 				mig = fmt.Sprintf("-- Collection %s exists only in target (review before deleting):\n-- DELETE /collections/%s", name, url.PathEscape(name))
+			} else if dstDriverType == "elasticsearch" || dstDriverType == "es" {
+				mig = fmt.Sprintf("-- Index %s exists only in target (review before deleting):\n-- DELETE /%s", name, url.PathEscape(name))
 			}
 			outcomes[idx] = tableDiffOutcome{
 				status: "extra_in_target",
@@ -152,6 +154,8 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 				if st, sErr := srcDrv.GetTableStructure(ctx, srcDB, srcSchema, tblName); sErr == nil && st.DDL != "" {
 					if dstDriverType == "qdrant" {
 						mig = buildQdrantCollectionMigration(tblName, st.DDL)
+					} else if dstDriverType == "elasticsearch" || dstDriverType == "es" {
+						mig = buildElasticsearchIndexMigration(tblName, st.DDL)
 					} else {
 						mig = strings.TrimSpace(st.DDL)
 						if !strings.HasSuffix(mig, ";") {
@@ -241,6 +245,50 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 							Detail:     fmt.Sprintf("Extra vector in target (%s)", dc.DataType),
 						})
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra vector %s (%s) in target collection %s", dc.Name, dc.DataType, tblName))
+					}
+				}
+			} else if dstDriverType == "elasticsearch" || dstDriverType == "es" {
+				addedProps := make(map[string]any)
+				for _, sc := range srcStruct.Columns {
+					if sc.Name == "_id" || sc.Name == "_score" {
+						continue
+					}
+					dc, exists := dstCols[sc.Name]
+					if !exists {
+						colDiffs = append(colDiffs, ColumnDiff{
+							ColumnName: sc.Name,
+							Status:     "added",
+							SourceType: sc.DataType,
+							Detail:     fmt.Sprintf("Missing mapping field in target (%s)", sc.DataType),
+						})
+						addedProps[sc.Name] = buildESFieldMappingFromDataType(sc.DataType)
+					} else if !strings.EqualFold(sc.DataType, dc.DataType) {
+						colDiffs = append(colDiffs, ColumnDiff{
+							ColumnName: sc.Name,
+							Status:     "modified",
+							SourceType: sc.DataType,
+							TargetType: dc.DataType,
+							Detail:     fmt.Sprintf("Mapping type differs: %s -> %s", dc.DataType, sc.DataType),
+						})
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Mapping field %s differs in %s: target=%s, source=%s (reindex required in Elasticsearch to change existing field types)", sc.Name, tblName, dc.DataType, sc.DataType))
+					}
+				}
+				if len(addedProps) > 0 {
+					bodyBytes, _ := json.MarshalIndent(map[string]any{"properties": addedProps}, "", "  ")
+					alterStmts = append(alterStmts, fmt.Sprintf("PUT /%s/_mapping\n%s", url.PathEscape(tblName), string(bodyBytes)))
+				}
+				for _, dc := range dstStruct.Columns {
+					if dc.Name == "_id" || dc.Name == "_score" {
+						continue
+					}
+					if _, exists := srcCols[dc.Name]; !exists {
+						colDiffs = append(colDiffs, ColumnDiff{
+							ColumnName: dc.Name,
+							Status:     "removed",
+							TargetType: dc.DataType,
+							Detail:     fmt.Sprintf("Extra mapping field in target (%s)", dc.DataType),
+						})
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra mapping field %s (%s) in target index %s (reindex required to remove field from mapping)", dc.Name, dc.DataType, tblName))
 					}
 				}
 			} else {
@@ -569,3 +617,75 @@ func buildQdrantCollectionMigration(collName, ddlJSON string) string {
 	}
 	return strings.Join(stmts, "\n\n")
 }
+
+func buildElasticsearchIndexMigration(indexName, ddlJSON string) string {
+	trimmed := strings.TrimSpace(ddlJSON)
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &raw); err == nil {
+		if idxObj, ok := raw[indexName].(map[string]any); ok {
+			createBody := make(map[string]any)
+			if mappings, hasM := idxObj["mappings"]; hasM {
+				createBody["mappings"] = mappings
+			}
+			if settings, hasS := idxObj["settings"]; hasS {
+				createBody["settings"] = settings
+			}
+			if len(createBody) > 0 {
+				if b, mErr := json.MarshalIndent(createBody, "", "  "); mErr == nil {
+					trimmed = string(b)
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("PUT /%s\n%s", url.PathEscape(indexName), trimmed)
+}
+
+func buildESFieldMappingFromDataType(dataType string) map[string]any {
+	dt := strings.TrimSpace(dataType)
+	if strings.HasPrefix(dt, "text") {
+		if strings.Contains(dt, "+keyword") {
+			return map[string]any{
+				"type": "text",
+				"fields": map[string]any{
+					"keyword": map[string]any{"type": "keyword", "ignore_above": 256},
+				},
+			}
+		}
+		return map[string]any{"type": "text"}
+	}
+	if strings.HasPrefix(dt, "dense_vector(") {
+		inner := strings.TrimSuffix(strings.TrimPrefix(dt, "dense_vector("), ")")
+		parts := strings.Split(inner, ",")
+		m := map[string]any{"type": "dense_vector"}
+		if len(parts) >= 1 {
+			var dims int
+			if _, err := fmt.Sscanf(strings.TrimSpace(parts[0]), "%d", &dims); err == nil && dims > 0 {
+				m["dims"] = dims
+			}
+		}
+		if len(parts) >= 2 {
+			sim := strings.TrimSpace(parts[1])
+			if sim != "" {
+				m["similarity"] = sim
+			}
+		}
+		return m
+	}
+	if strings.HasPrefix(dt, "knn_vector(") {
+		inner := strings.TrimSuffix(strings.TrimPrefix(dt, "knn_vector("), ")")
+		parts := strings.Split(inner, ",")
+		m := map[string]any{"type": "knn_vector"}
+		if len(parts) >= 1 {
+			var dims int
+			if _, err := fmt.Sscanf(strings.TrimSpace(parts[0]), "%d", &dims); err == nil && dims > 0 {
+				m["dimension"] = dims
+			}
+		}
+		return m
+	}
+	if dt == "" || dt == "json" {
+		return map[string]any{"type": "object"}
+	}
+	return map[string]any{"type": dt}
+}
+

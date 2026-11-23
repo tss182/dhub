@@ -252,8 +252,19 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
     const title = `${conn.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_console_${count}.sql`;
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
+    let starter: string | undefined;
+    if (conn.driver === 'elasticsearch') {
+      starter = `-- Elasticsearch Query Console\n-- Run REST commands (GET /_cat/indices, POST /index/_search) or SQL (SELECT * FROM "index" LIMIT 50)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nGET /_cat/indices?format=json\n`;
+    } else if (conn.driver === 'qdrant') {
+      starter = `-- Qdrant Query Console\n-- Run pseudo-SQL (SELECT * FROM collection LIMIT 50, SHOW COLLECTIONS) or REST API commands\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nSHOW COLLECTIONS;\n`;
+    } else if (conn.driver === 'redis') {
+      starter = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
+    } else if (conn.driver === 'mongodb') {
+      starter = `-- MongoDB Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nshow collections;\n`;
+    }
 
-    createConsole(conn.id, targetDb, targetSchema, title);
+    createConsole(conn.id, targetDb, targetSchema, title, starter);
   };
 
   const handleRefreshDatabases = async (connId: string) => {
@@ -545,11 +556,18 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                                 kind: 'console',
                                 title: record.title,
                                 badge: isTabOpen ? 'OPEN' : 'CONSOLE',
-                                subtitle: `${conn.name} / ${record.database || 'main'}`,
+                                subtitle:
+                                  conn.driver === 'elasticsearch' || conn.driver === 'qdrant'
+                                    ? conn.name
+                                    : `${conn.name} / ${record.database || 'main'}`,
                               })
                             }
                             onMouseLeave={handleItemMouseLeave}
-                            title={`${record.title} (${record.database || 'main'})`}
+                            title={
+                              conn.driver === 'elasticsearch' || conn.driver === 'qdrant'
+                                ? record.title
+                                : `${record.title} (${record.database || 'main'})`
+                            }
                             className={`group flex flex-col p-2 rounded cursor-pointer border transition-colors ${
                               isTabActive
                                 ? 'bg-[#22242c] border-zinc-500/60 text-white'
@@ -603,15 +621,17 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                             </div>
 
                             {/* Database info tag */}
-                            <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500">
-                              <Database className="h-2.5 w-2.5 text-blue-400 shrink-0" />
-                              <span
-                                className="font-mono text-zinc-400 truncate"
-                                title={record.database || 'main'}
-                              >
-                                {record.database || 'main'}
-                              </span>
-                            </div>
+                            {conn.driver !== 'elasticsearch' && conn.driver !== 'qdrant' && (
+                              <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500">
+                                <Database className="h-2.5 w-2.5 text-blue-400 shrink-0" />
+                                <span
+                                  className="font-mono text-zinc-400 truncate"
+                                  title={record.database || 'main'}
+                                >
+                                  {record.database || 'main'}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         );
                       })
@@ -703,7 +723,13 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Refresh Databases</span>
+                <span>
+                  {contextMenu.connection.driver === 'elasticsearch'
+                    ? 'Refresh Indices'
+                    : contextMenu.connection.driver === 'qdrant'
+                    ? 'Refresh Collections'
+                    : 'Refresh Databases'}
+                </span>
               </button>
             </>
           )}
@@ -765,7 +791,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >
                 <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Copy SQL</span>
+                <span>Copy Query</span>
               </button>
 
               {tabs.some((t) => t.id === contextMenu.console!.id) && (

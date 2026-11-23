@@ -344,6 +344,8 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
               <span>
                 {tableMeta?.driver === 'qdrant'
                   ? 'Clear All Points...'
+                  : tableMeta?.driver === 'elasticsearch'
+                  ? 'Clear All Documents...'
                   : tableMeta?.driver === 'mongodb'
                   ? 'Clear Collection...'
                   : 'Truncate Table...'}
@@ -362,6 +364,8 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
             <span>
               {tableMeta?.driver === 'qdrant' || tableMeta?.driver === 'mongodb'
                 ? 'Drop Collection...'
+                : tableMeta?.driver === 'elasticsearch'
+                ? 'Delete Index...'
                 : `Drop ${tableMeta?.objectType === 'view' ? 'View' : 'Table'}...`}
             </span>
           </button>

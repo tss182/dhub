@@ -150,7 +150,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return false;
   }, [driver, connectionId]);
 
-  const disableFreeze = isRedis || isQdrant;
+  const isElasticsearch = useMemo(() => {
+    const d = (driver || '').toLowerCase();
+    if (d === 'elasticsearch' || d === 'es') return true;
+    if (connectionId) {
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
+      const cd = conn?.driver?.toLowerCase();
+      if (cd === 'elasticsearch' || cd === 'es') return true;
+    }
+    return false;
+  }, [driver, connectionId]);
+
+  const disableFreeze = isRedis || isQdrant || isElasticsearch;
 
   const [whereInput, setWhereInput] = useState(whereClause || '');
   const [whereCursorPos, setWhereCursorPos] = useState<number>(0);
@@ -321,9 +332,13 @@ export const DataGrid: React.FC<DataGridProps> = ({
         if (colNameLower === 'score') return false;
         if (colNameLower === 'id') return isInsert;
       }
+      if (isElasticsearch) {
+        if (colNameLower === '_score') return false;
+        if (colNameLower === '_id') return isInsert;
+      }
       return true;
     },
-    [isReadOnly, isRedis, isQdrant]
+    [isReadOnly, isRedis, isQdrant, isElasticsearch]
   );
 
   const isCellEditable = useCallback(
@@ -1191,7 +1206,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const targetRow = rows[rowInArray] || rows[rowIndex];
     const sql = buildUpdateSql({ driver, tableName, columns, primaryKeys, targetRow, colName, newVal });
     const cleanTable = tableName || 'table';
-    const consoleTitle = isQdrant ? `update_${cleanTable}.qdrant` : `update_${cleanTable}.sql`;
+    const consoleTitle = isQdrant
+      ? `update_${cleanTable}.qdrant`
+      : isElasticsearch
+      ? `update_${cleanTable}.es`
+      : `update_${cleanTable}.sql`;
 
     const workbenchStore = useWorkbenchStore.getState();
     const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
@@ -1212,7 +1231,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     useAlertStore.getState().showToast({
       type: 'info',
-      message: `${isQdrant ? 'Qdrant REST' : 'UPDATE query'} ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
+      message: `${
+        isQdrant ? 'Qdrant REST' : isElasticsearch ? 'Elasticsearch REST' : 'UPDATE query'
+      } ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
     });
   };
 
@@ -1263,14 +1284,28 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
 
     const inputType = getColumnInputType(col.dataType);
-    let finalVal: unknown = isQdrant ? editVal : normalizeDateCommitValue(editVal, inputType);
-    if (isQdrant && typeof editVal === 'string') {
+    const isJsonEngine = isQdrant || isElasticsearch;
+    let finalVal: unknown = isJsonEngine ? editVal : normalizeDateCommitValue(editVal, inputType);
+    if (isJsonEngine && typeof editVal === 'string') {
       const rt = (col.rawType || '').toLowerCase();
       const dt = (col.dataType || '').toLowerCase();
       const t = editVal.trim();
-      if ((rt === 'number' || dt === 'integer' || dt === 'float') && t !== '' && Number.isFinite(Number(t))) {
+      const isNumCol =
+        rt === 'number' ||
+        dt === 'integer' ||
+        dt === 'float' ||
+        dt === 'long' ||
+        dt === 'double' ||
+        dt === 'short' ||
+        dt === 'byte' ||
+        dt === 'half_float' ||
+        dt === 'scaled_float';
+      if (isNumCol && t !== '' && Number.isFinite(Number(t))) {
         finalVal = Number(t);
-      } else if ((rt === 'boolean' || dt === 'bool') && (t.toLowerCase() === 'true' || t.toLowerCase() === 'false')) {
+      } else if (
+        (rt === 'boolean' || dt === 'bool' || dt === 'boolean') &&
+        (t.toLowerCase() === 'true' || t.toLowerCase() === 'false')
+      ) {
         finalVal = t.toLowerCase() === 'true';
       }
     }
@@ -2634,6 +2669,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         isReadOnly={isReadOnly}
         isRedis={isRedis}
         isQdrant={isQdrant}
+        isElasticsearch={isElasticsearch}
         rawSql={rawSql}
         copiedRawSql={copiedRawSql}
         stagedCount={stagedCount}
@@ -3188,6 +3224,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         isCopyAsSubmenuOpen={isCopyAsSubmenuOpen}
         isRedis={isRedis}
         isQdrant={isQdrant}
+        isElasticsearch={isElasticsearch}
         isReadOnly={isReadOnly}
         disableFreeze={disableFreeze}
         columns={columns}
@@ -3376,6 +3413,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         defaultFormat={copyFormat}
         selectionSummary={selectionSummary}
         isQdrant={isQdrant}
+        isElasticsearch={isElasticsearch}
         onClose={() => setIsCopyAsOpen(false)}
         onCopy={(fmt) => {
           const text = getFormattedCopyText(fmt);

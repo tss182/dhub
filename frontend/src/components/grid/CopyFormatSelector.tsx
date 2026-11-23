@@ -54,10 +54,11 @@ export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = COPY_FORMAT_OPTION
   {} as Record<CopyFormat, string>
 );
 
-export const CopyFormatSelector: React.FC<{ className?: string; isQdrant?: boolean }> = ({
-  className = '',
-  isQdrant = false,
-}) => {
+export const CopyFormatSelector: React.FC<{
+  className?: string;
+  isQdrant?: boolean;
+  isElasticsearch?: boolean;
+}> = ({ className = '', isQdrant = false, isElasticsearch = false }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const copyFormat = useSettingsStore((state) => state.copyFormat);
@@ -102,7 +103,11 @@ export const CopyFormatSelector: React.FC<{ className?: string; isQdrant?: boole
             Copy Format
           </div>
           {COPY_FORMAT_OPTIONS.filter((opt) =>
-            isQdrant ? !opt.id.startsWith('sql_') : opt.id !== 'qdrant_upsert'
+            isQdrant
+              ? !opt.id.startsWith('sql_')
+              : isElasticsearch
+              ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
+              : opt.id !== 'qdrant_upsert'
           ).map((opt) => (
             <button
               key={opt.id}

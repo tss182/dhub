@@ -80,8 +80,19 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
     const title = `${conn.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_console_${count}.sql`;
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
+    let starter: string | undefined;
+    if (conn.driver === 'elasticsearch') {
+      starter = `-- Elasticsearch Query Console\n-- Run REST commands (GET /_cat/indices, POST /index/_search) or SQL (SELECT * FROM "index" LIMIT 50)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nGET /_cat/indices?format=json\n`;
+    } else if (conn.driver === 'qdrant') {
+      starter = `-- Qdrant Query Console\n-- Run pseudo-SQL (SELECT * FROM collection LIMIT 50, SHOW COLLECTIONS) or REST API commands\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nSHOW COLLECTIONS;\n`;
+    } else if (conn.driver === 'redis') {
+      starter = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
+    } else if (conn.driver === 'mongodb') {
+      starter = `-- MongoDB Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nshow collections;\n`;
+    }
 
-    createConsole(conn.id, targetDb, targetSchema, title);
+    createConsole(conn.id, targetDb, targetSchema, title, starter);
   };
 
   return (

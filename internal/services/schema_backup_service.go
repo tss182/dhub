@@ -375,6 +375,9 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 	if strings.EqualFold(strings.TrimSpace(conn.Driver), "qdrant") {
 		return "", fmt.Errorf("Qdrant uses built-in HTTP snapshots: use Manage Collection -> Snapshots or Server Info -> Full Snapshots")
 	}
+	if strings.EqualFold(strings.TrimSpace(conn.Driver), "elasticsearch") || strings.EqualFold(strings.TrimSpace(conn.Driver), "es") {
+		return "", fmt.Errorf("Elasticsearch uses the Snapshot API (/_snapshot) or index data export (JSONL / JSON / CSV via Export Table)")
+	}
 	conn, closeTunnel, err := withSSHTunnel(conn)
 	if err != nil {
 		return "", err
@@ -927,6 +930,9 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 	}
 	if strings.EqualFold(strings.TrimSpace(conn.Driver), "qdrant") {
 		return "", fmt.Errorf("Qdrant uses built-in HTTP snapshots: use Manage Collection -> Snapshots -> Upload Snapshot")
+	}
+	if strings.EqualFold(strings.TrimSpace(conn.Driver), "elasticsearch") || strings.EqualFold(strings.TrimSpace(conn.Driver), "es") {
+		return "", fmt.Errorf("Elasticsearch uses the Snapshot API (/_snapshot) or index data import (JSONL / JSON / CSV via Import Data)")
 	}
 	conn, closeTunnel, err := withSSHTunnel(conn)
 	if err != nil {

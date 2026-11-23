@@ -656,7 +656,7 @@ func isReadOnlyHTTPCommand(clean string) bool {
 	if len(path) > 1 {
 		path = strings.TrimRight(path, "/")
 	}
-	if method == "GET" {
+	if method == "GET" || method == "HEAD" {
 		return true
 	}
 	if method == "POST" {
@@ -689,8 +689,33 @@ func isReadOnlyHTTPCommand(clean string) bool {
 				}
 			}
 		}
-		if lowerPath == "/_sql" || lowerPath == "/_search" || lowerPath == "/_count" ||
-			strings.HasSuffix(lowerPath, "/_search") || strings.HasSuffix(lowerPath, "/_count") {
+		if lowerPath == "/_sql" ||
+			lowerPath == "/_sql/translate" ||
+			lowerPath == "/_plugins/_sql" ||
+			lowerPath == "/_plugins/_sql/_explain" ||
+			lowerPath == "/_query" ||
+			lowerPath == "/_search" ||
+			lowerPath == "/_msearch" ||
+			lowerPath == "/_mget" ||
+			lowerPath == "/_count" ||
+			lowerPath == "/_analyze" ||
+			lowerPath == "/_field_caps" ||
+			lowerPath == "/_search/template" ||
+			lowerPath == "/_msearch/template" ||
+			lowerPath == "/_rank_eval" ||
+			strings.HasSuffix(lowerPath, "/_search") ||
+			strings.HasSuffix(lowerPath, "/_msearch") ||
+			strings.HasSuffix(lowerPath, "/_mget") ||
+			strings.HasSuffix(lowerPath, "/_count") ||
+			strings.HasSuffix(lowerPath, "/_analyze") ||
+			strings.HasSuffix(lowerPath, "/_validate/query") ||
+			strings.HasSuffix(lowerPath, "/_field_caps") ||
+			strings.HasSuffix(lowerPath, "/_terms_enum") ||
+			strings.HasSuffix(lowerPath, "/_search/template") ||
+			strings.HasSuffix(lowerPath, "/_msearch/template") ||
+			strings.HasSuffix(lowerPath, "/_rank_eval") ||
+			strings.HasSuffix(lowerPath, "/_explain") ||
+			strings.Contains(lowerPath, "/_explain/") {
 			return true
 		}
 	}
@@ -740,7 +765,7 @@ func isHTTPMethodLine(trimmed string) bool {
 		return false
 	}
 	switch strings.ToUpper(fields[0]) {
-	case "GET", "POST", "PUT", "DELETE", "PATCH":
+	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD":
 		return strings.HasPrefix(fields[1], "/")
 	default:
 		return false

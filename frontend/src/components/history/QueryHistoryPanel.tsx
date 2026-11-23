@@ -227,7 +227,7 @@ export const QueryHistoryPanel: React.FC<QueryHistoryPanelProps> = ({
                     </span>
 
                     {/* Database & Schema */}
-                    {item.databaseName && (
+                    {item.databaseName && item.databaseName !== 'default' && (
                       <span className="text-[11px] text-zinc-400 font-mono bg-[#121317] px-1.5 py-0.2 rounded border border-[#272932]">
                         db: {item.databaseName}
                       </span>

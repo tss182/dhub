@@ -35,6 +35,7 @@ interface GridContextMenuProps {
   isCopyAsSubmenuOpen: boolean;
   isRedis: boolean;
   isQdrant?: boolean;
+  isElasticsearch?: boolean;
   isReadOnly?: boolean;
   disableFreeze?: boolean;
   columns: ColumnMeta[];
@@ -76,6 +77,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   isCopyAsSubmenuOpen,
   isRedis,
   isQdrant = false,
+  isElasticsearch = false,
   isReadOnly = false,
   disableFreeze,
   columns,
@@ -341,6 +343,8 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                   {COPY_FORMAT_OPTIONS.filter((opt) =>
                     isQdrant
                       ? !opt.id.startsWith('sql_')
+                      : isElasticsearch
+                      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
                       : opt.id !== 'qdrant_upsert'
                   ).map((opt) => (
                     <button
@@ -551,7 +555,13 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 >
                   <div className="flex items-center gap-2">
                     <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-                    <span>{isQdrant ? 'Open Qdrant Update in Tab' : 'Open UPDATE in Tab'}</span>
+                    <span>
+                      {isQdrant
+                        ? 'Open Qdrant Update in Tab'
+                        : isElasticsearch
+                        ? 'Open Elasticsearch Update in Tab'
+                        : 'Open UPDATE in Tab'}
+                    </span>
                   </div>
                 </button>
               )}

@@ -155,30 +155,36 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
                 </option>
               ))}
             </select>
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                value={srcDB}
-                onChange={(e) => setSrcDB(e.target.value)}
-                className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
-              >
-                {srcDBs.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={srcSchema}
-                onChange={(e) => setSrcSchema(e.target.value)}
-                className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
-              >
-                {srcSchemas.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {(() => {
+              const sDrv = connections.find((c) => c.id === srcConnId)?.driver;
+              if (sDrv === 'elasticsearch' || sDrv === 'qdrant') return null;
+              return (
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={srcDB}
+                    onChange={(e) => setSrcDB(e.target.value)}
+                    className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
+                  >
+                    {srcDBs.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={srcSchema}
+                    onChange={(e) => setSrcSchema(e.target.value)}
+                    className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
+                  >
+                    {srcSchemas.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })()}
           </div>
 
           <div className="space-y-2 p-3 rounded-lg border border-[#272932] bg-[#121317]">
@@ -197,30 +203,36 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
                 </option>
               ))}
             </select>
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                value={dstDB}
-                onChange={(e) => setDstDB(e.target.value)}
-                className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
-              >
-                {dstDBs.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={dstSchema}
-                onChange={(e) => setDstSchema(e.target.value)}
-                className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
-              >
-                {dstSchemas.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {(() => {
+              const dDrv = connections.find((c) => c.id === dstConnId)?.driver;
+              if (dDrv === 'elasticsearch' || dDrv === 'qdrant') return null;
+              return (
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={dstDB}
+                    onChange={(e) => setDstDB(e.target.value)}
+                    className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
+                  >
+                    {dstDBs.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={dstSchema}
+                    onChange={(e) => setDstSchema(e.target.value)}
+                    className="rounded bg-[#191a20] border border-[#272932] px-2 py-1 text-zinc-200"
+                  >
+                    {dstSchemas.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })()}
           </div>
         </div>
 

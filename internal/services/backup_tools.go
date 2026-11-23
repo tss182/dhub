@@ -87,6 +87,8 @@ func getBackupToolCandidates(driverName, mode, filePath string) (primary string,
 		return "redis-cli", []string{"redis-cli"}, "Redis CLI (redis-cli)"
 	case "qdrant":
 		return "", nil, "Qdrant Snapshots (Built-in HTTP API)"
+	case "elasticsearch", "es":
+		return "", nil, "Elasticsearch Snapshot API (/_snapshot) / JSONL Export"
 	default:
 		return drv, []string{drv}, "Database Client Tool"
 	}

@@ -173,7 +173,7 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 
 	buildSelectSQL := func(drvType, db, sch, tbl string) string {
 		qPath := qualifyTableForQuery(drvType, db, sch, tbl)
-		if drvType == "qdrant" {
+		if drvType == "qdrant" || drvType == "elasticsearch" || drvType == "es" {
 			return fmt.Sprintf("SELECT * FROM %s", qPath)
 		}
 		parts := make([]string, len(keyCols))
@@ -250,10 +250,10 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 	srcMap, srcCols := indexRows(srcRes)
 	dstMap, dstCols := indexRows(dstRes)
 
-	// Determine common columns (for Qdrant schemaless collections, include union of source & target fields)
-	isQdrantDst := strings.EqualFold(dstDriverType, "qdrant")
+	// Determine common columns (for Qdrant / Elasticsearch schemaless collections/indices, include union of source & target fields)
+	isSchemalessDst := strings.EqualFold(dstDriverType, "qdrant") || strings.EqualFold(dstDriverType, "elasticsearch") || strings.EqualFold(dstDriverType, "es")
 	normColKey := func(c string) string {
-		if isQdrantDst {
+		if isSchemalessDst {
 			return c
 		}
 		return strings.ToLower(c)
@@ -265,12 +265,12 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 	commonCols := make([]string, 0, len(dstCols)+len(srcCols))
 	seenCommon := make(map[string]bool)
 	for _, dc := range dstCols {
-		if _, ok := srcColLookup[normColKey(dc)]; ok || isQdrantDst {
+		if _, ok := srcColLookup[normColKey(dc)]; ok || isSchemalessDst {
 			commonCols = append(commonCols, dc)
 			seenCommon[normColKey(dc)] = true
 		}
 	}
-	if isQdrantDst {
+	if isSchemalessDst {
 		for _, sc := range srcCols {
 			if !seenCommon[normColKey(sc)] {
 				commonCols = append(commonCols, sc)
@@ -317,7 +317,7 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 			for _, dc := range commonCols {
 				if sc, ok := srcColLookup[normColKey(dc)]; ok {
 					val := sRow[sc]
-					if isQdrantDst && val == nil {
+					if isSchemalessDst && val == nil {
 						continue
 					}
 					insertMap[dc] = val
@@ -368,7 +368,7 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 			if normalizeCellForCompare(sVal) != normalizeCellForCompare(dRow[dc]) {
 				diffFields = append(diffFields, dc)
 				// Avoid sending vector.<name>: nil when target has a named vector absent from source
-				if isQdrantDst && !hasSrcCol && (dc == "vector" || strings.HasPrefix(dc, "vector.")) {
+				if isSchemalessDst && !hasSrcCol && (dc == "vector" || strings.HasPrefix(dc, "vector.")) {
 					continue
 				}
 				updateMap[dc] = sVal

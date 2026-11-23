@@ -384,7 +384,7 @@ export function quoteSqlIdentifier(name: string, driver?: string): string {
   const d = (driver || '').toLowerCase();
   const isMySQL = d === 'mysql' || d === 'mariadb' || d === 'clickhouse';
   const isMSSQL = d === 'mssql' || d === 'sqlserver';
-  const isNoSQL = d === 'redis' || d === 'mongodb';
+  const isNoSQL = d === 'redis' || d === 'mongodb' || d === 'qdrant' || d === 'elasticsearch' || d === 'es';
   if (isNoSQL) return name;
   if (isMySQL) return `\`${name.replace(/`/g, '``')}\``;
   if (isMSSQL) return `[${name.replace(/]/g, ']]')}]`;
@@ -482,6 +482,23 @@ export function buildUpdateSql(params: {
     }
     const body = JSON.stringify({ payload: { [colName]: payloadVal }, points: [parsedId ?? 1] }, null, 2);
     return `POST /collections/${coll}/points/payload?wait=true\n${body}`;
+  }
+
+  if ((driver || '').toLowerCase() === 'elasticsearch' || (driver || '').toLowerCase() === 'es') {
+    const idx = encodeURIComponent(tableName || 'index');
+    const pkColIdx = columns.findIndex((c) => c.name === '_id');
+    const rawId = pkColIdx !== -1 ? targetRow?.[pkColIdx] : '1';
+    let payloadVal = newVal;
+    if (typeof newVal === 'string') {
+      const t = newVal.trim();
+      if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+        try {
+          payloadVal = JSON.parse(t);
+        } catch {}
+      }
+    }
+    const body = JSON.stringify({ doc: { [colName]: payloadVal } }, null, 2);
+    return `POST /${idx}/_update/${encodeURIComponent(String(rawId ?? '1'))}?refresh=wait_for\n${body}`;
   }
 
   return `UPDATE ${quotedTbl}\nSET ${quoteIdent(colName)} = ${formattedVal}\nWHERE ${whereClause};`;

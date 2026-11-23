@@ -27,20 +27,22 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const connections = useConnectionStore((s) => s.connections);
   const activeDriver = connections.find((c) => c.id === connectionId)?.driver || '';
   const isQdrant = activeDriver === 'qdrant';
+  const isElasticsearch = activeDriver === 'elasticsearch';
+  const isJsonFirst = isQdrant || isElasticsearch;
 
   const [format, setFormat] = useState<'csv' | 'xlsx' | 'json' | 'jsonl' | 'markdown' | 'sql_insert'>(
-    isQdrant ? 'jsonl' : 'csv'
+    isJsonFirst ? 'jsonl' : 'csv'
   );
 
   React.useEffect(() => {
     if (isOpen) {
       setFormat((prev) => {
-        if (isQdrant && (prev === 'sql_insert' || prev === 'csv')) return 'jsonl';
-        if (!isQdrant && prev === 'jsonl') return 'csv';
+        if (isJsonFirst && (prev === 'sql_insert' || prev === 'csv')) return 'jsonl';
+        if (!isJsonFirst && prev === 'jsonl') return 'csv';
         return prev;
       });
     }
-  }, [isOpen, isQdrant]);
+  }, [isOpen, isJsonFirst]);
   const [delimiter, setDelimiter] = useState<string>(',');
   const [includeHeader, setIncludeHeader] = useState<boolean>(true);
   const [filePath, setFilePath] = useState<string>('');
@@ -169,9 +171,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 { id: 'csv', label: 'CSV', desc: 'Delimited text' },
                 { id: 'xlsx', label: 'Excel (.xlsx)', desc: 'Spreadsheet workbook' },
                 { id: 'json', label: 'JSON', desc: 'Array of records' },
-                { id: 'jsonl', label: 'JSONL', desc: isQdrant ? 'Qdrant Points (.jsonl)' : 'JSON Lines (.jsonl)' },
+                {
+                  id: 'jsonl',
+                  label: 'JSONL',
+                  desc: isQdrant
+                    ? 'Qdrant Points (.jsonl)'
+                    : isElasticsearch
+                    ? 'Elasticsearch Documents (.jsonl)'
+                    : 'JSON Lines (.jsonl)',
+                },
                 { id: 'markdown', label: 'Markdown', desc: 'GitHub .md table' },
-                ...(!isQdrant ? [{ id: 'sql_insert', label: 'SQL INSERT', desc: 'DML batch script' }] : []),
+                ...(!isJsonFirst ? [{ id: 'sql_insert', label: 'SQL INSERT', desc: 'DML batch script' }] : []),
               ].map((f) => (
                 <button
                   key={f.id}

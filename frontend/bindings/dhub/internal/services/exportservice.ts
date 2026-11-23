@@ -31,7 +31,7 @@ export function ImportFileToTable(req: $models.ImportRequest): $CancellablePromi
 }
 
 /**
- * PreviewImportFile parses the first 10 rows of a CSV or JSON file for column mapping preview.
+ * PreviewImportFile parses the first rows of a CSV, JSON, or JSONL file for column mapping preview.
  */
 export function PreviewImportFile(filePath: string, delimiter: string, hasHeader: boolean): $CancellablePromise<$models.FilePreview | null> {
     return $Call.ByID(4004112981, filePath, delimiter, hasHeader);

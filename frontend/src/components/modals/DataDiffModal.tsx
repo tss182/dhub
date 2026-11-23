@@ -261,34 +261,42 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
                   </option>
                 ))}
               </select>
-              <select
-                value={srcDB}
-                onChange={(e) => setSrcDB(e.target.value)}
-                className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
-              >
-                {srcDBs.map((db) => (
-                  <option key={db} value={db}>
-                    {db}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={srcSchema}
-                onChange={(e) => setSrcSchema(e.target.value)}
-                className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
-              >
-                {srcSchemas.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              {(() => {
+                const sDrv = connections.find((c) => c.id === srcConnId)?.driver;
+                if (sDrv === 'elasticsearch' || sDrv === 'qdrant') return null;
+                return (
+                  <>
+                    <select
+                      value={srcDB}
+                      onChange={(e) => setSrcDB(e.target.value)}
+                      className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
+                    >
+                      {srcDBs.map((db) => (
+                        <option key={db} value={db}>
+                          {db}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={srcSchema}
+                      onChange={(e) => setSrcSchema(e.target.value)}
+                      className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
+                    >
+                      {srcSchemas.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                );
+              })()}
               <select
                 value={srcTable}
                 onChange={(e) => setSrcTable(e.target.value)}
                 className="col-span-2 rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none font-mono"
               >
-                <option value="">Select Source Table...</option>
+                <option value="">Select Source Table / Index...</option>
                 {srcTables.map((t) => (
                   <option key={t} value={t}>
                     {t}
@@ -316,28 +324,36 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
                   </option>
                 ))}
               </select>
-              <select
-                value={dstDB}
-                onChange={(e) => setDstDB(e.target.value)}
-                className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
-              >
-                {dstDBs.map((db) => (
-                  <option key={db} value={db}>
-                    {db}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={dstSchema}
-                onChange={(e) => setDstSchema(e.target.value)}
-                className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
-              >
-                {dstSchemas.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              {(() => {
+                const dDrv = connections.find((c) => c.id === dstConnId)?.driver;
+                if (dDrv === 'elasticsearch' || dDrv === 'qdrant') return null;
+                return (
+                  <>
+                    <select
+                      value={dstDB}
+                      onChange={(e) => setDstDB(e.target.value)}
+                      className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
+                    >
+                      {dstDBs.map((db) => (
+                        <option key={db} value={db}>
+                          {db}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={dstSchema}
+                      onChange={(e) => setDstSchema(e.target.value)}
+                      className="rounded border border-[#272932] bg-[#1e2029] px-2 py-1.5 text-zinc-200 outline-none"
+                    >
+                      {dstSchemas.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                );
+              })()}
               <select
                 value={dstTable}
                 onChange={(e) => setDstTable(e.target.value)}

@@ -681,16 +681,29 @@ export const ConnectionDialog: React.FC = () => {
                   <div className="grid grid-cols-3 gap-2">
                     <div className="col-span-2">
                       <label className="block text-[11px] text-zinc-400 mb-1">
-                        {driver === 'qdrant' ? 'Host / Qdrant URL' : 'Host'}
+                        {driver === 'qdrant'
+                          ? 'Host / Qdrant URL'
+                          : driver === 'elasticsearch'
+                          ? 'Host / Elasticsearch URL'
+                          : 'Host'}
                       </label>
                       <input
                         type="text"
-                        placeholder={driver === 'qdrant' ? 'localhost or https://xxx.cloud.qdrant.io:6333' : undefined}
+                        placeholder={
+                          driver === 'qdrant'
+                            ? 'localhost or https://xxx.cloud.qdrant.io:6333'
+                            : driver === 'elasticsearch'
+                            ? 'localhost or https://xxx.es.cloud.es.io:9200'
+                            : undefined
+                        }
                         value={host}
                         onChange={(e) => {
                           const val = e.target.value;
                           setHost(val);
-                          if (driver === 'qdrant' && (val.startsWith('https://') || val.startsWith('http://'))) {
+                          if (
+                            (driver === 'qdrant' || driver === 'elasticsearch') &&
+                            (val.startsWith('https://') || val.startsWith('http://'))
+                          ) {
                             try {
                               const parsed = new URL(val.trim());
                               if (parsed.port) {
@@ -698,7 +711,7 @@ export const ConnectionDialog: React.FC = () => {
                               } else if (parsed.protocol === 'https:') {
                                 setPort(443);
                               } else if (parsed.protocol === 'http:') {
-                                setPort(6333);
+                                setPort(driver === 'elasticsearch' ? 9200 : 6333);
                               }
                               if (parsed.protocol === 'https:' && sslMode === 'disable') {
                                 setSslMode('verify-full');
@@ -706,7 +719,11 @@ export const ConnectionDialog: React.FC = () => {
                                 setSslMode('disable');
                               }
                             } catch {}
-                          } else if (driver === 'qdrant' && !val.includes('://') && sslMode === 'verify-full') {
+                          } else if (
+                            (driver === 'qdrant' || driver === 'elasticsearch') &&
+                            !val.includes('://') &&
+                            sslMode === 'verify-full'
+                          ) {
                             setSslMode('disable');
                           }
                         }}
@@ -1043,11 +1060,13 @@ export const ConnectionDialog: React.FC = () => {
                 />
               </div>
 
-              {/* Transaction Mode (not applicable to Qdrant) */}
-              {driver === 'qdrant' ? (
+              {/* Transaction Mode (not applicable to Qdrant / Elasticsearch) */}
+              {driver === 'qdrant' || driver === 'elasticsearch' ? (
                 <div className="p-3 rounded bg-[#14151a] border border-[#272932] text-[11px] text-zinc-400">
                   <div className="font-semibold text-zinc-200 text-xs mb-0.5">Execution Mode</div>
-                  Qdrant executes REST and vector operations immediately (Auto-Commit). Multi-statement transactions are not used by Qdrant.
+                  {driver === 'elasticsearch'
+                    ? 'Elasticsearch executes REST, Bulk, and search operations immediately (Auto-Commit). Multi-statement SQL transactions are not used by Elasticsearch.'
+                    : 'Qdrant executes REST and vector operations immediately (Auto-Commit). Multi-statement transactions are not used by Qdrant.'}
                 </div>
               ) : (
                 <div className="p-3 rounded bg-[#14151a] border border-[#272932] space-y-2">

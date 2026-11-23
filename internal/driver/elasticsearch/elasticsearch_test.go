@@ -3,6 +3,7 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,3 +110,147 @@ func TestElasticsearchDriverLifecycleAndQueries(t *testing.T) {
 		t.Fatalf("expected count 120, got %s", got)
 	}
 }
+
+func TestElasticsearchAdvancedQueriesAndBulk(t *testing.T) {
+	var bulkBody string
+	var bulkContentType string
+	var lastSearchBody map[string]any
+	isOpenSearch := false
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/":
+			if isOpenSearch {
+				_, _ = w.Write([]byte(`{"name":"os-node","version":{"number":"2.11.0","distribution":"opensearch"}}`))
+			} else {
+				_, _ = w.Write([]byte(`{"name":"es-node","version":{"number":"8.12.0"}}`))
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/logs-2026.11.23/_mapping":
+			_, _ = w.Write([]byte(`{
+				"logs-2026.11.23": {
+					"mappings": {
+						"properties": {
+							"status": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+							"views": {"type": "long"},
+							"vec": {"type": "knn_vector", "dimension": 3, "method": {"space_type": "l2"}}
+						}
+					}
+				}
+			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/logs-2026.11.23/_search":
+			_ = json.NewDecoder(r.Body).Decode(&lastSearchBody)
+			if _, hasAggs := lastSearchBody["aggs"]; hasAggs {
+				_, _ = w.Write([]byte(`{
+					"hits": {"total": {"value": 100}, "hits": []},
+					"aggregations": {"by_status": {"buckets": [{"key": "ok", "doc_count": 100}]}}
+				}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{
+				"hits": {
+					"total": {"value": 250, "relation": "eq"},
+					"hits": [
+						{"_id": "1", "_score": 1.0, "_source": {"status": "ok", "views": 9007199254740993}}
+					]
+				}
+			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/logs-2026.11.23/_bulk":
+			bulkContentType = r.Header.Get("Content-Type")
+			buf := new(strings.Builder)
+			b := make([]byte, 4096)
+			for {
+				n, err := r.Body.Read(b)
+				if n > 0 {
+					buf.Write(b[:n])
+				}
+				if err != nil {
+					break
+				}
+			}
+			bulkBody = buf.String()
+			_, _ = w.Write([]byte(`{"took":5,"errors":false,"items":[{"index":{"_id":"1","status":201}},{"delete":{"_id":"2","status":200}}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/_plugins/_sql":
+			_, _ = w.Write([]byte(`{
+				"schema": [{"name": "status", "type": "keyword"}],
+				"datarows": [["ok"]]
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	drv, err := NewElasticsearchDriver(srv.URL, "", "", nil)
+	if err != nil {
+		t.Fatalf("NewElasticsearchDriver: %v", err)
+	}
+	defer drv.Close()
+
+	ctx := context.Background()
+	ver, err := drv.ServerVersion(ctx)
+	if err != nil || !strings.Contains(ver, "8.12.0") {
+		t.Fatalf("unexpected ServerVersion: %q, err=%v", ver, err)
+	}
+
+	// Dotted index name + complex WHERE + keyword sort fallback + int64 precision + HasMore
+	res, err := drv.Execute(ctx, driver.QueryRequest{
+		SQL: `SELECT status, views FROM "logs-2026.11.23" WHERE status != 'err' AND views >= 10 ORDER BY status DESC LIMIT 1`,
+	})
+	if err != nil {
+		t.Fatalf("Execute on dotted index failed: %v", err)
+	}
+	if !res.HasMore {
+		t.Fatalf("expected HasMore=true, got HasMore=%v", res.HasMore)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][1] != "9007199254740993" {
+		t.Fatalf("expected int64 precision preserved as string above 2^53-1, got %#v", res.Rows)
+	}
+
+	// Aggregations with size: 0 (empty hits.hits) must return aggregation JSON
+	aggRes, err := drv.Execute(ctx, driver.QueryRequest{
+		SQL: "POST /logs-2026.11.23/_search\n" + `{"size":0,"aggs":{"by_status":{"terms":{"field":"status.keyword"}}}}`,
+	})
+	if err != nil || len(aggRes.Rows) == 0 || !strings.Contains(fmt.Sprintf("%v", aggRes.Rows[0][0]), "aggregations") {
+		t.Fatalf("expected aggregations JSON when hits is empty, got %+v, err=%v", aggRes, err)
+	}
+
+	// Bulk ApplyChanges with NDJSON
+	affected, err := drv.ApplyChanges(ctx, "default", "default", "logs-2026.11.23", []driver.RowChange{
+		{Type: "insert", Changes: map[string]any{"_id": "1", "status": "ok"}},
+		{Type: "delete", PrimaryKey: map[string]any{"_id": "2"}},
+	})
+	if err != nil || affected != 2 {
+		t.Fatalf("ApplyChanges bulk failed: affected=%d, err=%v", affected, err)
+	}
+	if bulkContentType != "application/x-ndjson" || !strings.HasSuffix(bulkBody, "\n") {
+		t.Fatalf("expected application/x-ndjson with trailing newline, got content-type=%q body=%q", bulkContentType, bulkBody)
+	}
+
+	// OpenSearch knn_vector mapping & /_plugins/_sql fallback
+	isOpenSearch = true
+	drv.distro = ""
+	if _, err := drv.ServerVersion(ctx); err != nil {
+		t.Fatalf("ServerVersion OpenSearch: %v", err)
+	}
+	st, err := drv.GetTableStructure(ctx, "default", "default", "logs-2026.11.23")
+	if err != nil {
+		t.Fatalf("GetTableStructure: %v", err)
+	}
+	foundKNN := false
+	for _, col := range st.Columns {
+		if col.Name == "vec" && col.RawType == "vector" && strings.Contains(col.DataType, "(3, l2)") {
+			foundKNN = true
+		}
+	}
+	if !foundKNN {
+		t.Fatalf("expected OpenSearch knn_vector column, got %+v", st.Columns)
+	}
+	osSQLRes, err := drv.Execute(ctx, driver.QueryRequest{
+		SQL: `SELECT status FROM "logs-2026.11.23" GROUP BY status`,
+	})
+	if err != nil || len(osSQLRes.Rows) != 1 || osSQLRes.Rows[0][0] != "ok" {
+		t.Fatalf("expected OpenSearch /_plugins/_sql fallback to succeed, got %+v, err=%v", osSQLRes, err)
+	}
+}
+

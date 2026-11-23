@@ -7,6 +7,7 @@ export interface WorkbenchStatusBarProps {
   isMac: boolean;
   statusMessage: string;
   currentTx?: { mode: 'auto' | 'manual'; isOpen: boolean; count: number };
+  hideTx?: boolean;
   updateInfo: { hasUpdate?: boolean; latestVersion?: string } | null;
   onOpenUpdateModal: () => void;
   onOpenHelp: (tab: HelpTab) => void;
@@ -16,6 +17,7 @@ export const WorkbenchStatusBar: React.FC<WorkbenchStatusBarProps> = ({
   isMac,
   statusMessage,
   currentTx,
+  hideTx = false,
   updateInfo,
   onOpenUpdateModal,
   onOpenHelp,
@@ -29,21 +31,22 @@ export const WorkbenchStatusBar: React.FC<WorkbenchStatusBarProps> = ({
         </span>
       </div>
       <div className="flex items-center gap-4">
-        {currentTx?.mode === 'manual' ? (
-          currentTx.isOpen ? (
-            <span
-              className="text-amber-400 font-semibold flex items-center gap-1.5"
-              title="Active transaction with uncommitted statements"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-              <span>Tx: MANUAL (ACTIVE: {currentTx.count})</span>
-            </span>
+        {!hideTx &&
+          (currentTx?.mode === 'manual' ? (
+            currentTx.isOpen ? (
+              <span
+                className="text-amber-400 font-semibold flex items-center gap-1.5"
+                title="Active transaction with uncommitted statements"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span>Tx: MANUAL (ACTIVE: {currentTx.count})</span>
+              </span>
+            ) : (
+              <span className="text-zinc-400">Tx: MANUAL (IDLE)</span>
+            )
           ) : (
-            <span className="text-zinc-400">Tx: MANUAL (IDLE)</span>
-          )
-        ) : (
-          <span>Tx: AUTO</span>
-        )}
+            <span>Tx: AUTO</span>
+          ))}
         {updateInfo?.hasUpdate && (
           <button
             type="button"

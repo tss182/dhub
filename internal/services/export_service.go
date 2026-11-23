@@ -310,9 +310,13 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 
 	// Stream dataset in chunks to avoid loading up to 1M rows into RAM at once.
+	driverLower := strings.ToLower(strings.TrimSpace(driverType))
+	isSchemalessExport := driverLower == "qdrant" || driverLower == "elasticsearch" || driverLower == "es"
 	chunkSize := 5000
-	if driverType == "qdrant" {
+	if driverLower == "qdrant" {
 		chunkSize = 500
+	} else if driverLower == "elasticsearch" || driverLower == "es" {
+		chunkSize = 1000
 	}
 	const maxExportRows = 1000000
 
@@ -387,7 +391,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			for i, col := range res.Columns {
 				colNames[i] = col.Name
 			}
-			if driverType == "qdrant" && req.Table != "" {
+			if isSchemalessExport && req.Table != "" {
 				if ts, tsErr := drv.GetTableStructure(ctx, req.Database, req.Schema, req.Table); tsErr == nil && ts != nil && len(ts.Columns) > 0 {
 					seen := make(map[string]bool, len(colNames))
 					for _, cn := range colNames {
@@ -466,7 +470,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			chunkColIdx[col.Name] = i
 		}
 		alignRow := func(row []any) []any {
-			if driverType != "qdrant" {
+			if !isSchemalessExport {
 				return row
 			}
 			aligned := make([]any, len(colNames))
@@ -520,6 +524,18 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 						pt["vector"] = singleVec
 					}
 					outRecord = pt
+				} else if driverLower == "elasticsearch" || driverLower == "es" {
+					clear(jsonObj)
+					for i, val := range row {
+						if i < len(chunkColNames) {
+							col := chunkColNames[i]
+							if col == "_score" {
+								continue
+							}
+							jsonObj[col] = parseJSONIfPossible(val)
+						}
+					}
+					outRecord = jsonObj
 				} else {
 					clear(jsonObj)
 					for i, val := range row {
@@ -547,7 +563,10 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				clear(jsonObj)
 				for i, val := range row {
 					if i < len(chunkColNames) {
-						if driverType == "qdrant" {
+						if isSchemalessExport {
+							if (driverLower == "elasticsearch" || driverLower == "es") && chunkColNames[i] == "_score" {
+								continue
+							}
 							jsonObj[chunkColNames[i]] = parseJSONIfPossible(val)
 						} else {
 							jsonObj[chunkColNames[i]] = val
@@ -742,8 +761,9 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 	}
 
 	isQdrantImport := cfg != nil && strings.EqualFold(cfg.Driver, "qdrant")
+	isESImport := cfg != nil && (strings.EqualFold(cfg.Driver, "elasticsearch") || strings.EqualFold(cfg.Driver, "es"))
 	normalizeImportedItem := func(rawItem map[string]any) map[string]any {
-		if isQdrantImport {
+		if isQdrantImport || isESImport {
 			return flattenQdrantPointRecord(rawItem)
 		}
 		return rawItem
@@ -931,8 +951,13 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 				if isQdrantImport && (m.TableColumn == "id" || m.TableColumn == "vector" || strings.HasPrefix(m.TableColumn, "vector.")) {
 					continue
 				}
+				if isESImport && (m.TableColumn == "_id" || m.TableColumn == "_score") {
+					continue
+				}
 				changes[m.TableColumn] = nil
 			} else if isQdrantImport && m.TableColumn != "id" && m.TableColumn != "vector" && !strings.HasPrefix(m.TableColumn, "vector.") {
+				changes[m.TableColumn] = parseCSVTypedScalar(trimmedVal)
+			} else if isESImport && m.TableColumn != "_id" {
 				changes[m.TableColumn] = parseCSVTypedScalar(trimmedVal)
 			} else {
 				changes[m.TableColumn] = trimmedVal
@@ -1037,6 +1062,18 @@ func extractWrappedJSONObjects(wrapper map[string]any, limit int) []map[string]a
 }
 
 func flattenQdrantPointRecord(item map[string]any) map[string]any {
+	if srcRaw, hasSource := item["_source"]; hasSource {
+		if srcMap, ok := srcRaw.(map[string]any); ok {
+			flat := make(map[string]any, len(srcMap)+1)
+			for k, v := range srcMap {
+				flat[k] = v
+			}
+			if id, exists := item["_id"]; exists && id != nil {
+				flat["_id"] = id
+			}
+			return flat
+		}
+	}
 	payloadRaw, hasPayload := item["payload"]
 	if !hasPayload {
 		return item

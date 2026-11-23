@@ -18,6 +18,8 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
+  const isRestCommand = /^(?:DELETE|POST|PUT|PATCH)\s+\//i.test(sql.trim());
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
       <div className="w-full max-w-lg rounded-xl border border-rose-600/40 bg-[#191a20] shadow-2xl flex flex-col overflow-hidden text-zinc-100 animate-in fade-in zoom-in-95 duration-150">
@@ -32,7 +34,9 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
                 Dangerous Query Warning
               </h2>
               <p className="text-[11px] text-rose-300/70">
-                Statement without WHERE clause detected
+                {isRestCommand
+                  ? 'Destructive REST API operation detected'
+                  : 'Statement without WHERE clause detected'}
               </p>
             </div>
           </div>
@@ -53,10 +57,16 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
             </div>
           )}
 
-          <p className="text-zinc-300 leading-relaxed">
-            The SQL statement you are about to execute is an <strong className="text-rose-400">UPDATE</strong> or <strong className="text-rose-400">DELETE</strong> without a <code className="bg-[#272932] text-amber-300 px-1 py-0.5 rounded">WHERE</code> clause.
-            This operation will affect <strong>ALL rows</strong> in the target table and cannot be undone unless in an active transaction.
-          </p>
+          {isRestCommand ? (
+            <p className="text-zinc-300 leading-relaxed">
+              The REST command you are about to execute will permanently <strong className="text-rose-400">delete an entire index/collection</strong> or <strong className="text-rose-400">wipe all documents/points</strong> without a filter. This operation executes immediately and cannot be undone.
+            </p>
+          ) : (
+            <p className="text-zinc-300 leading-relaxed">
+              The SQL statement you are about to execute is an <strong className="text-rose-400">UPDATE</strong> or <strong className="text-rose-400">DELETE</strong> without a <code className="bg-[#272932] text-amber-300 px-1 py-0.5 rounded">WHERE</code> clause.
+              This operation will affect <strong>ALL rows</strong> in the target table and cannot be undone unless in an active transaction.
+            </p>
+          )}
 
           <div>
             <label className="block text-[11px] font-medium text-zinc-400 mb-1">

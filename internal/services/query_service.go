@@ -85,12 +85,18 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 		}
 	}
 
-	if cfg != nil && strings.EqualFold(strings.TrimSpace(cfg.Driver), "qdrant") {
-		cleanUpper := strings.ToUpper(strings.TrimSpace(driver.StripLeadingComments(req.SQL)))
-		if strings.HasPrefix(cleanUpper, "EXPLAIN ") || cleanUpper == "EXPLAIN" {
-			errMsg := "EXPLAIN is not supported by Qdrant; use Vector Search or REST Query stats instead"
-			q.emitStatus(req.ExecutionID, "error", errMsg)
-			return nil, fmt.Errorf("%s", errMsg)
+	if cfg != nil {
+		drvLower := strings.ToLower(strings.TrimSpace(cfg.Driver))
+		if drvLower == "qdrant" || drvLower == "elasticsearch" || drvLower == "es" {
+			cleanUpper := strings.ToUpper(strings.TrimSpace(driver.StripLeadingComments(req.SQL)))
+			if strings.HasPrefix(cleanUpper, "EXPLAIN ") || cleanUpper == "EXPLAIN" {
+				errMsg := "EXPLAIN is not supported by Qdrant; use Vector Search or REST Query stats instead"
+				if drvLower == "elasticsearch" || drvLower == "es" {
+					errMsg = "SQL EXPLAIN is not supported by Elasticsearch; use GET /<index>/_validate/query?explain=true or profile:true in POST /<index>/_search"
+				}
+				q.emitStatus(req.ExecutionID, "error", errMsg)
+				return nil, fmt.Errorf("%s", errMsg)
+			}
 		}
 	}
 

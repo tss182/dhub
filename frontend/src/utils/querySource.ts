@@ -3,7 +3,7 @@ export interface ParsedQuerySource {
   table: string;
 }
 
-const IDENT = '(?:`[^`]+`|"[^"]+"|\\[[^\\]]+\\]|[A-Za-z_][\\w$]*)';
+const IDENT = '(?:`[^`]+`|"[^"]+"|\\[[^\\]]+\\]|[A-Za-z_][\\w$.-]*)';
 
 function unquote(ident: string): string {
   const t = ident.trim();
@@ -22,13 +22,24 @@ function stripComments(sql: string): string {
 }
 
 /**
- * Detects a plain `SELECT ... FROM <one table> [WHERE/ORDER BY/LIMIT ...]` statement.
+ * Detects a plain `SELECT ... FROM <one table> [WHERE/ORDER BY/LIMIT ...]` statement
+ * or a single-index Elasticsearch `GET/POST /<index>/_search` request.
  * Returns null for joins, unions, grouping, DISTINCT, CTEs, subqueries, multi-statements, etc.
  */
 export function parseSingleTableSelect(rawSql: string): ParsedQuerySource | null {
   if (!rawSql) return null;
   const sql = stripComments(rawSql).trim().replace(/;+\s*$/, '').trim();
-  if (!sql || sql.includes(';')) return null;
+  if (!sql) return null;
+
+  const esSearchMatch = /^(?:GET|POST)\s+\/([A-Za-z0-9_.-]+)\/_search(?:\?[^\s]*)?(?:\s+[\s\S]*)?$/i.exec(sql);
+  if (esSearchMatch) {
+    const idxName = decodeURIComponent(esSearchMatch[1]);
+    if (!idxName.startsWith('_') && !idxName.includes('*') && !idxName.includes(',')) {
+      return { table: idxName };
+    }
+  }
+
+  if (sql.includes(';')) return null;
   if (!/^select\b/i.test(sql)) return null;
   if (/\b(join|union|intersect|except|group\s+by|having|distinct|window)\b/i.test(sql)) return null;
 

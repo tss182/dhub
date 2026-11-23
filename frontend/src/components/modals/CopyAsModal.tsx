@@ -8,6 +8,7 @@ interface CopyAsModalProps {
   defaultFormat: CopyFormat;
   selectionSummary?: string;
   isQdrant?: boolean;
+  isElasticsearch?: boolean;
   onClose: () => void;
   onCopy: (format: CopyFormat) => void;
 }
@@ -17,16 +18,26 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
   defaultFormat,
   selectionSummary,
   isQdrant = false,
+  isElasticsearch = false,
   onClose,
   onCopy,
 }) => {
   const [selectedFormat, setSelectedFormat] = useState<CopyFormat>(defaultFormat);
 
+  const visibleOptions = COPY_FORMAT_OPTIONS.filter((opt) =>
+    isQdrant
+      ? !opt.id.startsWith('sql_')
+      : isElasticsearch
+      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
+      : opt.id !== 'qdrant_upsert'
+  );
+
   useEffect(() => {
     if (isOpen) {
-      setSelectedFormat(defaultFormat);
+      const valid = visibleOptions.some((o) => o.id === defaultFormat);
+      setSelectedFormat(valid ? defaultFormat : visibleOptions[0]?.id || 'csv');
     }
-  }, [isOpen, defaultFormat]);
+  }, [isOpen, defaultFormat, isQdrant, isElasticsearch]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -49,23 +60,23 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         e.stopPropagation();
-        const currentIndex = COPY_FORMAT_OPTIONS.findIndex((o) => o.id === selectedFormat);
+        const currentIndex = visibleOptions.findIndex((o) => o.id === selectedFormat);
         const idx = currentIndex === -1 ? 0 : currentIndex;
         const nextIndex =
           e.key === 'ArrowDown'
-            ? (idx + 1) % COPY_FORMAT_OPTIONS.length
-            : (idx - 1 + COPY_FORMAT_OPTIONS.length) % COPY_FORMAT_OPTIONS.length;
-        setSelectedFormat(COPY_FORMAT_OPTIONS[nextIndex].id);
+            ? (idx + 1) % visibleOptions.length
+            : (idx - 1 + visibleOptions.length) % visibleOptions.length;
+        setSelectedFormat(visibleOptions[nextIndex].id);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, selectedFormat, onClose, onCopy]);
+  }, [isOpen, selectedFormat, visibleOptions, onClose, onCopy]);
 
   if (!isOpen) return null;
 
-  const selectedOption = COPY_FORMAT_OPTIONS.find((o) => o.id === selectedFormat) || COPY_FORMAT_OPTIONS[0];
+  const selectedOption = visibleOptions.find((o) => o.id === selectedFormat) || visibleOptions[0];
 
   return (
     <div
@@ -114,9 +125,7 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
 
             {/* Rows */}
             <div className="max-h-80 overflow-y-auto divide-y divide-[#22242e]">
-              {COPY_FORMAT_OPTIONS.filter((opt) =>
-                isQdrant ? !opt.id.startsWith('sql_') : opt.id !== 'qdrant_upsert'
-              ).map((opt) => {
+              {visibleOptions.map((opt) => {
                 const isSelected = opt.id === selectedFormat;
                 const isDefault = opt.id === defaultFormat;
                 return (
