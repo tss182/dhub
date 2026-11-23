@@ -174,9 +174,11 @@ func (q *QdrantDriver) DownloadSnapshot(ctx context.Context, collectionName, sna
 	n, copyErr := io.Copy(out, resp.Body)
 	closeErr := out.Close()
 	if copyErr != nil {
+		_ = os.Remove(savePath)
 		return n, copyErr
 	}
 	if closeErr != nil {
+		_ = os.Remove(savePath)
 		return n, closeErr
 	}
 	return n, nil
@@ -194,6 +196,7 @@ func (q *QdrantDriver) UploadSnapshot(ctx context.Context, collectionName, fileP
 	defer f.Close()
 
 	pr, pw := io.Pipe()
+	defer pr.Close()
 	mw := multipart.NewWriter(pw)
 
 	go func() {
@@ -707,7 +710,11 @@ func pointsToQueryResultWithProjection(execID, collection string, points []qdran
 		}
 		sort.Strings(namedVecNames)
 		for _, k := range namedVecNames {
-			columns = append(columns, driver.ColumnMeta{Name: "vector." + k, DataType: "vector", RawType: "vector", IsNullable: true})
+			colName := "vector." + k
+			if k == "" {
+				colName = "vector"
+			}
+			columns = append(columns, driver.ColumnMeta{Name: colName, DataType: "vector", RawType: "vector", IsNullable: true})
 		}
 	}
 

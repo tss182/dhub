@@ -243,6 +243,10 @@ func (s *SchemaService) DownloadQdrantSnapshot(connectionID, collectionName, sna
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
+	opKey := backupRestoreOpKey(connectionID, collectionName)
+	s.registerOp(opKey, cancel)
+	defer s.unregisterOp(opKey)
+
 	drv, err := s.sessions.GetOrConnect(ctx, connectionID)
 	if err != nil {
 		return 0, err
@@ -260,6 +264,10 @@ func (s *SchemaService) DownloadQdrantSnapshot(connectionID, collectionName, sna
 func (s *SchemaService) UploadQdrantSnapshot(connectionID, collectionName, filePath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
+
+	opKey := backupRestoreOpKey(connectionID, collectionName)
+	s.registerOp(opKey, cancel)
+	defer s.unregisterOp(opKey)
 
 	cfg, cErr := s.store.GetConnection(ctx, connectionID)
 	if cErr != nil {

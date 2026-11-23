@@ -123,6 +123,9 @@ func (x *xlsxStreamWriter) writeRow(values []any) error {
 			}
 		default:
 			s := fmt.Sprintf("%v", val)
+			if len(s) > 32767 {
+				s = s[:32764] + "..."
+			}
 			escBuf.Reset()
 			_ = xml.EscapeText(&escBuf, []byte(s))
 			if _, err := fmt.Fprintf(x.bw, `<c r="%s" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`, ref, escBuf.String()); err != nil {

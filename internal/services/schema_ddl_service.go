@@ -94,10 +94,17 @@ func (s *SchemaService) GetDatabaseDDL(connectionID, database, schema string) (s
 			if ddl == "" {
 				continue
 			}
+			label := strings.ToUpper(obj.Type)
+			if driverName == "qdrant" {
+				sb.WriteString(fmt.Sprintf("-- COLLECTION: %s\n", obj.Name))
+				sb.WriteString(buildQdrantCollectionMigration(obj.Name, ddl))
+				sb.WriteString("\n\n")
+				objectCount++
+				continue
+			}
 			if !strings.HasSuffix(ddl, ";") {
 				ddl += ";"
 			}
-			label := strings.ToUpper(obj.Type)
 			if sch != "" && sch != database {
 				sb.WriteString(fmt.Sprintf("-- %s: %s.%s\n", label, sch, obj.Name))
 			} else {

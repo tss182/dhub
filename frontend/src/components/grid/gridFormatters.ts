@@ -677,7 +677,12 @@ export function formatSelectedCells(params: {
           pt.payload[col.name] = val;
         }
       }
-      if (namedVecs) pt.vector = namedVecs;
+      if (namedVecs) {
+        if (pt.vector !== undefined) {
+          namedVecs[''] = pt.vector;
+        }
+        pt.vector = namedVecs;
+      }
       points.push(pt);
     }
     return `PUT /collections/${coll}/points?wait=true\n${JSON.stringify({ points }, null, 2)}`;

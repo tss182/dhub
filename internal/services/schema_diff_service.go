@@ -204,9 +204,9 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 			qTable := quoteIdentifier(dstDriverType, tblName)
 
 			if dstDriverType == "qdrant" {
-				// Qdrant payloads are schemaless; compare vector columns and payload indexes only.
+				// Qdrant payloads are schemaless; compare vector columns and payload indexes symmetrically.
 				for _, sc := range srcStruct.Columns {
-					if !strings.HasPrefix(sc.Name, "vector") {
+					if sc.Name != "vector" && !strings.HasPrefix(sc.Name, "vector.") {
 						continue
 					}
 					dc, exists := dstCols[sc.Name]
@@ -226,6 +226,21 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 							TargetType: dc.DataType,
 							Detail:     fmt.Sprintf("Vector config differs: %s -> %s", dc.DataType, sc.DataType),
 						})
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Vector %s differs in %s: target=%s, source=%s (recreate collection to change vector dimensions/distance)", sc.Name, tblName, dc.DataType, sc.DataType))
+					}
+				}
+				for _, dc := range dstStruct.Columns {
+					if dc.Name != "vector" && !strings.HasPrefix(dc.Name, "vector.") {
+						continue
+					}
+					if _, exists := srcCols[dc.Name]; !exists {
+						colDiffs = append(colDiffs, ColumnDiff{
+							ColumnName: dc.Name,
+							Status:     "removed",
+							TargetType: dc.DataType,
+							Detail:     fmt.Sprintf("Extra vector in target (%s)", dc.DataType),
+						})
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra vector %s (%s) in target collection %s", dc.Name, dc.DataType, tblName))
 					}
 				}
 			} else {
@@ -310,15 +325,25 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("CREATE %sINDEX %s ON %s (%s);", uniqueKw, quoteIdentifier(dstDriverType, sIdx.Name), qTable, strings.Join(qIdxCols, ", ")))
 					}
-				} else if strings.Join(sIdx.Columns, ",") != strings.Join(dIdx.Columns, ",") || sIdx.IsUnique != dIdx.IsUnique {
+				} else if strings.Join(sIdx.Columns, ",") != strings.Join(dIdx.Columns, ",") || sIdx.IsUnique != dIdx.IsUnique || (dstDriverType == "qdrant" && !strings.EqualFold(sIdx.Type, dIdx.Type)) {
 					colDiffs = append(colDiffs, ColumnDiff{
 						ColumnName: "INDEX " + sIdx.Name,
 						Status:     "modified",
-						SourceType: sColsStr,
-						TargetType: strings.Join(dIdx.Columns, ", "),
-						Detail:     fmt.Sprintf("Index differs: (%s) -> (%s)", strings.Join(dIdx.Columns, ", "), sColsStr),
+						SourceType: fmt.Sprintf("%s (%s)", sColsStr, sIdx.Type),
+						TargetType: fmt.Sprintf("%s (%s)", strings.Join(dIdx.Columns, ", "), dIdx.Type),
+						Detail:     fmt.Sprintf("Index differs: (%s:%s) -> (%s:%s)", strings.Join(dIdx.Columns, ", "), dIdx.Type, sColsStr, sIdx.Type),
 					})
-					alterStmts = append(alterStmts, fmt.Sprintf("-- Index %s.%s differs: target=(%s), source=(%s)", tblName, sIdx.Name, strings.Join(dIdx.Columns, ", "), sColsStr))
+					if dstDriverType == "qdrant" && len(sIdx.Columns) > 0 {
+						fieldName := sIdx.Columns[0]
+						fieldType := sIdx.Type
+						if fieldType == "" {
+							fieldType = "keyword"
+						}
+						idxBody, _ := json.Marshal(map[string]any{"field_name": fieldName, "field_schema": fieldType})
+						alterStmts = append(alterStmts, fmt.Sprintf("DELETE /collections/%s/index/%s?wait=true\nPUT /collections/%s/index?wait=true\n%s", url.PathEscape(tblName), url.PathEscape(fieldName), url.PathEscape(tblName), string(idxBody)))
+					} else {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Index %s.%s differs: target=(%s), source=(%s)", tblName, sIdx.Name, strings.Join(dIdx.Columns, ", "), sColsStr))
+					}
 				}
 			}
 			for key, dIdx := range dstIdxs {
@@ -485,8 +510,11 @@ func buildQdrantCollectionMigration(collName, ddlJSON string) string {
 				QuantizationConfig map[string]any `json:"quantization_config"`
 			} `json:"config"`
 			PayloadSchema map[string]struct {
-				DataType string `json:"data_type"`
+				DataType string         `json:"data_type"`
+				Params   map[string]any `json:"params,omitempty"`
 			} `json:"payload_schema"`
+			WalConfig        map[string]any `json:"wal_config,omitempty"`
+			StrictModeConfig map[string]any `json:"strict_mode_config,omitempty"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal([]byte(ddlJSON), &parsed); err != nil {
@@ -495,7 +523,7 @@ func buildQdrantCollectionMigration(collName, ddlJSON string) string {
 
 	createBody := make(map[string]any)
 	params := parsed.Result.Config.Params
-	for _, key := range []string{"vectors", "sparse_vectors", "shard_number", "replication_factor", "on_disk_payload"} {
+	for _, key := range []string{"vectors", "sparse_vectors", "shard_number", "sharding_method", "replication_factor", "write_consistency_factor", "on_disk_payload"} {
 		if v, ok := params[key]; ok && v != nil {
 			createBody[key] = v
 		}
@@ -508,6 +536,12 @@ func buildQdrantCollectionMigration(collName, ddlJSON string) string {
 	}
 	if len(parsed.Result.Config.QuantizationConfig) > 0 {
 		createBody["quantization_config"] = parsed.Result.Config.QuantizationConfig
+	}
+	if len(parsed.Result.WalConfig) > 0 {
+		createBody["wal_config"] = parsed.Result.WalConfig
+	}
+	if len(parsed.Result.StrictModeConfig) > 0 {
+		createBody["strict_mode_config"] = parsed.Result.StrictModeConfig
 	}
 
 	b, _ := json.MarshalIndent(createBody, "", "  ")
@@ -522,11 +556,14 @@ func buildQdrantCollectionMigration(collName, ddlJSON string) string {
 		}
 		sort.Strings(fields)
 		for _, f := range fields {
-			dt := parsed.Result.PayloadSchema[f].DataType
-			if dt == "" {
-				dt = "keyword"
+			ps := parsed.Result.PayloadSchema[f]
+			var fieldSchema any = ps.DataType
+			if len(ps.Params) > 0 {
+				fieldSchema = ps.Params
+			} else if ps.DataType == "" {
+				fieldSchema = "keyword"
 			}
-			idxBody, _ := json.Marshal(map[string]any{"field_name": f, "field_schema": dt})
+			idxBody, _ := json.Marshal(map[string]any{"field_name": f, "field_schema": fieldSchema})
 			stmts = append(stmts, fmt.Sprintf("PUT /collections/%s/index?wait=true\n%s", url.PathEscape(collName), string(idxBody)))
 		}
 	}

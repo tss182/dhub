@@ -85,6 +85,8 @@ func getBackupToolCandidates(driverName, mode, filePath string) (primary string,
 		return "mongodump", []string{"mongodump"}, "MongoDB Database Tools (mongodump & mongorestore)"
 	case "redis":
 		return "redis-cli", []string{"redis-cli"}, "Redis CLI (redis-cli)"
+	case "qdrant":
+		return "", nil, "Qdrant Snapshots (Built-in HTTP API)"
 	default:
 		return drv, []string{drv}, "Database Client Tool"
 	}

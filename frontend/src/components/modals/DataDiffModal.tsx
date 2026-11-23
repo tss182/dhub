@@ -467,10 +467,18 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
                             >
                               <span className="text-zinc-400">{f}</span>
                               <span className="text-rose-400 line-through truncate">
-                                {String(d.dstRow?.[f] ?? 'NULL')}
+                                {d.dstRow?.[f] == null
+                                  ? 'NULL'
+                                  : typeof d.dstRow[f] === 'object'
+                                  ? JSON.stringify(d.dstRow[f])
+                                  : String(d.dstRow[f])}
                               </span>
                               <span className="text-emerald-400 truncate">
-                                {String(d.srcRow?.[f] ?? 'NULL')}
+                                {d.srcRow?.[f] == null
+                                  ? 'NULL'
+                                  : typeof d.srcRow[f] === 'object'
+                                  ? JSON.stringify(d.srcRow[f])
+                                  : String(d.srcRow[f])}
                               </span>
                             </div>
                           ))}

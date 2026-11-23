@@ -251,21 +251,28 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 	dstMap, dstCols := indexRows(dstRes)
 
 	// Determine common columns (for Qdrant schemaless collections, include union of source & target fields)
+	isQdrantDst := strings.EqualFold(dstDriverType, "qdrant")
+	normColKey := func(c string) string {
+		if isQdrantDst {
+			return c
+		}
+		return strings.ToLower(c)
+	}
 	srcColLookup := make(map[string]string, len(srcCols))
 	for _, c := range srcCols {
-		srcColLookup[strings.ToLower(c)] = c
+		srcColLookup[normColKey(c)] = c
 	}
 	commonCols := make([]string, 0, len(dstCols)+len(srcCols))
 	seenCommon := make(map[string]bool)
 	for _, dc := range dstCols {
-		if _, ok := srcColLookup[strings.ToLower(dc)]; ok || dstDriverType == "qdrant" {
+		if _, ok := srcColLookup[normColKey(dc)]; ok || isQdrantDst {
 			commonCols = append(commonCols, dc)
-			seenCommon[strings.ToLower(dc)] = true
+			seenCommon[normColKey(dc)] = true
 		}
 	}
-	if dstDriverType == "qdrant" {
+	if isQdrantDst {
 		for _, sc := range srcCols {
-			if !seenCommon[strings.ToLower(sc)] {
+			if !seenCommon[normColKey(sc)] {
 				commonCols = append(commonCols, sc)
 			}
 		}
@@ -276,7 +283,7 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 
 	keySet := make(map[string]struct{}, len(keyCols))
 	for _, k := range keyCols {
-		keySet[strings.ToLower(k)] = struct{}{}
+		keySet[normColKey(k)] = struct{}{}
 	}
 
 	allKeysMap := make(map[string]struct{}, len(srcMap)+len(dstMap))
@@ -308,8 +315,12 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 			result.Added++
 			insertMap := make(map[string]any, len(commonCols))
 			for _, dc := range commonCols {
-				if sc, ok := srcColLookup[strings.ToLower(dc)]; ok {
-					insertMap[dc] = sRow[sc]
+				if sc, ok := srcColLookup[normColKey(dc)]; ok {
+					val := sRow[sc]
+					if isQdrantDst && val == nil {
+						continue
+					}
+					insertMap[dc] = val
 				}
 			}
 			result.RowDiffs = append(result.RowDiffs, DataRowDiff{
@@ -346,13 +357,21 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 		var diffFields []string
 		updateMap := make(map[string]any)
 		for _, dc := range commonCols {
-			if _, isKey := keySet[strings.ToLower(dc)]; isKey {
+			if _, isKey := keySet[normColKey(dc)]; isKey {
 				continue
 			}
-			sc := srcColLookup[strings.ToLower(dc)]
-			if normalizeCellForCompare(sRow[sc]) != normalizeCellForCompare(dRow[dc]) {
+			sc, hasSrcCol := srcColLookup[normColKey(dc)]
+			var sVal any
+			if hasSrcCol {
+				sVal = sRow[sc]
+			}
+			if normalizeCellForCompare(sVal) != normalizeCellForCompare(dRow[dc]) {
 				diffFields = append(diffFields, dc)
-				updateMap[dc] = sRow[sc]
+				// Avoid sending vector.<name>: nil when target has a named vector absent from source
+				if isQdrantDst && !hasSrcCol && (dc == "vector" || strings.HasPrefix(dc, "vector.")) {
+					continue
+				}
+				updateMap[dc] = sVal
 			}
 		}
 		if len(diffFields) == 0 {

@@ -372,6 +372,9 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 	if err != nil {
 		return "", fmt.Errorf("failed to get connection config: %w", err)
 	}
+	if strings.EqualFold(strings.TrimSpace(conn.Driver), "qdrant") {
+		return "", fmt.Errorf("Qdrant uses built-in HTTP snapshots: use Manage Collection -> Snapshots or Server Info -> Full Snapshots")
+	}
 	conn, closeTunnel, err := withSSHTunnel(conn)
 	if err != nil {
 		return "", err
@@ -921,6 +924,9 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 	}
 	if conn.IsReadOnly {
 		return "", fmt.Errorf("restore blocked: connection %q is configured as read-only", conn.Name)
+	}
+	if strings.EqualFold(strings.TrimSpace(conn.Driver), "qdrant") {
+		return "", fmt.Errorf("Qdrant uses built-in HTTP snapshots: use Manage Collection -> Snapshots -> Upload Snapshot")
 	}
 	conn, closeTunnel, err := withSSHTunnel(conn)
 	if err != nil {

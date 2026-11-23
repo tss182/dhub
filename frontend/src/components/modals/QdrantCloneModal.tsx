@@ -166,7 +166,12 @@ export const QdrantCloneModal: React.FC<QdrantCloneModalProps> = ({
             }
           });
 
-          const vector = Object.keys(namedVecs).length > 0 ? namedVecs : defaultVec;
+          const vector =
+            Object.keys(namedVecs).length > 0
+              ? defaultVec !== undefined
+                ? { '': defaultVec, ...namedVecs }
+                : namedVecs
+              : defaultVec;
           const pt: Record<string, any> = { id, payload };
           if (vector !== undefined) pt.vector = vector;
           return pt;
