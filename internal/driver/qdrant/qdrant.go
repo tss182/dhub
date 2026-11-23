@@ -503,6 +503,8 @@ func pointsToQueryResult(execID, collection string, points []qdrantPoint, elapse
 var (
 	sqlSelectCountRegex = regexp.MustCompile(`(?i)^\s*SELECT\s+COUNT\(\*\)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
 	sqlSelectRegex      = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*;?\s*$`)
+	sqlTruncateRegex    = regexp.MustCompile(`(?i)^\s*TRUNCATE\s+(?:TABLE\s+)?([^\s;]+)\s*;?\s*$`)
+	sqlDeleteRegex      = regexp.MustCompile(`(?i)^\s*DELETE\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
 	httpCmdRegex        = regexp.MustCompile(`(?i)^(GET|POST|PUT|DELETE|PATCH)\s+(\S+)(?:\s+([\s\S]*))?$`)
 )
 
@@ -515,6 +517,27 @@ func stripIdentQuotes(s string) string {
 	return strings.Trim(s, "\"`'[]")
 }
 
+func parseScalarLiteral(rawVal string) any {
+	rawVal = strings.TrimSpace(rawVal)
+	if (strings.HasPrefix(rawVal, "'") && strings.HasSuffix(rawVal, "'") && len(rawVal) >= 2) ||
+		(strings.HasPrefix(rawVal, `"`) && strings.HasSuffix(rawVal, `"`) && len(rawVal) >= 2) {
+		return rawVal[1 : len(rawVal)-1]
+	}
+	if strings.EqualFold(rawVal, "true") {
+		return true
+	}
+	if strings.EqualFold(rawVal, "false") {
+		return false
+	}
+	if iv, err := strconv.ParseInt(rawVal, 10, 64); err == nil {
+		return iv
+	}
+	if fv, err := strconv.ParseFloat(rawVal, 64); err == nil {
+		return fv
+	}
+	return rawVal
+}
+
 func parseSimpleWhereToFilter(where string) map[string]any {
 	where = strings.TrimSpace(where)
 	if where == "" {
@@ -522,50 +545,210 @@ func parseSimpleWhereToFilter(where string) map[string]any {
 	}
 	// Strip outer parentheses if present
 	if strings.HasPrefix(where, "(") && strings.HasSuffix(where, ")") {
-		where = strings.TrimSpace(where[1 : len(where)-1])
+		inner := strings.TrimSpace(where[1 : len(where)-1])
+		if inner != "" {
+			where = inner
+		}
 	}
+
+	// Allow raw Qdrant filter JSON directly in WHERE
+	if strings.HasPrefix(where, "{") && strings.HasSuffix(where, "}") {
+		var rawFilter map[string]any
+		if json.Unmarshal([]byte(where), &rawFilter) == nil && len(rawFilter) > 0 {
+			return rawFilter
+		}
+	}
+
 	parts := regexp.MustCompile(`(?i)\s+AND\s+`).Split(where, -1)
 	var must []map[string]any
-	eqRe := regexp.MustCompile(`^\s*([a-zA-Z0-9_."` + "`" + `]+)\s*=\s*(.+?)\s*$`)
+	var mustNot []map[string]any
+
+	isNullRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+IS\s+(NOT\s+)?NULL\s*$`)
+	inRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+IN\s*\((.+)\)\s*$`)
+	cmpRe := regexp.MustCompile(`^\s*([a-zA-Z0-9_."` + "`" + `]+)\s*(!=|<>|>=|<=|=|>|<)\s*(.+?)\s*$`)
+
 	for _, p := range parts {
-		m := eqRe.FindStringSubmatch(p)
-		if len(m) != 3 {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+
+		if m := isNullRe.FindStringSubmatch(p); len(m) == 3 {
+			key := strings.Trim(m[1], "\"`")
+			cond := map[string]any{"is_null": map[string]any{"key": key}}
+			if strings.TrimSpace(m[2]) != "" {
+				mustNot = append(mustNot, cond)
+			} else {
+				must = append(must, cond)
+			}
+			continue
+		}
+
+		if m := inRe.FindStringSubmatch(p); len(m) == 3 {
+			key := strings.Trim(m[1], "\"`")
+			rawItems := strings.Split(m[2], ",")
+			vals := make([]any, 0, len(rawItems))
+			for _, item := range rawItems {
+				item = strings.TrimSpace(item)
+				if item == "" {
+					continue
+				}
+				v := parseScalarLiteral(item)
+				if strings.EqualFold(key, "id") {
+					v = parsePointID(v)
+				}
+				vals = append(vals, v)
+			}
+			if len(vals) > 0 {
+				if strings.EqualFold(key, "id") {
+					must = append(must, map[string]any{"has_id": vals})
+				} else {
+					must = append(must, map[string]any{"key": key, "match": map[string]any{"any": vals}})
+				}
+			}
+			continue
+		}
+
+		m := cmpRe.FindStringSubmatch(p)
+		if len(m) != 4 {
 			continue
 		}
 		key := strings.Trim(m[1], "\"`")
-		rawVal := strings.TrimSpace(m[2])
-		var val any = rawVal
-		if (strings.HasPrefix(rawVal, "'") && strings.HasSuffix(rawVal, "'")) ||
-			(strings.HasPrefix(rawVal, `"`) && strings.HasSuffix(rawVal, `"`)) {
-			val = rawVal[1 : len(rawVal)-1]
-		} else if strings.EqualFold(rawVal, "true") {
-			val = true
-		} else if strings.EqualFold(rawVal, "false") {
-			val = false
-		} else if iv, err := strconv.ParseInt(rawVal, 10, 64); err == nil {
-			val = iv
-		} else if fv, err := strconv.ParseFloat(rawVal, 64); err == nil {
-			val = fv
+		op := m[2]
+		val := parseScalarLiteral(m[3])
+
+		if strings.EqualFold(key, "id") {
+			idVal := parsePointID(val)
+			if op == "=" {
+				must = append(must, map[string]any{"has_id": []any{idVal}})
+			} else if op == "!=" || op == "<>" {
+				mustNot = append(mustNot, map[string]any{"has_id": []any{idVal}})
+			}
+			continue
 		}
-		must = append(must, map[string]any{
-			"key":   key,
-			"match": map[string]any{"value": val},
-		})
+
+		switch op {
+		case "=":
+			must = append(must, map[string]any{
+				"key":   key,
+				"match": map[string]any{"value": val},
+			})
+		case "!=", "<>":
+			mustNot = append(mustNot, map[string]any{
+				"key":   key,
+				"match": map[string]any{"value": val},
+			})
+		case ">", ">=", "<", "<=":
+			rangeKey := map[string]string{
+				">":  "gt",
+				">=": "gte",
+				"<":  "lt",
+				"<=": "lte",
+			}[op]
+			must = append(must, map[string]any{
+				"key":   key,
+				"range": map[string]any{rangeKey: val},
+			})
+		}
 	}
-	if len(must) == 0 {
+
+	if len(must) == 0 && len(mustNot) == 0 {
 		return nil
 	}
-	return map[string]any{"must": must}
+	filter := make(map[string]any)
+	if len(must) > 0 {
+		filter["must"] = must
+	}
+	if len(mustNot) > 0 {
+		filter["must_not"] = mustNot
+	}
+	return filter
+}
+
+func sortPointsInMemory(pts []qdrantPoint, col, dir string) {
+	if len(pts) <= 1 || col == "" {
+		return
+	}
+	desc := strings.EqualFold(dir, "desc")
+	getVal := func(pt qdrantPoint) (any, bool) {
+		if strings.EqualFold(col, "id") {
+			return pt.ID, pt.ID != nil
+		}
+		if strings.EqualFold(col, "score") && pt.Score != nil {
+			return *pt.Score, true
+		}
+		if pt.Payload != nil {
+			v, ok := pt.Payload[col]
+			return v, ok && v != nil
+		}
+		return nil, false
+	}
+	sort.SliceStable(pts, func(i, j int) bool {
+		vi, oki := getVal(pts[i])
+		vj, okj := getVal(pts[j])
+		if !oki && !okj {
+			return false
+		}
+		if !oki {
+			return !desc
+		}
+		if !okj {
+			return desc
+		}
+		var cmp int
+		fi, isFi := toFloat64(vi)
+		fj, isFj := toFloat64(vj)
+		if isFi && isFj {
+			if fi < fj {
+				cmp = -1
+			} else if fi > fj {
+				cmp = 1
+			}
+		} else {
+			si := fmt.Sprintf("%v", vi)
+			sj := fmt.Sprintf("%v", vj)
+			cmp = strings.Compare(si, sj)
+		}
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
 	start := time.Now()
-	rawSQL := strings.TrimSpace(req.SQL)
+	rawSQL := strings.TrimSpace(driver.StripLeadingComments(req.SQL))
 	if rawSQL == "" {
 		return &driver.QueryResult{
 			ExecutionID: req.ExecutionID,
 			Columns:     []driver.ColumnMeta{},
 			Rows:        [][]any{},
+		}, nil
+	}
+
+	// 0. Health / trivial SELECT 1
+	if strings.EqualFold(rawSQL, "SELECT 1") || strings.EqualFold(rawSQL, "SELECT 1;") {
+		return &driver.QueryResult{
+			ExecutionID: req.ExecutionID,
+			Columns:     []driver.ColumnMeta{{Name: "result", DataType: "int64", RawType: "number"}},
+			Rows:        [][]any{{int64(1)}},
+			ElapsedMs:   time.Since(start).Milliseconds(),
 		}, nil
 	}
 
@@ -597,6 +780,48 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 			},
 			Rows:      rows,
 			ElapsedMs: time.Since(start).Milliseconds(),
+		}, nil
+	}
+
+	// 1b. Pseudo-SQL TRUNCATE TABLE <collection> / DELETE FROM <collection> [WHERE ...]
+	if match := sqlTruncateRegex.FindStringSubmatch(rawSQL); len(match) > 1 {
+		coll := stripIdentQuotes(match[1])
+		body := map[string]any{"filter": map[string]any{}}
+		if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/delete?wait=true", body); err != nil {
+			return nil, err
+		}
+		return &driver.QueryResult{
+			ExecutionID:  req.ExecutionID,
+			Columns:      []driver.ColumnMeta{},
+			Rows:         [][]any{},
+			RowsAffected: 0,
+			ElapsedMs:    time.Since(start).Milliseconds(),
+			SourceSchema: "default",
+			SourceTable:  coll,
+		}, nil
+	}
+	if match := sqlDeleteRegex.FindStringSubmatch(rawSQL); len(match) > 1 {
+		coll := stripIdentQuotes(match[1])
+		filter := map[string]any{}
+		if len(match) > 2 && strings.TrimSpace(match[2]) != "" {
+			if f := parseSimpleWhereToFilter(match[2]); f != nil {
+				filter = f
+			} else {
+				return nil, fmt.Errorf("unsupported WHERE clause for Qdrant DELETE: %s", match[2])
+			}
+		}
+		body := map[string]any{"filter": filter}
+		if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/delete?wait=true", body); err != nil {
+			return nil, err
+		}
+		return &driver.QueryResult{
+			ExecutionID:  req.ExecutionID,
+			Columns:      []driver.ColumnMeta{},
+			Rows:         [][]any{},
+			RowsAffected: 1,
+			ElapsedMs:    time.Since(start).Milliseconds(),
+			SourceSchema: "default",
+			SourceTable:  coll,
 		}, nil
 	}
 
@@ -653,8 +878,8 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 			offset = req.Offset
 		}
 
-		// Qdrant scroll uses cursor-based offset; for small offsets we request offset+limit and slice.
-		fetchLimit := limit + offset
+		// Qdrant scroll uses cursor-based offset; request +1 extra row so HasMore is accurate.
+		fetchLimit := limit + offset + 1
 		body := map[string]any{
 			"limit":        fetchLimit,
 			"with_payload": true,
@@ -666,14 +891,42 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 			}
 		}
 
+		var sortCol, sortDir string
+		usedServerOrderBy := false
+		if strings.TrimSpace(match[4]) != "" {
+			firstSort := strings.Split(match[4], ",")[0]
+			fields := strings.Fields(strings.TrimSpace(firstSort))
+			if len(fields) > 0 {
+				sortCol = stripIdentQuotes(fields[0])
+				sortDir = "asc"
+				if len(fields) > 1 && strings.EqualFold(fields[1], "DESC") {
+					sortDir = "desc"
+				}
+				if sortCol != "" && !strings.EqualFold(sortCol, "id") && !strings.EqualFold(sortCol, "vector") && !strings.HasPrefix(strings.ToLower(sortCol), "vector.") {
+					body["order_by"] = map[string]any{
+						"key":       sortCol,
+						"direction": sortDir,
+					}
+					usedServerOrderBy = true
+				}
+			}
+		}
+
 		respBytes, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/scroll", body)
+		if err != nil && usedServerOrderBy {
+			// Fallback if Qdrant rejects order_by (e.g. unindexed or non-numeric/datetime field)
+			delete(body, "order_by")
+			usedServerOrderBy = false
+			respBytes, _, err = q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/scroll", body)
+		}
 		if err != nil {
 			return nil, err
 		}
 
 		var scrollResp struct {
 			Result struct {
-				Points []qdrantPoint `json:"points"`
+				Points         []qdrantPoint `json:"points"`
+				NextPageOffset any           `json:"next_page_offset"`
 			} `json:"result"`
 		}
 		if err := json.Unmarshal(respBytes, &scrollResp); err != nil {
@@ -681,6 +934,10 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 		}
 
 		pts := scrollResp.Result.Points
+		if sortCol != "" && !usedServerOrderBy {
+			sortPointsInMemory(pts, sortCol, sortDir)
+		}
+
 		if offset > 0 {
 			if offset >= len(pts) {
 				pts = []qdrantPoint{}
@@ -688,11 +945,16 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 				pts = pts[offset:]
 			}
 		}
-		if len(pts) > limit {
+		hasMore := len(pts) > limit
+		if hasMore {
 			pts = pts[:limit]
+		} else if len(pts) == limit && scrollResp.Result.NextPageOffset != nil {
+			hasMore = true
 		}
 
-		return pointsToQueryResult(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), true), nil
+		res := pointsToQueryResult(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), true)
+		res.HasMore = hasMore
+		return res, nil
 	}
 
 	// 4. REST-style command: GET/POST/PUT/DELETE /collections/... [\n {json}]
@@ -779,8 +1041,23 @@ func parseVectorValue(raw any) any {
 	return raw
 }
 
+func parsePayloadValue(v any) any {
+	if s, ok := v.(string); ok {
+		trimmed := strings.TrimSpace(s)
+		if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+			(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+			var parsed any
+			if json.Unmarshal([]byte(trimmed), &parsed) == nil {
+				return parsed
+			}
+		}
+	}
+	return v
+}
+
 func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
+	escapedTable := url.PathEscape(table)
 	for _, c := range changes {
 		switch c.Type {
 		case "insert":
@@ -791,28 +1068,56 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 					pt["id"] = parsePointID(v)
 				} else if k == "vector" {
 					pt["vector"] = parseVectorValue(v)
+				} else if strings.HasPrefix(k, "vector.") {
+					vecMap, ok := pt["vector"].(map[string]any)
+					if !ok {
+						vecMap = make(map[string]any)
+						pt["vector"] = vecMap
+					}
+					vecMap[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
 				} else {
-					payload[k] = v
+					payload[k] = parsePayloadValue(v)
 				}
 			}
 			b, _ := json.Marshal(map[string]any{"points": []any{pt}})
-			statements = append(statements, fmt.Sprintf("PUT /collections/%s/points?wait=true\n%s", table, string(b)))
+			statements = append(statements, fmt.Sprintf("PUT /collections/%s/points?wait=true\n%s", escapedTable, string(b)))
 		case "update":
 			idVal := parsePointID(c.PrimaryKey["id"])
 			payload := make(map[string]any)
+			var singleVec any
+			namedVecs := make(map[string]any)
+
 			for k, v := range c.Changes {
-				if k != "id" && k != "vector" && !strings.HasPrefix(k, "vector.") {
-					payload[k] = v
+				if k == "id" {
+					continue
+				} else if k == "vector" {
+					singleVec = parseVectorValue(v)
+				} else if strings.HasPrefix(k, "vector.") {
+					namedVecs[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
+				} else {
+					payload[k] = parsePayloadValue(v)
 				}
 			}
 			if len(payload) > 0 {
 				b, _ := json.Marshal(map[string]any{"payload": payload, "points": []any{idVal}})
-				statements = append(statements, fmt.Sprintf("POST /collections/%s/points/payload?wait=true\n%s", table, string(b)))
+				statements = append(statements, fmt.Sprintf("POST /collections/%s/points/payload?wait=true\n%s", escapedTable, string(b)))
+			}
+			if singleVec != nil || len(namedVecs) > 0 {
+				var vecPayload any = singleVec
+				if len(namedVecs) > 0 {
+					vecPayload = namedVecs
+				}
+				b, _ := json.Marshal(map[string]any{
+					"points": []map[string]any{
+						{"id": idVal, "vector": vecPayload},
+					},
+				})
+				statements = append(statements, fmt.Sprintf("PUT /collections/%s/points/vectors?wait=true\n%s", escapedTable, string(b)))
 			}
 		case "delete":
 			idVal := parsePointID(c.PrimaryKey["id"])
 			b, _ := json.Marshal(map[string]any{"points": []any{idVal}})
-			statements = append(statements, fmt.Sprintf("POST /collections/%s/points/delete?wait=true\n%s", table, string(b)))
+			statements = append(statements, fmt.Sprintf("POST /collections/%s/points/delete?wait=true\n%s", escapedTable, string(b)))
 		}
 	}
 	return statements, nil
@@ -838,7 +1143,7 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 					}
 					vecMap[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
 				} else {
-					payload[k] = v
+					payload[k] = parsePayloadValue(v)
 				}
 			}
 			if _, ok := pt["id"]; !ok {
@@ -864,7 +1169,7 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 				} else if strings.HasPrefix(k, "vector.") {
 					namedVecs[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
 				} else {
-					payload[k] = v
+					payload[k] = parsePayloadValue(v)
 				}
 			}
 

@@ -641,10 +641,58 @@ func IsQueryReturningRows(sql string) bool {
 	return containsStandaloneWord(sanitizedUpper, "RETURNING")
 }
 
+func isReadOnlyHTTPCommand(clean string) bool {
+	fields := strings.Fields(clean)
+	if len(fields) < 2 {
+		return false
+	}
+	method := strings.ToUpper(fields[0])
+	path := strings.SplitN(fields[1], "?", 2)[0]
+	if !strings.HasPrefix(path, "/") {
+		return false
+	}
+	if method == "GET" {
+		return true
+	}
+	if method == "POST" {
+		lowerPath := strings.ToLower(path)
+		if strings.HasPrefix(lowerPath, "/collections/") {
+			for _, suffix := range []string{
+				"/points/search",
+				"/points/search/batch",
+				"/points/search/groups",
+				"/points/scroll",
+				"/points/query",
+				"/points/query/batch",
+				"/points/query/groups",
+				"/points/count",
+				"/points/recommend",
+				"/points/recommend/batch",
+				"/points/discover",
+				"/points/discover/batch",
+				"/points/facet",
+				"/points",
+			} {
+				if strings.HasSuffix(lowerPath, suffix) {
+					return true
+				}
+			}
+		}
+		if lowerPath == "/_sql" || lowerPath == "/_search" || lowerPath == "/_count" ||
+			strings.HasSuffix(lowerPath, "/_search") || strings.HasSuffix(lowerPath, "/_count") {
+			return true
+		}
+	}
+	return false
+}
+
 // IsReadOnlySafeQuery verifies that a SQL statement only performs read operations
 // and does not contain data-modifying CTEs (e.g., WITH ... DELETE) or DML/DDL statements.
 func IsReadOnlySafeQuery(sql string) bool {
 	clean := StripLeadingComments(sql)
+	if isReadOnlyHTTPCommand(clean) {
+		return true
+	}
 	upper := strings.ToUpper(clean)
 	isReadLeading := hasLeadingKeyword(upper, "SELECT") ||
 		hasLeadingKeyword(upper, "SHOW") ||

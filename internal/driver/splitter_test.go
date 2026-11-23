@@ -145,6 +145,12 @@ func TestIsReadOnlySafeQuery(t *testing.T) {
 		"WITH active AS (SELECT * FROM users) SELECT * FROM active",
 		"EXPLAIN SELECT * FROM users",
 		"SHOW TABLES",
+		"GET /collections/docs",
+		"POST /collections/docs/points/search\n{\"vector\":[0.1,0.2],\"limit\":5}",
+		"POST /collections/docs/points/scroll\n{\"limit\":10}",
+		"POST /collections/docs/points/query\n{\"query\":[0.1,0.2]}",
+		"POST /collections/docs/points/count\n{\"exact\":true}",
+		"POST /my_index/_search\n{\"query\":{\"match_all\":{}}}",
 	}
 	for _, q := range safe {
 		if !IsReadOnlySafeQuery(q) {
@@ -160,6 +166,9 @@ func TestIsReadOnlySafeQuery(t *testing.T) {
 		"EXPLAIN ANALYZE DELETE FROM users",
 		"DROP TABLE users",
 		"EXEC sp_who2",
+		"PUT /collections/docs/points?wait=true\n{}",
+		"POST /collections/docs/points/delete?wait=true\n{}",
+		"DELETE /collections/docs",
 	}
 	for _, q := range unsafe {
 		if IsReadOnlySafeQuery(q) {
