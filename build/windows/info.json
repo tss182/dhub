@@ -1,12 +1,12 @@
 {
 	"fixed": {
-		"file_version": "0.3.17",
-		"product_version": "0.3.17"
+		"file_version": "0.3.18",
+		"product_version": "0.3.18"
 	},
 	"info": {
 		"0409": {
-			"FileVersion": "0.3.17",
-			"ProductVersion": "0.3.17",
+			"FileVersion": "0.3.18",
+			"ProductVersion": "0.3.18",
 			"CompanyName": "AskDev",
 			"FileDescription": "Database Management System",
 			"LegalCopyright": "(c) 2026, AskDev",
