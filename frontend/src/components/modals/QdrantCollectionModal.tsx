@@ -10,6 +10,8 @@ import {
   Tag,
   AlertCircle,
   Loader2,
+  Sliders,
+  RotateCcw,
 } from 'lucide-react';
 import { ConnectionConfig } from '../../types/domain';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
@@ -66,12 +68,23 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
   collectionName,
   onUpdated,
 }) => {
-  const [activeTab, setActiveTab] = useState<'indexes' | 'snapshots' | 'info'>('indexes');
+  const [activeTab, setActiveTab] = useState<'indexes' | 'aliases' | 'snapshots' | 'settings' | 'info'>('indexes');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collectionInfo, setCollectionInfo] = useState<any>(null);
   const [indexes, setIndexes] = useState<PayloadIndexEntry[]>([]);
   const [snapshots, setSnapshots] = useState<SnapshotEntry[]>([]);
+  const [aliases, setAliases] = useState<string[]>([]);
+  const [newAliasName, setNewAliasName] = useState('');
+  const [recoverUrl, setRecoverUrl] = useState('');
+
+  // Runtime PATCH settings
+  const [indexingThreshold, setIndexingThreshold] = useState('');
+  const [memmapThreshold, setMemmapThreshold] = useState('');
+  const [vacuumMinVectors, setVacuumMinVectors] = useState('');
+  const [hnswM, setHnswM] = useState('');
+  const [hnswEfConstruct, setHnswEfConstruct] = useState('');
+  const [hnswOnDisk, setHnswOnDisk] = useState(false);
 
   const [newFieldName, setNewFieldName] = useState('');
   const [newFieldType, setNewFieldType] = useState<PayloadFieldType>('keyword');
@@ -110,13 +123,29 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      const [infoRes, snapRes] = await Promise.all([
+      const [infoRes, snapRes, aliasRes] = await Promise.all([
         runQdrantRest(`GET /collections/${encodeURIComponent(collectionName)}`),
         runQdrantRest(`GET /collections/${encodeURIComponent(collectionName)}/snapshots`).catch(() => null),
+        runQdrantRest(`GET /collections/${encodeURIComponent(collectionName)}/aliases`).catch(() => null),
       ]);
 
       const info = infoRes?.result ?? infoRes ?? {};
       setCollectionInfo(info);
+
+      const opt = info?.config?.optimizer_config ?? {};
+      setIndexingThreshold(opt.indexing_threshold != null ? String(opt.indexing_threshold) : '');
+      setMemmapThreshold(opt.memmap_threshold != null ? String(opt.memmap_threshold) : '');
+      setVacuumMinVectors(opt.vacuum_min_vector_number != null ? String(opt.vacuum_min_vector_number) : '');
+
+      const hnsw = info?.config?.hnsw_config ?? {};
+      setHnswM(hnsw.m != null ? String(hnsw.m) : '');
+      setHnswEfConstruct(hnsw.ef_construct != null ? String(hnsw.ef_construct) : '');
+      setHnswOnDisk(Boolean(hnsw.on_disk));
+
+      const aliasList = Array.isArray(aliasRes?.result?.aliases)
+        ? aliasRes.result.aliases.map((a: any) => String(a.alias_name || '')).filter(Boolean)
+        : [];
+      setAliases(aliasList);
 
       const schemaMap = info?.payload_schema || {};
       const parsedIndexes: PayloadIndexEntry[] = Object.entries(schemaMap).map(([field, meta]: [string, any]) => ({
@@ -245,6 +274,104 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
     }
   };
 
+  const handleCreateAlias = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const alias = newAliasName.trim();
+    if (!alias) return;
+    setIsBusyAction(true);
+    try {
+      const body = JSON.stringify({
+        actions: [{ create_alias: { collection_name: collectionName, alias_name: alias } }],
+      });
+      await runQdrantRest(`POST /collections/aliases\n${body}`);
+      alertSuccess(`Alias "${alias}" -> "${collectionName}" created.`, 'Alias Created');
+      setNewAliasName('');
+      await loadAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Create Alias');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
+  const handleDeleteAlias = async (alias: string) => {
+    setIsBusyAction(true);
+    try {
+      const body = JSON.stringify({
+        actions: [{ delete_alias: { alias_name: alias } }],
+      });
+      await runQdrantRest(`POST /collections/aliases\n${body}`);
+      alertSuccess(`Deleted alias "${alias}".`, 'Alias Deleted');
+      await loadAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Delete Alias');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
+  const handleRecoverSnapshot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const loc = recoverUrl.trim();
+    if (!loc) return;
+    const ok = await confirmDialog({
+      title: 'Recover Snapshot from URL',
+      message: `Recover collection "${collectionName}" from "${loc}"? Existing points in this collection may be replaced.`,
+      confirmLabel: 'Recover',
+      isDanger: true,
+    });
+    if (!ok) return;
+    setIsBusyAction(true);
+    try {
+      const body = JSON.stringify({ location: loc });
+      await runQdrantRest(`PUT /collections/${encodeURIComponent(collectionName)}/snapshots/recover?wait=true\n${body}`);
+      alertSuccess(`Collection "${collectionName}" recovered from snapshot.`, 'Recovery Complete');
+      setRecoverUrl('');
+      await loadAll();
+      await refreshExplorerObjects();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Snapshot Recovery Failed');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
+  const handlePatchSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsBusyAction(true);
+    try {
+      const patchBody: Record<string, any> = {};
+      const opt: Record<string, any> = {};
+      if (indexingThreshold.trim() !== '' && Number.isFinite(Number(indexingThreshold))) {
+        opt.indexing_threshold = Math.max(0, Math.floor(Number(indexingThreshold)));
+      }
+      if (memmapThreshold.trim() !== '' && Number.isFinite(Number(memmapThreshold))) {
+        opt.memmap_threshold = Math.max(0, Math.floor(Number(memmapThreshold)));
+      }
+      if (vacuumMinVectors.trim() !== '' && Number.isFinite(Number(vacuumMinVectors))) {
+        opt.vacuum_min_vector_number = Math.max(0, Math.floor(Number(vacuumMinVectors)));
+      }
+      if (Object.keys(opt).length > 0) patchBody.optimizers_config = opt;
+
+      const hnsw: Record<string, any> = { on_disk: hnswOnDisk };
+      if (hnswM.trim() !== '' && Number.isFinite(Number(hnswM))) {
+        hnsw.m = Math.max(0, Math.floor(Number(hnswM)));
+      }
+      if (hnswEfConstruct.trim() !== '' && Number.isFinite(Number(hnswEfConstruct))) {
+        hnsw.ef_construct = Math.max(4, Math.floor(Number(hnswEfConstruct)));
+      }
+      patchBody.hnsw_config = hnsw;
+
+      await runQdrantRest(`PATCH /collections/${encodeURIComponent(collectionName)}\n${JSON.stringify(patchBody)}`);
+      alertSuccess(`Updated runtime settings for "${collectionName}".`, 'Collection Updated');
+      await loadAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Update Collection');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
   const statusColor =
     collectionInfo?.status === 'green'
       ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
@@ -336,6 +463,18 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('aliases')}
+            className={`flex items-center gap-1.5 px-3 py-2 border-b-2 font-medium cursor-pointer transition-colors ${
+              activeTab === 'aliases'
+                ? 'border-blue-500 text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Tag className="h-3.5 w-3.5" />
+            <span>Aliases ({aliases.length})</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('snapshots')}
             className={`flex items-center gap-1.5 px-3 py-2 border-b-2 font-medium cursor-pointer transition-colors ${
               activeTab === 'snapshots'
@@ -345,6 +484,18 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
           >
             <Camera className="h-3.5 w-3.5" />
             <span>Snapshots ({snapshots.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('settings')}
+            className={`flex items-center gap-1.5 px-3 py-2 border-b-2 font-medium cursor-pointer transition-colors ${
+              activeTab === 'settings'
+                ? 'border-blue-500 text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Sliders className="h-3.5 w-3.5" />
+            <span>Settings</span>
           </button>
           <button
             type="button"
@@ -459,6 +610,65 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
             </div>
           )}
 
+          {activeTab === 'aliases' && (
+            <div className="space-y-3">
+              {!connection?.isReadOnly && (
+                <form
+                  onSubmit={handleCreateAlias}
+                  className="flex items-end gap-2 p-3 rounded-lg border border-[#282b36] bg-[#14151b]"
+                >
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-zinc-400 mb-1">
+                      Alias Name (e.g. prod_docs for zero-downtime swap)
+                    </label>
+                    <input
+                      type="text"
+                      value={newAliasName}
+                      onChange={(e) => setNewAliasName(e.target.value)}
+                      placeholder="e.g. documents_live"
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isBusyAction || !newAliasName.trim()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Assign Alias</span>
+                  </button>
+                </form>
+              )}
+
+              <div className="rounded-lg border border-[#282b36] bg-[#14151b] overflow-hidden">
+                {aliases.length === 0 ? (
+                  <div className="p-6 text-center text-zinc-500">
+                    No aliases point to this collection yet.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#222530]">
+                    {aliases.map((a) => (
+                      <div key={a} className="flex items-center justify-between px-3 py-2">
+                        <span className="font-mono text-cyan-300">{a}</span>
+                        {!connection?.isReadOnly && (
+                          <button
+                            type="button"
+                            disabled={isBusyAction}
+                            onClick={() => handleDeleteAlias(a)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-rose-400 hover:bg-rose-500/15 cursor-pointer"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            <span>Remove</span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {activeTab === 'snapshots' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -477,6 +687,29 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                   </button>
                 )}
               </div>
+
+              {!connection?.isReadOnly && (
+                <form
+                  onSubmit={handleRecoverSnapshot}
+                  className="flex items-center gap-2 p-2.5 rounded-lg border border-[#282b36] bg-[#14151b]"
+                >
+                  <input
+                    type="text"
+                    value={recoverUrl}
+                    onChange={(e) => setRecoverUrl(e.target.value)}
+                    placeholder="Recover from URL or file:///... snapshot path"
+                    className="flex-1 rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isBusyAction || !recoverUrl.trim()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-600/80 hover:bg-amber-600 disabled:opacity-50 text-white font-medium cursor-pointer"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Recover</span>
+                  </button>
+                </form>
+              )}
 
               <div className="rounded-lg border border-[#282b36] bg-[#14151b] overflow-hidden">
                 {snapshots.length === 0 ? (
@@ -523,6 +756,89 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                 )}
               </div>
             </div>
+          )}
+
+          {activeTab === 'settings' && (
+            <form onSubmit={handlePatchSettings} className="space-y-4">
+              <div className="rounded-lg border border-[#282b36] bg-[#14151b] p-3 space-y-3">
+                <div className="font-semibold text-zinc-200">Optimizers Config</div>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">indexing_threshold (KB)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={indexingThreshold}
+                      onChange={(e) => setIndexingThreshold(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">memmap_threshold (KB)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={memmapThreshold}
+                      onChange={(e) => setMemmapThreshold(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">vacuum_min_vector_number</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={vacuumMinVectors}
+                      onChange={(e) => setVacuumMinVectors(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#282b36] bg-[#14151b] p-3 space-y-3">
+                <div className="font-semibold text-zinc-200">HNSW Config</div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">m (Max Edges)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={hnswM}
+                      onChange={(e) => setHnswM(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">ef_construct</label>
+                    <input
+                      type="number"
+                      min={4}
+                      value={hnswEfConstruct}
+                      onChange={(e) => setHnswEfConstruct(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                  <input type="checkbox" checked={hnswOnDisk} onChange={(e) => setHnswOnDisk(e.target.checked)} />
+                  <span>Store HNSW graph on disk</span>
+                </label>
+              </div>
+
+              {!connection?.isReadOnly && (
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={isBusyAction}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium cursor-pointer"
+                  >
+                    {isBusyAction && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    <span>Apply PATCH Settings</span>
+                  </button>
+                </div>
+              )}
+            </form>
           )}
 
           {activeTab === 'info' && (

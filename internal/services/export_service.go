@@ -143,7 +143,32 @@ func (e *ExportService) PreviewImportFile(filePath, delimiter string, hasHeader 
 	}
 	defer f.Close()
 
-	if strings.HasSuffix(strings.ToLower(filePath), ".json") {
+	lowerPath := strings.ToLower(filePath)
+	if strings.HasSuffix(lowerPath, ".jsonl") || strings.HasSuffix(lowerPath, ".ndjson") {
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+		var rawList []map[string]any
+		for scanner.Scan() && len(rawList) < 10 {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var item map[string]any
+			if err := json.Unmarshal([]byte(line), &item); err != nil {
+				return nil, fmt.Errorf("invalid JSONL line: %w", err)
+			}
+			rawList = append(rawList, flattenQdrantPointRecord(item))
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("failed to read JSONL file: %w", err)
+		}
+		if len(rawList) == 0 {
+			return nil, fmt.Errorf("JSONL file contains no valid JSON objects")
+		}
+		return buildJSONFilePreview(rawList), nil
+	}
+
+	if strings.HasSuffix(lowerPath, ".json") {
 		byteData, err := io.ReadAll(io.LimitReader(f, 2*1024*1024))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read JSON file: %w", err)
@@ -171,37 +196,7 @@ func (e *ExportService) PreviewImportFile(filePath, delimiter string, hasHeader 
 			return nil, fmt.Errorf("JSON file must contain an array of objects or an object containing an array")
 		}
 
-		colSet := make(map[string]bool)
-		var columns []string
-		for _, item := range rawList {
-			for k := range item {
-				if !colSet[k] {
-					colSet[k] = true
-					columns = append(columns, k)
-				}
-			}
-		}
-
-		var previewRows [][]string
-		for idx, item := range rawList {
-			if idx >= 10 {
-				break
-			}
-			row := make([]string, len(columns))
-			for cIdx, col := range columns {
-				if v, ok := item[col]; ok && v != nil {
-					row[cIdx] = fmt.Sprintf("%v", v)
-				} else {
-					row[cIdx] = ""
-				}
-			}
-			previewRows = append(previewRows, row)
-		}
-
-		return &FilePreview{
-			Columns: columns,
-			Rows:    previewRows,
-		}, nil
+		return buildJSONFilePreview(rawList), nil
 	}
 
 	delimRune := ','
@@ -386,6 +381,12 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				if _, err := bw.WriteString("[\n"); err != nil {
 					return nil, fmt.Errorf("failed to write JSON export: %w", err)
 				}
+			case "jsonl", "ndjson":
+				colNames = make([]string, len(res.Columns))
+				for i, col := range res.Columns {
+					colNames[i] = col.Name
+				}
+				jsonObj = make(map[string]any, len(colNames))
 			case "sql_insert", "sql":
 				sqlTargetTable = req.Table
 				if sqlTargetTable == "" {
@@ -440,6 +441,59 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		}
 
 		switch format {
+		case "jsonl", "ndjson":
+			for _, row := range res.Rows {
+				var outRecord map[string]any
+				if driverType == "qdrant" {
+					pt := map[string]any{"payload": map[string]any{}}
+					payload := pt["payload"].(map[string]any)
+					var namedVecs map[string]any
+					for i, val := range row {
+						if i >= len(colNames) {
+							continue
+						}
+						col := colNames[i]
+						if col == "score" {
+							continue
+						} else if col == "id" {
+							pt["id"] = val
+						} else if col == "vector" {
+							pt["vector"] = parseJSONIfPossible(val)
+						} else if strings.HasPrefix(col, "vector.") {
+							if namedVecs == nil {
+								namedVecs = make(map[string]any)
+							}
+							namedVecs[strings.TrimPrefix(col, "vector.")] = parseJSONIfPossible(val)
+						} else if val != nil {
+							payload[col] = parseJSONIfPossible(val)
+						}
+					}
+					if namedVecs != nil {
+						pt["vector"] = namedVecs
+					}
+					outRecord = pt
+				} else {
+					clear(jsonObj)
+					for i, val := range row {
+						if i < len(colNames) {
+							jsonObj[colNames[i]] = val
+						}
+					}
+					outRecord = jsonObj
+				}
+				raw, err := json.Marshal(outRecord)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encode JSONL export: %w", err)
+				}
+				if _, err := bw.Write(raw); err != nil {
+					return nil, err
+				}
+				if err := bw.WriteByte('\n'); err != nil {
+					return nil, err
+				}
+				exportedRows++
+			}
+
 		case "json":
 			for _, row := range res.Rows {
 				clear(jsonObj)
@@ -540,7 +594,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		if err := bw.Flush(); err != nil {
 			return nil, err
 		}
-	case "sql_insert", "sql", "markdown", "md":
+	case "jsonl", "ndjson", "sql_insert", "sql", "markdown", "md":
 		if err := bw.Flush(); err != nil {
 			return nil, err
 		}
@@ -627,6 +681,56 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 		batch = batch[:0]
 		e.emitProgress(opID, "import", "running", totalImported, fmt.Sprintf("Imported %d rows...", totalImported))
 		return nil
+	}
+
+	isJSONL := strings.EqualFold(req.Format, "jsonl") ||
+		strings.EqualFold(req.Format, "ndjson") ||
+		strings.HasSuffix(strings.ToLower(req.FilePath), ".jsonl") ||
+		strings.HasSuffix(strings.ToLower(req.FilePath), ".ndjson")
+	if isJSONL {
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var rawItem map[string]any
+			if err := json.Unmarshal([]byte(line), &rawItem); err != nil {
+				return nil, fmt.Errorf("error decoding JSONL record: %w", err)
+			}
+			item := flattenQdrantPointRecord(rawItem)
+			changes := make(map[string]any, len(req.Mappings))
+			for _, m := range req.Mappings {
+				if m.TableColumn == "" {
+					continue
+				}
+				if val, ok := item[m.FileColumn]; ok {
+					changes[m.TableColumn] = val
+				}
+			}
+			if len(changes) > 0 {
+				batch = append(batch, driver.RowChange{
+					Type:    "insert",
+					Changes: changes,
+				})
+				if len(batch) >= batchSize {
+					if err := flushBatch(); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("error reading JSONL file: %w", err)
+		}
+		if err := flushBatch(); err != nil {
+			return nil, err
+		}
+		return &ImportResult{
+			RowsImported: totalImported,
+			ElapsedMs:    time.Since(start).Milliseconds(),
+		}, nil
 	}
 
 	isJSON := strings.EqualFold(req.Format, "json") || strings.HasSuffix(strings.ToLower(req.FilePath), ".json")
@@ -782,4 +886,95 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 		RowsImported: totalImported,
 		ElapsedMs:    time.Since(start).Milliseconds(),
 	}, nil
+}
+
+func parseJSONIfPossible(val any) any {
+	s, ok := val.(string)
+	if !ok {
+		return val
+	}
+	trimmed := strings.TrimSpace(s)
+	if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+		(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+		var parsed any
+		if json.Unmarshal([]byte(trimmed), &parsed) == nil {
+			return parsed
+		}
+	}
+	return val
+}
+
+func flattenQdrantPointRecord(item map[string]any) map[string]any {
+	payloadRaw, hasPayload := item["payload"]
+	if !hasPayload {
+		return item
+	}
+	payloadMap, ok := payloadRaw.(map[string]any)
+	if !ok {
+		return item
+	}
+	flat := make(map[string]any, len(payloadMap)+4)
+	if id, exists := item["id"]; exists {
+		flat["id"] = id
+	}
+	if vec, exists := item["vector"]; exists && vec != nil {
+		if vecMap, isMap := vec.(map[string]any); isMap {
+			if _, isSparse := vecMap["indices"]; isSparse {
+				flat["vector"] = vec
+			} else {
+				for k, v := range vecMap {
+					flat["vector."+k] = v
+				}
+			}
+		} else {
+			flat["vector"] = vec
+		}
+	}
+	for k, v := range payloadMap {
+		flat[k] = v
+	}
+	return flat
+}
+
+func buildJSONFilePreview(rawList []map[string]any) *FilePreview {
+	colSet := make(map[string]bool)
+	var columns []string
+	for _, item := range rawList {
+		for k := range item {
+			if !colSet[k] {
+				colSet[k] = true
+				columns = append(columns, k)
+			}
+		}
+	}
+	var previewRows [][]string
+	for idx, item := range rawList {
+		if idx >= 10 {
+			break
+		}
+		row := make([]string, len(columns))
+		for cIdx, col := range columns {
+			if v, ok := item[col]; ok && v != nil {
+				switch vt := v.(type) {
+				case string:
+					row[cIdx] = vt
+				case []any, map[string]any:
+					if b, err := json.Marshal(vt); err == nil {
+						row[cIdx] = string(b)
+					} else {
+						row[cIdx] = fmt.Sprintf("%v", v)
+					}
+				default:
+					row[cIdx] = fmt.Sprintf("%v", v)
+				}
+			} else {
+				row[cIdx] = ""
+			}
+		}
+		previewRows = append(previewRows, row)
+	}
+	return &FilePreview{
+		Columns: columns,
+		Rows:    previewRows,
+	}
 }

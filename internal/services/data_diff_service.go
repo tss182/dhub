@@ -232,15 +232,24 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 	srcMap, srcCols := indexRows(srcRes)
 	dstMap, dstCols := indexRows(dstRes)
 
-	// Determine common columns (preserving target column names for DML generation)
+	// Determine common columns (for Qdrant schemaless collections, include union of source & target fields)
 	srcColLookup := make(map[string]string, len(srcCols))
 	for _, c := range srcCols {
 		srcColLookup[strings.ToLower(c)] = c
 	}
-	commonCols := make([]string, 0, len(dstCols))
+	commonCols := make([]string, 0, len(dstCols)+len(srcCols))
+	seenCommon := make(map[string]bool)
 	for _, dc := range dstCols {
-		if _, ok := srcColLookup[strings.ToLower(dc)]; ok {
+		if _, ok := srcColLookup[strings.ToLower(dc)]; ok || dstDriverType == "qdrant" {
 			commonCols = append(commonCols, dc)
+			seenCommon[strings.ToLower(dc)] = true
+		}
+	}
+	if dstDriverType == "qdrant" {
+		for _, sc := range srcCols {
+			if !seenCommon[strings.ToLower(sc)] {
+				commonCols = append(commonCols, sc)
+			}
 		}
 	}
 	if len(commonCols) == 0 {

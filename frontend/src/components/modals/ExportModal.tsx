@@ -3,6 +3,7 @@ import { Dialogs } from '@wailsio/runtime';
 import { Download, FileText, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
 import * as ExportService from '../../../bindings/dhub/internal/services/exportservice';
 import { ExportRequest } from '../../../bindings/dhub/internal/services/models';
+import { useConnectionStore } from '../../stores/useConnectionStore';
 
 export interface ExportModalProps {
   isOpen: boolean;
@@ -23,7 +24,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   table = '',
   sql = '',
 }) => {
-  const [format, setFormat] = useState<'csv' | 'xlsx' | 'json' | 'markdown' | 'sql_insert'>('csv');
+  const connections = useConnectionStore((s) => s.connections);
+  const activeDriver = connections.find((c) => c.id === connectionId)?.driver || '';
+  const isQdrant = activeDriver === 'qdrant';
+
+  const [format, setFormat] = useState<'csv' | 'xlsx' | 'json' | 'jsonl' | 'markdown' | 'sql_insert'>(
+    isQdrant ? 'jsonl' : 'csv'
+  );
   const [delimiter, setDelimiter] = useState<string>(',');
   const [includeHeader, setIncludeHeader] = useState<boolean>(true);
   const [filePath, setFilePath] = useState<string>('');
@@ -144,8 +151,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 { id: 'csv', label: 'CSV', desc: 'Delimited text' },
                 { id: 'xlsx', label: 'Excel (.xlsx)', desc: 'Spreadsheet workbook' },
                 { id: 'json', label: 'JSON', desc: 'Array of records' },
+                { id: 'jsonl', label: 'JSONL', desc: isQdrant ? 'Qdrant Points (.jsonl)' : 'JSON Lines (.jsonl)' },
                 { id: 'markdown', label: 'Markdown', desc: 'GitHub .md table' },
-                { id: 'sql_insert', label: 'SQL INSERT', desc: 'DML batch script' },
+                ...(!isQdrant ? [{ id: 'sql_insert', label: 'SQL INSERT', desc: 'DML batch script' }] : []),
               ].map((f) => (
                 <button
                   key={f.id}

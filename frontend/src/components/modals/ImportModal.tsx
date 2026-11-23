@@ -60,9 +60,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         CanChooseFiles: true,
         AllowsMultipleSelection: false,
         Filters: [
-          { DisplayName: 'Supported Files (*.csv, *.tsv, *.txt, *.json)', Pattern: '*.csv;*.tsv;*.txt;*.json' },
+          { DisplayName: 'Supported Files (*.csv, *.tsv, *.txt, *.json, *.jsonl)', Pattern: '*.csv;*.tsv;*.txt;*.json;*.jsonl;*.ndjson' },
           { DisplayName: 'Delimited Files (*.csv, *.tsv, *.txt)', Pattern: '*.csv;*.tsv;*.txt' },
-          { DisplayName: 'JSON Files (*.json)', Pattern: '*.json' },
+          { DisplayName: 'JSON / JSONL Files (*.json, *.jsonl, *.ndjson)', Pattern: '*.json;*.jsonl;*.ndjson' },
           { DisplayName: 'All Files (*.*)', Pattern: '*.*' },
         ],
       });
