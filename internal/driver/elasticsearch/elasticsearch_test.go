@@ -266,3 +266,86 @@ func TestElasticsearchAdvancedQueriesAndBulk(t *testing.T) {
 	}
 }
 
+func TestElasticsearchDeepPaginationAndAuthModes(t *testing.T) {
+	var seenAuth []string
+	var seenHost string
+	var pitCreated, pitDeleted, searchAfterUsed bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = append(seenAuth, r.Header.Get("Authorization"))
+		seenHost = r.Host
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/":
+			_, _ = w.Write([]byte(`{"name":"es-node","version":{"number":"8.15.0"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/big_idx/_pit":
+			pitCreated = true
+			_, _ = w.Write([]byte(`{"id":"pit-123"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/_pit":
+			pitDeleted = true
+			_, _ = w.Write([]byte(`{"succeeded":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/_search":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if _, hasSA := body["search_after"]; hasSA {
+				searchAfterUsed = true
+				_, _ = w.Write([]byte(`{
+					"hits":{"hits":[{"_id":"doc-10051","_source":{"title":"Deep Doc"}}]}
+				}`))
+			} else {
+				_, _ = w.Write([]byte(`{
+					"hits":{"hits":[{"_id":"doc-step","sort":[10050]}]}
+				}`))
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/big_idx/_mapping":
+			_, _ = w.Write([]byte(`{"big_idx":{"mappings":{"properties":{"title":{"type":"text"}}}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/_cat/indices":
+			_, _ = w.Write([]byte(`[{"index":"big_idx","health":"green","docs.count":"20000"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	// 1. API Key auth + Host header override (SSH tunnel)
+	apiDrv, err := NewElasticsearchDriver(srv.URL, "__apikey__", "id123:secret456", nil)
+	if err != nil {
+		t.Fatalf("NewElasticsearchDriver apikey: %v", err)
+	}
+	apiDrv.SetHostHeader("es.internal.example.com")
+	if _, err := apiDrv.Execute(ctx, driver.QueryRequest{SQL: `GET /_cat/indices?format=json`}); err != nil {
+		t.Fatalf("cat indices failed: %v", err)
+	}
+	_ = apiDrv.Close()
+	if seenHost != "es.internal.example.com" {
+		t.Fatalf("expected Host header override es.internal.example.com, got %q", seenHost)
+	}
+	if len(seenAuth) == 0 || !strings.HasPrefix(seenAuth[0], "ApiKey ") {
+		t.Fatalf("expected ApiKey auth header, got %v", seenAuth)
+	}
+
+	// 2. Bearer token auth + Deep Pagination (offset > 10000 via PIT + search_after)
+	bearerDrv, err := NewElasticsearchDriver(srv.URL, "__bearer__", "my-jwt-token", nil)
+	if err != nil {
+		t.Fatalf("NewElasticsearchDriver bearer: %v", err)
+	}
+	defer bearerDrv.Close()
+	res, err := bearerDrv.Execute(ctx, driver.QueryRequest{
+		SQL:    `SELECT * FROM big_idx`,
+		Offset: 10050,
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("Deep pagination failed: %v", err)
+	}
+	if !pitCreated || !pitDeleted || !searchAfterUsed {
+		t.Fatalf("expected PIT lifecycle + search_after, got pitCreated=%v pitDeleted=%v searchAfterUsed=%v", pitCreated, pitDeleted, searchAfterUsed)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][0] != "doc-10051" {
+		t.Fatalf("unexpected deep pagination result: %+v", res.Rows)
+	}
+}
+

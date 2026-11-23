@@ -187,3 +187,35 @@ func TestExportService_ExportAndImport(t *testing.T) {
 		t.Errorf("expected 2 rows in imported_items, got %d", count)
 	}
 }
+
+func TestESBulkNDJSONHelpersAndPreview(t *testing.T) {
+	id, isAction := extractESBulkActionID(map[string]any{
+		"index": map[string]any{"_index": "articles", "_id": "doc-42"},
+	})
+	if !isAction || id != "doc-42" {
+		t.Fatalf("expected bulk action with _id=doc-42, got id=%q isAction=%v", id, isAction)
+	}
+
+	flat := flattenQdrantPointRecord(map[string]any{
+		"_id":     "doc-99",
+		"_source": map[string]any{"title": "Hello ES", "views": 10},
+	})
+	if flat["_id"] != "doc-99" || flat["title"] != "Hello ES" {
+		t.Fatalf("unexpected flattened ES document: %+v", flat)
+	}
+
+	tmpDir := t.TempDir()
+	ndjsonPath := filepath.Join(tmpDir, "bulk.ndjson")
+	content := "{\"index\":{\"_index\":\"articles\",\"_id\":\"1\"}}\n{\"title\":\"First\"}\n{\"index\":{\"_index\":\"articles\",\"_id\":\"2\"}}\n{\"title\":\"Second\"}\n"
+	if err := os.WriteFile(ndjsonPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write ndjson: %v", err)
+	}
+	svc := &ExportService{}
+	prev, err := svc.PreviewImportFile(ndjsonPath, ",", true)
+	if err != nil {
+		t.Fatalf("PreviewImportFile ndjson failed: %v", err)
+	}
+	if len(prev.Rows) != 2 {
+		t.Fatalf("expected 2 preview rows from ES bulk ndjson, got %d", len(prev.Rows))
+	}
+}

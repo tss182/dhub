@@ -193,3 +193,38 @@ func TestSplitHTTPOrSQLStatements_ReadOnlyBypassPrevention(t *testing.T) {
 		t.Fatalf("expected POST /collections/docs/facet to be read-only safe")
 	}
 }
+
+func TestElasticsearchReadOnlyAndSplitter(t *testing.T) {
+	safeES := []string{
+		"GET /_cat/indices?format=json",
+		"HEAD /my_index",
+		"POST /my_index/_search\n{\"query\":{\"match_all\":{}}}",
+		"POST /my_index/_count\n{\"query\":{\"match_all\":{}}}",
+		"POST /my_index/_analyze\n{\"analyzer\":\"standard\",\"text\":\"hello world\"}",
+		"FROM logs | WHERE status == \"ok\" | LIMIT 10",
+	}
+	for _, q := range safeES {
+		if !IsReadOnlySafeQuery(q) {
+			t.Errorf("expected Elasticsearch query %q to be read-only safe", q)
+		}
+	}
+
+	unsafeES := []string{
+		"POST /my_index/_bulk\n{\"index\":{}}\n{\"a\":1}\n",
+		"POST /_reindex\n{\"source\":{\"index\":\"a\"},\"dest\":{\"index\":\"b\"}}",
+		"POST /my_index/_delete_by_query\n{\"query\":{\"match_all\":{}}}",
+		"PUT /my_index\n{}",
+		"DELETE /my_index",
+	}
+	for _, q := range unsafeES {
+		if IsReadOnlySafeQuery(q) {
+			t.Errorf("expected Elasticsearch mutating query %q to be blocked in read-only mode", q)
+		}
+	}
+
+	script := "// list indices\nGET /_cat/indices?format=json\n\nFROM logs | LIMIT 5"
+	stmts := SplitHTTPOrSQLStatements(script)
+	if len(stmts) != 2 {
+		t.Fatalf("expected 2 statements, got %d: %#v", len(stmts), stmts)
+	}
+}

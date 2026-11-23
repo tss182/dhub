@@ -467,6 +467,10 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
         parts.push(
           'QDRANT DIALECT RULES: Qdrant is a vector database, NOT a relational SQL engine. Do NOT generate JOINs, GROUP BY, or CREATE TABLE SQL. For vector similarity, hybrid, recommend, or facet queries, generate Qdrant REST commands (e.g. `POST /collections/<name>/points/query`, `POST /collections/<name>/points/search`, `POST /collections/<name>/points/scroll`, `POST /collections/<name>/facet`) inside the ```sql block. For simple browsing or `open_table` "where", use Qdrant-compatible filters like `category = \'news\' AND views >= 10`, `title LIKE \'%keyword%\'`, or raw Qdrant JSON filter `{"must":[...]}`.'
         );
+      } else if (activeConn.driver === 'elasticsearch') {
+        parts.push(
+          'ELASTICSEARCH DIALECT RULES: Elasticsearch/OpenSearch is a distributed search & analytics engine, NOT a relational SQL database. Do NOT generate SQL JOINs, CREATE TABLE, ALTER TABLE, or transactions. Use Kibana DevTools REST syntax (`GET /_cat/indices?format=json`, `POST /<index>/_search\\n{...}`, `POST /<index>/_count\\n{...}`, `POST /<index>/_bulk\\n...`) or ES|QL (`FROM <index> | WHERE ... | STATS ... | SORT ... | LIMIT ...`) inside the ```sql block. For `open_table` "where" filters, use simple expressions (`status = \'active\' AND views >= 10`, `title LIKE \'%search%\'`, `_id IN (\'1\', \'2\')`) or raw Query DSL JSON (`{"bool":{"must":[...]}}`).'
+        );
       }
     }
 

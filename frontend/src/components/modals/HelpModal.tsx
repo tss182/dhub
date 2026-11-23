@@ -150,6 +150,24 @@ const QDRANT_SNIPPETS: SnippetItem[] = [
   },
 ];
 
+const ELASTICSEARCH_SNIPPETS: SnippetItem[] = [
+  {
+    label: 'Cluster Health & Indices',
+    code: 'GET /_cluster/health\nGET /_cat/indices?v&s=docs.count:desc',
+    description: 'Inspect cluster status and list all indices sorted by document count.',
+  },
+  {
+    label: 'BM25 + Aggregations Search',
+    code: 'POST /articles/_search\n{\n  "size": 10,\n  "query": { "match": { "title": "vector" } },\n  "aggs": {\n    "by_status": { "terms": { "field": "status.keyword", "size": 10 } }\n  }\n}',
+    description: 'Run full-text search with bucket aggregations (supports Table & Chart views).',
+  },
+  {
+    label: 'ES|QL Piped Query',
+    code: 'FROM articles\n| WHERE views > 100\n| STATS avg_views = AVG(views) BY status\n| SORT avg_views DESC\n| LIMIT 25',
+    description: 'Execute native Elasticsearch|QL piped queries via POST /_query?format=json.',
+  },
+];
+
 const SQL_SNIPPETS: SnippetItem[] = [
   {
     label: 'Dynamic Named Parameters',
@@ -305,6 +323,16 @@ const SEARCHABLE_TOPICS: SearchableTopic[] = [
     summary:
       'Create single/named vector collections with quantization & HNSW tuning, browse/edit points, run similarity searches (raw vector or OpenAI/Gemini/Ollama text embeddings), and manage payload indexes & snapshots.',
     snippets: QDRANT_SNIPPETS,
+  },
+  {
+    id: 'db-elasticsearch',
+    tab: 'databases',
+    tabLabel: 'Database Engines',
+    title: 'Elasticsearch & OpenSearch Guide',
+    keywords: ['elasticsearch', 'elastic', 'opensearch', 'kibana', 'esql', 'knn', 'dsl', 'index', 'alias', 'reindex'],
+    summary:
+      'Connect via Basic, API Key, Bearer Token, or Elastic Cloud ID; manage mappings, shards, aliases, and reindex jobs; run BM25/kNN/Hybrid searches, ES|QL, and Kibana DevTools REST commands.',
+    snippets: ELASTICSEARCH_SNIPPETS,
   },
   {
     id: 'ed-features',
@@ -951,6 +979,32 @@ export const HelpModal: React.FC = () => {
                       </p>
                       <div className="grid grid-cols-1 gap-2.5">
                         {QDRANT_SNIPPETS.map((s, idx) => (
+                          <SnippetBlock
+                            key={idx}
+                            item={s}
+                            canInsert={canInsertToConsole}
+                            onInsert={handleInsertToConsole}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Elasticsearch & OpenSearch Guide */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <DbDriverIcon driver="elasticsearch" className="h-4 w-4" />
+                        <h4 className="text-xs font-semibold text-zinc-100 uppercase tracking-wider">
+                          Elasticsearch &amp; OpenSearch Guide
+                        </h4>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 leading-relaxed">
+                        Manage indices, mappings, shards, aliases, and async reindex jobs; use the{' '}
+                        <strong>Search Studio</strong> (BM25, kNN, Hybrid, More Like This),{' '}
+                        <strong>Text Analyzer Playground</strong>, <strong>Aggregations</strong>,{' '}
+                        <strong>ES|QL</strong>, and Kibana DevTools REST syntax.
+                      </p>
+                      <div className="grid grid-cols-1 gap-2.5">
+                        {ELASTICSEARCH_SNIPPETS.map((s, idx) => (
                           <SnippetBlock
                             key={idx}
                             item={s}

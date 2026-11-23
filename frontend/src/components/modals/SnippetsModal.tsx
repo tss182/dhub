@@ -28,6 +28,7 @@ export const SnippetsModal: React.FC<SnippetsModalProps> = ({
 }) => {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [search, setSearch] = useState('');
+  const [driverFilter, setDriverFilter] = useState<string>('all');
   const [editing, setEditing] = useState<Partial<Snippet> | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -92,13 +93,20 @@ export const SnippetsModal: React.FC<SnippetsModalProps> = ({
     }
   };
 
-  const filtered = snippets.filter(
-    (s) =>
-      !search.trim() ||
-      s.title.toLowerCase().includes(search.toLowerCase()) ||
-      s.sqlText.toLowerCase().includes(search.toLowerCase()) ||
-      s.tags.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = snippets.filter((s) => {
+    const matchesDriver =
+      driverFilter === 'all' ||
+      (driverFilter === '' ? !s.driver : (s.driver || '').toLowerCase() === driverFilter.toLowerCase());
+    if (!matchesDriver) return false;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      s.title.toLowerCase().includes(q) ||
+      s.sqlText.toLowerCase().includes(q) ||
+      s.tags.toLowerCase().includes(q) ||
+      (s.driver || '').toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4">
@@ -148,15 +156,38 @@ export const SnippetsModal: React.FC<SnippetsModalProps> = ({
                 />
               </div>
             </div>
-            <div>
-              <label className="block text-[11px] text-zinc-400 mb-1">Description</label>
-              <input
-                type="text"
-                value={editing.description || ''}
-                onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-                placeholder="Optional note..."
-                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-100 focus:border-blue-500 focus:outline-none"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">Description</label>
+                <input
+                  type="text"
+                  value={editing.description || ''}
+                  onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+                  placeholder="Optional note..."
+                  className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-100 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">Engine / Driver</label>
+                <select
+                  value={editing.driver || ''}
+                  onChange={(e) => setEditing({ ...editing, driver: e.target.value })}
+                  className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-100 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">Any / Generic SQL</option>
+                  <option value="postgres">PostgreSQL</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="mariadb">MariaDB</option>
+                  <option value="sqlite">SQLite</option>
+                  <option value="mssql">SQL Server</option>
+                  <option value="oracle">Oracle</option>
+                  <option value="clickhouse">ClickHouse</option>
+                  <option value="mongodb">MongoDB</option>
+                  <option value="redis">Redis</option>
+                  <option value="qdrant">Qdrant</option>
+                  <option value="elasticsearch">Elasticsearch</option>
+                </select>
+              </div>
             </div>
             <div>
               <label className="block text-[11px] text-zinc-400 mb-1">SQL</label>
@@ -185,8 +216,8 @@ export const SnippetsModal: React.FC<SnippetsModalProps> = ({
           </form>
         ) : (
           <>
-            <div className="p-3 border-b border-[#272932] bg-[#16171d]">
-              <div className="relative flex items-center">
+            <div className="p-3 border-b border-[#272932] bg-[#16171d] flex items-center gap-2">
+              <div className="relative flex items-center flex-1">
                 <Search className="absolute left-2.5 h-3.5 w-3.5 text-zinc-500" />
                 <input
                   type="text"
@@ -196,6 +227,21 @@ export const SnippetsModal: React.FC<SnippetsModalProps> = ({
                   className="w-full rounded bg-[#121317] border border-[#272932] pl-8 pr-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
                 />
               </div>
+              <select
+                value={driverFilter}
+                onChange={(e) => setDriverFilter(e.target.value)}
+                className="rounded bg-[#121317] border border-[#272932] px-2.5 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none"
+              >
+                <option value="all">All Engines</option>
+                <option value="">Generic</option>
+                <option value="elasticsearch">Elasticsearch</option>
+                <option value="qdrant">Qdrant</option>
+                <option value="postgres">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+                <option value="sqlite">SQLite</option>
+                <option value="redis">Redis</option>
+                <option value="mongodb">MongoDB</option>
+              </select>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {filtered.length === 0 ? (

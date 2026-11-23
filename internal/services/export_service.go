@@ -149,6 +149,8 @@ func (e *ExportService) PreviewImportFile(filePath, delimiter string, hasHeader 
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 		var rawList []map[string]any
+		pendingBulkID := ""
+		hasPendingBulkID := false
 		for scanner.Scan() && len(rawList) < 100 {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
@@ -160,7 +162,20 @@ func (e *ExportService) PreviewImportFile(filePath, delimiter string, hasHeader 
 			if err := dec.Decode(&item); err != nil {
 				return nil, fmt.Errorf("invalid JSONL line: %w", err)
 			}
-			rawList = append(rawList, flattenQdrantPointRecord(item))
+			if actionID, isAction := extractESBulkActionID(item); isAction {
+				pendingBulkID = actionID
+				hasPendingBulkID = true
+				continue
+			}
+			flat := flattenQdrantPointRecord(item)
+			if hasPendingBulkID {
+				if pendingBulkID != "" && flat["_id"] == nil {
+					flat["_id"] = pendingBulkID
+				}
+				pendingBulkID = ""
+				hasPendingBulkID = false
+			}
+			rawList = append(rawList, flat)
 		}
 		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("failed to read JSONL file: %w", err)
@@ -337,7 +352,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize xlsx writer: %w", err)
 		}
-	case "json", "jsonl", "ndjson", "sql_insert", "sql", "markdown", "md":
+	case "json", "jsonl", "ndjson", "es_bulk", "bulk_ndjson", "sql_insert", "sql", "markdown", "md":
 	default:
 		delimRune := ','
 		if req.Delimiter == ";" {
@@ -411,7 +426,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				if _, err := bw.WriteString("[\n"); err != nil {
 					return nil, fmt.Errorf("failed to write JSON export: %w", err)
 				}
-			case "jsonl", "ndjson":
+			case "jsonl", "ndjson", "es_bulk", "bulk_ndjson":
 				jsonObj = make(map[string]any, len(colNames))
 			case "sql_insert", "sql":
 				sqlTargetTable = req.Table
@@ -483,6 +498,54 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		}
 
 		switch format {
+		case "es_bulk", "bulk_ndjson":
+			for _, row := range res.Rows {
+				clear(jsonObj)
+				var docID any
+				for i, val := range row {
+					if i >= len(chunkColNames) {
+						continue
+					}
+					col := chunkColNames[i]
+					if col == "_score" {
+						continue
+					}
+					if col == "_id" {
+						docID = val
+						continue
+					}
+					jsonObj[col] = parseJSONIfPossible(val)
+				}
+				meta := map[string]any{}
+				if req.Table != "" {
+					meta["_index"] = req.Table
+				}
+				if docID != nil && fmt.Sprintf("%v", docID) != "" {
+					meta["_id"] = docID
+				}
+				actionLine, err := json.Marshal(map[string]any{"index": meta})
+				if err != nil {
+					return nil, fmt.Errorf("failed to encode ES bulk action: %w", err)
+				}
+				docLine, err := json.Marshal(jsonObj)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encode ES bulk document: %w", err)
+				}
+				if _, err := bw.Write(actionLine); err != nil {
+					return nil, err
+				}
+				if err := bw.WriteByte('\n'); err != nil {
+					return nil, err
+				}
+				if _, err := bw.Write(docLine); err != nil {
+					return nil, err
+				}
+				if err := bw.WriteByte('\n'); err != nil {
+					return nil, err
+				}
+				exportedRows++
+			}
+
 		case "jsonl", "ndjson":
 			for _, row := range res.Rows {
 				var outRecord map[string]any
@@ -776,6 +839,8 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 	if isJSONL {
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+		pendingBulkID := ""
+		hasPendingBulkID := false
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
@@ -787,7 +852,19 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 			if err := dec.Decode(&rawItem); err != nil {
 				return nil, fmt.Errorf("error decoding JSONL record: %w", err)
 			}
+			if actionID, isAction := extractESBulkActionID(rawItem); isAction {
+				pendingBulkID = actionID
+				hasPendingBulkID = true
+				continue
+			}
 			item := normalizeImportedItem(rawItem)
+			if hasPendingBulkID {
+				if pendingBulkID != "" && item["_id"] == nil {
+					item["_id"] = pendingBulkID
+				}
+				pendingBulkID = ""
+				hasPendingBulkID = false
+			}
 			changes := make(map[string]any, len(req.Mappings))
 			for _, m := range req.Mappings {
 				if m.TableColumn == "" {
@@ -1059,6 +1136,23 @@ func extractWrappedJSONObjects(wrapper map[string]any, limit int) []map[string]a
 		}
 	}
 	return out
+}
+
+func extractESBulkActionID(item map[string]any) (string, bool) {
+	if len(item) != 1 {
+		return "", false
+	}
+	for _, actionKey := range []string{"index", "create", "update"} {
+		if rawMeta, ok := item[actionKey]; ok {
+			if metaMap, ok := rawMeta.(map[string]any); ok {
+				if id, hasID := metaMap["_id"]; hasID && id != nil {
+					return fmt.Sprintf("%v", id), true
+				}
+				return "", true
+			}
+		}
+	}
+	return "", false
 }
 
 func flattenQdrantPointRecord(item map[string]any) map[string]any {

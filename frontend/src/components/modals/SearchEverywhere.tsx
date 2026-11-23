@@ -362,7 +362,13 @@ export const SearchEverywhere: React.FC = () => {
 
           const isView = item.objectType?.toLowerCase() === 'view';
 
-          const badgeLabel = isView ? 'VIEW' : driver === 'qdrant' ? 'COLLECTION' : 'TABLE';
+          const badgeLabel = isView
+            ? 'VIEW'
+            : driver === 'qdrant'
+            ? 'COLLECTION'
+            : driver === 'elasticsearch'
+            ? 'INDEX'
+            : 'TABLE';
 
           const resItem: SearchResultItem = {
             id: `obj-${dedupKey}`,
@@ -514,7 +520,7 @@ export const SearchEverywhere: React.FC = () => {
     if (item.kind === 'connection' && item.connectionId) {
       const conn = connections.find((c) => c.id === item.connectionId);
       if (conn) {
-        const defaultDb = conn.driver === 'qdrant' ? 'default' : 'main';
+        const defaultDb = conn.driver === 'qdrant' || conn.driver === 'elasticsearch' ? 'default' : 'main';
         setActiveConnection(conn.id, conn.databaseName || defaultDb, conn.driver === 'postgres' ? 'public' : defaultDb);
       }
     }
@@ -542,12 +548,43 @@ export const SearchEverywhere: React.FC = () => {
   const qLowerMatch = query.trim().toLowerCase();
   const isHelpMatch =
     Boolean(qLowerMatch) &&
-    ['help', 'guide', 'docs', 'documentation', 'manual', 'shortcut', 'shortcuts', 'faq', 'tutorial', 'mongo', 'mongodb', 'redis', 'qdrant', 'vector', 'embedding'].some(
-      (kw) => kw.includes(qLowerMatch) || qLowerMatch.includes(kw)
-    );
+    [
+      'help',
+      'guide',
+      'docs',
+      'documentation',
+      'manual',
+      'shortcut',
+      'shortcuts',
+      'faq',
+      'tutorial',
+      'mongo',
+      'mongodb',
+      'redis',
+      'qdrant',
+      'elasticsearch',
+      'elastic',
+      'opensearch',
+      'kibana',
+      'esql',
+      'knn',
+      'dsl',
+      'vector',
+      'embedding',
+    ].some((kw) => kw.includes(qLowerMatch) || qLowerMatch.includes(kw));
 
   const matchedHelpTab =
-    qLowerMatch.includes('mongo') || qLowerMatch.includes('redis') || qLowerMatch.includes('qdrant') || qLowerMatch.includes('vector') || qLowerMatch.includes('embedding')
+    qLowerMatch.includes('mongo') ||
+    qLowerMatch.includes('redis') ||
+    qLowerMatch.includes('qdrant') ||
+    qLowerMatch.includes('elastic') ||
+    qLowerMatch.includes('opensearch') ||
+    qLowerMatch.includes('kibana') ||
+    qLowerMatch.includes('esql') ||
+    qLowerMatch.includes('knn') ||
+    qLowerMatch.includes('dsl') ||
+    qLowerMatch.includes('vector') ||
+    qLowerMatch.includes('embedding')
       ? 'databases'
       : qLowerMatch.includes('shortcut')
       ? 'shortcuts'

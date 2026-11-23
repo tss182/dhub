@@ -739,7 +739,9 @@ func IsReadOnlySafeQuery(sql string) bool {
 		hasLeadingKeyword(upper, "PRAGMA") ||
 		hasLeadingKeyword(upper, "WITH") ||
 		hasLeadingKeyword(upper, "VALUES") ||
-		hasLeadingKeyword(upper, "CHECK")
+		hasLeadingKeyword(upper, "CHECK") ||
+		(hasLeadingKeyword(upper, "FROM") && strings.Contains(clean, "|")) ||
+		hasLeadingKeyword(upper, "ROW")
 	if !isReadLeading {
 		return false
 	}
@@ -777,7 +779,8 @@ func isSQLStartLine(trimmed string) bool {
 	return hasLeadingKeyword(upper, "SELECT") ||
 		hasLeadingKeyword(upper, "SHOW") ||
 		hasLeadingKeyword(upper, "TRUNCATE") ||
-		hasLeadingKeyword(upper, "DELETE")
+		hasLeadingKeyword(upper, "DELETE") ||
+		hasLeadingKeyword(upper, "FROM")
 }
 
 // SplitHTTPOrSQLStatements splits a script containing REST commands (GET/POST/PUT/DELETE/PATCH /...)
