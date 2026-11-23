@@ -28,9 +28,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const activeDriver = connections.find((c) => c.id === connectionId)?.driver || '';
   const isQdrant = activeDriver === 'qdrant';
   const isElasticsearch = activeDriver === 'elasticsearch';
-  const isJsonFirst = isQdrant || isElasticsearch;
+  const isMongo = activeDriver === 'mongodb';
+  const isJsonFirst = isQdrant || isElasticsearch || isMongo;
 
-  const [format, setFormat] = useState<'csv' | 'xlsx' | 'json' | 'jsonl' | 'es_bulk' | 'markdown' | 'sql_insert'>(
+  const [format, setFormat] = useState<'csv' | 'xlsx' | 'json' | 'jsonl' | 'ejson' | 'es_bulk' | 'markdown' | 'sql_insert'>(
     isJsonFirst ? 'jsonl' : 'csv'
   );
 
@@ -61,7 +62,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   if (!isOpen) return null;
 
   const getFileExt = (fmt: string) =>
-    fmt === 'sql_insert' ? 'sql' : fmt === 'markdown' ? 'md' : fmt === 'es_bulk' ? 'ndjson' : fmt;
+    fmt === 'sql_insert' ? 'sql' : fmt === 'markdown' ? 'md' : fmt === 'es_bulk' ? 'ndjson' : fmt === 'ejson' ? 'ejson.json' : fmt;
 
   const defaultFileName = table
     ? `${table}_export.${getFileExt(format)}`
@@ -178,8 +179,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     ? 'Qdrant Points (.jsonl)'
                     : isElasticsearch
                     ? 'Elasticsearch Documents (.jsonl)'
+                    : isMongo
+                    ? 'MongoDB Documents (.jsonl)'
                     : 'JSON Lines (.jsonl)',
                 },
+                ...(isMongo ? [{ id: 'ejson', label: 'Extended JSON', desc: 'Lossless MongoDB EJSON' }] : []),
                 { id: 'markdown', label: 'Markdown', desc: 'GitHub .md table' },
                 ...(isElasticsearch ? [{ id: 'es_bulk', label: 'ES Bulk NDJSON', desc: 'POST /_bulk format' }] : []),
                 ...(!isJsonFirst ? [{ id: 'sql_insert', label: 'SQL INSERT', desc: 'DML batch script' }] : []),

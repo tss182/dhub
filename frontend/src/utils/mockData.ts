@@ -254,6 +254,11 @@ export function generateMockValue(
   if (t.includes('bool')) {
     return rowIdx % 2 === 0;
   }
+  if (t === 'objectid' || t === 'oid') {
+    const ts = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+    const rand = Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    return `${ts}${rand}`;
+  }
   if (t === 'point_id' || t.includes('uuid')) {
     return crypto.randomUUID
       ? crypto.randomUUID()
@@ -305,6 +310,18 @@ export function generateMockValue(
   }
   if (t === 'ip') {
     return `192.168.${(rowIdx % 254) + 1}.${((rowIdx * 7) % 253) + 1}`;
+  }
+  if (t === 'decimal128') {
+    return Number(((rowIdx + 1) * 12.5).toFixed(2));
+  }
+  if (t === 'array') {
+    return [`tag_${(rowIdx % 5) + 1}`, `item_${rowIdx + 1}`];
+  }
+  if (t === 'object') {
+    return { sample: true, index: rowIdx + 1 };
+  }
+  if (t === 'date') {
+    return new Date(Date.now() - rowIdx * 3600 * 1000).toISOString();
   }
   if (t.includes('timestamp') || t.includes('datetime')) {
     const jitterMs = Math.floor(Math.random() * 3600 * 1000);

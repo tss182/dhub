@@ -75,6 +75,13 @@ export const ConnectionDialog: React.FC = () => {
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [txMode, setTxMode] = useState<'auto' | 'manual'>('auto');
 
+  // MongoDB-specific options (persisted in optionsJson)
+  const [mongoAuthSource, setMongoAuthSource] = useState('admin');
+  const [mongoAuthMechanism, setMongoAuthMechanism] = useState('');
+  const [mongoReplicaSet, setMongoReplicaSet] = useState('');
+  const [mongoDirectConnection, setMongoDirectConnection] = useState(false);
+  const [mongoReadPreference, setMongoReadPreference] = useState('primaryPreferred');
+
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -130,6 +137,20 @@ export const ConnectionDialog: React.FC = () => {
           setSslCaPath(conn.sslCaPath || '');
           setSslCertPath(conn.sslCertPath || '');
           setSslKeyPath(conn.sslKeyPath || '');
+          try {
+            const opts = conn.optionsJson ? JSON.parse(conn.optionsJson) : {};
+            setMongoAuthSource(typeof opts.authSource === 'string' ? opts.authSource : 'admin');
+            setMongoAuthMechanism(typeof opts.authMechanism === 'string' ? opts.authMechanism : '');
+            setMongoReplicaSet(typeof opts.replicaSet === 'string' ? opts.replicaSet : '');
+            setMongoDirectConnection(Boolean(opts.directConnection));
+            setMongoReadPreference(typeof opts.readPreference === 'string' ? opts.readPreference : 'primaryPreferred');
+          } catch {
+            setMongoAuthSource('admin');
+            setMongoAuthMechanism('');
+            setMongoReplicaSet('');
+            setMongoDirectConnection(false);
+            setMongoReadPreference('primaryPreferred');
+          }
         }
       }).catch((e) => {
         console.error('Failed to get connection for editing:', e);
@@ -181,6 +202,11 @@ export const ConnectionDialog: React.FC = () => {
       setSslCaPath('');
       setSslCertPath('');
       setSslKeyPath('');
+      setMongoAuthSource('admin');
+      setMongoAuthMechanism('');
+      setMongoReplicaSet('');
+      setMongoDirectConnection(false);
+      setMongoReadPreference('primaryPreferred');
     }
     setTestResult(null);
   }, [isConnectionDialogOpen, editingConnectionId]);
@@ -328,7 +354,16 @@ export const ConnectionDialog: React.FC = () => {
       sshAuthType,
       sshKeyPath,
       sshPassword,
-      optionsJson: '{}',
+      optionsJson:
+        driver === 'mongodb'
+          ? JSON.stringify({
+              authSource: mongoAuthSource.trim() || 'admin',
+              authMechanism: mongoAuthMechanism.trim(),
+              replicaSet: mongoReplicaSet.trim(),
+              directConnection: mongoDirectConnection,
+              readPreference: mongoReadPreference,
+            })
+          : existing?.optionsJson || '{}',
       sortOrder,
     };
   };
@@ -944,6 +979,64 @@ export const ConnectionDialog: React.FC = () => {
                           className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                         />
                       </div>
+
+                      {driver === 'mongodb' && (
+                        <div className="space-y-2.5 pt-1 border-t border-[#232530]">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">
+                                Auth Source <span className="text-zinc-500 text-[10px]">(e.g. admin)</span>
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="admin"
+                                value={mongoAuthSource}
+                                onChange={(e) => setMongoAuthSource(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">Auth Mechanism</label>
+                              <select
+                                value={mongoAuthMechanism}
+                                onChange={(e) => setMongoAuthMechanism(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-2.5 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                              >
+                                <option value="">DEFAULT (Auto)</option>
+                                <option value="SCRAM-SHA-256">SCRAM-SHA-256</option>
+                                <option value="SCRAM-SHA-1">SCRAM-SHA-1</option>
+                                <option value="MONGODB-X509">MONGODB-X509</option>
+                                <option value="PLAIN">PLAIN (LDAP)</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 items-center">
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">
+                                Replica Set <span className="text-zinc-500 text-[10px]">(optional)</span>
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="e.g. rs0"
+                                value={mongoReplicaSet}
+                                onChange={(e) => setMongoReplicaSet(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                              />
+                            </div>
+                            <div className="pt-4">
+                              <label className="flex items-center gap-2 text-[11px] text-zinc-300 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={mongoDirectConnection}
+                                  onChange={(e) => setMongoDirectConnection(e.target.checked)}
+                                  className="h-3.5 w-3.5 rounded border-[#3b3e4f] bg-[#22242c] text-blue-600 focus:ring-0 cursor-pointer"
+                                />
+                                <span>Direct Connection</span>
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -1073,7 +1166,7 @@ export const ConnectionDialog: React.FC = () => {
                   className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-2 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                 >
                   <option value="disable">disable (No encryption)</option>
-                  {driver === 'postgres' || driver === 'qdrant' || driver === 'elasticsearch' ? (
+                  {driver === 'postgres' || driver === 'qdrant' || driver === 'elasticsearch' || driver === 'mongodb' ? (
                     <>
                       <option value="require">require (Encrypt without CA verification)</option>
                       <option value="verify-ca">verify-ca (Verify server CA)</option>
@@ -1193,13 +1286,33 @@ export const ConnectionDialog: React.FC = () => {
                 />
               </div>
 
-              {/* Transaction Mode (not applicable to Qdrant / Elasticsearch) */}
-              {driver === 'qdrant' || driver === 'elasticsearch' ? (
-                <div className="p-3 rounded bg-[#14151a] border border-[#272932] text-[11px] text-zinc-400">
+              {/* Transaction Mode (not applicable to Qdrant / Elasticsearch / MongoDB) */}
+              {driver === 'qdrant' || driver === 'elasticsearch' || driver === 'mongodb' ? (
+                <div className="p-3 rounded bg-[#14151a] border border-[#272932] space-y-2.5 text-[11px] text-zinc-400">
                   <div className="font-semibold text-zinc-200 text-xs mb-0.5">Execution Mode</div>
-                  {driver === 'elasticsearch'
-                    ? 'Elasticsearch executes REST, Bulk, and search operations immediately (Auto-Commit). Multi-statement SQL transactions are not used by Elasticsearch.'
-                    : 'Qdrant executes REST and vector operations immediately (Auto-Commit). Multi-statement transactions are not used by Qdrant.'}
+                  {driver === 'elasticsearch' ? (
+                    <p>Elasticsearch executes REST, Bulk, and search operations immediately (Auto-Commit). Multi-statement SQL transactions are not used by Elasticsearch.</p>
+                  ) : driver === 'mongodb' ? (
+                    <>
+                      <p>MongoDB operations execute immediately (Auto-Commit). Choose default Read Preference for queries:</p>
+                      <div>
+                        <label className="block text-[11px] text-zinc-400 mb-1">Read Preference</label>
+                        <select
+                          value={mongoReadPreference}
+                          onChange={(e) => setMongoReadPreference(e.target.value)}
+                          className="w-full rounded bg-[#121317] border border-[#272932] px-2.5 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
+                        >
+                          <option value="primaryPreferred">primaryPreferred (Recommended)</option>
+                          <option value="primary">primary</option>
+                          <option value="secondaryPreferred">secondaryPreferred</option>
+                          <option value="secondary">secondary</option>
+                          <option value="nearest">nearest</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : (
+                    <p>Qdrant executes REST and vector operations immediately (Auto-Commit). Multi-statement transactions are not used by Qdrant.</p>
+                  )}
                 </div>
               ) : (
                 <div className="p-3 rounded bg-[#14151a] border border-[#272932] space-y-2">

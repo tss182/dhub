@@ -1039,10 +1039,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   ]);
 
   const handleOpenBackupModal = async (conn: ConnectionConfig, database: string) => {
-    let defaultPath = `${database}_backup.sql`;
+    const isMongo = conn.driver === 'mongodb';
+    let defaultPath = isMongo ? `${database}_backup.archive.gz` : `${database}_backup.sql`;
     try {
       const suggested = await SchemaService.GetDefaultBackupPath(database);
-      if (suggested) defaultPath = suggested;
+      if (suggested) {
+        defaultPath = isMongo ? suggested.replace(/\.sql(\.gz)?$/i, '.archive.gz') : suggested;
+      }
     } catch {}
 
     const cliTool = getBackupCliTool(conn.driver);
@@ -1118,20 +1121,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
   const handleBrowseBackupFile = async () => {
     const dbName = backupRestoreModal.database || 'database';
+    const isMongo = backupRestoreModal.connection?.driver === 'mongodb';
     const currentPath = backupRestoreModal.filePath || '';
     const defaultFilename =
-      currentPath.split(/[\\/]/).pop() || `${dbName}_backup.sql`;
+      currentPath.split(/[\\/]/).pop() || (isMongo ? `${dbName}_backup.archive.gz` : `${dbName}_backup.sql`);
     try {
       const chosen = await Dialogs.SaveFile({
         Title: `Save Database Backup (${dbName})`,
         Filename: defaultFilename,
         CanCreateDirectories: true,
-        Filters: [
-          {
-            DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
-            Pattern: '*.sql;*.sql.gz;*.gz',
-          },
-        ],
+        Filters: isMongo
+          ? [
+              {
+                DisplayName: 'MongoDB Archive (*.archive.gz, *.archive)',
+                Pattern: '*.archive.gz;*.archive;*.gz',
+              },
+            ]
+          : [
+              {
+                DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
+                Pattern: '*.sql;*.sql.gz;*.gz',
+              },
+            ],
       });
       if (chosen && typeof chosen === 'string' && chosen.trim()) {
         setBackupRestoreModal((prev) => ({
@@ -1145,17 +1156,27 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   };
 
   const handleBrowseRestoreFile = async (): Promise<void> => {
+    const isMongo = backupRestoreModal.connection?.driver === 'mongodb';
     try {
       const chosen: any = await Dialogs.OpenFile({
-        Title: `Select SQL File to Restore (${backupRestoreModal.database || 'Database'})`,
+        Title: isMongo
+          ? `Select MongoDB Archive to Restore (${backupRestoreModal.database || 'Database'})`
+          : `Select SQL File to Restore (${backupRestoreModal.database || 'Database'})`,
         CanChooseFiles: true,
         AllowsMultipleSelection: false,
-        Filters: [
-          {
-            DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
-            Pattern: '*.sql;*.sql.gz;*.gz',
-          },
-        ],
+        Filters: isMongo
+          ? [
+              {
+                DisplayName: 'MongoDB Archive (*.archive.gz, *.archive)',
+                Pattern: '*.archive.gz;*.archive;*.gz',
+              },
+            ]
+          : [
+              {
+                DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
+                Pattern: '*.sql;*.sql.gz;*.gz',
+              },
+            ],
       });
       const picked = Array.isArray(chosen) ? chosen[0] : chosen;
       if (picked && typeof picked === 'string' && picked.trim()) {
@@ -1192,18 +1213,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       backupProgress: null,
     }));
 
-    // Prompt user immediately to pick the .sql file to restore
+    // Prompt user immediately to pick the backup file to restore
+    const isMongo = conn.driver === 'mongodb';
     try {
       const chosen: any = await Dialogs.OpenFile({
-        Title: `Select SQL File to Restore into [${database}]`,
+        Title: isMongo
+          ? `Select MongoDB Archive to Restore into [${database}]`
+          : `Select SQL File to Restore into [${database}]`,
         CanChooseFiles: true,
         AllowsMultipleSelection: false,
-        Filters: [
-          {
-            DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
-            Pattern: '*.sql;*.sql.gz;*.gz',
-          },
-        ],
+        Filters: isMongo
+          ? [
+              {
+                DisplayName: 'MongoDB Archive (*.archive.gz, *.archive)',
+                Pattern: '*.archive.gz;*.archive;*.gz',
+              },
+            ]
+          : [
+              {
+                DisplayName: 'SQL Backup File (*.sql, *.sql.gz)',
+                Pattern: '*.sql;*.sql.gz;*.gz',
+              },
+            ],
       });
       const picked = Array.isArray(chosen) ? chosen[0] : chosen;
       if (picked && typeof picked === 'string' && picked.trim()) {
@@ -2181,11 +2212,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const isRedis = conn.driver === 'redis';
     const isQdrant = conn.driver === 'qdrant';
     const isElasticsearch = conn.driver === 'elasticsearch';
+    const isMongo = conn.driver === 'mongodb';
     const isView = obj.type === 'view';
-    const keyword = isRedis ? 'KEY' : isQdrant ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
+    const keyword = isRedis ? 'KEY' : isQdrant || isMongo ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
 
     const ok = await confirmDialog({
-      title: isRedis ? 'Delete Key' : isQdrant ? 'Drop Collection' : isElasticsearch ? 'Delete Index' : `Drop ${isView ? 'View' : 'Table'}`,
+      title: isRedis ? 'Delete Key' : isQdrant || isMongo ? 'Drop Collection' : isElasticsearch ? 'Delete Index' : `Drop ${isView ? 'View' : 'Table'}`,
       message: isRedis
         ? `Are you sure you want to delete key "${obj.name}" from ${db}? This action cannot be undone.`
         : isElasticsearch
@@ -2195,7 +2227,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         database: db,
         schema,
         targetName: obj.name,
-        targetLabel: isRedis ? 'Key' : isQdrant ? 'Collection' : isElasticsearch ? 'Index' : isView ? 'View' : 'Table',
+        targetLabel: isRedis ? 'Key' : isQdrant || isMongo ? 'Collection' : isElasticsearch ? 'Index' : isView ? 'View' : 'Table',
       }),
       confirmLabel: isRedis ? 'Delete Key' : isElasticsearch ? 'Delete Index' : `Drop ${keyword.toLowerCase()}`,
       isDanger: true,
@@ -2273,21 +2305,24 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     const isQdrant = conn.driver === 'qdrant';
     const isElasticsearch = conn.driver === 'elasticsearch';
+    const isMongo = conn.driver === 'mongodb';
 
     const ok = await confirmDialog({
-      title: isQdrant ? 'Clear All Points' : isElasticsearch ? 'Clear All Documents' : 'Truncate Table',
+      title: isQdrant ? 'Clear All Points' : isElasticsearch || isMongo ? 'Clear All Documents' : 'Truncate Table',
       message: isQdrant
         ? `Are you sure you want to delete all points in collection "${obj.name}"? The collection and vector config will remain intact. This action cannot be undone.`
         : isElasticsearch
         ? `Are you sure you want to delete all documents in index "${obj.name}"? The index and its field mappings will remain intact. This action cannot be undone.`
+        : isMongo
+        ? `Are you sure you want to delete all documents in collection "${obj.name}"? The collection and its indexes will remain intact. This action cannot be undone.`
         : `Are you sure you want to TRUNCATE table "${obj.name}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: db,
         schema,
         targetName: obj.name,
-        targetLabel: isQdrant ? 'Collection' : isElasticsearch ? 'Index' : 'Table',
+        targetLabel: isQdrant || isMongo ? 'Collection' : isElasticsearch ? 'Index' : 'Table',
       }),
-      confirmLabel: isQdrant ? 'Clear All Points' : isElasticsearch ? 'Clear All Documents' : 'Truncate Table',
+      confirmLabel: isQdrant ? 'Clear All Points' : isElasticsearch || isMongo ? 'Clear All Documents' : 'Truncate Table',
       isDanger: true,
     });
     if (!ok) return;
@@ -2337,15 +2372,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       alertSuccess(
         isQdrant
           ? `All points in collection "${obj.name}" were cleared.`
-          : isElasticsearch
-          ? `All documents in index "${obj.name}" were cleared.`
+          : isElasticsearch || isMongo
+          ? `All documents in ${isMongo ? 'collection' : 'index'} "${obj.name}" were cleared.`
           : `Table "${obj.name}" was truncated successfully.`,
-        isQdrant ? 'Collection Cleared' : isElasticsearch ? 'Index Cleared' : 'Table Truncated'
+        isQdrant || isMongo ? 'Collection Cleared' : isElasticsearch ? 'Index Cleared' : 'Table Truncated'
       );
     } catch (err: any) {
       alertError(
         err?.message || String(err),
-        isQdrant ? 'Failed to Clear Collection' : isElasticsearch ? 'Failed to Clear Index' : 'Failed to Truncate Table'
+        isQdrant || isMongo ? 'Failed to Clear Collection' : isElasticsearch ? 'Failed to Clear Index' : 'Failed to Truncate Table'
       );
     }
   };
@@ -5295,7 +5330,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
 
               {contextMenu.connection.driver !== 'qdrant' &&
                 contextMenu.connection.driver !== 'redis' &&
-                contextMenu.connection.driver !== 'elasticsearch' && (
+                contextMenu.connection.driver !== 'elasticsearch' &&
+                contextMenu.connection.driver !== 'mongodb' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5692,7 +5728,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>New Query Console</span>
               </button>
 
-              {contextMenu.connection.driver !== 'redis' && contextMenu.connection.driver !== 'qdrant' && (
+              {contextMenu.connection.driver !== 'redis' &&
+                contextMenu.connection.driver !== 'qdrant' &&
+                contextMenu.connection.driver !== 'mongodb' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5710,7 +5748,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
-              {contextMenu.connection.driver !== 'redis' && contextMenu.connection.driver !== 'qdrant' && (
+              {contextMenu.connection.driver !== 'redis' &&
+                contextMenu.connection.driver !== 'qdrant' &&
+                contextMenu.connection.driver !== 'mongodb' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5761,7 +5801,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                 >
                   <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                  <span>View Database DDL (Schema Only)</span>
+                  <span>
+                    {contextMenu.connection.driver === 'mongodb'
+                      ? 'View Database Script (MQL)'
+                      : 'View Database DDL (Schema Only)'}
+                  </span>
                 </button>
               )}
 
@@ -5781,7 +5825,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   >
                     <Download className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
                     <span>
-                      Backup Database ({contextMenu.connection.driver === 'postgres' ? 'pg_dump' : contextMenu.connection.driver === 'mariadb' ? 'mariadb-dump' : 'mysqldump'})...
+                      Backup Database ({getBackupCliTool(contextMenu.connection.driver)})...
                     </span>
                   </button>
 
@@ -5798,7 +5842,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     >
                       <Upload className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
                       <span>
-                        Restore Database ({contextMenu.connection.driver === 'postgres' ? 'psql' : contextMenu.connection.driver === 'mariadb' ? 'mariadb' : 'mysql'})...
+                        Restore Database ({getRestoreCliTool(contextMenu.connection.driver)})...
                       </span>
                     </button>
                   )}
@@ -6333,7 +6377,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   >
                     <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                     <span>
-                      {contextMenu.connection!.driver === 'qdrant'
+                      {contextMenu.connection!.driver === 'qdrant' || contextMenu.connection!.driver === 'mongodb'
                         ? 'Copy Collection Name'
                         : contextMenu.connection!.driver === 'elasticsearch'
                         ? 'Copy Index Name'
@@ -6366,6 +6410,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                           ? 'View Collection Config (JSON)'
                           : contextMenu.connection!.driver === 'elasticsearch'
                           ? 'View Index Mapping (JSON)'
+                          : contextMenu.connection!.driver === 'mongodb'
+                          ? 'View Collection Script (MQL)'
                           : `View ${contextMenu.table!.type === 'view' ? 'View' : 'Table'} DDL`}
                       </span>
                     </button>
@@ -6388,6 +6434,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                           ? 'Copy Collection Config (JSON)'
                           : contextMenu.connection!.driver === 'elasticsearch'
                           ? 'Copy Index Mapping (JSON)'
+                          : contextMenu.connection!.driver === 'mongodb'
+                          ? 'Copy Collection Script (MQL)'
                           : 'Copy Table Schema (DDL)'}
                       </span>
                     </button>
@@ -6455,7 +6503,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     >
                       <Upload className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                       <span>
-                        {contextMenu.connection!.driver === 'qdrant' || contextMenu.connection!.driver === 'elasticsearch'
+                        {contextMenu.connection!.driver === 'qdrant' ||
+                        contextMenu.connection!.driver === 'elasticsearch' ||
+                        contextMenu.connection!.driver === 'mongodb'
                           ? 'Import Data (CSV / JSON / JSONL)...'
                           : 'Import Data (CSV)...'}
                       </span>
@@ -6678,7 +6728,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       <span>
                         {contextMenu.connection!.driver === 'qdrant'
                           ? 'Clear All Points...'
-                          : contextMenu.connection!.driver === 'elasticsearch'
+                          : contextMenu.connection!.driver === 'elasticsearch' ||
+                            contextMenu.connection!.driver === 'mongodb'
                           ? 'Clear All Documents...'
                           : 'Truncate Table...'}
                       </span>
@@ -6701,7 +6752,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     >
                       <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
                       <span>
-                        {contextMenu.connection!.driver === 'qdrant'
+                        {contextMenu.connection!.driver === 'qdrant' ||
+                        contextMenu.connection!.driver === 'mongodb'
                           ? 'Drop Collection...'
                           : contextMenu.connection!.driver === 'elasticsearch'
                           ? 'Delete Index...'

@@ -21,6 +21,11 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
   if (!isOpen) return null;
 
   const isRestCommand = /^(?:DELETE|POST|PUT|PATCH)\s+\//i.test(sql.trim());
+  const isMongoDestructive =
+    driver?.toLowerCase() === 'mongodb' ||
+    /\bdb\s*\.\s*(?:dropDatabase\s*\(|(?:[a-zA-Z0-9_$-]+|getCollection\([^)]+\))\s*\.\s*(?:drop\s*\(|deleteMany\s*\(\s*\{\s*\}\s*\)|updateMany\s*\(\s*\{\s*\}\s*,))/i.test(
+      sql.trim()
+    );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
@@ -38,6 +43,8 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
               <p className="text-[11px] text-rose-300/70">
                 {isRestCommand
                   ? 'Destructive REST API operation detected'
+                  : isMongoDestructive
+                  ? 'Destructive MongoDB operation detected'
                   : 'Statement without WHERE clause detected'}
               </p>
             </div>
@@ -62,6 +69,10 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
           {isRestCommand ? (
             <p className="text-zinc-300 leading-relaxed">
               The REST command you are about to execute will permanently <strong className="text-rose-400">delete an entire index/collection</strong> or <strong className="text-rose-400">wipe all documents/points</strong> without a filter. This operation executes immediately and cannot be undone.
+            </p>
+          ) : isMongoDestructive ? (
+            <p className="text-zinc-300 leading-relaxed">
+              The MongoDB operation you are about to execute will permanently <strong className="text-rose-400">drop a database/collection</strong> or <strong className="text-rose-400">modify/delete all documents</strong> with an empty filter <code className="bg-[#272932] text-amber-300 px-1 py-0.5 rounded">{'{}'}</code>. This operation executes immediately and cannot be undone.
             </p>
           ) : (
             <p className="text-zinc-300 leading-relaxed">

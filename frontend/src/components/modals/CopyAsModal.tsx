@@ -9,6 +9,7 @@ interface CopyAsModalProps {
   selectionSummary?: string;
   isQdrant?: boolean;
   isElasticsearch?: boolean;
+  isMongo?: boolean;
   onClose: () => void;
   onCopy: (format: CopyFormat) => void;
 }
@@ -19,6 +20,7 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
   selectionSummary,
   isQdrant = false,
   isElasticsearch = false,
+  isMongo = false,
   onClose,
   onCopy,
 }) => {
@@ -26,10 +28,12 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
 
   const visibleOptions = COPY_FORMAT_OPTIONS.filter((opt) =>
     isQdrant
-      ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk'
+      ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk' && !opt.id.startsWith('mongo_')
       : isElasticsearch
-      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
-      : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
+      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert' && !opt.id.startsWith('mongo_')
+      : isMongo
+      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
+      : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk' && !opt.id.startsWith('mongo_')
   );
 
   useEffect(() => {
@@ -37,7 +41,7 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
       const valid = visibleOptions.some((o) => o.id === defaultFormat);
       setSelectedFormat(valid ? defaultFormat : visibleOptions[0]?.id || 'csv');
     }
-  }, [isOpen, defaultFormat, isQdrant, isElasticsearch]);
+  }, [isOpen, defaultFormat, isQdrant, isElasticsearch, isMongo]);
 
   useEffect(() => {
     if (!isOpen) return;

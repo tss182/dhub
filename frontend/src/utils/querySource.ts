@@ -39,6 +39,14 @@ export function parseSingleTableSelect(rawSql: string): ParsedQuerySource | null
     }
   }
 
+  const mongoFindMatch = /^db\s*\.\s*(?:getCollection\(\s*["']([^"']+)["']\s*\)|([A-Za-z0-9_$-]+))\s*\.\s*find(?:One)?\s*\(/i.exec(sql);
+  if (mongoFindMatch) {
+    const collName = (mongoFindMatch[1] || mongoFindMatch[2] || '').trim();
+    if (collName) {
+      return { table: collName };
+    }
+  }
+
   if (sql.includes(';')) return null;
   if (!/^select\b/i.test(sql)) return null;
   if (/\b(join|union|intersect|except|group\s+by|having|distinct|window)\b/i.test(sql)) return null;

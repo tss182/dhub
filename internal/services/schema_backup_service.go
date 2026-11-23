@@ -768,29 +768,23 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			Percent:      10,
 			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
 		})
-		host := strings.TrimSpace(conn.Host)
-		if host == "" {
-			host = "localhost"
-		}
-		port := conn.Port
-		if port <= 0 {
-			port = 27017
-		}
-		args := []string{
-			"--host", host,
-			"--port", strconv.Itoa(port),
-			"--db", database,
-			"--archive=" + filePath,
-		}
+		args := buildMongoToolsCommonArgs(conn, database)
+		args = append(args, "--archive="+filePath)
 		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
 			args = append(args, "--gzip")
 		}
-		if strings.TrimSpace(conn.Username) != "" {
-			args = append(args, "--username", conn.Username)
-			if conn.Password != "" {
-				args = append(args, "--password", conn.Password)
+		if opts.TableSelection == "include" && len(opts.Tables) > 0 {
+			for _, t := range opts.Tables {
+				if strings.TrimSpace(t) != "" {
+					args = append(args, "--collection", strings.TrimSpace(t))
+				}
 			}
-			args = append(args, "--authenticationDatabase", "admin")
+		} else if opts.TableSelection == "exclude" && len(opts.Tables) > 0 {
+			for _, t := range opts.Tables {
+				if strings.TrimSpace(t) != "" {
+					args = append(args, "--excludeCollection", strings.TrimSpace(t))
+				}
+			}
 		}
 		cmd := exec.CommandContext(ctx, binPath, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -1210,29 +1204,10 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			TotalBytes:   totalBytes,
 			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
 		})
-		host := strings.TrimSpace(conn.Host)
-		if host == "" {
-			host = "localhost"
-		}
-		port := conn.Port
-		if port <= 0 {
-			port = 27017
-		}
-		args := []string{
-			"--host", host,
-			"--port", strconv.Itoa(port),
-			"--archive=" + filePath,
-			"--nsInclude=" + database + ".*",
-		}
+		args := buildMongoToolsCommonArgs(conn, "")
+		args = append(args, "--archive="+filePath, "--nsInclude="+database+".*")
 		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
 			args = append(args, "--gzip")
-		}
-		if strings.TrimSpace(conn.Username) != "" {
-			args = append(args, "--username", conn.Username)
-			if conn.Password != "" {
-				args = append(args, "--password", conn.Password)
-			}
-			args = append(args, "--authenticationDatabase", "admin")
 		}
 		cmd := exec.CommandContext(ctx, binPath, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -1324,4 +1299,54 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		Message:      "Restore completed",
 	})
 	return fmt.Sprintf("Database '%s' restored successfully from %s", database, filepath.Base(filePath)), nil
+}
+
+func buildMongoToolsCommonArgs(conn *store.ConnectionConfig, database string) []string {
+	rawHost := strings.TrimSpace(conn.Host)
+	var args []string
+	if strings.HasPrefix(rawHost, "mongodb://") || strings.HasPrefix(rawHost, "mongodb+srv://") {
+		args = append(args, "--uri="+rawHost)
+	} else {
+		host := rawHost
+		if host == "" {
+			host = "localhost"
+		}
+		port := conn.Port
+		if port <= 0 {
+			port = 27017
+		}
+		args = append(args, "--host", host, "--port", strconv.Itoa(port))
+		if strings.TrimSpace(conn.Username) != "" {
+			authDB := "admin"
+			if strings.TrimSpace(conn.OptionsJSON) != "" {
+				var mOpts map[string]any
+				if json.Unmarshal([]byte(conn.OptionsJSON), &mOpts) == nil {
+					if v, ok := mOpts["mongoAuthSource"].(string); ok && strings.TrimSpace(v) != "" {
+						authDB = strings.TrimSpace(v)
+					}
+				}
+			}
+			args = append(args, "--username", conn.Username)
+			if conn.Password != "" {
+				args = append(args, "--password", conn.Password)
+			}
+			args = append(args, "--authenticationDatabase", authDB)
+		}
+	}
+	if database != "" {
+		args = append(args, "--db", database)
+	}
+	if conn.SSLMode != "" && conn.SSLMode != "disable" {
+		args = append(args, "--ssl")
+		if conn.SSLMode == "require" || conn.SSLMode == "required" {
+			args = append(args, "--sslAllowInvalidCertificates")
+		}
+		if strings.TrimSpace(conn.SSLCAPath) != "" {
+			args = append(args, "--sslCAFile", conn.SSLCAPath)
+		}
+		if strings.TrimSpace(conn.SSLCertPath) != "" {
+			args = append(args, "--sslPEMKeyFile", conn.SSLCertPath)
+		}
+	}
+	return args
 }

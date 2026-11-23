@@ -34,6 +34,9 @@ function isSystemDatabase(driver: string, dbName: string): boolean {
   if (driver === 'clickhouse') {
     return ['system', 'information_schema'].includes(lower);
   }
+  if (driver === 'mongodb' || driver === 'mongo') {
+    return ['admin', 'local', 'config'].includes(lower);
+  }
   return false;
 }
 

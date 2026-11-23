@@ -62,6 +62,8 @@ export const DmlPreviewModal: React.FC<DmlPreviewModalProps> = ({
               ? 'Pending Qdrant REST Operations'
               : connection?.driver === 'elasticsearch'
               ? 'Pending Elasticsearch REST Operations'
+              : connection?.driver === 'mongodb'
+              ? 'Pending MongoDB Operations'
               : 'Pending DML Statements'}
           </span>
           <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer">
@@ -99,6 +101,8 @@ export const DmlPreviewModal: React.FC<DmlPreviewModalProps> = ({
                   <span>
                     {connection?.driver === 'qdrant' || connection?.driver === 'elasticsearch'
                       ? 'Copy REST'
+                      : connection?.driver === 'mongodb'
+                      ? 'Copy MQL'
                       : 'Copy Query'}
                   </span>
                 </>

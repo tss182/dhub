@@ -57,11 +57,14 @@ export const MockDataModal: React.FC<MockDataModalProps> = ({
         setColumns(cols);
         const isES = activeConn?.driver === 'elasticsearch';
         const isQdrant = activeConn?.driver === 'qdrant';
+        const isMongo = activeConn?.driver === 'mongodb';
         const init: Record<string, boolean> = {};
         cols.forEach((c) => {
           if (isES && (c.name === '_id' || c.name === '_score')) {
             init[c.name] = false;
           } else if (isQdrant && c.name === 'score') {
+            init[c.name] = false;
+          } else if (isMongo && c.name === '_id') {
             init[c.name] = false;
           } else {
             init[c.name] = !c.isAutoIncrement;

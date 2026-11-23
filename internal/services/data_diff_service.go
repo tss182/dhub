@@ -250,8 +250,8 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 	srcMap, srcCols := indexRows(srcRes)
 	dstMap, dstCols := indexRows(dstRes)
 
-	// Determine common columns (for Qdrant / Elasticsearch schemaless collections/indices, include union of source & target fields)
-	isSchemalessDst := strings.EqualFold(dstDriverType, "qdrant") || strings.EqualFold(dstDriverType, "elasticsearch") || strings.EqualFold(dstDriverType, "es")
+	// Determine common columns (for Qdrant / Elasticsearch / MongoDB schemaless collections/indices, include union of source & target fields)
+	isSchemalessDst := strings.EqualFold(dstDriverType, "qdrant") || strings.EqualFold(dstDriverType, "elasticsearch") || strings.EqualFold(dstDriverType, "es") || strings.EqualFold(dstDriverType, "mongodb") || strings.EqualFold(dstDriverType, "mongo")
 	normColKey := func(c string) string {
 		if isSchemalessDst {
 			return c

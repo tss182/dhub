@@ -20,7 +20,7 @@ function stripTableOptionsFromDdl(rawDdl: string): string {
 function formatCleanTableDdl(tableName: string, struct: any, driver?: string): string {
   const rawDdl = (struct?.ddl || '').trim();
   const normDriver = (driver || '').toLowerCase();
-  if (normDriver === 'qdrant' || normDriver === 'elasticsearch' || rawDdl.startsWith('{')) {
+  if (normDriver === 'qdrant' || normDriver === 'elasticsearch' || normDriver === 'mongodb' || normDriver === 'mongo' || rawDdl.startsWith('{')) {
     return rawDdl;
   }
   if (normDriver === 'clickhouse' && rawDdl) {
@@ -212,12 +212,17 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
 
   const isQdrant = connection?.driver === 'qdrant';
   const isElasticsearch = connection?.driver === 'elasticsearch';
+  const isMongo = connection?.driver === 'mongodb';
   const isJsonSchema = (isQdrant || isElasticsearch) && scope === 'table';
   const title =
     isQdrant && scope === 'table'
       ? `Collection Config (JSON) — ${tableName}`
       : isElasticsearch && scope === 'table'
       ? `Index Mapping (JSON) — ${tableName}`
+      : isMongo && scope === 'table'
+      ? `Collection Script (MQL) — ${tableName}`
+      : isMongo
+      ? `Database Script (MQL) — ${database}`
       : scope === 'table'
       ? `Table DDL — ${tableName}`
       : scope === 'schema'
@@ -243,6 +248,8 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
       ? `${safe}_config.json`
       : isElasticsearch && scope === 'table'
       ? `${safe}_mapping.json`
+      : isMongo
+      ? `${safe}_schema.js`
       : `${safe}_ddl.sql`;
   })();
 

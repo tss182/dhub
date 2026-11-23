@@ -126,6 +126,8 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 				mig = fmt.Sprintf("-- Collection %s exists only in target (review before deleting):\n-- DELETE /collections/%s", name, url.PathEscape(name))
 			} else if dstDriverType == "elasticsearch" || dstDriverType == "es" {
 				mig = fmt.Sprintf("-- Index %s exists only in target (review before deleting):\n-- DELETE /%s", name, url.PathEscape(name))
+			} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
+				mig = fmt.Sprintf("// Collection %s exists only in target (review before dropping):\n// db.getCollection(%q).drop();", name, name)
 			}
 			outcomes[idx] = tableDiffOutcome{
 				status: "extra_in_target",
@@ -156,6 +158,8 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						mig = buildQdrantCollectionMigration(tblName, st.DDL)
 					} else if dstDriverType == "elasticsearch" || dstDriverType == "es" {
 						mig = buildElasticsearchIndexMigration(tblName, st.DDL)
+					} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
+						mig = strings.TrimSpace(st.DDL)
 					} else {
 						mig = strings.TrimSpace(st.DDL)
 						if !strings.HasSuffix(mig, ";") {
@@ -291,6 +295,37 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra mapping field %s (%s) in target index %s (reindex required to remove field from mapping)", dc.Name, dc.DataType, tblName))
 					}
 				}
+			} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
+				// MongoDB collections are schemaless; compare sampled fields as informational diffs without ALTER TABLE SQL.
+				for _, sc := range srcStruct.Columns {
+					dc, exists := dstCols[sc.Name]
+					if !exists {
+						colDiffs = append(colDiffs, ColumnDiff{
+							ColumnName: sc.Name,
+							Status:     "added",
+							SourceType: sc.DataType,
+							Detail:     fmt.Sprintf("Field present in source sample (%s), absent in target sample", sc.DataType),
+						})
+					} else if !strings.EqualFold(sc.DataType, dc.DataType) {
+						colDiffs = append(colDiffs, ColumnDiff{
+							ColumnName: sc.Name,
+							Status:     "modified",
+							SourceType: sc.DataType,
+							TargetType: dc.DataType,
+							Detail:     fmt.Sprintf("Sampled BSON type differs: %s -> %s", dc.DataType, sc.DataType),
+						})
+					}
+				}
+				for _, dc := range dstStruct.Columns {
+					if _, exists := srcCols[dc.Name]; !exists {
+						colDiffs = append(colDiffs, ColumnDiff{
+							ColumnName: dc.Name,
+							Status:     "removed",
+							TargetType: dc.DataType,
+							Detail:     fmt.Sprintf("Field present in target sample (%s), absent in source sample", dc.DataType),
+						})
+					}
+				}
 			} else {
 				for _, sc := range srcStruct.Columns {
 					dc, exists := dstCols[sc.Name]
@@ -374,6 +409,8 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						}
 						idxBody, _ := json.Marshal(map[string]any{"field_name": fieldName, "field_schema": fieldType})
 						alterStmts = append(alterStmts, fmt.Sprintf("PUT /collections/%s/index?wait=true\n%s", url.PathEscape(tblName), string(idxBody)))
+					} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
+						alterStmts = append(alterStmts, fmt.Sprintf("db.getCollection(%q).createIndex(%s, { name: %q, unique: %v });", tblName, buildMongoIndexKeysJSON(sIdx.Columns), sIdx.Name, sIdx.IsUnique))
 					} else if dstDriverType == "clickhouse" {
 						expr := sIdx.Expression
 						if expr == "" {
@@ -422,6 +459,8 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 					})
 					if dstDriverType == "qdrant" && len(dIdx.Columns) > 0 {
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra payload index in target: DELETE /collections/%s/index/%s?wait=true", url.PathEscape(tblName), url.PathEscape(dIdx.Columns[0])))
+					} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
+						alterStmts = append(alterStmts, fmt.Sprintf("// Extra index in target:\n// db.getCollection(%q).dropIndex(%q);", tblName, dIdx.Name))
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: DROP INDEX %s;", quoteIdentifier(dstDriverType, dIdx.Name)))
 					}
@@ -705,5 +744,27 @@ func buildESFieldMappingFromDataType(dataType string) map[string]any {
 		return map[string]any{"type": "object"}
 	}
 	return map[string]any{"type": dt}
+}
+
+func buildMongoIndexKeysJSON(cols []string) string {
+	if len(cols) == 0 {
+		return "{}"
+	}
+	parts := make([]string, 0, len(cols))
+	for _, c := range cols {
+		field := c
+		dir := "1"
+		if idx := strings.LastIndex(c, ":"); idx > 0 {
+			field = c[:idx]
+			rawDir := strings.TrimSpace(c[idx+1:])
+			if rawDir == "-1" || rawDir == "1" {
+				dir = rawDir
+			} else if rawDir != "" {
+				dir = fmt.Sprintf("%q", rawDir)
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%q: %s", field, dir))
+	}
+	return "{ " + strings.Join(parts, ", ") + " }"
 }
 

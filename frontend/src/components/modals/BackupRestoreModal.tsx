@@ -287,7 +287,13 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
         <form onSubmit={handleConfirmBackupRestore} className="p-6 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
           <div>
             <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-              {isBackup ? 'Backup File Location (.sql)' : 'SQL File to Restore (.sql)'}{' '}
+              {drv === 'mongodb'
+                ? isBackup
+                  ? 'Backup Archive Location (.archive.gz / .archive)'
+                  : 'MongoDB Archive File to Restore (.archive.gz / .archive)'
+                : isBackup
+                ? 'Backup File Location (.sql)'
+                : 'SQL File to Restore (.sql)'}{' '}
               <span className="text-rose-400">*</span>
             </label>
             <div className="flex items-center gap-2">
@@ -296,7 +302,11 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                 required
                 disabled={backupRestoreModal.isProcessing}
                 placeholder={
-                  isBackup
+                  drv === 'mongodb'
+                    ? isBackup
+                      ? '/path/to/backup.archive.gz'
+                      : 'Select a .archive.gz or .archive file...'
+                    : isBackup
                     ? '/path/to/backup.sql'
                     : 'Select a .sql file to restore...'
                 }
@@ -321,7 +331,11 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
               </button>
             </div>
             <p className="text-[11px] text-zinc-500 mt-1.5">
-              {isBackup
+              {drv === 'mongodb'
+                ? isBackup
+                  ? `Exports MongoDB database "${backupRestoreModal.database}" as a BSON archive using ${cliTool}.`
+                  : `Restores the BSON archive into MongoDB database "${backupRestoreModal.database}" using ${cliTool}.`
+                : isBackup
                 ? `Exports database "${backupRestoreModal.database}" using ${cliTool}.`
                 : `Executes the .sql file into database "${backupRestoreModal.database}" using ${cliTool}.`}
             </p>
@@ -481,6 +495,8 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
 
           {isBackup && (
             <>
+              {drv !== 'mongodb' && (
+              <>
               {/* Dump Content Mode */}
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
@@ -587,12 +603,14 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                   )}
                 </div>
               </div>
+              </>
+              )}
 
               {/* Table Selection */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
-                    Tables Selection
+                    {drv === 'mongodb' ? 'Collections Selection' : 'Tables Selection'}
                   </label>
                   {backupRestoreModal.tableSelection !== 'all' && (
                     <span className="text-[11px] text-zinc-400 font-mono">

@@ -49,6 +49,16 @@ export const COPY_FORMAT_OPTIONS: CopyFormatOption[] = [
     label: 'Elasticsearch Bulk',
     description: 'Generates POST /<index>/_bulk?refresh=wait_for NDJSON payload for Elasticsearch / OpenSearch.',
   },
+  {
+    id: 'mongo_insert',
+    label: 'MongoDB insertMany',
+    description: 'Generates db.<collection>.insertMany([...]) MQL script for MongoDB Shell.',
+  },
+  {
+    id: 'mongo_ejson',
+    label: 'MongoDB EJSON',
+    description: 'Array of documents formatted with Extended JSON ($oid, $date) for MongoDB.',
+  },
 ];
 
 export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = COPY_FORMAT_OPTIONS.reduce(
@@ -63,7 +73,8 @@ export const CopyFormatSelector: React.FC<{
   className?: string;
   isQdrant?: boolean;
   isElasticsearch?: boolean;
-}> = ({ className = '', isQdrant = false, isElasticsearch = false }) => {
+  isMongo?: boolean;
+}> = ({ className = '', isQdrant = false, isElasticsearch = false, isMongo = false }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const copyFormat = useSettingsStore((state) => state.copyFormat);
@@ -109,10 +120,12 @@ export const CopyFormatSelector: React.FC<{
           </div>
           {COPY_FORMAT_OPTIONS.filter((opt) =>
             isQdrant
-              ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk'
+              ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk' && !opt.id.startsWith('mongo_')
               : isElasticsearch
-              ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
-              : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
+              ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert' && !opt.id.startsWith('mongo_')
+              : isMongo
+              ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
+              : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk' && !opt.id.startsWith('mongo_')
           ).map((opt) => (
             <button
               key={opt.id}

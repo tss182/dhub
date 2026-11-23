@@ -27,6 +27,7 @@ interface GridToolbarProps {
   isRedis: boolean;
   isQdrant?: boolean;
   isElasticsearch?: boolean;
+  isMongo?: boolean;
   rawSql?: string;
   copiedRawSql: boolean;
   stagedCount: number;
@@ -74,6 +75,7 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
   isRedis,
   isQdrant = false,
   isElasticsearch = false,
+  isMongo = false,
   rawSql,
   copiedRawSql,
   stagedCount,
@@ -251,7 +253,7 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
               <>
                 <Check className="h-3.5 w-3.5 text-emerald-400" />
                 <span className="text-[11px] font-semibold text-emerald-300">
-                  {isQdrant || isElasticsearch ? 'Copied!' : 'Copied SQL!'}
+                  {isQdrant || isElasticsearch || isMongo ? 'Copied!' : 'Copied SQL!'}
                 </span>
               </>
             ) : (
@@ -273,6 +275,8 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
                   ? 'Preview Qdrant REST Operations'
                   : isElasticsearch
                   ? 'Preview Elasticsearch REST Operations'
+                  : isMongo
+                  ? 'Preview MongoDB Operations'
                   : 'Preview SQL DML'
               }
             >
@@ -293,6 +297,8 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
                     ? 'Copy Qdrant REST Operations'
                     : isElasticsearch
                     ? 'Copy Elasticsearch REST Operations'
+                    : isMongo
+                    ? 'Copy MongoDB Operations'
                     : 'Copy SQL DML'
                 }
               >
@@ -341,6 +347,13 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
                       MATCH
                     </span>
                   </>
+                ) : isMongo ? (
+                  <>
+                    <Filter className="h-3 w-3 text-emerald-400" />
+                    <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-wider">
+                      FILTER
+                    </span>
+                  </>
                 ) : (
                   <>
                     <Filter className="h-3 w-3 text-blue-400" />
@@ -361,6 +374,8 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
                     ? `Qdrant filter, e.g. category = 'news' AND views >= 10 or {"must":[...]} (Enter)`
                     : isElasticsearch
                     ? `Elasticsearch filter, e.g. status = 'active' AND views >= 10 or {"term":...} (Enter)`
+                    : isMongo
+                    ? `MongoDB filter, e.g. {"status": "active"} or status = 'active' AND age >= 18 (Enter)`
                     : "condition, e.g. status = 'active' AND id > 10 (Enter to filter)"
                 }
                 value={whereInput}

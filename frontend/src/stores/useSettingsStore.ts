@@ -11,7 +11,9 @@ export type CopyFormat =
   | 'sql_update'
   | 'sql_upsert'
   | 'qdrant_upsert'
-  | 'es_bulk';
+  | 'es_bulk'
+  | 'mongo_insert'
+  | 'mongo_ejson';
 export type AiProvider = 'openai' | 'gemini';
 export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'ai' | 'backup' | 'version';
 
@@ -124,7 +126,7 @@ function parseSettingsObject(parsed: any): SettingsValues {
     aiModel: typeof parsed?.aiModel === 'string' && parsed.aiModel.trim()
       ? parsed.aiModel.trim()
       : DEFAULT_SETTINGS.aiModel,
-    copyFormat: ['csv', 'json', 'markdown', 'sql_insert', 'sql_update', 'sql_upsert', 'qdrant_upsert'].includes(parsed?.copyFormat)
+    copyFormat: ['csv', 'json', 'markdown', 'sql_insert', 'sql_update', 'sql_upsert', 'qdrant_upsert', 'es_bulk', 'mongo_insert', 'mongo_ejson'].includes(parsed?.copyFormat)
       ? parsed.copyFormat
       : DEFAULT_SETTINGS.copyFormat,
     checkUpdatesOnStartup:

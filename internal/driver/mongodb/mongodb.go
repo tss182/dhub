@@ -6,10 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dhub/internal/driver"
@@ -20,13 +19,20 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
+// MongoDBDriver implements driver.DatabaseDriver for MongoDB using the official mongo-driver.
 type MongoDBDriver struct {
 	client    *mongo.Client
 	uri       string
 	defaultDB string
 }
 
+// NewMongoDBDriver creates a MongoDBDriver from a connection URI.
 func NewMongoDBDriver(uri string) (*MongoDBDriver, error) {
+	return NewMongoDBDriverWithOptions(uri, nil)
+}
+
+// NewMongoDBDriverWithOptions creates a MongoDBDriver with optional preconfigured ClientOptions (TLS, ReadPreference, etc.).
+func NewMongoDBDriverWithOptions(uri string, extraOpts *options.ClientOptions) (*MongoDBDriver, error) {
 	defaultDB := ""
 	if u, err := url.Parse(uri); err == nil {
 		path := strings.TrimPrefix(u.Path, "/")
@@ -38,12 +44,20 @@ func NewMongoDBDriver(uri string) (*MongoDBDriver, error) {
 		defaultDB = "admin"
 	}
 
-	clientOpts := options.Client().
-		ApplyURI(uri).
-		SetMaxPoolSize(4).
-		SetMinPoolSize(0).
-		SetMaxConnIdleTime(2 * time.Minute)
-	client, err := mongo.Connect(context.Background(), clientOpts)
+	opts := []*options.ClientOptions{
+		options.Client().
+			ApplyURI(uri).
+			SetMaxPoolSize(8).
+			SetMinPoolSize(0).
+			SetMaxConnIdleTime(2 * time.Minute).
+			SetConnectTimeout(10 * time.Second).
+			SetServerSelectionTimeout(10 * time.Second),
+	}
+	if extraOpts != nil {
+		opts = append(opts, extraOpts)
+	}
+
+	client, err := mongo.Connect(context.Background(), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to mongodb: %w", err)
 	}
@@ -56,7 +70,7 @@ func NewMongoDBDriver(uri string) (*MongoDBDriver, error) {
 }
 
 func (m *MongoDBDriver) Ping(ctx context.Context) error {
-	return m.client.Ping(ctx, readpref.Primary())
+	return m.client.Ping(ctx, readpref.PrimaryPreferred())
 }
 
 func (m *MongoDBDriver) Close() error {
@@ -64,6 +78,18 @@ func (m *MongoDBDriver) Close() error {
 		return m.client.Disconnect(context.Background())
 	}
 	return nil
+}
+
+// ServerVersion returns the MongoDB server version string via buildInfo.
+func (m *MongoDBDriver) ServerVersion(ctx context.Context) (string, error) {
+	var res bson.M
+	if err := m.client.Database("admin").RunCommand(ctx, bson.D{{Key: "buildInfo", Value: 1}}).Decode(&res); err != nil {
+		return "", err
+	}
+	if v, ok := res["version"].(string); ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("version not found in buildInfo")
 }
 
 func (m *MongoDBDriver) targetDatabase(database string) string {
@@ -98,711 +124,462 @@ func (m *MongoDBDriver) ListObjects(ctx context.Context, database, schema string
 	}
 	defer cur.Close(ctx)
 
-	var objects []driver.ObjectSummary
-	for cur.Next(ctx) {
-		var elem struct {
-			Name string `bson:"name"`
-			Type string `bson:"type"`
-		}
-		if err := cur.Decode(&elem); err != nil {
-			continue
-		}
-
-		collType := "table"
-		if elem.Type == "view" {
-			collType = "view"
-		}
-
-		// Fast estimate of document count
-		count, _ := db.Collection(elem.Name).EstimatedDocumentCount(ctx)
-
-		objects = append(objects, driver.ObjectSummary{
-			Schema:      dbName,
-			Name:        elem.Name,
-			Type:        collType,
-			RowEstimate: count,
-		})
+	type collEntry struct {
+		name   string
+		objTyp string
+		engine string
+		skipCt bool
 	}
 
-	sort.Slice(objects, func(i, j int) bool {
-		return objects[i].Name < objects[j].Name
-	})
+	var entries []collEntry
+	for cur.Next(ctx) {
+		var raw bson.M
+		if err := cur.Decode(&raw); err != nil {
+			continue
+		}
+		name, _ := raw["name"].(string)
+		if name == "" {
+			continue
+		}
+		collType, _ := raw["type"].(string)
+		objType := "table"
+		engine := ""
+		skipCt := strings.HasPrefix(name, "system.")
 
-	return objects, nil
+		switch collType {
+		case "view":
+			objType = "view"
+			engine = "view"
+			skipCt = true
+		case "timeseries":
+			engine = "timeseries"
+		default:
+			if optsMap, ok := raw["options"].(bson.M); ok {
+				if capped, ok := optsMap["capped"].(bool); ok && capped {
+					engine = "capped"
+				} else if _, ok := optsMap["timeseries"]; ok {
+					engine = "timeseries"
+				}
+			}
+		}
+
+		entries = append(entries, collEntry{
+			name:   name,
+			objTyp: objType,
+			engine: engine,
+			skipCt: skipCt,
+		})
+	}
+	if err := cur.Err(); err != nil {
+		return nil, err
+	}
+
+	results := make([]driver.ObjectSummary, len(entries))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+
+	for i, e := range entries {
+		results[i] = driver.ObjectSummary{
+			Name:   e.name,
+			Type:   e.objTyp,
+			Engine: e.engine,
+		}
+		if e.skipCt {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, collName string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			if cnt, err := db.Collection(collName).EstimatedDocumentCount(cctx); err == nil {
+				results[idx].RowEstimate = cnt
+			}
+		}(i, e.name)
+	}
+	wg.Wait()
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Name < results[j].Name
+	})
+	return results, nil
 }
 
 func (m *MongoDBDriver) GetTableStructure(ctx context.Context, database, schema, table string) (*driver.TableStructure, error) {
 	dbName := m.targetDatabase(database)
-	coll := m.client.Database(dbName).Collection(table)
+	db := m.client.Database(dbName)
+	coll := db.Collection(table)
 
 	structure := &driver.TableStructure{
-		Schema:      dbName,
 		Name:        table,
-		Columns:     []driver.ColumnMeta{},
+		Schema:      dbName,
 		PrimaryKeys: []string{"_id"},
-		ForeignKeys: []driver.ForeignKeyMeta{},
-		Indexes:     []driver.IndexMeta{},
 	}
 
-	// 1. Sample up to 50 documents to inspect fields and data types
+	// Sample up to 50 documents for non-null type inference
+	typeHist := make(map[string]map[string]int)
 	cur, err := coll.Find(ctx, bson.M{}, options.Find().SetLimit(50))
 	if err == nil {
 		defer cur.Close(ctx)
-		fieldTypes := make(map[string]string)
-		var fieldOrder []string
-
 		for cur.Next(ctx) {
-			var doc bson.D
-			if err := cur.Decode(&doc); err != nil {
+			var doc bson.M
+			if decErr := cur.Decode(&doc); decErr != nil {
 				continue
 			}
-			for _, elem := range doc {
-				t := inferBsonType(elem.Value)
-				if _, exists := fieldTypes[elem.Key]; !exists {
-					fieldTypes[elem.Key] = t
-					fieldOrder = append(fieldOrder, elem.Key)
+			for k, v := range doc {
+				if _, ok := typeHist[k]; !ok {
+					typeHist[k] = make(map[string]int)
+				}
+				t := inferBsonType(v)
+				if t != "null" {
+					typeHist[k][t]++
 				}
 			}
 		}
+	}
 
-		// Ensure _id is first
-		hasID := false
-		for _, f := range fieldOrder {
-			if f == "_id" {
-				hasID = true
-				break
-			}
+	// Build sorted column list with _id first
+	fieldNames := make([]string, 0, len(typeHist))
+	hasID := false
+	for k := range typeHist {
+		if k == "_id" {
+			hasID = true
+			continue
 		}
-		if !hasID {
-			fieldOrder = append([]string{"_id"}, fieldOrder...)
-			fieldTypes["_id"] = "objectId"
+		fieldNames = append(fieldNames, k)
+	}
+	sort.Strings(fieldNames)
+	if hasID {
+		fieldNames = append([]string{"_id"}, fieldNames...)
+	}
+
+	for _, k := range fieldNames {
+		hist := typeHist[k]
+		dominant := "null"
+		maxCount := 0
+		if len(hist) > 1 {
+			// Check if all types are numeric (int/long/double/decimal) or mixed
+			dominant = pickDominantType(hist)
 		} else {
-			// Move _id to front
-			var reordered []string
-			reordered = append(reordered, "_id")
-			for _, f := range fieldOrder {
-				if f != "_id" {
-					reordered = append(reordered, f)
+			for t, cnt := range hist {
+				if cnt > maxCount {
+					maxCount = cnt
+					dominant = t
 				}
 			}
-			fieldOrder = reordered
 		}
+		structure.Columns = append(structure.Columns, driver.ColumnMeta{
+			Name:         k,
+			DataType:     dominant,
+			RawType:      rawTypeFromBson(dominant),
+			IsNullable:   k != "_id",
+			IsPrimaryKey: k == "_id",
+		})
+	}
 
-		for _, name := range fieldOrder {
-			t := fieldTypes[name]
-			if t == "" {
-				t = "string"
+	// Decode indexes using bson.D to preserve exact key order and attributes
+	var ddlLines []string
+	collRef := formatCollectionRef(table)
+
+	// Inspect collection options (capped, timeseries, validator, viewOn)
+	if infoCur, infoErr := db.ListCollections(ctx, bson.M{"name": table}); infoErr == nil {
+		defer infoCur.Close(ctx)
+		if infoCur.Next(ctx) {
+			var info bson.M
+			if infoCur.Decode(&info) == nil {
+				collType, _ := info["type"].(string)
+				optsMap, _ := info["options"].(bson.M)
+				if collType == "view" {
+					viewOn, _ := optsMap["viewOn"].(string)
+					pipelineClean := bsonValueToCleanValue(optsMap["pipeline"])
+					pBytes, _ := json.MarshalIndent(pipelineClean, "", "  ")
+					ddlLines = append(ddlLines, fmt.Sprintf("db.createView(%q, %q, %s);", table, viewOn, string(pBytes)))
+				} else if len(optsMap) > 0 {
+					optsClean := bsonValueToCleanValue(optsMap)
+					oBytes, _ := json.MarshalIndent(optsClean, "", "  ")
+					ddlLines = append(ddlLines, fmt.Sprintf("db.createCollection(%q, %s);", table, string(oBytes)))
+				} else {
+					ddlLines = append(ddlLines, fmt.Sprintf("db.createCollection(%q);", table))
+				}
 			}
-			structure.Columns = append(structure.Columns, driver.ColumnMeta{
-				Name:         name,
-				DataType:     t,
-				RawType:      rawTypeFromBson(t),
-				IsPrimaryKey: name == "_id",
-				IsNullable:   name != "_id",
-			})
 		}
 	}
-
-	// Default fallback if collection is empty
-	if len(structure.Columns) == 0 {
-		structure.Columns = []driver.ColumnMeta{
-			{Name: "_id", DataType: "objectId", RawType: "string", IsPrimaryKey: true},
-		}
+	if len(ddlLines) == 0 {
+		ddlLines = append(ddlLines, fmt.Sprintf("db.createCollection(%q);", table))
 	}
 
-	// 2. Fetch Indexes
-	if idxCur, idxErr := coll.Indexes().List(ctx); idxErr == nil {
+	idxCur, idxErr := coll.Indexes().List(ctx)
+	if idxErr == nil {
 		defer idxCur.Close(ctx)
 		for idxCur.Next(ctx) {
-			var idxDoc bson.M
-			if err := idxCur.Decode(&idxDoc); err != nil {
+			var rawIdx bson.D
+			if idxCur.Decode(&rawIdx) != nil {
 				continue
 			}
-			idxName, _ := idxDoc["name"].(string)
-			isUnique, _ := idxDoc["unique"].(bool)
+			idxName := ""
+			isUnique := false
+			isSparse := false
+			isHidden := false
+			var ttl *int32
+			var keyDoc bson.D
+			var partialFilter any
+
+			for _, elem := range rawIdx {
+				switch elem.Key {
+				case "name":
+					idxName, _ = elem.Value.(string)
+				case "unique":
+					isUnique, _ = elem.Value.(bool)
+				case "sparse":
+					isSparse, _ = elem.Value.(bool)
+				case "hidden":
+					isHidden, _ = elem.Value.(bool)
+				case "expireAfterSeconds":
+					switch v := elem.Value.(type) {
+					case int32:
+						ttl = &v
+					case int64:
+						t32 := int32(v)
+						ttl = &t32
+					case float64:
+						t32 := int32(v)
+						ttl = &t32
+					}
+				case "partialFilterExpression":
+					partialFilter = elem.Value
+				case "key":
+					if kd, ok := elem.Value.(bson.D); ok {
+						keyDoc = kd
+					}
+				}
+			}
 
 			var cols []string
-			if keyDoc, ok := idxDoc["key"].(bson.M); ok {
-				for k := range keyDoc {
-					cols = append(cols, k)
+			idxType := "BTREE"
+			for _, ke := range keyDoc {
+				cols = append(cols, fmt.Sprintf("%s:%v", ke.Key, ke.Value))
+				switch val := ke.Value.(type) {
+				case string:
+					switch val {
+					case "text":
+						idxType = "TEXT"
+					case "2dsphere", "2d":
+						idxType = strings.ToUpper(val)
+					case "hashed":
+						idxType = "HASHED"
+					}
 				}
-			} else if keyD, ok := idxDoc["key"].(primitive.D); ok {
-				for _, elem := range keyD {
-					cols = append(cols, elem.Key)
-				}
+			}
+			if ttl != nil {
+				idxType = fmt.Sprintf("TTL (%ds)", *ttl)
+			} else if isHidden {
+				idxType += " (HIDDEN)"
+			} else if isSparse {
+				idxType += " (SPARSE)"
 			}
 
 			structure.Indexes = append(structure.Indexes, driver.IndexMeta{
 				Name:      idxName,
 				Columns:   cols,
-				IsUnique:  isUnique,
+				IsUnique:  isUnique || idxName == "_id_",
 				IsPrimary: idxName == "_id_",
-				Type:      "B-Tree",
+				Type:      idxType,
 			})
-		}
-	}
 
-	// 3. Generate DDL preview
-	structure.DDL = fmt.Sprintf("db.createCollection(\"%s\");", table)
-	for _, idx := range structure.Indexes {
-		if idx.IsPrimary {
-			continue
-		}
-		var keys []string
-		for _, c := range idx.Columns {
-			keys = append(keys, fmt.Sprintf("\"%s\": 1", c))
-		}
-		uniqueStr := ""
-		if idx.IsUnique {
-			uniqueStr = ", { unique: true }"
-		}
-		structure.DDL += fmt.Sprintf("\n\ndb.%s.createIndex({ %s }%s);", table, strings.Join(keys, ", "), uniqueStr)
-	}
-
-	return structure, nil
-}
-
-func inferBsonType(v any) string {
-	if v == nil {
-		return "null"
-	}
-	switch v.(type) {
-	case primitive.ObjectID:
-		return "objectId"
-	case string:
-		return "string"
-	case int, int32:
-		return "int32"
-	case int64:
-		return "int64"
-	case float32, float64:
-		return "double"
-	case bool:
-		return "boolean"
-	case primitive.DateTime, time.Time:
-		return "date"
-	case primitive.A, []any:
-		return "array"
-	case primitive.D, primitive.M, map[string]any:
-		return "object"
-	default:
-		return fmt.Sprintf("%T", v)
-	}
-}
-
-func rawTypeFromBson(t string) string {
-	switch t {
-	case "int32", "int64", "double":
-		return "number"
-	case "boolean":
-		return "boolean"
-	case "date":
-		return "date"
-	case "array", "object":
-		return "json"
-	default:
-		return "string"
-	}
-}
-
-func stripQuotes(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.Contains(s, ".") {
-		parts := strings.SplitN(s, ".", 2)
-		s = parts[1]
-	}
-	s = strings.Trim(s, "\"`'[]")
-	return s
-}
-
-func parseID(val any) any {
-	if s, ok := val.(string); ok {
-		s = strings.TrimSpace(s)
-		s = strings.TrimPrefix(s, "ObjectId(\"")
-		s = strings.TrimPrefix(s, "ObjectId('")
-		s = strings.TrimSuffix(s, "\")")
-		s = strings.TrimSuffix(s, "')")
-		if oid, err := primitive.ObjectIDFromHex(s); err == nil {
-			return oid
-		}
-		return s
-	}
-	return val
-}
-
-func bsonValueToAny(v any) any {
-	if v == nil {
-		return nil
-	}
-	switch val := v.(type) {
-	case primitive.ObjectID:
-		return val.Hex()
-	case primitive.DateTime:
-		return val.Time().Format(time.RFC3339)
-	case time.Time:
-		return val.Format(time.RFC3339)
-	case primitive.A, []any, primitive.D, primitive.M, map[string]any:
-		b, err := json.Marshal(val)
-		if err == nil {
-			return string(b)
-		}
-		return fmt.Sprintf("%v", val)
-	default:
-		return val
-	}
-}
-
-func docsToQueryResult(execID, dbName, collName string, docs []bson.D, elapsedMs int64) *driver.QueryResult {
-	fieldSet := make(map[string]bool)
-	var colNames []string
-
-	// Scan all documents to collect columns
-	for _, doc := range docs {
-		for _, elem := range doc {
-			if !fieldSet[elem.Key] {
-				fieldSet[elem.Key] = true
-				colNames = append(colNames, elem.Key)
+			if idxName != "_id_" && len(keyDoc) > 0 {
+				keyJSON := formatShellOrderedDoc(keyDoc)
+				var optParts []string
+				if idxName != "" {
+					optParts = append(optParts, fmt.Sprintf("name: %q", idxName))
+				}
+				if isUnique {
+					optParts = append(optParts, "unique: true")
+				}
+				if isSparse {
+					optParts = append(optParts, "sparse: true")
+				}
+				if isHidden {
+					optParts = append(optParts, "hidden: true")
+				}
+				if ttl != nil {
+					optParts = append(optParts, fmt.Sprintf("expireAfterSeconds: %d", *ttl))
+				}
+				if partialFilter != nil {
+					pfBytes, _ := json.Marshal(bsonValueToCleanValue(partialFilter))
+					optParts = append(optParts, fmt.Sprintf("partialFilterExpression: %s", string(pfBytes)))
+				}
+				if len(optParts) > 0 {
+					ddlLines = append(ddlLines, fmt.Sprintf("%s.createIndex(%s, { %s });", collRef, keyJSON, strings.Join(optParts, ", ")))
+				} else {
+					ddlLines = append(ddlLines, fmt.Sprintf("%s.createIndex(%s);", collRef, keyJSON))
+				}
 			}
 		}
 	}
 
-	// Ensure _id is first if present
-	var orderedCols []string
-	if fieldSet["_id"] {
-		orderedCols = append(orderedCols, "_id")
+	structure.DDL = strings.Join(ddlLines, "\n")
+	return structure, nil
+}
+
+func pickDominantType(hist map[string]int) string {
+	best := ""
+	bestCnt := 0
+	for t, cnt := range hist {
+		if cnt > bestCnt {
+			bestCnt = cnt
+			best = t
+		}
 	}
-	for _, c := range colNames {
-		if c != "_id" {
-			orderedCols = append(orderedCols, c)
+	if len(hist) > 1 {
+		return "mixed"
+	}
+	return best
+}
+
+func formatCollectionRef(name string) string {
+	if isSimpleShellIdent(name) {
+		return "db." + name
+	}
+	return fmt.Sprintf("db.getCollection(%q)", name)
+}
+
+func formatShellOrderedDoc(d bson.D) string {
+	parts := make([]string, 0, len(d))
+	for _, e := range d {
+		parts = append(parts, fmt.Sprintf("%s: %s", formatShellKey(e.Key), formatMongoShellValue(e.Value)))
+	}
+	return "{ " + strings.Join(parts, ", ") + " }"
+}
+
+func (m *MongoDBDriver) GetDatabaseDDL(ctx context.Context, database string) (string, error) {
+	dbName := m.targetDatabase(database)
+	objs, err := m.ListObjects(ctx, dbName, dbName)
+	if err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("// MongoDB Database Script: %s\nuse %s;\n\n", dbName, dbName))
+	for _, obj := range objs {
+		if strings.HasPrefix(obj.Name, "system.") {
+			continue
+		}
+		st, err := m.GetTableStructure(ctx, dbName, dbName, obj.Name)
+		if err != nil || st == nil || st.DDL == "" {
+			sb.WriteString(fmt.Sprintf("db.createCollection(%q);\n\n", obj.Name))
+			continue
+		}
+		sb.WriteString(st.DDL)
+		sb.WriteString("\n\n")
+	}
+	return strings.TrimSpace(sb.String()), nil
+}
+
+func (m *MongoDBDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
+	start := time.Now()
+	dbName := m.targetDatabase(req.Database)
+	sqlStr := strings.TrimSpace(req.SQL)
+
+	if sqlStr == "" {
+		return &driver.QueryResult{
+			ExecutionID: req.ExecutionID,
+			ElapsedMs:   0,
+		}, nil
+	}
+
+	upper := strings.ToUpper(sqlStr)
+	if strings.HasPrefix(upper, "SELECT ") || strings.HasPrefix(upper, "SELECT\n") || strings.HasPrefix(upper, "SELECT\t") {
+		return m.executePseudoSQL(ctx, dbName, req, start)
+	}
+
+	return m.executeShellScript(ctx, dbName, req, start)
+}
+
+func docsToQueryResult(docs []bson.M, elapsed time.Duration, hasMore bool) *driver.QueryResult {
+	colTypes := make(map[string]map[string]int)
+	hasID := false
+	for _, doc := range docs {
+		for k, v := range doc {
+			if k == "_id" {
+				hasID = true
+			}
+			if _, ok := colTypes[k]; !ok {
+				colTypes[k] = make(map[string]int)
+			}
+			t := inferBsonType(v)
+			if t != "null" {
+				colTypes[k][t]++
+			}
 		}
 	}
 
-	columns := make([]driver.ColumnMeta, len(orderedCols))
-	for i, colName := range orderedCols {
-		isPK := colName == "_id"
-		columns[i] = driver.ColumnMeta{
-			Name:         colName,
-			DataType:     "string",
-			RawType:      "string",
-			IsPrimaryKey: isPK,
-			IsNullable:   !isPK,
+	colNames := make([]string, 0, len(colTypes))
+	for k := range colTypes {
+		if k == "_id" {
+			continue
+		}
+		colNames = append(colNames, k)
+	}
+	sort.Strings(colNames)
+	if hasID {
+		colNames = append([]string{"_id"}, colNames...)
+	}
+
+	cols := make([]driver.ColumnMeta, len(colNames))
+	for i, name := range colNames {
+		hist := colTypes[name]
+		dtype := "null"
+		if len(hist) == 1 {
+			for t := range hist {
+				dtype = t
+			}
+		} else if len(hist) > 1 {
+			dtype = "mixed"
+		}
+		cols[i] = driver.ColumnMeta{
+			Name:         name,
+			DataType:     dtype,
+			RawType:      rawTypeFromBson(dtype),
+			IsNullable:   name != "_id",
+			IsPrimaryKey: name == "_id",
 		}
 	}
 
 	rows := make([][]any, len(docs))
 	for rIdx, doc := range docs {
-		docMap := make(map[string]any, len(doc))
-		for _, elem := range doc {
-			docMap[elem.Key] = elem.Value
-		}
-		row := make([]any, len(orderedCols))
-		for cIdx, colName := range orderedCols {
-			if val, ok := docMap[colName]; ok {
-				row[cIdx] = bsonValueToAny(val)
-			} else {
+		row := make([]any, len(colNames))
+		for cIdx, cName := range colNames {
+			val, exists := doc[cName]
+			if !exists || val == nil {
 				row[cIdx] = nil
+				continue
+			}
+			clean := bsonValueToCleanValue(val)
+			switch v := clean.(type) {
+			case map[string]any, []any:
+				b, err := json.Marshal(v)
+				if err != nil {
+					row[cIdx] = fmt.Sprintf("%v", v)
+				} else {
+					row[cIdx] = string(b)
+				}
+			default:
+				row[cIdx] = v
 			}
 		}
 		rows[rIdx] = row
 	}
 
 	return &driver.QueryResult{
-		ExecutionID:  execID,
-		Columns:      columns,
+		Columns:      cols,
 		Rows:         rows,
 		RowsAffected: int64(len(rows)),
-		ElapsedMs:    elapsedMs,
-		IsEditable:   true,
-		SourceSchema: dbName,
-		SourceTable:  collName,
-		PrimaryKeys:  []string{"_id"},
+		ElapsedMs:    elapsed.Milliseconds(),
+		HasMore:      hasMore,
 	}
-}
-
-var (
-	sqlSelectCountRegex = regexp.MustCompile(`(?i)^\s*SELECT\s+COUNT\(\*\)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
-	sqlSelectRegex      = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*;?\s*$`)
-	mongoShellCmdRegex  = regexp.MustCompile(`(?i)^\s*db\.([a-zA-Z0-9_$-]+)\.([a-zA-Z0-9_]+)\s*\(([\s\S]*)\)\s*;?\s*$`)
-)
-
-func (m *MongoDBDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	start := time.Now()
-	dbName := m.targetDatabase(req.Database)
-	rawSQL := strings.TrimSpace(req.SQL)
-
-	if rawSQL == "" {
-		return &driver.QueryResult{
-			ExecutionID: req.ExecutionID,
-			Columns:     []driver.ColumnMeta{},
-			Rows:        [][]any{},
-			ElapsedMs:   0,
-		}, nil
-	}
-
-	// 1. SHOW DATABASES / SHOW DBS
-	if strings.EqualFold(rawSQL, "SHOW DBS") || strings.EqualFold(rawSQL, "SHOW DATABASES") || strings.EqualFold(rawSQL, "SHOW DATABASES;") {
-		dbs, err := m.ListDatabases(ctx)
-		if err != nil {
-			return nil, err
-		}
-		rows := make([][]any, len(dbs))
-		for i, d := range dbs {
-			rows[i] = []any{d}
-		}
-		return &driver.QueryResult{
-			ExecutionID: req.ExecutionID,
-			Columns:     []driver.ColumnMeta{{Name: "database", DataType: "string", RawType: "string"}},
-			Rows:        rows,
-			ElapsedMs:   time.Since(start).Milliseconds(),
-		}, nil
-	}
-
-	// 2. SHOW COLLECTIONS / SHOW TABLES
-	if strings.EqualFold(rawSQL, "SHOW COLLECTIONS") || strings.EqualFold(rawSQL, "SHOW TABLES") || strings.EqualFold(rawSQL, "SHOW COLLECTIONS;") {
-		objs, err := m.ListObjects(ctx, dbName, dbName)
-		if err != nil {
-			return nil, err
-		}
-		rows := make([][]any, len(objs))
-		for i, o := range objs {
-			rows[i] = []any{o.Name, o.Type, o.RowEstimate}
-		}
-		return &driver.QueryResult{
-			ExecutionID: req.ExecutionID,
-			Columns: []driver.ColumnMeta{
-				{Name: "collection", DataType: "string", RawType: "string"},
-				{Name: "type", DataType: "string", RawType: "string"},
-				{Name: "count", DataType: "int64", RawType: "number"},
-			},
-			Rows:      rows,
-			ElapsedMs: time.Since(start).Milliseconds(),
-		}, nil
-	}
-
-	// 3. Pseudo-SQL SELECT COUNT(*) FROM <table>
-	if match := sqlSelectCountRegex.FindStringSubmatch(rawSQL); len(match) > 1 {
-		collName := stripQuotes(match[1])
-		filter := bson.M{}
-		if len(match) > 2 && strings.TrimSpace(match[2]) != "" {
-			filter = parseWhereClause(match[2])
-		}
-		coll := m.client.Database(dbName).Collection(collName)
-		count, err := coll.CountDocuments(ctx, filter)
-		if err != nil {
-			return nil, err
-		}
-		return &driver.QueryResult{
-			ExecutionID: req.ExecutionID,
-			Columns: []driver.ColumnMeta{
-				{Name: "count", DataType: "int64", RawType: "number"},
-			},
-			Rows:         [][]any{{count}},
-			RowsAffected: 1,
-			ElapsedMs:    time.Since(start).Milliseconds(),
-			SourceSchema: dbName,
-			SourceTable:  collName,
-		}, nil
-	}
-
-	// 4. Pseudo-SQL SELECT ... FROM <table>
-	if match := sqlSelectRegex.FindStringSubmatch(rawSQL); len(match) > 2 {
-		collName := stripQuotes(match[2])
-		coll := m.client.Database(dbName).Collection(collName)
-
-		filter := bson.M{}
-		if match[3] != "" {
-			filter = parseWhereClause(match[3])
-		}
-
-		findOpts := options.Find()
-		limit := int64(100)
-		if match[5] != "" {
-			if l, err := strconv.ParseInt(match[5], 10, 64); err == nil && l > 0 {
-				limit = l
-			}
-		} else if req.Limit > 0 {
-			limit = int64(req.Limit)
-		}
-		findOpts.SetLimit(limit)
-
-		offset := int64(0)
-		if match[6] != "" {
-			if o, err := strconv.ParseInt(match[6], 10, 64); err == nil && o >= 0 {
-				offset = o
-			}
-		} else if req.Offset > 0 {
-			offset = int64(req.Offset)
-		}
-		if offset > 0 {
-			findOpts.SetSkip(offset)
-		}
-
-		// Projection
-		fieldsStr := strings.TrimSpace(match[1])
-		if fieldsStr != "*" && fieldsStr != "" {
-			proj := bson.M{}
-			for _, f := range strings.Split(fieldsStr, ",") {
-				cleanF := stripQuotes(f)
-				if cleanF != "" {
-					proj[cleanF] = 1
-				}
-			}
-			if len(proj) > 0 {
-				findOpts.SetProjection(proj)
-			}
-		}
-
-		cur, err := coll.Find(ctx, filter, findOpts)
-		if err != nil {
-			return nil, err
-		}
-		defer cur.Close(ctx)
-
-		var docs []bson.D
-		for cur.Next(ctx) {
-			var doc bson.D
-			if err := cur.Decode(&doc); err == nil {
-				docs = append(docs, doc)
-			}
-		}
-
-		return docsToQueryResult(req.ExecutionID, dbName, collName, docs, time.Since(start).Milliseconds()), nil
-	}
-
-	// 5. Mongo Shell Syntax: db.<collection>.<method>(...)
-	if match := mongoShellCmdRegex.FindStringSubmatch(rawSQL); len(match) >= 3 {
-		collName := match[1]
-		method := strings.ToLower(match[2])
-		argsRaw := strings.TrimSpace(match[3])
-		return m.executeMongoShellMethod(ctx, req.ExecutionID, dbName, collName, method, argsRaw, req.Limit, req.Offset, start)
-	}
-
-	// 6. JSON Command: {"command": ...}
-	if strings.HasPrefix(rawSQL, "{") && strings.HasSuffix(rawSQL, "}") {
-		var cmdDoc bson.D
-		if err := bson.UnmarshalExtJSON([]byte(rawSQL), true, &cmdDoc); err == nil {
-			var resDoc bson.D
-			err := m.client.Database(dbName).RunCommand(ctx, cmdDoc).Decode(&resDoc)
-			if err != nil {
-				return nil, err
-			}
-			return docsToQueryResult(req.ExecutionID, dbName, "", []bson.D{resDoc}, time.Since(start).Milliseconds()), nil
-		}
-	}
-
-	return nil, fmt.Errorf("unsupported MongoDB query or command: %s", rawSQL)
-}
-
-func (m *MongoDBDriver) executeMongoShellMethod(
-	ctx context.Context,
-	execID, dbName, collName, method, argsRaw string,
-	reqLimit, reqOffset int,
-	start time.Time,
-) (*driver.QueryResult, error) {
-	coll := m.client.Database(dbName).Collection(collName)
-
-	switch method {
-	case "find":
-		filter := bson.M{}
-		if argsRaw != "" {
-			_ = bson.UnmarshalExtJSON([]byte(argsRaw), true, &filter)
-		}
-		limit := int64(100)
-		if reqLimit > 0 {
-			limit = int64(reqLimit)
-		}
-		findOpts := options.Find().SetLimit(limit)
-		if reqOffset > 0 {
-			findOpts.SetSkip(int64(reqOffset))
-		}
-		cur, err := coll.Find(ctx, filter, findOpts)
-		if err != nil {
-			return nil, err
-		}
-		defer cur.Close(ctx)
-
-		var docs []bson.D
-		for cur.Next(ctx) {
-			var doc bson.D
-			if err := cur.Decode(&doc); err == nil {
-				docs = append(docs, doc)
-			}
-		}
-		return docsToQueryResult(execID, dbName, collName, docs, time.Since(start).Milliseconds()), nil
-
-	case "countdocuments", "count":
-		filter := bson.M{}
-		if argsRaw != "" {
-			_ = bson.UnmarshalExtJSON([]byte(argsRaw), true, &filter)
-		}
-		count, err := coll.CountDocuments(ctx, filter)
-		if err != nil {
-			return nil, err
-		}
-		return &driver.QueryResult{
-			ExecutionID:  execID,
-			Columns:      []driver.ColumnMeta{{Name: "count", DataType: "int64", RawType: "number"}},
-			Rows:         [][]any{{count}},
-			RowsAffected: 1,
-			ElapsedMs:    time.Since(start).Milliseconds(),
-			SourceSchema: dbName,
-			SourceTable:  collName,
-		}, nil
-
-	case "insertone":
-		var doc bson.M
-		if err := bson.UnmarshalExtJSON([]byte(argsRaw), true, &doc); err != nil {
-			return nil, fmt.Errorf("invalid json in insertOne: %w", err)
-		}
-		res, err := coll.InsertOne(ctx, doc)
-		if err != nil {
-			return nil, err
-		}
-		return &driver.QueryResult{
-			ExecutionID:  execID,
-			Columns:      []driver.ColumnMeta{{Name: "insertedId", DataType: "string", RawType: "string"}},
-			Rows:         [][]any{{fmt.Sprintf("%v", res.InsertedID)}},
-			RowsAffected: 1,
-			ElapsedMs:    time.Since(start).Milliseconds(),
-			SourceSchema: dbName,
-			SourceTable:  collName,
-		}, nil
-
-	case "deleteone":
-		var filter bson.M
-		if err := bson.UnmarshalExtJSON([]byte(argsRaw), true, &filter); err != nil {
-			return nil, fmt.Errorf("invalid filter json in deleteOne: %w", err)
-		}
-		res, err := coll.DeleteOne(ctx, filter)
-		if err != nil {
-			return nil, err
-		}
-		return &driver.QueryResult{
-			ExecutionID:  execID,
-			Columns:      []driver.ColumnMeta{{Name: "deletedCount", DataType: "int64", RawType: "number"}},
-			Rows:         [][]any{{res.DeletedCount}},
-			RowsAffected: res.DeletedCount,
-			ElapsedMs:    time.Since(start).Milliseconds(),
-			SourceSchema: dbName,
-			SourceTable:  collName,
-		}, nil
-
-	case "deletemany":
-		var filter bson.M
-		if err := bson.UnmarshalExtJSON([]byte(argsRaw), true, &filter); err != nil {
-			return nil, fmt.Errorf("invalid filter json in deleteMany: %w", err)
-		}
-		res, err := coll.DeleteMany(ctx, filter)
-		if err != nil {
-			return nil, err
-		}
-		return &driver.QueryResult{
-			ExecutionID:  execID,
-			Columns:      []driver.ColumnMeta{{Name: "deletedCount", DataType: "int64", RawType: "number"}},
-			Rows:         [][]any{{res.DeletedCount}},
-			RowsAffected: res.DeletedCount,
-			ElapsedMs:    time.Since(start).Milliseconds(),
-			SourceSchema: dbName,
-			SourceTable:  collName,
-		}, nil
-
-	case "drop":
-		err := coll.Drop(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return &driver.QueryResult{
-			ExecutionID:  execID,
-			Columns:      []driver.ColumnMeta{{Name: "result", DataType: "string", RawType: "string"}},
-			Rows:         [][]any{{"collection dropped"}},
-			RowsAffected: 1,
-			ElapsedMs:    time.Since(start).Milliseconds(),
-			SourceSchema: dbName,
-			SourceTable:  collName,
-		}, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported MongoDB method: %s", method)
-	}
-}
-
-func parseWhereScalar(raw string, isID bool) any {
-	v := strings.TrimSpace(raw)
-	v = strings.Trim(v, "'\"")
-	if isID {
-		return parseID(v)
-	}
-	if strings.EqualFold(v, "true") {
-		return true
-	}
-	if strings.EqualFold(v, "false") {
-		return false
-	}
-	if strings.EqualFold(v, "null") {
-		return nil
-	}
-	if num, err := strconv.ParseInt(v, 10, 64); err == nil {
-		return num
-	}
-	if f, err := strconv.ParseFloat(v, 64); err == nil {
-		return f
-	}
-	return v
-}
-
-var mongoWhereAndRegex = regexp.MustCompile(`(?i)\s+AND\s+`)
-var mongoWhereCondRegex = regexp.MustCompile(`(?i)^(.+?)\s*(!=|<>|>=|<=|=|>|<|\bLIKE\b)\s*(.+)$`)
-
-func parseWhereClause(where string) bson.M {
-	where = strings.TrimSpace(where)
-	if strings.HasPrefix(where, "(") && strings.HasSuffix(where, ")") {
-		where = strings.TrimSpace(where[1 : len(where)-1])
-	}
-	if strings.HasPrefix(where, "{") && strings.HasSuffix(where, "}") {
-		var m bson.M
-		if err := bson.UnmarshalExtJSON([]byte(where), true, &m); err == nil {
-			return m
-		}
-	}
-
-	filter := bson.M{}
-	clauses := mongoWhereAndRegex.Split(where, -1)
-	for _, clause := range clauses {
-		clause = strings.TrimSpace(clause)
-		m := mongoWhereCondRegex.FindStringSubmatch(clause)
-		if len(m) != 4 {
-			continue
-		}
-		k := stripQuotes(m[1])
-		op := strings.ToUpper(strings.TrimSpace(m[2]))
-		rawVal := strings.TrimSpace(m[3])
-
-		if op == "LIKE" {
-			pattern := strings.Trim(rawVal, "'\"")
-			pattern = regexp.QuoteMeta(pattern)
-			pattern = strings.ReplaceAll(pattern, "%", ".*")
-			pattern = strings.ReplaceAll(pattern, "_", ".")
-			filter[k] = bson.M{"$regex": "^" + pattern + "$", "$options": "i"}
-			continue
-		}
-
-		val := parseWhereScalar(rawVal, k == "_id")
-		switch op {
-		case "=":
-			filter[k] = val
-		case "!=", "<>":
-			filter[k] = bson.M{"$ne": val}
-		case ">":
-			filter[k] = bson.M{"$gt": val}
-		case ">=":
-			filter[k] = bson.M{"$gte": val}
-		case "<":
-			filter[k] = bson.M{"$lt": val}
-		case "<=":
-			filter[k] = bson.M{"$lte": val}
-		}
-	}
-	return filter
 }
 
 func (m *MongoDBDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
@@ -811,27 +588,55 @@ func (m *MongoDBDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, 
 
 func (m *MongoDBDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
+	collRef := formatCollectionRef(table)
 
 	for _, c := range changes {
 		switch c.Type {
 		case "insert":
-			b, _ := json.Marshal(c.Changes)
-			statements = append(statements, fmt.Sprintf("db.%s.insertOne(%s);", table, string(b)))
+			doc := make(bson.D, 0, len(c.Changes))
+			for k, v := range c.Changes {
+				if k == "_id" {
+					doc = append(doc, bson.E{Key: k, Value: parseID(v)})
+				} else {
+					doc = append(doc, bson.E{Key: k, Value: coerceValueForBson(v, "")})
+				}
+			}
+			statements = append(statements, fmt.Sprintf("%s.insertOne(%s);", collRef, formatShellOrderedDoc(doc)))
+
 		case "update":
-			filterMap := make(map[string]any)
+			filterDoc := make(bson.D, 0, len(c.PrimaryKey))
 			for k, v := range c.PrimaryKey {
-				filterMap[k] = parseID(v)
+				filterDoc = append(filterDoc, bson.E{Key: k, Value: parseID(v)})
 			}
-			fBytes, _ := json.Marshal(filterMap)
-			sBytes, _ := json.Marshal(c.Changes)
-			statements = append(statements, fmt.Sprintf("db.%s.updateOne(%s, { \"$set\": %s });", table, string(fBytes), string(sBytes)))
+			setDoc := make(bson.D, 0)
+			unsetDoc := make(bson.D, 0)
+			for k, v := range c.Changes {
+				if k == "_id" {
+					continue
+				}
+				if v == nil {
+					unsetDoc = append(unsetDoc, bson.E{Key: k, Value: ""})
+				} else {
+					setDoc = append(setDoc, bson.E{Key: k, Value: coerceValueForBson(v, "")})
+				}
+			}
+			var updateOps []string
+			if len(setDoc) > 0 {
+				updateOps = append(updateOps, fmt.Sprintf("$set: %s", formatShellOrderedDoc(setDoc)))
+			}
+			if len(unsetDoc) > 0 {
+				updateOps = append(updateOps, fmt.Sprintf("$unset: %s", formatShellOrderedDoc(unsetDoc)))
+			}
+			if len(updateOps) > 0 {
+				statements = append(statements, fmt.Sprintf("%s.updateOne(%s, { %s });", collRef, formatShellOrderedDoc(filterDoc), strings.Join(updateOps, ", ")))
+			}
+
 		case "delete":
-			filterMap := make(map[string]any)
+			filterDoc := make(bson.D, 0, len(c.PrimaryKey))
 			for k, v := range c.PrimaryKey {
-				filterMap[k] = parseID(v)
+				filterDoc = append(filterDoc, bson.E{Key: k, Value: parseID(v)})
 			}
-			fBytes, _ := json.Marshal(filterMap)
-			statements = append(statements, fmt.Sprintf("db.%s.deleteOne(%s);", table, string(fBytes)))
+			statements = append(statements, fmt.Sprintf("%s.deleteOne(%s);", collRef, formatShellOrderedDoc(filterDoc)))
 		}
 	}
 
@@ -839,57 +644,84 @@ func (m *MongoDBDriver) GenerateDMLPreview(database, schema, table string, chang
 }
 
 func (m *MongoDBDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
+	if len(changes) == 0 {
+		return 0, nil
+	}
 	dbName := m.targetDatabase(database)
 	coll := m.client.Database(dbName).Collection(table)
 
-	var totalAffected int64
+	// Fetch column type hints once for typed BSON coercion
+	typeHints := make(map[string]string)
+	if st, err := m.GetTableStructure(ctx, dbName, dbName, table); err == nil && st != nil {
+		for _, col := range st.Columns {
+			typeHints[col.Name] = col.DataType
+		}
+	}
+
+	var writeModels []mongo.WriteModel
 	for _, c := range changes {
 		switch c.Type {
 		case "insert":
 			doc := bson.M{}
 			for k, v := range c.Changes {
 				if k == "_id" {
+					if v == nil || v == "" {
+						continue
+					}
 					doc[k] = parseID(v)
 				} else {
-					doc[k] = v
+					doc[k] = coerceValueForBson(v, typeHints[k])
 				}
 			}
-			res, err := coll.InsertOne(ctx, doc)
-			if err != nil {
-				return totalAffected, fmt.Errorf("failed to insert document: %w", err)
-			}
-			if res.InsertedID != nil {
-				totalAffected++
-			}
+			writeModels = append(writeModels, mongo.NewInsertOneModel().SetDocument(doc))
+
 		case "update":
 			filter := bson.M{}
 			for k, v := range c.PrimaryKey {
 				filter[k] = parseID(v)
 			}
-			updateDoc := bson.M{}
+			setDoc := bson.M{}
+			unsetDoc := bson.M{}
 			for k, v := range c.Changes {
 				if k == "_id" {
 					continue
 				}
-				updateDoc[k] = v
+				if v == nil {
+					unsetDoc[k] = ""
+				} else {
+					setDoc[k] = coerceValueForBson(v, typeHints[k])
+				}
 			}
-			res, err := coll.UpdateOne(ctx, filter, bson.M{"$set": updateDoc})
-			if err != nil {
-				return totalAffected, fmt.Errorf("failed to update document: %w", err)
+			updateDoc := bson.M{}
+			if len(setDoc) > 0 {
+				updateDoc["$set"] = setDoc
 			}
-			totalAffected += res.ModifiedCount
+			if len(unsetDoc) > 0 {
+				updateDoc["$unset"] = unsetDoc
+			}
+			if len(updateDoc) > 0 {
+				writeModels = append(writeModels, mongo.NewUpdateOneModel().SetFilter(filter).SetUpdate(updateDoc))
+			}
+
 		case "delete":
 			filter := bson.M{}
 			for k, v := range c.PrimaryKey {
 				filter[k] = parseID(v)
 			}
-			res, err := coll.DeleteOne(ctx, filter)
-			if err != nil {
-				return totalAffected, fmt.Errorf("failed to delete document: %w", err)
-			}
-			totalAffected += res.DeletedCount
+			writeModels = append(writeModels, mongo.NewDeleteOneModel().SetFilter(filter))
 		}
 	}
 
-	return totalAffected, nil
+	if len(writeModels) == 0 {
+		return 0, nil
+	}
+
+	res, err := coll.BulkWrite(ctx, writeModels, options.BulkWrite().SetOrdered(true))
+	if err != nil {
+		return 0, fmt.Errorf("failed to apply MongoDB changes: %w", err)
+	}
+	return res.InsertedCount + res.ModifiedCount + res.DeletedCount + res.UpsertedCount, nil
 }
+
+// Keep unused primitive import satisfied if needed
+var _ = primitive.NilObjectID

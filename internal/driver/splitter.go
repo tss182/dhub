@@ -886,3 +886,229 @@ func SplitHTTPOrSQLStatements(raw string) []string {
 	return stmts
 }
 
+// SplitMongoStatements splits a MongoDB shell script into individual statements,
+// respecting JS/MQL strings (' " `), comments (// and /* */), and (), {}, [] nesting.
+func SplitMongoStatements(raw string) []string {
+	var stmts []string
+	var cur strings.Builder
+	n := len(raw)
+	i := 0
+	depthParen := 0
+	depthBrace := 0
+	depthBracket := 0
+	inSingle := false
+	inDouble := false
+	inBacktick := false
+	escaped := false
+
+	flush := func() {
+		s := strings.TrimSpace(cur.String())
+		cur.Reset()
+		if s != "" && strings.TrimSpace(StripLeadingComments(s)) != "" {
+			stmts = append(stmts, s)
+		}
+	}
+
+	nextIsDot := func(idx int) bool {
+		for idx < n {
+			c := raw[idx]
+			if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+				idx++
+				continue
+			}
+			return c == '.'
+		}
+		return false
+	}
+
+	for i < n {
+		ch := raw[i]
+		if escaped {
+			cur.WriteByte(ch)
+			escaped = false
+			i++
+			continue
+		}
+		if (inSingle || inDouble || inBacktick) && ch == '\\' {
+			cur.WriteByte(ch)
+			escaped = true
+			i++
+			continue
+		}
+		if ch == '\'' && !inDouble && !inBacktick {
+			inSingle = !inSingle
+			cur.WriteByte(ch)
+			i++
+			continue
+		}
+		if ch == '"' && !inSingle && !inBacktick {
+			inDouble = !inDouble
+			cur.WriteByte(ch)
+			i++
+			continue
+		}
+		if ch == '`' && !inSingle && !inDouble {
+			inBacktick = !inBacktick
+			cur.WriteByte(ch)
+			i++
+			continue
+		}
+		if inSingle || inDouble || inBacktick {
+			cur.WriteByte(ch)
+			i++
+			continue
+		}
+		if ch == '/' && i+1 < n && raw[i+1] == '/' {
+			for i < n && raw[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if ch == '/' && i+1 < n && raw[i+1] == '*' {
+			i += 2
+			for i+1 < n && !(raw[i] == '*' && raw[i+1] == '/') {
+				i++
+			}
+			if i+1 < n {
+				i += 2
+			}
+			continue
+		}
+
+		switch ch {
+		case '(':
+			depthParen++
+			cur.WriteByte(ch)
+		case ')':
+			if depthParen > 0 {
+				depthParen--
+			}
+			cur.WriteByte(ch)
+		case '{':
+			depthBrace++
+			cur.WriteByte(ch)
+		case '}':
+			if depthBrace > 0 {
+				depthBrace--
+			}
+			cur.WriteByte(ch)
+		case '[':
+			depthBracket++
+			cur.WriteByte(ch)
+		case ']':
+			if depthBracket > 0 {
+				depthBracket--
+			}
+			cur.WriteByte(ch)
+		case ';':
+			if depthParen == 0 && depthBrace == 0 && depthBracket == 0 {
+				flush()
+			} else {
+				cur.WriteByte(ch)
+			}
+		case '\n':
+			if depthParen == 0 && depthBrace == 0 && depthBracket == 0 {
+				trimmed := strings.TrimSpace(cur.String())
+				lower := strings.ToLower(trimmed)
+				if strings.HasPrefix(lower, "use ") || strings.HasPrefix(lower, "show ") {
+					flush()
+				} else if trimmed != "" && !strings.HasSuffix(trimmed, ".") && !nextIsDot(i+1) {
+					flush()
+				} else {
+					cur.WriteByte(ch)
+				}
+			} else {
+				cur.WriteByte(ch)
+			}
+		default:
+			cur.WriteByte(ch)
+		}
+		i++
+	}
+	flush()
+	return stmts
+}
+
+// IsReadOnlySafeMongoQuery checks whether a MongoDB shell statement or pseudo-SQL query
+// is safe to execute on a Read-Only connection.
+func IsReadOnlySafeMongoQuery(stmt string) bool {
+	clean := strings.TrimSpace(StripLeadingComments(stmt))
+	if clean == "" {
+		return true
+	}
+	lower := strings.ToLower(clean)
+
+	// Allow read-only pseudo-SQL SELECT
+	if strings.HasPrefix(lower, "select ") || strings.HasPrefix(lower, "select\n") || strings.HasPrefix(lower, "select\t") {
+		return IsReadOnlySafeQuery(clean)
+	}
+
+	// Shell navigation and inspection
+	if strings.HasPrefix(lower, "use ") || strings.HasPrefix(lower, "show ") || lower == "db" {
+		return true
+	}
+
+	// Replica set / sharding status
+	if strings.HasPrefix(lower, "rs.status") || strings.HasPrefix(lower, "rs.conf") ||
+		strings.HasPrefix(lower, "rs.ismaster") || strings.HasPrefix(lower, "rs.hello") ||
+		strings.HasPrefix(lower, "sh.status") {
+		return true
+	}
+
+	// Explicitly block mutating collection/db methods
+	for _, writePattern := range []string{
+		".insertone(", ".insertmany(", ".insert(",
+		".updateone(", ".updatemany(", ".update(",
+		".replaceone(", ".findoneandupdate(", ".findoneandreplace(", ".findoneanddelete(",
+		".deleteone(", ".deletemany(", ".remove(",
+		".drop(", ".dropdatabase(", ".createcollection(", ".createview(",
+		".createindex(", ".dropindex(", ".dropindexes(", ".hideindex(", ".unhideindex(",
+		".renamecollection(", ".bulkwrite(",
+		".createuser(", ".updateuser(", ".dropuser(", ".createrole(", ".droprole(",
+		".killop(",
+	} {
+		if strings.Contains(lower, writePattern) {
+			return false
+		}
+	}
+
+	// Aggregate is read-only unless it uses $out or $merge
+	if strings.Contains(lower, ".aggregate(") {
+		sanitized := strings.ToLower(clean)
+		if strings.Contains(sanitized, "$out") || strings.Contains(sanitized, "$merge") {
+			return false
+		}
+		return true
+	}
+
+	// Known read-only collection/db methods
+	for _, readPattern := range []string{
+		".find(", ".findone(", ".countdocuments(", ".estimateddocumentcount(",
+		".count(", ".distinct(", ".getindexes(", ".stats(", ".validate(",
+		"db.getcollectionnames(", "db.getcollectioninfos(", "db.stats(",
+		"db.version(", "db.serverstatus(", "db.currentop(", "db.listcommands(",
+		"db.getusers(", "db.getroles(", "db.getname(",
+	} {
+		if strings.Contains(lower, readPattern) {
+			return true
+		}
+	}
+
+	// Raw command or runCommand: allow only known safe read commands
+	if strings.HasPrefix(lower, "db.runcommand(") || strings.HasPrefix(lower, "db.admincommand(") || strings.HasPrefix(lower, "{") {
+		for _, safeCmd := range []string{
+			"ping", "hello", "ismaster", "buildinfo", "serverstatus", "dbstats",
+			"collstats", "listcollections", "listdatabases", "listindexes",
+			"usersinfo", "rolesinfo", "explain", "count", "distinct", "find",
+			"replsetgetstatus", "replsetgetconfig", "listshards", "listcommands",
+		} {
+			if strings.Contains(lower, safeCmd) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return false
+}
+

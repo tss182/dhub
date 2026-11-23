@@ -420,6 +420,27 @@ export function buildUpdateSql(params: {
   newVal: any;
 }): string {
   const { driver, tableName, columns, primaryKeys, targetRow, colName, newVal } = params;
+  if ((driver || '').toLowerCase() === 'mongodb' || (driver || '').toLowerCase() === 'mongo') {
+    const coll = tableName || 'collection';
+    const pkColIdx = columns.findIndex((c) => c.name === '_id');
+    const rawId = pkColIdx !== -1 ? targetRow?.[pkColIdx] : undefined;
+    const idStr = rawId !== undefined && rawId !== null ? String(rawId).trim() : '';
+    const filterExpr = /^[a-fA-F0-9]{24}$/.test(idStr)
+      ? `{ "_id": ObjectId("${idStr}") }`
+      : JSON.stringify({ _id: rawId ?? '' });
+
+    let parsedVal: any = newVal;
+    if (typeof newVal === 'string') {
+      const t = newVal.trim();
+      if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+        try {
+          parsedVal = JSON.parse(t);
+        } catch {}
+      }
+    }
+    const updateBody = JSON.stringify({ $set: { [colName]: parsedVal } }, null, 2);
+    return `db.${coll}.updateOne(${filterExpr}, ${updateBody});`;
+  }
   const quoteIdent = (name: string) => quoteSqlIdentifier(name, driver);
   const quotedTbl = quoteTableName(tableName, driver);
 
@@ -513,6 +534,28 @@ export function buildUpdateSql(params: {
     return `POST /${idx}/_update/${encodeURIComponent(String(rawId ?? '1'))}?refresh=wait_for\n${body}`;
   }
 
+  if ((driver || '').toLowerCase() === 'mongodb' || (driver || '').toLowerCase() === 'mongo') {
+    const coll = tableName || 'collection';
+    const pkColIdx = columns.findIndex((c) => c.name === '_id');
+    const rawId = pkColIdx !== -1 ? targetRow?.[pkColIdx] : undefined;
+    const idStr = rawId !== undefined && rawId !== null ? String(rawId).trim() : '';
+    const filterExpr = /^[a-fA-F0-9]{24}$/.test(idStr)
+      ? `{ "_id": ObjectId("${idStr}") }`
+      : JSON.stringify({ _id: rawId ?? '' });
+
+    let parsedVal: any = newVal;
+    if (typeof newVal === 'string') {
+      const t = newVal.trim();
+      if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+        try {
+          parsedVal = JSON.parse(t);
+        } catch {}
+      }
+    }
+    const updateBody = JSON.stringify({ $set: { [colName]: parsedVal } }, null, 2);
+    return `db.${coll}.updateOne(${filterExpr}, ${updateBody});`;
+  }
+
   if ((driver || '').toLowerCase() === 'clickhouse') {
     return `ALTER TABLE ${quotedTbl}\nUPDATE ${quoteIdent(colName)} = ${formattedVal}\nWHERE ${whereClause}\nSETTINGS mutations_sync = 1;`;
   }
@@ -574,7 +617,7 @@ export function formatSelectedCells(params: {
     return vr.rowData?.[cIdx];
   };
 
-  if (targetFormat === 'json') {
+  if (targetFormat === 'json' || targetFormat === 'mongo_ejson' || targetFormat === 'mongo_insert') {
     const list: Record<string, any>[] = [];
     for (const r of selectedRowIndices) {
       const vr = visualRows[r];
@@ -584,9 +627,27 @@ export function formatSelectedCells(params: {
         if (isMultiRange && !isCellSelected(r, c)) continue;
         const col = columns[c];
         if (!col) continue;
-        rowObj[col.name] = getVal(vr, c, col.name);
+        let val = getVal(vr, c, col.name);
+        if (
+          (targetFormat === 'mongo_ejson' || targetFormat === 'mongo_insert') &&
+          typeof val === 'string'
+        ) {
+          const t = val.trim();
+          if (col.name === '_id' && /^[a-fA-F0-9]{24}$/.test(t) && targetFormat === 'mongo_ejson') {
+            val = { $oid: t };
+          } else if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+            try {
+              val = JSON.parse(t);
+            } catch {}
+          }
+        }
+        rowObj[col.name] = val;
       }
       list.push(rowObj);
+    }
+    if (targetFormat === 'mongo_insert') {
+      const coll = tableName || 'collection';
+      return `db.${coll}.insertMany(${JSON.stringify(list, null, 2)});`;
     }
     return JSON.stringify(list, null, 2);
   }

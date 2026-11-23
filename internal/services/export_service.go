@@ -326,11 +326,11 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 
 	// Stream dataset in chunks to avoid loading up to 1M rows into RAM at once.
 	driverLower := strings.ToLower(strings.TrimSpace(driverType))
-	isSchemalessExport := driverLower == "qdrant" || driverLower == "elasticsearch" || driverLower == "es"
+	isSchemalessExport := driverLower == "qdrant" || driverLower == "elasticsearch" || driverLower == "es" || driverLower == "mongodb" || driverLower == "mongo"
 	chunkSize := 5000
 	if driverLower == "qdrant" {
 		chunkSize = 500
-	} else if driverLower == "elasticsearch" || driverLower == "es" {
+	} else if driverLower == "elasticsearch" || driverLower == "es" || driverLower == "mongodb" || driverLower == "mongo" {
 		chunkSize = 1000
 	}
 	const maxExportRows = 1000000
@@ -352,7 +352,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize xlsx writer: %w", err)
 		}
-	case "json", "jsonl", "ndjson", "es_bulk", "bulk_ndjson", "sql_insert", "sql", "markdown", "md":
+	case "json", "ejson", "jsonl", "ndjson", "es_bulk", "bulk_ndjson", "sql_insert", "sql", "markdown", "md":
 	default:
 		delimRune := ','
 		if req.Delimiter == ";" {
@@ -421,7 +421,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				}
 			}
 			switch format {
-			case "json":
+			case "json", "ejson":
 				jsonObj = make(map[string]any, len(colNames))
 				if _, err := bw.WriteString("[\n"); err != nil {
 					return nil, fmt.Errorf("failed to write JSON export: %w", err)
@@ -587,12 +587,12 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 						pt["vector"] = singleVec
 					}
 					outRecord = pt
-				} else if driverLower == "elasticsearch" || driverLower == "es" {
+				} else if driverLower == "elasticsearch" || driverLower == "es" || driverLower == "mongodb" || driverLower == "mongo" {
 					clear(jsonObj)
 					for i, val := range row {
 						if i < len(chunkColNames) {
 							col := chunkColNames[i]
-							if col == "_score" {
+							if (driverLower == "elasticsearch" || driverLower == "es") && col == "_score" {
 								continue
 							}
 							jsonObj[col] = parseJSONIfPossible(val)
@@ -621,7 +621,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 				exportedRows++
 			}
 
-		case "json":
+		case "json", "ejson":
 			for _, row := range res.Rows {
 				clear(jsonObj)
 				for i, val := range row {
@@ -724,7 +724,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 
 	switch format {
-	case "json":
+	case "json", "ejson":
 		if _, err := bw.WriteString("\n]\n"); err != nil {
 			return nil, err
 		}
@@ -825,6 +825,7 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 
 	isQdrantImport := cfg != nil && strings.EqualFold(cfg.Driver, "qdrant")
 	isESImport := cfg != nil && (strings.EqualFold(cfg.Driver, "elasticsearch") || strings.EqualFold(cfg.Driver, "es"))
+	isMongoImport := cfg != nil && (strings.EqualFold(cfg.Driver, "mongodb") || strings.EqualFold(cfg.Driver, "mongo"))
 	normalizeImportedItem := func(rawItem map[string]any) map[string]any {
 		if isQdrantImport || isESImport {
 			return flattenQdrantPointRecord(rawItem)
@@ -1028,13 +1029,13 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 				if isQdrantImport && (m.TableColumn == "id" || m.TableColumn == "vector" || strings.HasPrefix(m.TableColumn, "vector.")) {
 					continue
 				}
-				if isESImport && (m.TableColumn == "_id" || m.TableColumn == "_score") {
+				if (isESImport || isMongoImport) && (m.TableColumn == "_id" || m.TableColumn == "_score") {
 					continue
 				}
 				changes[m.TableColumn] = nil
 			} else if isQdrantImport && m.TableColumn != "id" && m.TableColumn != "vector" && !strings.HasPrefix(m.TableColumn, "vector.") {
 				changes[m.TableColumn] = parseCSVTypedScalar(trimmedVal)
-			} else if isESImport && m.TableColumn != "_id" {
+			} else if (isESImport || isMongoImport) && m.TableColumn != "_id" {
 				changes[m.TableColumn] = parseCSVTypedScalar(trimmedVal)
 			} else {
 				changes[m.TableColumn] = trimmedVal

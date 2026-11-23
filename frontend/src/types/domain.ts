@@ -38,6 +38,7 @@ export interface ConnectionConfig {
   sshUser: string;
   sshAuthType: 'password' | 'key';
   sshKeyPath: string;
+  optionsJson?: string;
 }
 
 export function resolveConnectionEnv(

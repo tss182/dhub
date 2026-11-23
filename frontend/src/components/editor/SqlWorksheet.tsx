@@ -309,6 +309,15 @@ function isDangerousQuery(sqlText: string): boolean {
       }
     } catch {}
   }
+  // MongoDB destructive commands: db.dropDatabase(), db.<coll>.drop(), deleteMany({}), updateMany({}, ...)
+  if (
+    /\bdb\s*\.\s*dropDatabase\s*\(/i.test(clean) ||
+    /\bdb\s*\.\s*(?:[a-zA-Z0-9_$-]+|getCollection\(\s*["'][^"']+["']\s*\))\s*\.\s*drop\s*\(/i.test(clean) ||
+    /\bdb\s*\.\s*(?:[a-zA-Z0-9_$-]+|getCollection\(\s*["'][^"']+["']\s*\))\s*\.\s*deleteMany\s*\(\s*\{\s*\}\s*\)/i.test(clean) ||
+    /\bdb\s*\.\s*(?:[a-zA-Z0-9_$-]+|getCollection\(\s*["'][^"']+["']\s*\))\s*\.\s*updateMany\s*\(\s*\{\s*\}\s*,/i.test(clean)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -1529,9 +1538,18 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       const trimmed = statementText.trim();
       if (!trimmed) return;
 
-      // Check parameters (skip for Qdrant, Elasticsearch, or REST HTTP commands where `?wait=true` is a query string)
+      // Check parameters (skip for NoSQL/REST drivers where `:`, `$`, or `?` are native syntax)
       const isRestCmd = /^(GET|POST|PUT|DELETE|PATCH|HEAD)\s+\//i.test(trimmed);
-      if (connection?.driver !== 'qdrant' && connection?.driver !== 'elasticsearch' && !isRestCmd) {
+      const drvLower = (connection?.driver || '').toLowerCase();
+      if (
+        drvLower !== 'qdrant' &&
+        drvLower !== 'elasticsearch' &&
+        drvLower !== 'es' &&
+        drvLower !== 'mongodb' &&
+        drvLower !== 'mongo' &&
+        drvLower !== 'redis' &&
+        !isRestCmd
+      ) {
         const params = detectSqlParameters(trimmed);
         if (params.length > 0) {
           setPendingParams({
@@ -1594,7 +1612,17 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         onChange(formatted);
         return;
       }
-      if (drv === 'redis' || drv === 'mongodb') return;
+      if (drv === 'mongodb') {
+        const trimmed = sql.trim();
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            onChange(JSON.stringify(JSON.parse(trimmed), null, 2));
+            return;
+          } catch {}
+        }
+        return;
+      }
+      if (drv === 'redis') return;
       let lang: any = 'sql';
       if (drv === 'postgres') lang = 'postgresql';
       else if (drv === 'mariadb') lang = 'mariadb';
@@ -1623,8 +1651,26 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     const stmt = extractActiveStatement();
     if (!stmt) return;
 
-    const drv = connection?.driver || 'sqlite';
-    if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant' || drv === 'elasticsearch') return;
+    const drv = (connection?.driver || 'sqlite').toLowerCase();
+    if (drv === 'redis' || drv === 'qdrant' || drv === 'elasticsearch' || drv === 'es') return;
+    if (drv === 'mongodb' || drv === 'mongo') {
+      const verbosity = isAnalyze ? 'executionStats' : 'queryPlanner';
+      const cleanStmt = stmt.replace(/;+\s*$/, '').trim();
+      let explainSql = cleanStmt;
+      if (/^db\s*\./i.test(cleanStmt)) {
+        explainSql = `${cleanStmt}.explain("${verbosity}");`;
+      } else if (/^\{[\s\S]*\}$/.test(cleanStmt)) {
+        explainSql = `{"explain": ${cleanStmt}, "verbosity": "${verbosity}"}`;
+      } else {
+        explainSql = `${cleanStmt}`;
+      }
+      if (onExplain) {
+        onExplain(explainSql, isAnalyze);
+      } else {
+        executeWithChecks(explainSql, databaseRef.current);
+      }
+      return;
+    }
     let prefix = 'EXPLAIN ';
     if (drv === 'postgres') {
       prefix = isAnalyze
@@ -1876,14 +1922,18 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                   onClick={() => handleExplain(false)}
                   className="w-full text-left px-2.5 py-1.5 rounded hover:bg-[#2c303c] text-zinc-200 text-xs flex items-center justify-between"
                 >
-                  <span>Explain Plan</span>
+                  <span>
+                    {connection?.driver === 'mongodb' ? 'Explain (queryPlanner)' : 'Explain Plan'}
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleExplain(true)}
                   className="w-full text-left px-2.5 py-1.5 rounded hover:bg-[#2c303c] text-amber-300 text-xs flex items-center justify-between"
                 >
-                  <span>Explain Analyze</span>
+                  <span>
+                    {connection?.driver === 'mongodb' ? 'Explain (executionStats)' : 'Explain Analyze'}
+                  </span>
                   <Zap className="h-3 w-3 text-amber-400" />
                 </button>
               </div>
@@ -1954,8 +2004,11 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             </button>
           )}
 
-          {/* Transaction Controls (hidden for Qdrant & Elasticsearch) */}
-          {connection?.driver !== 'qdrant' && connection?.driver !== 'elasticsearch' && (
+          {/* Transaction Controls (hidden for Qdrant, Elasticsearch, MongoDB & Redis) */}
+          {connection?.driver !== 'qdrant' &&
+            connection?.driver !== 'elasticsearch' &&
+            connection?.driver !== 'mongodb' &&
+            connection?.driver !== 'redis' && (
             <>
               <div className="h-4 w-[1px] bg-[#272932] mx-1" />
               <div className="flex items-center gap-1.5">

@@ -12,6 +12,11 @@ export interface DriverCapabilities {
   defaultPort: number;
   identifierQuote: '`' | '"' | '[]';
   systemDatabases: string[];
+  entityLabel: string;
+  entityPluralLabel: string;
+  recordLabel: string;
+  recordPluralLabel: string;
+  queryLanguageLabel: string;
   // Schema & DDL
   hasSeparateSchemas: boolean;
   supportsTableEngines: boolean;
@@ -20,11 +25,13 @@ export interface DriverCapabilities {
   supportsAutoIncrement: boolean;
   supportsCollation: boolean;
   supportsRelationalIndexes: boolean;
+  supportsDocumentIndexes: boolean;
   supportsSkippingIndexes: boolean;
   supportsProjections: boolean;
   supportsPartitions: boolean;
   supportsMaterializedViews: boolean;
   supportsDictionaries: boolean;
+  supportsSchemaValidation: boolean;
   // Query & Execution
   supportsTransactions: boolean;
   supportsStandardUpdate: boolean;
@@ -32,9 +39,16 @@ export interface DriverCapabilities {
   supportsUpsertOnDuplicateKey: boolean;
   supportsFinalModifier: boolean;
   supportsPrewhere: boolean;
+  supportsSqlExplain: boolean;
+  supportsNativeExplain: boolean;
+  supportsSqlParameters: boolean;
   // UI & Tools
   supportsErDiagram: boolean;
   supportsMoveTable: boolean;
+  supportsDatabaseAlter: boolean;
+  supportsSqlDmlCopy: boolean;
+  supportsDocumentView: boolean;
+  supportsAggregationPipeline: boolean;
   supportsVectorSearch: boolean;
   backupToolLabel: string;
 }
@@ -45,6 +59,11 @@ const DEFAULT_RELATIONAL: DriverCapabilities = {
   defaultPort: 5432,
   identifierQuote: '"',
   systemDatabases: [],
+  entityLabel: 'Table',
+  entityPluralLabel: 'Tables',
+  recordLabel: 'Row',
+  recordPluralLabel: 'Rows',
+  queryLanguageLabel: 'SQL',
   hasSeparateSchemas: false,
   supportsTableEngines: false,
   supportsForeignKeys: true,
@@ -52,19 +71,28 @@ const DEFAULT_RELATIONAL: DriverCapabilities = {
   supportsAutoIncrement: true,
   supportsCollation: true,
   supportsRelationalIndexes: true,
+  supportsDocumentIndexes: false,
   supportsSkippingIndexes: false,
   supportsProjections: false,
   supportsPartitions: false,
   supportsMaterializedViews: false,
   supportsDictionaries: false,
+  supportsSchemaValidation: false,
   supportsTransactions: true,
   supportsStandardUpdate: true,
   supportsAlterTableMutations: false,
   supportsUpsertOnDuplicateKey: false,
   supportsFinalModifier: false,
   supportsPrewhere: false,
+  supportsSqlExplain: true,
+  supportsNativeExplain: false,
+  supportsSqlParameters: true,
   supportsErDiagram: true,
   supportsMoveTable: true,
+  supportsDatabaseAlter: true,
+  supportsSqlDmlCopy: true,
+  supportsDocumentView: false,
+  supportsAggregationPipeline: false,
   supportsVectorSearch: false,
   backupToolLabel: 'SQL',
 };
@@ -76,6 +104,11 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     defaultPort: 9000,
     identifierQuote: '`',
     systemDatabases: ['system', 'information_schema', 'INFORMATION_SCHEMA'],
+    entityLabel: 'Table',
+    entityPluralLabel: 'Tables',
+    recordLabel: 'Row',
+    recordPluralLabel: 'Rows',
+    queryLanguageLabel: 'SQL',
     hasSeparateSchemas: false,
     supportsTableEngines: true,
     supportsForeignKeys: false,
@@ -83,19 +116,28 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     supportsAutoIncrement: false,
     supportsCollation: false,
     supportsRelationalIndexes: false,
+    supportsDocumentIndexes: false,
     supportsSkippingIndexes: true,
     supportsProjections: true,
     supportsPartitions: true,
     supportsMaterializedViews: true,
     supportsDictionaries: true,
+    supportsSchemaValidation: false,
     supportsTransactions: false,
     supportsStandardUpdate: false,
     supportsAlterTableMutations: true,
     supportsUpsertOnDuplicateKey: false,
     supportsFinalModifier: true,
     supportsPrewhere: true,
+    supportsSqlExplain: true,
+    supportsNativeExplain: false,
+    supportsSqlParameters: true,
     supportsErDiagram: false,
     supportsMoveTable: true,
+    supportsDatabaseAlter: true,
+    supportsSqlDmlCopy: true,
+    supportsDocumentView: false,
+    supportsAggregationPipeline: false,
     supportsVectorSearch: true,
     backupToolLabel: 'SQL / Native',
   },
@@ -156,13 +198,30 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     category: 'document',
     defaultDatabase: 'admin',
     defaultPort: 27017,
+    systemDatabases: ['admin', 'local', 'config'],
+    entityLabel: 'Collection',
+    entityPluralLabel: 'Collections',
+    recordLabel: 'Document',
+    recordPluralLabel: 'Documents',
+    queryLanguageLabel: 'MQL',
     supportsForeignKeys: false,
     supportsTriggers: false,
     supportsAutoIncrement: false,
     supportsCollation: false,
+    supportsRelationalIndexes: false,
+    supportsDocumentIndexes: true,
+    supportsSchemaValidation: true,
     supportsTransactions: false,
+    supportsStandardUpdate: false,
+    supportsSqlExplain: false,
+    supportsNativeExplain: true,
+    supportsSqlParameters: false,
     supportsErDiagram: false,
     supportsMoveTable: false,
+    supportsDatabaseAlter: false,
+    supportsSqlDmlCopy: false,
+    supportsDocumentView: true,
+    supportsAggregationPipeline: true,
     backupToolLabel: 'mongodump',
   },
   redis: {
@@ -170,14 +229,24 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     category: 'keyvalue',
     defaultDatabase: 'db0',
     defaultPort: 6379,
+    entityLabel: 'Key',
+    entityPluralLabel: 'Keys',
+    recordLabel: 'Entry',
+    recordPluralLabel: 'Entries',
+    queryLanguageLabel: 'Redis CLI',
     supportsForeignKeys: false,
     supportsTriggers: false,
     supportsAutoIncrement: false,
     supportsCollation: false,
     supportsRelationalIndexes: false,
     supportsTransactions: false,
+    supportsStandardUpdate: false,
+    supportsSqlExplain: false,
+    supportsSqlParameters: false,
     supportsErDiagram: false,
     supportsMoveTable: false,
+    supportsDatabaseAlter: false,
+    supportsSqlDmlCopy: false,
     backupToolLabel: 'redis-cli',
   },
   qdrant: {
@@ -185,14 +254,24 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     category: 'vector',
     defaultDatabase: 'default',
     defaultPort: 6333,
+    entityLabel: 'Collection',
+    entityPluralLabel: 'Collections',
+    recordLabel: 'Point',
+    recordPluralLabel: 'Points',
+    queryLanguageLabel: 'REST',
     supportsForeignKeys: false,
     supportsTriggers: false,
     supportsAutoIncrement: false,
     supportsCollation: false,
     supportsRelationalIndexes: false,
     supportsTransactions: false,
+    supportsStandardUpdate: false,
+    supportsSqlExplain: false,
+    supportsSqlParameters: false,
     supportsErDiagram: false,
     supportsMoveTable: false,
+    supportsDatabaseAlter: false,
+    supportsSqlDmlCopy: false,
     supportsVectorSearch: true,
     backupToolLabel: 'Snapshot',
   },
@@ -201,14 +280,24 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     category: 'search',
     defaultDatabase: 'default',
     defaultPort: 9200,
+    entityLabel: 'Index',
+    entityPluralLabel: 'Indices',
+    recordLabel: 'Document',
+    recordPluralLabel: 'Documents',
+    queryLanguageLabel: 'REST / ES|QL',
     supportsForeignKeys: false,
     supportsTriggers: false,
     supportsAutoIncrement: false,
     supportsCollation: false,
     supportsRelationalIndexes: false,
     supportsTransactions: false,
+    supportsStandardUpdate: false,
+    supportsSqlExplain: false,
+    supportsSqlParameters: false,
     supportsErDiagram: false,
     supportsMoveTable: false,
+    supportsDatabaseAlter: false,
+    supportsSqlDmlCopy: false,
     supportsVectorSearch: true,
     backupToolLabel: 'Snapshot',
   },

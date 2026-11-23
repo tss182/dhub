@@ -163,6 +163,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
     return false;
   }, [driver, connectionId]);
 
+  const isMongo = useMemo(() => {
+    const d = (driver || '').toLowerCase();
+    if (d === 'mongodb' || d === 'mongo') return true;
+    if (connectionId) {
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
+      const cd = conn?.driver?.toLowerCase();
+      if (cd === 'mongodb' || cd === 'mongo') return true;
+    }
+    return false;
+  }, [driver, connectionId]);
+
   const disableFreeze = isRedis || isQdrant || isElasticsearch;
 
   const [whereInput, setWhereInput] = useState(whereClause || '');
@@ -1219,6 +1230,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       ? `update_${cleanTable}.qdrant`
       : isElasticsearch
       ? `update_${cleanTable}.es`
+      : isMongo
+      ? `update_${cleanTable}.mongo.js`
       : `update_${cleanTable}.sql`;
 
     const workbenchStore = useWorkbenchStore.getState();
@@ -1241,7 +1254,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     useAlertStore.getState().showToast({
       type: 'info',
       message: `${
-        isQdrant ? 'Qdrant REST' : isElasticsearch ? 'Elasticsearch REST' : 'UPDATE query'
+        isQdrant ? 'Qdrant REST' : isElasticsearch ? 'Elasticsearch REST' : isMongo ? 'MongoDB updateOne' : 'UPDATE query'
       } ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
     });
   };
@@ -2709,6 +2722,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         isRedis={isRedis}
         isQdrant={isQdrant}
         isElasticsearch={isElasticsearch}
+        isMongo={isMongo}
         rawSql={rawSql}
         copiedRawSql={copiedRawSql}
         stagedCount={stagedCount}
@@ -3269,6 +3283,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         isRedis={isRedis}
         isQdrant={isQdrant}
         isElasticsearch={isElasticsearch}
+        isMongo={isMongo}
         isReadOnly={isReadOnly}
         disableFreeze={disableFreeze}
         columns={columns}
@@ -3546,6 +3561,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         selectionSummary={selectionSummary}
         isQdrant={isQdrant}
         isElasticsearch={isElasticsearch}
+        isMongo={isMongo}
         onClose={() => setIsCopyAsOpen(false)}
         onCopy={(fmt) => {
           const text = getFormattedCopyText(fmt);

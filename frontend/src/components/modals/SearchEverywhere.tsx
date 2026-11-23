@@ -364,7 +364,7 @@ export const SearchEverywhere: React.FC = () => {
 
           const badgeLabel = isView
             ? 'VIEW'
-            : driver === 'qdrant'
+            : driver === 'qdrant' || driver === 'mongodb'
             ? 'COLLECTION'
             : driver === 'elasticsearch'
             ? 'INDEX'
@@ -520,7 +520,7 @@ export const SearchEverywhere: React.FC = () => {
     if (item.kind === 'connection' && item.connectionId) {
       const conn = connections.find((c) => c.id === item.connectionId);
       if (conn) {
-        const defaultDb = conn.driver === 'qdrant' || conn.driver === 'elasticsearch' ? 'default' : 'main';
+        const defaultDb = conn.driver === 'qdrant' || conn.driver === 'elasticsearch' ? 'default' : conn.driver === 'mongodb' ? 'admin' : 'main';
         setActiveConnection(conn.id, conn.databaseName || defaultDb, conn.driver === 'postgres' ? 'public' : defaultDb);
       }
     }

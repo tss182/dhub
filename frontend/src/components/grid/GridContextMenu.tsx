@@ -36,6 +36,7 @@ interface GridContextMenuProps {
   isRedis: boolean;
   isQdrant?: boolean;
   isElasticsearch?: boolean;
+  isMongo?: boolean;
   isReadOnly?: boolean;
   disableFreeze?: boolean;
   columns: ColumnMeta[];
@@ -82,6 +83,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   isRedis,
   isQdrant = false,
   isElasticsearch = false,
+  isMongo = false,
   isReadOnly = false,
   disableFreeze,
   columns,
@@ -373,10 +375,12 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
 
                   {COPY_FORMAT_OPTIONS.filter((opt) =>
                     isQdrant
-                      ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk'
+                      ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk' && !opt.id.startsWith('mongo_')
                       : isElasticsearch
-                      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
-                      : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
+                      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert' && !opt.id.startsWith('mongo_')
+                      : isMongo
+                      ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
+                      : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk' && !opt.id.startsWith('mongo_')
                   ).map((opt) => (
                     <button
                       key={opt.id}
@@ -591,6 +595,8 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                         ? 'Open Qdrant Update in Tab'
                         : isElasticsearch
                         ? 'Open Elasticsearch Update in Tab'
+                        : isMongo
+                        ? 'Open updateOne in Tab'
                         : 'Open UPDATE in Tab'}
                     </span>
                   </div>

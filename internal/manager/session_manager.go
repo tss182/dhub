@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -35,6 +36,8 @@ import (
 	mysqldriver "github.com/go-sql-driver/mysql"
 	goredis "github.com/redis/go-redis/v9"
 	go_ora "github.com/sijms/go-ora/v2"
+	mongoopts "go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 type Session struct {
@@ -454,49 +457,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		u.RawQuery = q.Encode()
 		return mssql.NewMSSQLDriver(u.String())
 	case "mongodb", "mongo":
-		connStr := strings.TrimSpace(cfg.Host)
-		if strings.HasPrefix(connStr, "mongodb://") || strings.HasPrefix(connStr, "mongodb+srv://") {
-			return mongodb.NewMongoDBDriver(connStr)
-		}
-		if port <= 0 {
-			port = 27017
-		}
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		dbName := strings.TrimSpace(cfg.DatabaseName)
-		if dbName == "" {
-			dbName = "admin"
-		}
-
-		u := &url.URL{
-			Scheme: "mongodb",
-			Host:   fmt.Sprintf("%s:%d", host, port),
-			Path:   "/" + dbName,
-		}
-		if cfg.Username != "" || cfg.Password != "" {
-			u.User = url.UserPassword(cfg.Username, cfg.Password)
-		}
-		q := u.Query()
-		if cfg.Username != "" {
-			q.Set("authSource", dbName)
-		}
-
-		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
-			q.Set("tls", "true")
-			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
-				q.Set("tlsInsecure", "true")
-			}
-			if cfg.SSLCAPath != "" {
-				q.Set("tlsCAFile", cfg.SSLCAPath)
-			}
-			if cfg.SSLCertPath != "" {
-				q.Set("tlsCertificateKeyFile", cfg.SSLCertPath)
-			}
-		}
-
-		u.RawQuery = q.Encode()
-		return mongodb.NewMongoDBDriver(u.String())
+		return buildMongoDriver(cfg, host, port)
 	case "qdrant":
 		baseURL, origHostname := resolveHTTPBaseURL(cfg, host, port, 6333)
 		tlsCfg, tlsErr := buildHTTPDriverTLSConfig(cfg, baseURL, origHostname)
@@ -642,7 +603,7 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 	rawHost := strings.TrimSpace(cfg.Host)
 	remoteHost := rawHost
 	remotePort := cfg.Port
-	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") || strings.HasPrefix(rawHost, "clickhouse://") {
+	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") || strings.HasPrefix(rawHost, "clickhouse://") || strings.HasPrefix(rawHost, "mongodb://") {
 		if u, err := url.Parse(rawHost); err == nil && u.Hostname() != "" {
 			remoteHost = u.Hostname()
 			if pStr := u.Port(); pStr != "" {
@@ -656,6 +617,8 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 					remotePort = 80
 				} else if u.Scheme == "clickhouse" {
 					remotePort = 9000
+				} else if u.Scheme == "mongodb" {
+					remotePort = 27017
 				}
 			}
 		}
@@ -666,8 +629,130 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 		remotePort = 9000
 	} else if remotePort <= 0 && (strings.EqualFold(strings.TrimSpace(cfg.Driver), "elasticsearch") || strings.EqualFold(strings.TrimSpace(cfg.Driver), "es")) {
 		remotePort = 9200
+	} else if remotePort <= 0 && (strings.EqualFold(strings.TrimSpace(cfg.Driver), "mongodb") || strings.EqualFold(strings.TrimSpace(cfg.Driver), "mongo")) {
+		remotePort = 27017
 	}
 	return remoteHost, remotePort
+}
+
+type mongoConnectionOptions struct {
+	AuthSource       string `json:"mongoAuthSource"`
+	AuthMechanism    string `json:"mongoAuthMechanism"`
+	ReplicaSet       string `json:"mongoReplicaSet"`
+	DirectConnection bool   `json:"mongoDirectConnection"`
+	ReadPreference   string `json:"mongoReadPreference"`
+}
+
+func buildMongoDriver(cfg store.ConnectionConfig, host string, port int) (driver.DatabaseDriver, error) {
+	var mOpts mongoConnectionOptions
+	if strings.TrimSpace(cfg.OptionsJSON) != "" {
+		_ = json.Unmarshal([]byte(cfg.OptionsJSON), &mOpts)
+	}
+
+	rawConn := strings.TrimSpace(cfg.Host)
+	origHostname := ""
+	var finalURI string
+
+	if strings.HasPrefix(rawConn, "mongodb://") || strings.HasPrefix(rawConn, "mongodb+srv://") {
+		u, err := url.Parse(rawConn)
+		if err != nil {
+			return nil, fmt.Errorf("invalid MongoDB URI: %w", err)
+		}
+		origHostname = u.Hostname()
+		if cfg.SSHEnabled {
+			if strings.HasPrefix(rawConn, "mongodb+srv://") {
+				return nil, fmt.Errorf("SSH tunnel cannot be used with mongodb+srv:// SRV URIs; use a direct mongodb:// host:port")
+			}
+			u.Host = fmt.Sprintf("%s:%d", host, port)
+			q := u.Query()
+			q.Set("directConnection", "true")
+			u.RawQuery = q.Encode()
+		}
+		if (u.User == nil) && (cfg.Username != "" || cfg.Password != "") {
+			u.User = url.UserPassword(cfg.Username, cfg.Password)
+		}
+		q := u.Query()
+		if mOpts.AuthSource != "" {
+			q.Set("authSource", mOpts.AuthSource)
+		}
+		if mOpts.AuthMechanism != "" {
+			q.Set("authMechanism", mOpts.AuthMechanism)
+		}
+		if mOpts.ReplicaSet != "" {
+			q.Set("replicaSet", mOpts.ReplicaSet)
+		}
+		if mOpts.DirectConnection {
+			q.Set("directConnection", "true")
+		}
+		u.RawQuery = q.Encode()
+		finalURI = u.String()
+	} else {
+		if port <= 0 {
+			port = 27017
+		}
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		origHostname = rawConn
+		dbName := strings.TrimSpace(cfg.DatabaseName)
+		if dbName == "" {
+			dbName = "admin"
+		}
+
+		u := &url.URL{
+			Scheme: "mongodb",
+			Host:   fmt.Sprintf("%s:%d", host, port),
+			Path:   "/" + dbName,
+		}
+		if cfg.Username != "" || cfg.Password != "" {
+			u.User = url.UserPassword(cfg.Username, cfg.Password)
+		}
+		q := u.Query()
+		if cfg.Username != "" {
+			authSrc := mOpts.AuthSource
+			if authSrc == "" {
+				authSrc = "admin"
+			}
+			q.Set("authSource", authSrc)
+		}
+		if mOpts.AuthMechanism != "" {
+			q.Set("authMechanism", mOpts.AuthMechanism)
+		}
+		if mOpts.ReplicaSet != "" {
+			q.Set("replicaSet", mOpts.ReplicaSet)
+		}
+		if mOpts.DirectConnection || cfg.SSHEnabled {
+			q.Set("directConnection", "true")
+		}
+		u.RawQuery = q.Encode()
+		finalURI = u.String()
+	}
+
+	clientOpts := mongoopts.Client()
+	if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+		tlsCfg, tlsErr := buildHTTPDriverTLSConfig(cfg, "https://"+origHostname, origHostname)
+		if tlsErr != nil {
+			return nil, tlsErr
+		}
+		if tlsCfg != nil {
+			clientOpts.SetTLSConfig(tlsCfg)
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(mOpts.ReadPreference)) {
+	case "primary":
+		clientOpts.SetReadPreference(readpref.Primary())
+	case "primarypreferred":
+		clientOpts.SetReadPreference(readpref.PrimaryPreferred())
+	case "secondary":
+		clientOpts.SetReadPreference(readpref.Secondary())
+	case "secondarypreferred":
+		clientOpts.SetReadPreference(readpref.SecondaryPreferred())
+	case "nearest":
+		clientOpts.SetReadPreference(readpref.Nearest())
+	}
+
+	return mongodb.NewMongoDBDriverWithOptions(finalURI, clientOpts)
 }
 
 func decodeElasticCloudID(raw string) (string, bool) {

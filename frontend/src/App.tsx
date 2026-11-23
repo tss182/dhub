@@ -704,7 +704,30 @@ export function App() {
     const offsetVal = tabData?.startOffset ?? tab.tableViewState?.offset ?? 0;
 
     let sql = '';
-    if (driver === 'mssql' || driver === 'oracle') {
+    if (driver === 'mongodb' || driver === 'mongo') {
+      const collName = tab.table || '';
+      const filterStr = cleanCustom || '{}';
+      const collRef = /^[A-Za-z_][A-Za-z0-9_]*$/.test(collName)
+        ? `db.${collName}`
+        : `db.getCollection(${JSON.stringify(collName)})`;
+      let projStr = '';
+      if (hasCustomCols && visibleCols.length > 0) {
+        const projObj: Record<string, number> = {};
+        visibleCols.forEach((c) => {
+          projObj[c.name] = 1;
+        });
+        projStr = `, ${JSON.stringify(projObj)}`;
+      }
+      let sortChain = '';
+      if (sortConfigs.length > 0) {
+        const sortObj: Record<string, number> = {};
+        sortConfigs.forEach((sc) => {
+          sortObj[sc.column] = sc.direction.toLowerCase() === 'desc' ? -1 : 1;
+        });
+        sortChain = `.sort(${JSON.stringify(sortObj)})`;
+      }
+      sql = `${collRef}.find(${filterStr}${projStr})${sortChain}.skip(${offsetVal}).limit(${limitVal});`;
+    } else if (driver === 'mssql' || driver === 'oracle') {
       const effectiveOrder = orderByClause || (driver === 'mssql' ? '\nORDER BY (SELECT NULL)' : '');
       sql = `SELECT ${selectClause}\nFROM ${fullTablePath}${combinedWhere}${effectiveOrder}\nOFFSET ${offsetVal} ROWS FETCH NEXT ${limitVal} ROWS ONLY;`;
     } else {
@@ -732,12 +755,19 @@ export function App() {
     const tableName = tab.table;
     const isQdrant = driver === 'qdrant';
     const isElasticsearch = driver === 'elasticsearch' || driver === 'es';
+    const isMongo = driver === 'mongodb' || driver === 'mongo';
     const ok = await confirmDialog({
-      title: isQdrant ? 'Clear All Points' : isElasticsearch ? 'Clear All Documents' : 'Truncate Table',
+      title: isQdrant
+        ? 'Clear All Points'
+        : isElasticsearch || isMongo
+        ? 'Clear All Documents'
+        : 'Truncate Table',
       message: isQdrant
         ? `Are you sure you want to delete all points in collection "${tableName}"? The collection schema and indexes will be preserved. This action cannot be undone.`
         : isElasticsearch
         ? `Are you sure you want to delete all documents in index "${tableName}"? The index and its field mappings will remain intact. This action cannot be undone.`
+        : isMongo
+        ? `Are you sure you want to delete all documents in collection "${tableName}"? The collection and its indexes will be preserved. This action cannot be undone.`
         : `Are you sure you want to TRUNCATE table "${tableName}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: targetDb,
@@ -814,7 +844,8 @@ export function App() {
     const isView = objectType === 'view';
     const isQdrant = driver === 'qdrant';
     const isElasticsearch = driver === 'elasticsearch' || driver === 'es';
-    const keyword = isQdrant ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
+    const isMongo = driver === 'mongodb' || driver === 'mongo';
+    const keyword = isQdrant || isMongo ? 'COLLECTION' : isElasticsearch ? 'INDEX' : isView ? 'VIEW' : 'TABLE';
     const tableName = tab.table;
 
     const ok = await confirmDialog({
@@ -1989,7 +2020,7 @@ export function App() {
     if (!tab.connectionId || !tab.table) return;
     const conn = connections.find((c) => c.id === tab.connectionId);
     const driver = conn?.driver || tab.driver;
-    if (driver === 'redis' || driver === 'mongodb') return;
+    if (driver === 'redis') return;
 
     const isMSSQL = driver === 'mssql';
     const targetDb = tab.database || conn?.databaseName || 'main';
@@ -3048,6 +3079,8 @@ export function App() {
                         const isQdrantTab = effectiveTabDriver === 'qdrant';
                         const isElasticsearchTab =
                           effectiveTabDriver === 'elasticsearch' || effectiveTabDriver === 'es';
+                        const isMongoTab =
+                          effectiveTabDriver === 'mongodb' || effectiveTabDriver === 'mongo';
                         return (
                         <>
                           <button
@@ -3090,10 +3123,12 @@ export function App() {
                                 ? 'View Collection Config (JSON)'
                                 : isElasticsearchTab
                                 ? 'View Index Mapping (JSON)'
+                                : isMongoTab
+                                ? 'View Collection Script (MQL)'
                                 : 'View Table DDL'
                             }
                           >
-                            {isQdrantTab || isElasticsearchTab ? 'JSON' : 'DDL'}
+                            {isQdrantTab || isElasticsearchTab ? 'JSON' : isMongoTab ? 'MQL' : 'DDL'}
                           </button>
                           {!isQdrantTab && !isElasticsearchTab && (
                             <button
@@ -3110,9 +3145,9 @@ export function App() {
                                 });
                               }}
                               className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                              title="View Complete Table Query SQL"
+                              title={isMongoTab ? 'View Complete Collection Query (MQL)' : 'View Complete Table Query SQL'}
                             >
-                              SQL
+                              {isMongoTab ? 'Query' : 'SQL'}
                             </button>
                           )}
                           <ColumnVisibilityPopover
@@ -3219,6 +3254,7 @@ export function App() {
                     <CopyFormatSelector
                       isQdrant={tableConn?.driver === 'qdrant'}
                       isElasticsearch={tableConn?.driver === 'elasticsearch'}
+                      isMongo={tableConn?.driver === 'mongodb'}
                     />
 
                     <button
