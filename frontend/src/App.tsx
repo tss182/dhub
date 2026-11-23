@@ -477,7 +477,7 @@ export function App() {
         ...prev,
         [tab.id]: {
           ...(prev[tab.id] || { pageSize: 100, page: 1 }),
-          columns: cols,
+          columns: resRows.length > 0 || !prev[tab.id]?.columns?.length ? cols : prev[tab.id].columns,
           rows: resRows,
           primaryKeys: (res?.primaryKeys as string[]) || prev[tab.id]?.primaryKeys || [],
           isLoading: false,
@@ -729,6 +729,8 @@ export function App() {
       sql = `DELETE FROM ${quoteSqlIdentifier(driver, tableName)}; DELETE FROM sqlite_sequence WHERE name = '${escapedLiteral}';`;
     } else if (driver === 'mongodb') {
       sql = `db.${tableName}.deleteMany({});`;
+    } else if (driver === 'qdrant') {
+      sql = `POST /collections/${encodeURIComponent(tableName)}/points/delete?wait=true\n{"filter":{}}`;
     } else if (driver === 'elasticsearch') {
       sql = `POST /${encodeURIComponent(tableName)}/_delete_by_query\n{"query":{"match_all":{}}}`;
     } else {
@@ -1923,7 +1925,7 @@ export function App() {
     if (!tab.connectionId || !tab.table) return;
     const conn = connections.find((c) => c.id === tab.connectionId);
     const driver = conn?.driver || tab.driver;
-    if (driver === 'redis' || driver === 'mongodb' || driver === 'qdrant' || driver === 'elasticsearch') return;
+    if (driver === 'redis' || driver === 'mongodb') return;
 
     const isMSSQL = driver === 'mssql';
     const targetDb = tab.database || conn?.databaseName || 'main';
@@ -2958,64 +2960,70 @@ export function App() {
                       </span>
                     )}
                     {activeTab.driver?.toLowerCase() !== 'redis' &&
-                      connections.find((c) => c.id === activeTab.connectionId)?.driver?.toLowerCase() !== 'redis' && (
+                      connections.find((c) => c.id === activeTab.connectionId)?.driver?.toLowerCase() !== 'redis' && (() => {
+                        const effectiveTabDriver = (
+                          activeTab.driver ||
+                          connections.find((c) => c.id === activeTab.connectionId)?.driver ||
+                          ''
+                        ).toLowerCase();
+                        const isQdrantTab = effectiveTabDriver === 'qdrant';
+                        return (
                         <>
-                          {activeTab.driver?.toLowerCase() !== 'qdrant' &&
-                            connections.find((c) => c.id === activeTab.connectionId)?.driver?.toLowerCase() !== 'qdrant' && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                                    openEditTableModal(
-                                      conn,
-                                      activeTab.database || 'main',
-                                      activeTab.schema || 'main',
-                                      activeTab.table
-                                    );
-                                  }}
-                                  className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                                  title="Edit Table Structure"
-                                >
-                                  <Pencil className="h-3 w-3" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                                    openDdlModal({
-                                      scope: 'table',
-                                      conn,
-                                      database: activeTab.database || 'main',
-                                      schema: activeTab.schema || 'main',
-                                      tableName: activeTab.table,
-                                    });
-                                  }}
-                                  className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                                  title="View Table DDL"
-                                >
-                                  DDL
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const { conn, targetDb, targetSchema, sql } = buildTableTabSql(activeTab);
-                                    setTableSqlModal({
-                                      isOpen: true,
-                                      conn,
-                                      database: targetDb,
-                                      schema: targetSchema,
-                                      tableName: activeTab.table || '',
-                                      sql,
-                                    });
-                                  }}
-                                  className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                                  title="View Complete Table Query SQL"
-                                >
-                                  SQL
-                                </button>
-                              </>
-                            )}
+                          {!isQdrantTab && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                                openEditTableModal(
+                                  conn,
+                                  activeTab.database || 'main',
+                                  activeTab.schema || 'main',
+                                  activeTab.table
+                                );
+                              }}
+                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                              title="Edit Table Structure"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                              openDdlModal({
+                                scope: 'table',
+                                conn,
+                                database: activeTab.database || 'main',
+                                schema: activeTab.schema || 'main',
+                                tableName: activeTab.table,
+                              });
+                            }}
+                            className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title={isQdrantTab ? 'View Collection Config (JSON)' : 'View Table DDL'}
+                          >
+                            {isQdrantTab ? 'JSON' : 'DDL'}
+                          </button>
+                          {!isQdrantTab && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const { conn, targetDb, targetSchema, sql } = buildTableTabSql(activeTab);
+                                setTableSqlModal({
+                                  isOpen: true,
+                                  conn,
+                                  database: targetDb,
+                                  schema: targetSchema,
+                                  tableName: activeTab.table || '',
+                                  sql,
+                                });
+                              }}
+                              className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                              title="View Complete Table Query SQL"
+                            >
+                              SQL
+                            </button>
+                          )}
                           <ColumnVisibilityPopover
                             columns={tableDataByTab[activeTab.id]?.columns || []}
                             primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
@@ -3084,7 +3092,8 @@ export function App() {
                             <LocateFixed className="h-3 w-3" />
                           </button>
                         </>
-                      )}
+                        );
+                      })()}
                     <span className="text-zinc-600 shrink-0">/</span>
                     <span
                       className="font-mono text-[11px] text-zinc-400 truncate max-w-[200px]"

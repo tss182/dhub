@@ -1988,6 +1988,10 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let sql = '';
     if (isRedis) {
       sql = `DEL ${obj.name}`;
+    } else if (conn.driver === 'qdrant') {
+      sql = `DELETE /collections/${encodeURIComponent(obj.name)}`;
+    } else if (conn.driver === 'elasticsearch') {
+      sql = `DELETE /${encodeURIComponent(obj.name)}`;
     } else if (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse') {
       sql = `DROP ${keyword} \`${obj.name}\`;`;
     } else if (conn.driver === 'mssql') {
@@ -2071,6 +2075,10 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       sql = `DELETE FROM "${obj.name}"; DELETE FROM sqlite_sequence WHERE name = '${obj.name}';`;
     } else if (conn.driver === 'mongodb') {
       sql = `db.${obj.name}.deleteMany({});`;
+    } else if (conn.driver === 'qdrant') {
+      sql = `POST /collections/${encodeURIComponent(obj.name)}/points/delete?wait=true\n{"filter":{}}`;
+    } else if (conn.driver === 'elasticsearch') {
+      sql = `POST /${encodeURIComponent(obj.name)}/_delete_by_query\n{"query":{"match_all":{}}}`;
     } else {
       sql = `TRUNCATE TABLE "${obj.name}";`;
     }
@@ -2551,6 +2559,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
       content = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
     } else if (conn?.driver === 'mongodb') {
       content = `-- MongoDB Query Console for ${targetDb}\n-- Run Mongo shell syntax or SQL:\n-- e.g. db.${tableName || 'collection'}.find() or SELECT * FROM ${tableName || 'collection'}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `db.${tableName}.find()` : `show collections`};\n`;
+    } else if (conn?.driver === 'qdrant') {
+      content = `-- Qdrant Query Console\n-- Run pseudo-SQL (SELECT * FROM collection LIMIT 50, SHOW COLLECTIONS) or REST API commands\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `SELECT * FROM "${tableName}" LIMIT 50;` : `SHOW COLLECTIONS;`}\n`;
     } else if (tableName) {
       const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb' || conn?.driver === 'clickhouse') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
       content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : conn?.driver === 'oracle' ? `SELECT * FROM ${quoted} FETCH FIRST 100 ROWS ONLY;\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
@@ -4819,6 +4829,18 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
                   <span>New Table...</span>
                 </button>
+              ) : contextMenu.connection.driver === 'qdrant' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenCreateTable(contextMenu.connection!, 'default', 'default');
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>New Collection...</span>
+                </button>
               ) : (
                 <button
                   type="button"
@@ -4845,21 +4867,23 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>New Query Console</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleOpenERDiagram(
-                    contextMenu.connection!.id,
-                    contextMenu.database!,
-                    contextMenu.schema || contextMenu.database!
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                <span>Open ER Diagram...</span>
-              </button>
+              {contextMenu.connection.driver !== 'qdrant' && contextMenu.connection.driver !== 'redis' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenERDiagram(
+                      contextMenu.connection!.id,
+                      contextMenu.database!,
+                      contextMenu.schema || contextMenu.database!
+                    );
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>Open ER Diagram...</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -4885,7 +4909,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>Refresh Connection</span>
               </button>
 
-              {contextMenu.connection.driver !== 'sqlite' && (
+              {contextMenu.connection.driver !== 'sqlite' && contextMenu.connection.driver !== 'qdrant' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -4900,7 +4924,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
-              {contextMenu.connection.driver !== 'sqlite' && (
+              {contextMenu.connection.driver !== 'sqlite' && contextMenu.connection.driver !== 'qdrant' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -4915,7 +4939,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
-              {contextMenu.connection.driver !== 'sqlite' && (
+              {contextMenu.connection.driver !== 'sqlite' && contextMenu.connection.driver !== 'qdrant' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5194,7 +5218,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>New Query Console</span>
               </button>
 
-              {contextMenu.connection.driver !== 'redis' && (
+              {contextMenu.connection.driver !== 'redis' && contextMenu.connection.driver !== 'qdrant' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5212,7 +5236,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
-              {contextMenu.connection.driver !== 'redis' && (
+              {contextMenu.connection.driver !== 'redis' && contextMenu.connection.driver !== 'qdrant' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5235,7 +5259,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                <span>Refresh Database</span>
+                <span>{contextMenu.connection.driver === 'qdrant' ? 'Refresh Collections' : 'Refresh Database'}</span>
               </button>
 
               <button
@@ -5247,7 +5271,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>Copy Database Name</span>
               </button>
 
-              {contextMenu.connection.driver?.toLowerCase() !== 'redis' && (
+              {contextMenu.connection.driver?.toLowerCase() !== 'redis' && contextMenu.connection.driver !== 'qdrant' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -5267,7 +5291,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
-              {contextMenu.connection.driver !== 'redis' && (
+              {contextMenu.connection.driver !== 'redis' && contextMenu.connection.driver !== 'qdrant' && (
                 <>
                   <div className="my-1 border-t border-[#272932]" />
 
@@ -5738,7 +5762,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                   >
                     <Table className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
-                    <span>Edit Data (Open Table)</span>
+                    <span>
+                      {contextMenu.connection!.driver === 'qdrant'
+                        ? 'Browse Points (Open Collection)'
+                        : 'Edit Data (Open Table)'}
+                    </span>
                   </button>
 
                   {contextMenu.connection!.driver !== 'qdrant' && (
@@ -5777,21 +5805,23 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>New Query Console</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeContextMenu();
-                      handleOpenERDiagram(
-                        contextMenu.connection!.id,
-                        contextMenu.database!,
-                        contextMenu.schema || contextMenu.database!
-                      );
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                    <span>Open ER Diagram...</span>
-                  </button>
+                  {contextMenu.connection!.driver !== 'qdrant' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeContextMenu();
+                        handleOpenERDiagram(
+                          contextMenu.connection!.id,
+                          contextMenu.database!,
+                          contextMenu.schema || contextMenu.database!
+                        );
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                      <span>Open ER Diagram...</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -5807,7 +5837,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                   >
                     <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                    <span>Refresh Table</span>
+                    <span>
+                      {contextMenu.connection!.driver === 'qdrant' ? 'Refresh Collection' : 'Refresh Table'}
+                    </span>
                   </button>
 
                   <button
@@ -5816,50 +5848,58 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
                   >
                     <Copy className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                    <span>Copy Table Name</span>
+                    <span>
+                      {contextMenu.connection!.driver === 'qdrant' ? 'Copy Collection Name' : 'Copy Table Name'}
+                    </span>
                   </button>
 
-                  {contextMenu.connection!.driver !== 'qdrant' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const conn = contextMenu.connection!;
-                          const db = contextMenu.database || 'main';
-                          const sch = contextMenu.schema || 'main';
-                          const tbl = contextMenu.table!.name;
-                          closeContextMenu();
-                          openDdlModal({
-                            scope: 'table',
-                            conn,
-                            database: db,
-                            schema: sch,
-                            tableName: tbl,
-                          });
-                        }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                      >
-                        <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                        <span>View {contextMenu.table!.type === 'view' ? 'View' : 'Table'} DDL</span>
-                      </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const conn = contextMenu.connection!;
+                        const db = contextMenu.database || 'main';
+                        const sch = contextMenu.schema || 'main';
+                        const tbl = contextMenu.table!.name;
+                        closeContextMenu();
+                        openDdlModal({
+                          scope: 'table',
+                          conn,
+                          database: db,
+                          schema: sch,
+                          tableName: tbl,
+                        });
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                      <span>
+                        {contextMenu.connection!.driver === 'qdrant'
+                          ? 'View Collection Config (JSON)'
+                          : `View ${contextMenu.table!.type === 'view' ? 'View' : 'Table'} DDL`}
+                      </span>
+                    </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleCopyTableSchema(
-                            contextMenu.connection!,
-                            contextMenu.database || 'main',
-                            contextMenu.schema || 'main',
-                            contextMenu.table!.name
-                          );
-                        }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                      >
-                        <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                        <span>Copy Table Schema (DDL)</span>
-                      </button>
-                    </>
-                  )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleCopyTableSchema(
+                          contextMenu.connection!,
+                          contextMenu.database || 'main',
+                          contextMenu.schema || 'main',
+                          contextMenu.table!.name
+                        );
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                      <span>
+                        {contextMenu.connection!.driver === 'qdrant'
+                          ? 'Copy Collection Config (JSON)'
+                          : 'Copy Table Schema (DDL)'}
+                      </span>
+                    </button>
+                  </>
 
                   {(contextMenu.connection!.driver === 'postgres' || contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && !contextMenu.connection!.isReadOnly && (
                     <button
@@ -6071,7 +6111,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
                     >
                       <Eraser className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                      <span>Truncate Table...</span>
+                      <span>
+                        {contextMenu.connection!.driver === 'qdrant'
+                          ? 'Clear All Points...'
+                          : 'Truncate Table...'}
+                      </span>
                     </button>
                   )}
 
@@ -6089,7 +6133,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
                   >
                     <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                    <span>Drop {contextMenu.table!.type === 'view' ? 'View' : 'Table'}...</span>
+                    <span>
+                      {contextMenu.connection!.driver === 'qdrant'
+                        ? 'Drop Collection...'
+                        : `Drop ${contextMenu.table!.type === 'view' ? 'View' : 'Table'}...`}
+                    </span>
                   </button>
                 </>
               )}

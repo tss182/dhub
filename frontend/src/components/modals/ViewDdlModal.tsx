@@ -17,14 +17,18 @@ function stripTableOptionsFromDdl(rawDdl: string): string {
     .trim();
 }
 
-function formatCleanTableDdl(tableName: string, struct: any): string {
-  const cols: any[] = struct?.columns || [];
-  if (cols.length === 0) {
-    const raw = (struct?.ddl || '').trim();
-    return raw ? stripTableOptionsFromDdl(raw) : '';
+function formatCleanTableDdl(tableName: string, struct: any, driver?: string): string {
+  const rawDdl = (struct?.ddl || '').trim();
+  const normDriver = (driver || '').toLowerCase();
+  if (normDriver === 'qdrant' || normDriver === 'elasticsearch' || rawDdl.startsWith('{')) {
+    return rawDdl;
   }
 
-  const rawDdl = (struct?.ddl || '').trim();
+  const cols: any[] = struct?.columns || [];
+  if (cols.length === 0) {
+    return rawDdl ? stripTableOptionsFromDdl(rawDdl) : '';
+  }
+
   if (/^\s*create\s+(?:or\s+replace\s+)?view\b/i.test(rawDdl)) {
     return rawDdl.endsWith(';') ? rawDdl : `${rawDdl};`;
   }
@@ -146,11 +150,15 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
           targetSchema,
           tableName
         );
-        const resultDdl = formatCleanTableDdl(tableName, struct);
+        const resultDdl = formatCleanTableDdl(tableName, struct, connection.driver);
         if (!resultDdl) {
           setError(`No DDL available for "${tableName}".`);
         } else {
-          setDdl(resultDdl.endsWith(';') ? resultDdl : `${resultDdl};`);
+          const isJsonConfig =
+            connection.driver === 'qdrant' ||
+            connection.driver === 'elasticsearch' ||
+            resultDdl.trim().startsWith('{');
+          setDdl(isJsonConfig || resultDdl.endsWith(';') ? resultDdl : `${resultDdl};`);
         }
       } else {
         const schemaArg = scope === 'schema' ? targetSchema : '';

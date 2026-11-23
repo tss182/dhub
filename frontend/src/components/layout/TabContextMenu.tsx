@@ -341,7 +341,13 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
               className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
             >
               <Eraser className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-              <span>Truncate Table...</span>
+              <span>
+                {tableMeta?.driver === 'qdrant'
+                  ? 'Clear All Points...'
+                  : tableMeta?.driver === 'mongodb'
+                  ? 'Clear Collection...'
+                  : 'Truncate Table...'}
+              </span>
             </button>
           )}
           <button
@@ -353,7 +359,11 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
             className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
           >
             <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-            <span>Drop {tableMeta?.objectType === 'view' ? 'View' : 'Table'}...</span>
+            <span>
+              {tableMeta?.driver === 'qdrant' || tableMeta?.driver === 'mongodb'
+                ? 'Drop Collection...'
+                : `Drop ${tableMeta?.objectType === 'view' ? 'View' : 'Table'}...`}
+            </span>
           </button>
         </>
       )}

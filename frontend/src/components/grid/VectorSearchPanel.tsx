@@ -94,6 +94,52 @@ function parseVectorText(raw: string): number[] | null {
   return null;
 }
 
+function parseSimpleQdrantFilter(raw: string): Record<string, any> | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+AND\s+/i);
+  const must: any[] = [];
+  const mustNot: any[] = [];
+  for (const part of parts) {
+    const m = part.trim().match(/^([a-zA-Z0-9_."`]+)\s*(!=|<>|>=|<=|=|>|<)\s*(.+)$/);
+    if (!m) continue;
+    const key = m[1].replace(/^["`]|["`]$/g, '');
+    const op = m[2];
+    const rawVal = m[3].trim();
+    let val: any = rawVal;
+    if ((rawVal.startsWith("'") && rawVal.endsWith("'")) || (rawVal.startsWith('"') && rawVal.endsWith('"'))) {
+      val = rawVal.slice(1, -1);
+    } else if (/^true$/i.test(rawVal)) {
+      val = true;
+    } else if (/^false$/i.test(rawVal)) {
+      val = false;
+    } else if (!Number.isNaN(Number(rawVal))) {
+      val = Number(rawVal);
+    }
+
+    if (key.toLowerCase() === 'id') {
+      const idVal = typeof val === 'string' && /^\d+$/.test(val) ? Number(val) : val;
+      if (op === '=') must.push({ has_id: [idVal] });
+      else if (op === '!=' || op === '<>') mustNot.push({ has_id: [idVal] });
+      continue;
+    }
+
+    if (op === '=') {
+      must.push({ key, match: { value: val } });
+    } else if (op === '!=' || op === '<>') {
+      mustNot.push({ key, match: { value: val } });
+    } else {
+      const rangeKey = op === '>' ? 'gt' : op === '>=' ? 'gte' : op === '<' ? 'lt' : 'lte';
+      must.push({ key, range: { [rangeKey]: val } });
+    }
+  }
+  if (must.length === 0 && mustNot.length === 0) return null;
+  const out: Record<string, any> = {};
+  if (must.length > 0) out.must = must;
+  if (mustNot.length > 0) out.must_not = mustNot;
+  return out;
+}
+
 export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   driver,
   schema,
@@ -249,7 +295,10 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         try {
           body.filter = JSON.parse(filter);
         } catch {
-          // Allow simple key=val fallback if not JSON
+          const fallback = parseSimpleQdrantFilter(filter);
+          if (fallback) {
+            body.filter = fallback;
+          }
         }
       }
       return `POST /collections/${encodeURIComponent(tableName)}/points/search\n${JSON.stringify(body, null, 2)}`;
@@ -326,6 +375,23 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const handleRunSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setEmbedError(null);
+
+    if (driver === 'qdrant' && filterInput.trim()) {
+      const trimmedFilter = filterInput.trim();
+      let validFilter = false;
+      if (trimmedFilter.startsWith('{')) {
+        try {
+          JSON.parse(trimmedFilter);
+          validFilter = true;
+        } catch {}
+      } else if (parseSimpleQdrantFilter(trimmedFilter)) {
+        validFilter = true;
+      }
+      if (!validFilter) {
+        setEmbedError("Invalid Qdrant filter: use JSON (e.g. {\"must\":[...]}) or key = 'value'.");
+        return;
+      }
+    }
 
     let vec: number[] | null = null;
     if (inputMode === 'vector') {

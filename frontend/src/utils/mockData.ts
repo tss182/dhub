@@ -254,10 +254,17 @@ export function generateMockValue(
   if (t.includes('bool')) {
     return rowIdx % 2 === 0;
   }
-  if (t.includes('uuid')) {
+  if (t === 'point_id' || t.includes('uuid')) {
     return crypto.randomUUID
       ? crypto.randomUUID()
-      : `00000000-0000-4000-8000-${String(rowIdx).padStart(12, '0')}`;
+      : `00000000-0000-4000-8000-${String(rowIdx + 1).padStart(12, '0')}`;
+  }
+  if (t.startsWith('vector') || (col.rawType || '').toLowerCase() === 'vector') {
+    const dimMatch = t.match(/vector\s*\(\s*(\d+)/);
+    const dims = dimMatch ? Math.max(1, Math.min(4096, Number(dimMatch[1]))) : 4;
+    const raw = Array.from({ length: dims }, () => Number((Math.random() * 2 - 1).toFixed(4)));
+    const norm = Math.sqrt(raw.reduce((acc, v) => acc + v * v, 0)) || 1;
+    return JSON.stringify(raw.map((v) => Number((v / norm).toFixed(4))));
   }
   if (
     t.includes('int') ||

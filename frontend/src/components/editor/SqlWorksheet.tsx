@@ -268,7 +268,22 @@ function isDangerousQuery(sqlText: string): boolean {
 }
 
 const TOP_LEVEL_STMT_START_RE =
-  /^(?:SELECT|WITH|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|EXPLAIN|SHOW|DESCRIBE|DESC|PRAGMA|USE|CALL|EXEC|MERGE|REPLACE|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|SET)\b/i;
+  /^(?:SELECT|WITH|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|EXPLAIN|SHOW|DESCRIBE|DESC|PRAGMA|USE|CALL|EXEC|MERGE|REPLACE|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|SET|GET|POST|PUT|PATCH)\b/i;
+
+function hasUnclosedJsonBraces(text: string): boolean {
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"' && text[i - 1] !== '\\') {
+      inString = !inString;
+    } else if (!inString) {
+      if (ch === '{') depth++;
+      else if (ch === '}') depth = Math.max(0, depth - 1);
+    }
+  }
+  return depth > 0;
+}
 
 function stripLeadingSqlComments(sqlText: string): string {
   let i = 0;
@@ -383,7 +398,9 @@ function findActiveSqlStatement(fullText: string, offset: number): string {
       const afterStart = splitAt + match[0].length;
       const beforeChunk = fullText.slice(subStart, splitAt).trim();
       const afterChunk = stripLeadingSqlComments(fullText.slice(afterStart, seg.end));
-      const prevEndsWithClause = /\b(?:AS|UNION|ALL|INTERSECT|EXCEPT)\s*$|[,(]\s*$/i.test(beforeChunk);
+      const prevEndsWithClause =
+        /\b(?:AS|UNION|ALL|INTERSECT|EXCEPT)\s*$|[,(]\s*$/i.test(beforeChunk) ||
+        hasUnclosedJsonBraces(beforeChunk);
 
       if (beforeChunk && !prevEndsWithClause && TOP_LEVEL_STMT_START_RE.test(afterChunk)) {
         subRanges.push({ start: subStart, end: splitAt });
