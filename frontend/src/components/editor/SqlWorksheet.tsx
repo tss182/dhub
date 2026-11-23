@@ -1391,15 +1391,18 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       const trimmed = statementText.trim();
       if (!trimmed) return;
 
-      // Check parameters
-      const params = detectSqlParameters(trimmed);
-      if (params.length > 0) {
-        setPendingParams({
-          parameters: params,
-          sql: trimmed,
-          targetDb,
-        });
-        return;
+      // Check parameters (skip for Qdrant or REST HTTP commands where `?wait=true` is a query string)
+      const isRestCmd = /^(GET|POST|PUT|DELETE|PATCH)\s+\//i.test(trimmed);
+      if (connection?.driver !== 'qdrant' && !isRestCmd) {
+        const params = detectSqlParameters(trimmed);
+        if (params.length > 0) {
+          setPendingParams({
+            parameters: params,
+            sql: trimmed,
+            targetDb,
+          });
+          return;
+        }
       }
 
       // Check dangerous query

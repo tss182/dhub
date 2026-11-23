@@ -1222,7 +1222,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const idColIdx = columns.findIndex((c) => c.name === 'id');
     const rawId = idColIdx !== -1 ? targetRow?.[idColIdx] : undefined;
     if (rawId === undefined || rawId === null) return;
-    const parsedId = typeof rawId === 'string' && /^-?\d+$/.test(rawId.trim()) ? Number(rawId.trim()) : rawId;
+    const trimmedId = typeof rawId === 'string' ? rawId.trim() : '';
+    const parsedId =
+      typeof rawId === 'string' && /^\d+$/.test(trimmedId) && Number.isSafeInteger(Number(trimmedId))
+        ? Number(trimmedId)
+        : rawId;
     const coll = encodeURIComponent(tableName || 'collection');
     const queryStr = `POST /collections/${coll}/points/query\n${JSON.stringify(
       { query: parsedId, limit: 10, with_payload: true, with_vector: true },
@@ -1250,7 +1254,17 @@ export const DataGrid: React.FC<DataGridProps> = ({
     }
 
     const inputType = getColumnInputType(col.dataType);
-    const finalVal = normalizeDateCommitValue(editVal, inputType);
+    let finalVal: unknown = isQdrant ? editVal : normalizeDateCommitValue(editVal, inputType);
+    if (isQdrant && typeof editVal === 'string') {
+      const rt = (col.rawType || '').toLowerCase();
+      const dt = (col.dataType || '').toLowerCase();
+      const t = editVal.trim();
+      if ((rt === 'number' || dt === 'integer' || dt === 'float') && t !== '' && Number.isFinite(Number(t))) {
+        finalVal = Number(t);
+      } else if ((rt === 'boolean' || dt === 'bool') && (t.toLowerCase() === 'true' || t.toLowerCase() === 'false')) {
+        finalVal = t.toLowerCase() === 'true';
+      }
+    }
 
     if (rowIndex < 0) {
       stageCellUpdate(tabId, rowIndex, {}, {}, col.name, finalVal);
@@ -2039,6 +2053,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
           const staged = latestStaged[targetRowIndex];
           columns.forEach((col, idx) => {
             if (!col.isAutoIncrement && isColumnEditable(col.name, true)) {
+              if (isQdrant && col.name === 'id') {
+                initialValues.id =
+                  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : '';
+                return;
+              }
               const rawVal =
                 staged?.type === 'update' && staged.changes[col.name] !== undefined
                   ? staged.changes[col.name]

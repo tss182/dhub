@@ -412,29 +412,41 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
       }
       if (Object.keys(opt).length > 0) patchBody.optimizers_config = opt;
 
-      const hnsw: Record<string, any> = { on_disk: hnswOnDisk };
+      const hnsw: Record<string, any> = {};
+      if (hnswOnDisk !== Boolean(collectionInfo?.config?.hnsw_config?.on_disk)) {
+        hnsw.on_disk = hnswOnDisk;
+      }
       if (hnswM.trim() !== '' && Number.isFinite(Number(hnswM))) {
         hnsw.m = Math.max(0, Math.floor(Number(hnswM)));
       }
       if (hnswEfConstruct.trim() !== '' && Number.isFinite(Number(hnswEfConstruct))) {
         hnsw.ef_construct = Math.max(4, Math.floor(Number(hnswEfConstruct)));
       }
-      patchBody.hnsw_config = hnsw;
+      if (Object.keys(hnsw).length > 0) patchBody.hnsw_config = hnsw;
 
-      const strictCfg: Record<string, any> = {
-        enabled: strictEnabled,
-        unindexed_filtering_retrieve: strictAllowUnindexed,
-      };
-      if (strictMaxLimit.trim() !== '' && Number.isFinite(Number(strictMaxLimit))) {
-        strictCfg.max_query_limit = Math.max(1, Math.floor(Number(strictMaxLimit)));
+      const hasExistingStrict = Boolean(collectionInfo?.config?.strict_mode_config);
+      if (
+        strictEnabled ||
+        hasExistingStrict ||
+        strictMaxLimit.trim() !== '' ||
+        strictMaxTimeout.trim() !== '' ||
+        strictMaxEf.trim() !== ''
+      ) {
+        const strictCfg: Record<string, any> = {
+          enabled: strictEnabled,
+          unindexed_filtering_retrieve: strictAllowUnindexed,
+        };
+        if (strictMaxLimit.trim() !== '' && Number.isFinite(Number(strictMaxLimit))) {
+          strictCfg.max_query_limit = Math.max(1, Math.floor(Number(strictMaxLimit)));
+        }
+        if (strictMaxTimeout.trim() !== '' && Number.isFinite(Number(strictMaxTimeout))) {
+          strictCfg.max_timeout = Math.max(1, Math.floor(Number(strictMaxTimeout)));
+        }
+        if (strictMaxEf.trim() !== '' && Number.isFinite(Number(strictMaxEf))) {
+          strictCfg.search_max_hnsw_ef = Math.max(1, Math.floor(Number(strictMaxEf)));
+        }
+        patchBody.strict_mode_config = strictCfg;
       }
-      if (strictMaxTimeout.trim() !== '' && Number.isFinite(Number(strictMaxTimeout))) {
-        strictCfg.max_timeout = Math.max(1, Math.floor(Number(strictMaxTimeout)));
-      }
-      if (strictMaxEf.trim() !== '' && Number.isFinite(Number(strictMaxEf))) {
-        strictCfg.search_max_hnsw_ef = Math.max(1, Math.floor(Number(strictMaxEf)));
-      }
-      patchBody.strict_mode_config = strictCfg;
 
       await runQdrantRest(`PATCH /collections/${encodeURIComponent(collectionName)}\n${JSON.stringify(patchBody)}`);
       alertSuccess(`Updated runtime settings for "${collectionName}".`, 'Collection Updated');
@@ -469,12 +481,13 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
   const handleUploadSnapshot = async () => {
     if (!connection) return;
     try {
-      const chosen = await Dialogs.OpenFile({
+      const rawChosen = await Dialogs.OpenFile({
         Title: `Upload Local Snapshot to ${collectionName}`,
         CanChooseFiles: true,
         AllowsMultipleSelection: false,
         Filters: [{ DisplayName: 'Snapshot Files (*.snapshot)', Pattern: '*.snapshot' }, { DisplayName: 'All Files (*.*)', Pattern: '*.*' }],
       });
+      const chosen = Array.isArray(rawChosen) ? rawChosen[0] : rawChosen;
       if (!chosen || typeof chosen !== 'string') return;
       const ok = await confirmDialog({
         title: 'Upload & Recover Snapshot',
@@ -520,8 +533,8 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
     if (!sk) return;
     setIsBusyAction(true);
     try {
-      const body = JSON.stringify({ create_sharding_key: { shard_key: sk } });
-      await runQdrantRest(`PUT /collections/${encodeURIComponent(collectionName)}/cluster\n${body}`);
+      const body = JSON.stringify({ shard_key: sk });
+      await runQdrantRest(`PUT /collections/${encodeURIComponent(collectionName)}/shards\n${body}`);
       alertSuccess(`Created shard key "${sk}".`, 'Shard Key Created');
       setNewShardKey('');
       await loadAll();

@@ -53,7 +53,12 @@ func NewQueryService(s *store.LocalStore, sm *manager.SessionManager, appGetter 
 
 func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResult, error) {
 	cfg, cfgErr := q.store.GetConnection(context.Background(), req.ConnectionID)
-	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
+	if cfgErr != nil {
+		errMsg := fmt.Sprintf("execution blocked: failed to verify connection permissions: %v", cfgErr)
+		q.emitStatus(req.ExecutionID, "error", errMsg)
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+	if cfg != nil && cfg.IsReadOnly {
 		var statements []string
 		if cfg.Driver == "qdrant" || cfg.Driver == "elasticsearch" || cfg.Driver == "es" {
 			statements = driver.SplitHTTPOrSQLStatements(req.SQL)
@@ -298,7 +303,10 @@ func (q *QueryService) PreviewChanges(connectionID, database, schema, table stri
 
 func (q *QueryService) SubmitChanges(connectionID, database, schema, table string, changes []driver.RowChange) (int64, error) {
 	cfg, cfgErr := q.store.GetConnection(context.Background(), connectionID)
-	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
+	if cfgErr != nil {
+		return 0, fmt.Errorf("submission blocked: failed to verify connection permissions: %w", cfgErr)
+	}
+	if cfg != nil && cfg.IsReadOnly {
 		return 0, fmt.Errorf("submission blocked: connection %q is configured as read-only", cfg.Name)
 	}
 

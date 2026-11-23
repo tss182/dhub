@@ -137,7 +137,10 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
     if (!swapAlias || !swapAlias.target.trim()) return;
     try {
       const body = JSON.stringify({
-        actions: [{ create_alias: { alias_name: swapAlias.alias, collection_name: swapAlias.target.trim() } }],
+        actions: [
+          { delete_alias: { alias_name: swapAlias.alias } },
+          { create_alias: { alias_name: swapAlias.alias, collection_name: swapAlias.target.trim() } },
+        ],
       });
       await runRest(`POST /collections/aliases\n${body}`);
       alertSuccess(`Alias "${swapAlias.alias}" switched to "${swapAlias.target.trim()}".`, 'Alias Swapped');

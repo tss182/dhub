@@ -457,7 +457,11 @@ export function buildUpdateSql(params: {
     const coll = encodeURIComponent(tableName || 'collection');
     const pkColIdx = columns.findIndex((c) => c.name === 'id');
     const rawId = pkColIdx !== -1 ? targetRow?.[pkColIdx] : undefined;
-    const parsedId = typeof rawId === 'string' && /^-?\d+$/.test(rawId.trim()) ? Number(rawId.trim()) : rawId;
+    const trimmedId = typeof rawId === 'string' ? rawId.trim() : '';
+    const parsedId =
+      typeof rawId === 'string' && /^\d+$/.test(trimmedId) && Number.isSafeInteger(Number(trimmedId))
+        ? Number(trimmedId)
+        : rawId;
     if (colName === 'vector' || colName.startsWith('vector.')) {
       let vecVal = newVal;
       if (typeof newVal === 'string') {
@@ -643,7 +647,11 @@ export function formatSelectedCells(params: {
         const val = getVal(vr, c, col.name);
         if (col.name === 'score') continue;
         if (col.name === 'id') {
-          pt.id = typeof val === 'string' && /^-?\d+$/.test(val.trim()) ? Number(val.trim()) : val;
+          const tVal = typeof val === 'string' ? val.trim() : '';
+          pt.id =
+            typeof val === 'string' && /^\d+$/.test(tVal) && Number.isSafeInteger(Number(tVal))
+              ? Number(tVal)
+              : val;
         } else if (col.name === 'vector') {
           if (typeof val === 'string') {
             try { pt.vector = JSON.parse(val); } catch { pt.vector = val; }

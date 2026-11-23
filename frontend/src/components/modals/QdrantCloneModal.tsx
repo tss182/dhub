@@ -138,7 +138,12 @@ export const QdrantCloneModal: React.FC<QdrantCloneModalProps> = ({
             const name = col?.name || '';
             const rawVal = row[idx];
             if (name === 'id') {
-              id = typeof rawVal === 'string' && /^-?\d+$/.test(rawVal) ? Number(rawVal) : rawVal;
+              if (typeof rawVal === 'string' && /^\d+$/.test(rawVal)) {
+                const n = Number(rawVal);
+                id = Number.isSafeInteger(n) ? n : rawVal;
+              } else {
+                id = rawVal;
+              }
             } else if (name === 'vector') {
               if (rawVal !== null && rawVal !== undefined && rawVal !== '') {
                 defaultVec = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal;
@@ -184,11 +189,19 @@ export const QdrantCloneModal: React.FC<QdrantCloneModalProps> = ({
       const aliasTarget = swapAlias.trim();
       if (aliasTarget) {
         setProgressMsg(`Swapping alias "${aliasTarget}" -> "${dst}"...`);
-        await runRest(
-          `POST /collections/aliases\n${JSON.stringify({
-            actions: [{ create_alias: { collection_name: dst, alias_name: aliasTarget } }],
-          })}`
-        );
+        let aliasExists = false;
+        try {
+          const aliasEnv = await runRest('GET /aliases');
+          const list = aliasEnv?.result?.aliases || [];
+          aliasExists = Array.isArray(list) && list.some((a: any) => a?.alias_name === aliasTarget);
+        } catch {}
+        const actions: any[] = aliasExists
+          ? [
+              { delete_alias: { alias_name: aliasTarget } },
+              { create_alias: { collection_name: dst, alias_name: aliasTarget } },
+            ]
+          : [{ create_alias: { collection_name: dst, alias_name: aliasTarget } }];
+        await runRest(`POST /collections/aliases\n${JSON.stringify({ actions })}`);
       }
 
       alertSuccess(

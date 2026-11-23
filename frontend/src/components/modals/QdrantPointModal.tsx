@@ -33,7 +33,7 @@ function parseMaybeJson(val: any): any {
 
 function parsePointIdValue(raw: string): string | number {
   const trimmed = raw.trim();
-  if (/^-?\d+$/.test(trimmed)) {
+  if (/^\d+$/.test(trimmed)) {
     const n = Number(trimmed);
     if (Number.isSafeInteger(n)) return n;
   }
@@ -75,9 +75,11 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
     const vecNames = vectorCols.length > 0 ? vectorCols.map((c) => c.name) : ['vector'];
     setEmbedTargetCol(vecNames[0] || 'vector');
 
+    let cancelled = false;
     if (mode === 'edit' && initialRow) {
       const idIdx = columns.findIndex((c) => c.name === 'id');
-      setPointId(idIdx >= 0 && initialRow[idIdx] != null ? String(initialRow[idIdx]) : '');
+      const rawIdStr = idIdx >= 0 && initialRow[idIdx] != null ? String(initialRow[idIdx]) : '';
+      setPointId(rawIdStr);
 
       const payloadObj: Record<string, any> = {};
       columns.forEach((c, idx) => {
@@ -90,11 +92,50 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
             initVecs[c.name] = '';
           }
         } else if (val !== undefined && val !== null) {
-          payloadObj[c.name] = parseMaybeJson(val);
+          const dtLower = (c.dataType || '').toLowerCase();
+          payloadObj[c.name] =
+            dtLower === 'array' || dtLower === 'object' || dtLower === 'json' ? parseMaybeJson(val) : val;
         }
       });
       setVectorInputs(initVecs);
       setPayloadJson(JSON.stringify(payloadObj, null, 2));
+
+      // Fetch full point from Qdrant so hidden columns / omitted projections are preserved on PUT overwrite
+      if (rawIdStr && connectionId && collectionName) {
+        QueryService.ExecuteQuery({
+          connectionId,
+          database,
+          schema,
+          sql: `GET /collections/${encodeURIComponent(collectionName)}/points/${encodeURIComponent(rawIdStr)}`,
+          executionId: `qdrant-pt-get-${Date.now()}`,
+          limit: 1,
+          offset: 0,
+        })
+          .then((res) => {
+            if (cancelled || res?.error || !res?.rows?.[0] || !res?.columns) return;
+            const fullCols = res.columns;
+            const fullRow = res.rows[0];
+            const fullPayload: Record<string, any> = {};
+            const fullVecs: Record<string, string> = { ...initVecs };
+            fullCols.forEach((c, idx) => {
+              if (c.name === 'id' || c.name === 'score') return;
+              const val = fullRow[idx];
+              if (isVectorColumn(c.dataType, c.rawType) || c.name === 'vector' || c.name.startsWith('vector.')) {
+                fullVecs[c.name] = val !== null && val !== undefined ? (typeof val === 'string' ? val : JSON.stringify(val)) : '';
+              } else if (val !== undefined && val !== null) {
+                const dtLower = (c.dataType || '').toLowerCase();
+                fullPayload[c.name] =
+                  dtLower === 'array' || dtLower === 'object' || dtLower === 'json' ? parseMaybeJson(val) : val;
+              }
+            });
+            setVectorInputs(fullVecs);
+            setPayloadJson(JSON.stringify(fullPayload, null, 2));
+          })
+          .catch(() => {});
+      }
+      return () => {
+        cancelled = true;
+      };
     } else {
       const uuid =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -223,11 +264,19 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
     const idVal = parsePointIdValue(pointId);
     setIsSaving(true);
     try {
+      const mergedVec =
+        Object.keys(parsedVectors).length > 0
+          ? hasSingleVector
+            ? { '': singleVectorVal, ...parsedVectors }
+            : parsedVectors
+          : hasSingleVector
+          ? singleVectorVal
+          : {};
       if (mode === 'insert') {
         const pt: Record<string, any> = {
           id: idVal,
           payload: parsedPayload,
-          vector: hasSingleVector ? singleVectorVal : Object.keys(parsedVectors).length > 0 ? parsedVectors : {},
+          vector: mergedVec,
         };
         const cmd = `PUT /collections/${collEsc}/points?wait=true\n${JSON.stringify({ points: [pt] })}`;
         const res = await QueryService.ExecuteQuery({
@@ -260,7 +309,7 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
 
         if (hasSingleVector || Object.keys(parsedVectors).length > 0) {
           const vecCmd = `PUT /collections/${collEsc}/points/vectors?wait=true\n${JSON.stringify({
-            points: [{ id: idVal, vector: hasSingleVector ? singleVectorVal : parsedVectors }],
+            points: [{ id: idVal, vector: mergedVec }],
           })}`;
           const vRes = await QueryService.ExecuteQuery({
             connectionId,

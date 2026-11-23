@@ -3,6 +3,7 @@ package qdrant
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
@@ -570,6 +571,24 @@ func formatCellValue(v any) any {
 			return string(b)
 		}
 		return fmt.Sprintf("%v", val)
+	case json.Number:
+		if iv, err := val.Int64(); err == nil {
+			// Preserve > 2^53 integers as strings so JavaScript Number never loses precision.
+			if iv > 9007199254740991 || iv < -9007199254740991 {
+				return val.String()
+			}
+			return iv
+		}
+		if uv, err := strconv.ParseUint(val.String(), 10, 64); err == nil {
+			if uv > 9007199254740991 {
+				return val.String()
+			}
+			return int64(uv)
+		}
+		if fv, err := val.Float64(); err == nil {
+			return fv
+		}
+		return val.String()
 	case float64:
 		if val == float64(int64(val)) {
 			return int64(val)
@@ -578,6 +597,22 @@ func formatCellValue(v any) any {
 	default:
 		return val
 	}
+}
+
+func decodeJSONUseNumber(data []byte, target any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	return dec.Decode(target)
+}
+
+func generateUUIDv4() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func pointsToQueryResult(execID, collection string, points []qdrantPoint, elapsedMs int64, isEditable bool) *driver.QueryResult {
@@ -589,6 +624,7 @@ func pointsToQueryResultWithProjection(execID, collection string, points []qdran
 	hasSingleVec := false
 	namedVecSet := make(map[string]bool)
 	payloadSet := make(map[string]bool)
+	payloadTypes := make(map[string]string)
 
 	for _, pt := range points {
 		if pt.Score != nil {
@@ -603,8 +639,20 @@ func pointsToQueryResultWithProjection(execID, collection string, points []qdran
 				hasSingleVec = true
 			}
 		}
-		for k := range pt.Payload {
+		for k, v := range pt.Payload {
 			payloadSet[k] = true
+			if v != nil {
+				inferred := inferJSONType(v)
+				if prev, exists := payloadTypes[k]; !exists {
+					payloadTypes[k] = inferred
+				} else if prev != inferred {
+					if (prev == "integer" && inferred == "float") || (prev == "float" && inferred == "integer") {
+						payloadTypes[k] = "float"
+					} else {
+						payloadTypes[k] = "json"
+					}
+				}
+			}
 		}
 	}
 
@@ -643,7 +691,11 @@ func pointsToQueryResultWithProjection(execID, collection string, points []qdran
 		}
 		sort.Strings(payloadNames)
 		for _, k := range payloadNames {
-			columns = append(columns, driver.ColumnMeta{Name: k, DataType: "json", RawType: "string", IsNullable: true})
+			dt := payloadTypes[k]
+			if dt == "" {
+				dt = "json"
+			}
+			columns = append(columns, driver.ColumnMeta{Name: k, DataType: dt, RawType: rawTypeFromJSONType(dt), IsNullable: true})
 		}
 
 		if hasSingleVec {
@@ -1523,7 +1575,7 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 							return nil, stepErr
 						}
 						var stepResp scrollResult
-						if err := json.Unmarshal(stepBytes, &stepResp); err != nil {
+						if err := decodeJSONUseNumber(stepBytes, &stepResp); err != nil {
 							return nil, err
 						}
 						pts := stepResp.Result.Points
@@ -1558,7 +1610,7 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 					return nil, err
 				}
 				var scrollResp scrollResult
-				if err := json.Unmarshal(respBytes, &scrollResp); err != nil {
+				if err := decodeJSONUseNumber(respBytes, &scrollResp); err != nil {
 					return nil, err
 				}
 				pts := scrollResp.Result.Points
@@ -1605,7 +1657,7 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 						return nil, stepErr
 					}
 					var stepResp scrollResult
-					if err := json.Unmarshal(stepBytes, &stepResp); err != nil {
+					if err := decodeJSONUseNumber(stepBytes, &stepResp); err != nil {
 						return nil, err
 					}
 					curOff += len(stepResp.Result.Points)
@@ -1639,7 +1691,7 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 				return nil, err
 			}
 			var scrollResp scrollResult
-			if err := json.Unmarshal(respBytes, &scrollResp); err != nil {
+			if err := decodeJSONUseNumber(respBytes, &scrollResp); err != nil {
 				return nil, err
 			}
 
@@ -1734,11 +1786,16 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 
 		// Try to extract collection name from path: /collections/{name}/...
 		coll := ""
-		trimmedPath := strings.TrimPrefix(path, "/")
+		cleanPath := strings.SplitN(strings.SplitN(path, "?", 2)[0], "#", 2)[0]
+		trimmedPath := strings.TrimPrefix(cleanPath, "/")
 		if strings.HasPrefix(trimmedPath, "collections/") {
 			segs := strings.Split(strings.TrimPrefix(trimmedPath, "collections/"), "/")
-			if len(segs) > 0 {
-				coll = segs[0]
+			if len(segs) > 0 && segs[0] != "" {
+				if unesc, uErr := url.PathUnescape(segs[0]); uErr == nil {
+					coll = unesc
+				} else {
+					coll = segs[0]
+				}
 			}
 		}
 
@@ -1749,32 +1806,56 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 		var env struct {
 			Result json.RawMessage `json:"result"`
 		}
-		if json.Unmarshal(respBytes, &env) == nil && len(env.Result) > 0 {
+		if decodeJSONUseNumber(respBytes, &env) == nil && len(env.Result) > 0 {
+			lowerCleanPath := strings.ToLower(cleanPath)
+			isPointsEndpoint := strings.Contains(lowerCleanPath, "/points")
+
 			// 4a. Single point object (GET /collections/{name}/points/{id})
-			var singlePt qdrantPoint
-			if json.Unmarshal(env.Result, &singlePt) == nil && singlePt.ID != nil {
-				return pointsToQueryResult(req.ExecutionID, coll, []qdrantPoint{singlePt}, time.Since(start).Milliseconds(), coll != ""), nil
+			if isPointsEndpoint {
+				var singlePt qdrantPoint
+				if decodeJSONUseNumber(env.Result, &singlePt) == nil && singlePt.ID != nil {
+					return pointsToQueryResult(req.ExecutionID, coll, []qdrantPoint{singlePt}, time.Since(start).Milliseconds(), coll != ""), nil
+				}
+				// 4b. Standard points array (search/recommend/discover)
+				var pts []qdrantPoint
+				if decodeJSONUseNumber(env.Result, &pts) == nil && pts != nil && (len(pts) == 0 || pts[0].ID != nil) {
+					return pointsToQueryResult(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), false), nil
+				}
 			}
-			// 4a. Standard points array (search/recommend/discover)
-			var pts []qdrantPoint
-			if json.Unmarshal(env.Result, &pts) == nil && pts != nil {
-				return pointsToQueryResult(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), false), nil
-			}
-			// 4b. Scroll / Query API result.points
+			// 4c. Scroll / Query API result.points
 			var scrollObj struct {
 				Points []qdrantPoint `json:"points"`
 			}
-			if json.Unmarshal(env.Result, &scrollObj) == nil && scrollObj.Points != nil {
+			if decodeJSONUseNumber(env.Result, &scrollObj) == nil && scrollObj.Points != nil {
 				return pointsToQueryResult(req.ExecutionID, coll, scrollObj.Points, time.Since(start).Milliseconds(), coll != ""), nil
 			}
-			// 4c. Grouped search/query result.groups
+			// 4d. Query Batch API []{points: [...]}
+			var queryBatch []struct {
+				Points []qdrantPoint `json:"points"`
+			}
+			if isPointsEndpoint && decodeJSONUseNumber(env.Result, &queryBatch) == nil && len(queryBatch) > 0 && queryBatch[0].Points != nil {
+				var flat []qdrantPoint
+				for bIdx, grp := range queryBatch {
+					for _, h := range grp.Points {
+						if h.Payload == nil {
+							h.Payload = make(map[string]any)
+						}
+						if _, exists := h.Payload["_batch_index"]; !exists {
+							h.Payload["_batch_index"] = bIdx
+						}
+						flat = append(flat, h)
+					}
+				}
+				return pointsToQueryResult(req.ExecutionID, coll, flat, time.Since(start).Milliseconds(), false), nil
+			}
+			// 4e. Grouped search/query result.groups
 			var groupsObj struct {
 				Groups []struct {
 					ID   any           `json:"id"`
 					Hits []qdrantPoint `json:"hits"`
 				} `json:"groups"`
 			}
-			if json.Unmarshal(env.Result, &groupsObj) == nil && groupsObj.Groups != nil {
+			if decodeJSONUseNumber(env.Result, &groupsObj) == nil && groupsObj.Groups != nil {
 				var flat []qdrantPoint
 				for _, g := range groupsObj.Groups {
 					for _, h := range g.Hits {
@@ -1789,9 +1870,9 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 				}
 				return pointsToQueryResult(req.ExecutionID, coll, flat, time.Since(start).Milliseconds(), false), nil
 			}
-			// 4d. Batch search/query [][]qdrantPoint
+			// 4f. Legacy Batch search [][]qdrantPoint
 			var batchPts [][]qdrantPoint
-			if json.Unmarshal(env.Result, &batchPts) == nil && batchPts != nil {
+			if isPointsEndpoint && decodeJSONUseNumber(env.Result, &batchPts) == nil && batchPts != nil {
 				var flat []qdrantPoint
 				for bIdx, grp := range batchPts {
 					for _, h := range grp {
@@ -1806,14 +1887,14 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 				}
 				return pointsToQueryResult(req.ExecutionID, coll, flat, time.Since(start).Milliseconds(), false), nil
 			}
-			// 4e. Facet API result.hits
+			// 4g. Facet API result.hits
 			var facetObj struct {
 				Hits []struct {
 					Value any   `json:"value"`
 					Count int64 `json:"count"`
 				} `json:"hits"`
 			}
-			if json.Unmarshal(env.Result, &facetObj) == nil && facetObj.Hits != nil {
+			if decodeJSONUseNumber(env.Result, &facetObj) == nil && facetObj.Hits != nil {
 				rows := make([][]any, len(facetObj.Hits))
 				for i, h := range facetObj.Hits {
 					rows[i] = []any{formatCellValue(h.Value), h.Count}
@@ -1857,11 +1938,22 @@ func (q *QdrantDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, e
 }
 
 func parsePointID(raw any) any {
-	if s, ok := raw.(string); ok {
-		if iv, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
-			return iv
+	switch v := raw.(type) {
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if uv, err := strconv.ParseUint(trimmed, 10, 64); err == nil {
+			return uv
 		}
-		return s
+		return v
+	case json.Number:
+		if uv, err := strconv.ParseUint(v.String(), 10, 64); err == nil {
+			return uv
+		}
+		return v.String()
+	case float64:
+		if v >= 0 && v == float64(uint64(v)) {
+			return uint64(v)
+		}
 	}
 	return raw
 }
@@ -1895,10 +1987,18 @@ func buildPointForInsert(changes map[string]any) map[string]any {
 	payload := pt["payload"].(map[string]any)
 	for k, v := range changes {
 		if k == "id" {
+			if v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
+				continue
+			}
 			pt["id"] = parsePointID(v)
 		} else if k == "vector" {
-			pt["vector"] = parseVectorValue(v)
+			if v != nil {
+				pt["vector"] = parseVectorValue(v)
+			}
 		} else if strings.HasPrefix(k, "vector.") {
+			if v == nil {
+				continue
+			}
 			vecMap, ok := pt["vector"].(map[string]any)
 			if !ok {
 				vecMap = make(map[string]any)
@@ -1919,12 +2019,16 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 		switch c.Type {
 		case "insert":
 			pt := buildPointForInsert(c.Changes)
+			if _, ok := pt["id"]; !ok {
+				pt["id"] = generateUUIDv4()
+			}
 			b, _ := json.Marshal(map[string]any{"points": []any{pt}})
 			statements = append(statements, fmt.Sprintf("PUT /collections/%s/points?wait=true\n%s", escapedTable, string(b)))
 		case "update":
 			idVal := parsePointID(c.PrimaryKey["id"])
 			payload := make(map[string]any)
 			var deleteKeys []string
+			var deleteVectors []string
 			var singleVec any
 			namedVecs := make(map[string]any)
 
@@ -1932,9 +2036,18 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 				if k == "id" {
 					continue
 				} else if k == "vector" {
-					singleVec = parseVectorValue(v)
+					if v == nil {
+						deleteVectors = append(deleteVectors, "")
+					} else {
+						singleVec = parseVectorValue(v)
+					}
 				} else if strings.HasPrefix(k, "vector.") {
-					namedVecs[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
+					vecName := strings.TrimPrefix(k, "vector.")
+					if v == nil {
+						deleteVectors = append(deleteVectors, vecName)
+					} else {
+						namedVecs[vecName] = parseVectorValue(v)
+					}
 				} else if v == nil {
 					deleteKeys = append(deleteKeys, k)
 				} else {
@@ -1953,6 +2066,9 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 			if singleVec != nil || len(namedVecs) > 0 {
 				var vecPayload any = singleVec
 				if len(namedVecs) > 0 {
+					if singleVec != nil {
+						namedVecs[""] = singleVec
+					}
 					vecPayload = namedVecs
 				}
 				b, _ := json.Marshal(map[string]any{
@@ -1961,6 +2077,11 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 					},
 				})
 				statements = append(statements, fmt.Sprintf("PUT /collections/%s/points/vectors?wait=true\n%s", escapedTable, string(b)))
+			}
+			if len(deleteVectors) > 0 {
+				sort.Strings(deleteVectors)
+				b, _ := json.Marshal(map[string]any{"points": []any{idVal}, "vectors": deleteVectors})
+				statements = append(statements, fmt.Sprintf("POST /collections/%s/points/vectors/delete?wait=true\n%s", escapedTable, string(b)))
 			}
 		case "delete":
 			idVal := parsePointID(c.PrimaryKey["id"])
@@ -2013,7 +2134,7 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 			}
 			pt := buildPointForInsert(c.Changes)
 			if _, ok := pt["id"]; !ok {
-				pt["id"] = time.Now().UnixNano()
+				pt["id"] = generateUUIDv4()
 			}
 			insertBatch = append(insertBatch, pt)
 			if len(insertBatch) >= 250 {
@@ -2032,6 +2153,7 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 			idVal := parsePointID(c.PrimaryKey["id"])
 			payload := make(map[string]any)
 			var deleteKeys []string
+			var deleteVectors []string
 			var singleVec any
 			namedVecs := make(map[string]any)
 
@@ -2039,9 +2161,18 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 				if k == "id" {
 					continue
 				} else if k == "vector" {
-					singleVec = parseVectorValue(v)
+					if v == nil {
+						deleteVectors = append(deleteVectors, "")
+					} else {
+						singleVec = parseVectorValue(v)
+					}
 				} else if strings.HasPrefix(k, "vector.") {
-					namedVecs[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
+					vecName := strings.TrimPrefix(k, "vector.")
+					if v == nil {
+						deleteVectors = append(deleteVectors, vecName)
+					} else {
+						namedVecs[vecName] = parseVectorValue(v)
+					}
 				} else if v == nil {
 					deleteKeys = append(deleteKeys, k)
 				} else {
@@ -2070,6 +2201,9 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 			if singleVec != nil || len(namedVecs) > 0 {
 				var vecPayload any = singleVec
 				if len(namedVecs) > 0 {
+					if singleVec != nil {
+						namedVecs[""] = singleVec
+					}
 					vecPayload = namedVecs
 				}
 				body := map[string]any{
@@ -2078,6 +2212,15 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 					},
 				}
 				if _, _, err := q.doRequest(ctx, http.MethodPut, "/collections/"+escapedTable+"/points/vectors?wait=true", body); err != nil {
+					return totalAffected, err
+				}
+			}
+			if len(deleteVectors) > 0 {
+				body := map[string]any{
+					"points":  []any{idVal},
+					"vectors": deleteVectors,
+				}
+				if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+escapedTable+"/points/vectors/delete?wait=true", body); err != nil {
 					return totalAffected, err
 				}
 			}

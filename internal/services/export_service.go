@@ -653,7 +653,10 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 	defer e.unregisterOp(opID)
 
 	cfg, cfgErr := e.store.GetConnection(ctx, req.ConnectionID)
-	if cfgErr == nil && cfg != nil && cfg.IsReadOnly {
+	if cfgErr != nil {
+		return nil, fmt.Errorf("import blocked: failed to verify connection permissions: %w", cfgErr)
+	}
+	if cfg != nil && cfg.IsReadOnly {
 		return nil, fmt.Errorf("import blocked: connection %q is configured as read-only", cfg.Name)
 	}
 

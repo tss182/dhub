@@ -261,7 +261,11 @@ func (s *SchemaService) UploadQdrantSnapshot(connectionID, collectionName, fileP
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	if cfg, cErr := s.store.GetConnection(ctx, connectionID); cErr == nil && cfg != nil && cfg.IsReadOnly {
+	cfg, cErr := s.store.GetConnection(ctx, connectionID)
+	if cErr != nil {
+		return fmt.Errorf("snapshot upload blocked: failed to verify connection permissions: %w", cErr)
+	}
+	if cfg != nil && cfg.IsReadOnly {
 		return fmt.Errorf("snapshot upload blocked: connection %q is configured as read-only", cfg.Name)
 	}
 	drv, err := s.sessions.GetOrConnect(ctx, connectionID)

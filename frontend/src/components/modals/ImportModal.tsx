@@ -60,7 +60,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
   const handleBrowseFile = async () => {
     try {
-      const chosen = await Dialogs.OpenFile({
+      const rawChosen = await Dialogs.OpenFile({
         Title: `Select File to Import into ${table}`,
         CanChooseFiles: true,
         AllowsMultipleSelection: false,
@@ -71,6 +71,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           { DisplayName: 'All Files (*.*)', Pattern: '*.*' },
         ],
       });
+      const chosen = Array.isArray(rawChosen) ? rawChosen[0] : rawChosen;
       if (chosen && typeof chosen === 'string' && chosen.trim()) {
         setFilePath(chosen.trim());
       }

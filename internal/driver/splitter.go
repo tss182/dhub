@@ -425,7 +425,7 @@ func SplitStatements(sql string) []string {
 func StripLeadingComments(sql string) string {
 	s := strings.TrimSpace(sql)
 	for {
-		if strings.HasPrefix(s, "--") {
+		if strings.HasPrefix(s, "--") || strings.HasPrefix(s, "//") {
 			if idx := strings.Index(s, "\n"); idx != -1 {
 				s = strings.TrimSpace(s[idx+1:])
 				continue
@@ -647,9 +647,14 @@ func isReadOnlyHTTPCommand(clean string) bool {
 		return false
 	}
 	method := strings.ToUpper(fields[0])
-	path := strings.SplitN(fields[1], "?", 2)[0]
+	// Strip #fragment before ?query so URL fragments cannot spoof suffixes.
+	rawTarget := strings.SplitN(fields[1], "#", 2)[0]
+	path := strings.SplitN(rawTarget, "?", 2)[0]
 	if !strings.HasPrefix(path, "/") {
 		return false
+	}
+	if len(path) > 1 {
+		path = strings.TrimRight(path, "/")
 	}
 	if method == "GET" {
 		return true
@@ -657,27 +662,29 @@ func isReadOnlyHTTPCommand(clean string) bool {
 	if method == "POST" {
 		lowerPath := strings.ToLower(path)
 		if strings.HasPrefix(lowerPath, "/collections/") {
-			for _, suffix := range []string{
-				"/points/search",
-				"/points/search/batch",
-				"/points/search/groups",
-				"/points/scroll",
-				"/points/query",
-				"/points/query/batch",
-				"/points/query/groups",
-				"/points/count",
-				"/points/recommend",
-				"/points/recommend/batch",
-				"/points/recommend/groups",
-				"/points/discover",
-				"/points/discover/batch",
-				"/points/discover/groups",
-				"/points/search/matrix/pairs",
-				"/points/search/matrix/offsets",
-				"/facet",
-				"/points",
-			} {
-				if strings.HasSuffix(lowerPath, suffix) {
+			rest := strings.TrimPrefix(lowerPath, "/collections/")
+			collSeg, actionSeg, hasAction := strings.Cut(rest, "/")
+			if collSeg != "" && hasAction {
+				actionPath := "/" + actionSeg
+				switch actionPath {
+				case "/points/search",
+					"/points/search/batch",
+					"/points/search/groups",
+					"/points/scroll",
+					"/points/query",
+					"/points/query/batch",
+					"/points/query/groups",
+					"/points/count",
+					"/points/recommend",
+					"/points/recommend/batch",
+					"/points/recommend/groups",
+					"/points/discover",
+					"/points/discover/batch",
+					"/points/discover/groups",
+					"/points/search/matrix/pairs",
+					"/points/search/matrix/offsets",
+					"/facet",
+					"/points":
 					return true
 				}
 			}
@@ -782,7 +789,17 @@ func SplitHTTPOrSQLStatements(raw string) []string {
 			}
 		}
 
-		if !isCommentLine && !hasNonComment {
+		if isCommentLine {
+			// Do not append trailing comments onto a completed REST command's JSON body,
+			// and never scan comment text for quotes/braces.
+			if !curIsREST || braceDepth > 0 || bracketDepth > 0 {
+				cur.WriteString(line)
+				cur.WriteByte('\n')
+			}
+			continue
+		}
+
+		if !hasNonComment {
 			hasNonComment = true
 			if isHTTPMethodLine(trimmed) {
 				curIsREST = true
