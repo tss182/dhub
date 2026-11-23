@@ -365,7 +365,8 @@ export const ConnectionDialog: React.FC = () => {
       setConnections(updated as any);
       moveConnectionToFolder(id, folderId || null);
       setPendingFolderIdForNewConn(null);
-      setActiveConnection(id, databaseName || 'main', 'main');
+      const defaultDb = driver === 'qdrant' ? 'default' : 'main';
+      setActiveConnection(id, databaseName || defaultDb, defaultDb);
       setConnectionDialogOpen(false);
     } catch (e: any) {
       alertError(e?.message || String(e), 'Failed to Save Connection');
@@ -391,7 +392,8 @@ export const ConnectionDialog: React.FC = () => {
       setConnections(updated as any);
       if (activeConnectionId === editingConnectionId) {
         if (updated && updated.length > 0) {
-          setActiveConnection(updated[0].id, updated[0].databaseName || 'main', 'main');
+          const nextDb = updated[0].driver === 'qdrant' ? 'default' : 'main';
+          setActiveConnection(updated[0].id, updated[0].databaseName || nextDb, nextDb);
         } else {
           setActiveConnection('', '', '');
         }
@@ -690,12 +692,18 @@ export const ConnectionDialog: React.FC = () => {
                               if (parsed.port) {
                                 setPort(Number(parsed.port));
                               } else if (parsed.protocol === 'https:') {
+                                setPort(443);
+                              } else if (parsed.protocol === 'http:') {
                                 setPort(6333);
                               }
                               if (parsed.protocol === 'https:' && sslMode === 'disable') {
                                 setSslMode('verify-full');
+                              } else if (parsed.protocol === 'http:' && sslMode !== 'disable') {
+                                setSslMode('disable');
                               }
                             } catch {}
+                          } else if (driver === 'qdrant' && !val.includes('://') && sslMode === 'verify-full') {
+                            setSslMode('disable');
                           }
                         }}
                         className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"

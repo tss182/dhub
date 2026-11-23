@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -495,11 +496,24 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		return mongodb.NewMongoDBDriver(u.String())
 	case "qdrant":
 		baseURL, origHostname := resolveHTTPBaseURL(cfg, host, port, 6333)
-		tlsCfg := buildHTTPDriverTLSConfig(cfg, baseURL, origHostname)
-		return qdrant.NewQdrantDriver(baseURL, cfg.Password, tlsCfg)
+		tlsCfg, tlsErr := buildHTTPDriverTLSConfig(cfg, baseURL, origHostname)
+		if tlsErr != nil {
+			return nil, tlsErr
+		}
+		drv, err := qdrant.NewQdrantDriver(baseURL, cfg.Password, tlsCfg)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.SSHEnabled && origHostname != "" {
+			drv.SetHostHeader(origHostname)
+		}
+		return drv, nil
 	case "elasticsearch", "es":
 		baseURL, origHostname := resolveHTTPBaseURL(cfg, host, port, 9200)
-		tlsCfg := buildHTTPDriverTLSConfig(cfg, baseURL, origHostname)
+		tlsCfg, tlsErr := buildHTTPDriverTLSConfig(cfg, baseURL, origHostname)
+		if tlsErr != nil {
+			return nil, tlsErr
+		}
 		return elasticsearch.NewElasticsearchDriver(baseURL, cfg.Username, cfg.Password, tlsCfg)
 	case "clickhouse":
 		connStr := strings.TrimSpace(cfg.Host)
@@ -588,35 +602,48 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
 		if u, err := url.Parse(rawHost); err == nil && u.Hostname() != "" {
 			remoteHost = u.Hostname()
-			if remotePort <= 0 {
-				if pStr := u.Port(); pStr != "" {
-					if p, pErr := strconv.Atoi(pStr); pErr == nil && p > 0 {
-						remotePort = p
-					}
-				} else if u.Scheme == "https" {
+			if pStr := u.Port(); pStr != "" {
+				if p, pErr := strconv.Atoi(pStr); pErr == nil && p > 0 {
+					remotePort = p
+				}
+			} else if remotePort <= 0 {
+				if u.Scheme == "https" {
 					remotePort = 443
+				} else if u.Scheme == "http" {
+					remotePort = 80
 				}
 			}
 		}
+	}
+	if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "qdrant") {
+		remotePort = 6333
 	}
 	return remoteHost, remotePort
 }
 
 func resolveHTTPBaseURL(cfg store.ConnectionConfig, host string, port, defaultPort int) (baseURL, origHostname string) {
 	rawHost := strings.TrimSpace(cfg.Host)
+	wantTLS := cfg.SSLMode != "" && cfg.SSLMode != "disable"
 	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
-		if cfg.SSHEnabled {
-			if u, err := url.Parse(rawHost); err == nil {
-				origHostname = u.Hostname()
+		if u, err := url.Parse(rawHost); err == nil {
+			origHostname = u.Hostname()
+			if wantTLS && u.Scheme == "http" {
+				u.Scheme = "https"
+			}
+			if cfg.SSHEnabled {
 				if port <= 0 {
 					port = defaultPort
 				}
 				if host == "" {
 					host = "127.0.0.1"
 				}
-				u.Host = fmt.Sprintf("%s:%d", host, port)
+				u.Host = net.JoinHostPort(host, strconv.Itoa(port))
 				return strings.TrimRight(u.String(), "/"), origHostname
 			}
+			if u.Port() == "" && port > 0 && port != 443 && port != 80 {
+				u.Host = net.JoinHostPort(origHostname, strconv.Itoa(port))
+			}
+			return strings.TrimRight(u.String(), "/"), origHostname
 		}
 		return strings.TrimRight(rawHost, "/"), ""
 	}
@@ -627,35 +654,59 @@ func resolveHTTPBaseURL(cfg store.ConnectionConfig, host string, port, defaultPo
 		host = "127.0.0.1"
 	}
 	scheme := "http"
-	if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+	if wantTLS {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s:%d", scheme, host, port), ""
+	if cfg.SSHEnabled {
+		origHostname = rawHost
+	}
+	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, strconv.Itoa(port))), origHostname
 }
 
-func buildHTTPDriverTLSConfig(cfg store.ConnectionConfig, baseURL, origHostname string) *tls.Config {
+func buildHTTPDriverTLSConfig(cfg store.ConnectionConfig, baseURL, origHostname string) (*tls.Config, error) {
 	if !strings.HasPrefix(baseURL, "https://") && (cfg.SSLMode == "" || cfg.SSLMode == "disable") {
-		return nil
+		return nil, nil
 	}
 	tlsCfg := &tls.Config{}
 	if cfg.SSHEnabled && origHostname != "" {
 		tlsCfg.ServerName = origHostname
 	}
 	if cfg.SSLCAPath != "" {
-		rootCertPool := x509.NewCertPool()
-		if pem, err := os.ReadFile(cfg.SSLCAPath); err == nil {
-			rootCertPool.AppendCertsFromPEM(pem)
-			tlsCfg.RootCAs = rootCertPool
+		pem, err := os.ReadFile(cfg.SSLCAPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read SSL CA file %q: %w", cfg.SSLCAPath, err)
 		}
+		rootCertPool := x509.NewCertPool()
+		if !rootCertPool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("failed to parse SSL CA certificates from %q", cfg.SSLCAPath)
+		}
+		tlsCfg.RootCAs = rootCertPool
 	}
 	if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
-		if cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath); err == nil {
-			tlsCfg.Certificates = []tls.Certificate{cert}
+		cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load SSL client certificate/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	switch cfg.SSLMode {
+	case "require", "required":
+		tlsCfg.InsecureSkipVerify = true
+	case "verify-ca":
+		tlsCfg.InsecureSkipVerify = true
+		roots := tlsCfg.RootCAs
+		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			opts := x509.VerifyOptions{
+				Roots:         roots,
+				Intermediates: x509.NewCertPool(),
+			}
+			for _, cert := range cs.PeerCertificates[1:] {
+				opts.Intermediates.AddCert(cert)
+			}
+			_, err := cs.PeerCertificates[0].Verify(opts)
+			return err
 		}
 	}
-	if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
-		tlsCfg.InsecureSkipVerify = true
-	}
-	return tlsCfg
+	return tlsCfg, nil
 }
 

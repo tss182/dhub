@@ -29,9 +29,15 @@ import (
 type QdrantDriver struct {
 	baseURL     string
 	apiKey      string
+	hostHeader  string
 	client      *http.Client
 	cursorMu    sync.Mutex
 	cursorCache map[string]map[int]any
+}
+
+// SetHostHeader overrides the HTTP Host header (used when tunneling over SSH).
+func (q *QdrantDriver) SetHostHeader(host string) {
+	q.hostHeader = strings.TrimSpace(host)
 }
 
 // NewQdrantDriver creates a Qdrant driver targeting baseURL (e.g. http://127.0.0.1:6333).
@@ -86,6 +92,9 @@ func (q *QdrantDriver) doRequest(ctx context.Context, method, path string, body 
 	req, err := http.NewRequestWithContext(ctx, method, q.baseURL+path, bodyReader)
 	if err != nil {
 		return nil, 0, err
+	}
+	if q.hostHeader != "" {
+		req.Host = q.hostHeader
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -155,6 +164,9 @@ func (q *QdrantDriver) DownloadSnapshot(ctx context.Context, collectionName, sna
 	if err != nil {
 		return 0, err
 	}
+	if q.hostHeader != "" {
+		req.Host = q.hostHeader
+	}
 	if q.apiKey != "" {
 		req.Header.Set("api-key", q.apiKey)
 	}
@@ -220,6 +232,9 @@ func (q *QdrantDriver) UploadSnapshot(ctx context.Context, collectionName, fileP
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.baseURL+path, pr)
 	if err != nil {
 		return err
+	}
+	if q.hostHeader != "" {
+		req.Host = q.hostHeader
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	if q.apiKey != "" {
@@ -746,7 +761,11 @@ func pointsToQueryResultWithProjection(execID, collection string, points []qdran
 				}
 			default:
 				if pt.Payload != nil {
-					row = append(row, formatCellValue(pt.Payload[col.Name]))
+					if pv, ok := lookupPayloadPath(pt.Payload, col.Name); ok {
+						row = append(row, formatCellValue(pv))
+					} else {
+						row = append(row, nil)
+					}
 				} else {
 					row = append(row, nil)
 				}
@@ -805,10 +824,10 @@ func (q *QdrantDriver) buildEmptyCollectionColumns(ctx context.Context, coll str
 }
 
 var (
-	sqlSelectCountRegex = regexp.MustCompile(`(?i)^\s*SELECT\s+COUNT\(\*\)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
-	sqlSelectRegex      = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*;?\s*$`)
+	sqlSelectCountRegex = regexp.MustCompile(`(?is)^\s*SELECT\s+COUNT\(\*\)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
+	sqlSelectRegex      = regexp.MustCompile(`(?is)^\s*SELECT\s+(.+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*;?\s*$`)
 	sqlTruncateRegex    = regexp.MustCompile(`(?i)^\s*TRUNCATE\s+(?:TABLE\s+)?([^\s;]+)\s*;?\s*$`)
-	sqlDeleteRegex      = regexp.MustCompile(`(?i)^\s*DELETE\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
+	sqlDeleteRegex      = regexp.MustCompile(`(?is)^\s*DELETE\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
 	httpCmdRegex        = regexp.MustCompile(`(?i)^(GET|POST|PUT|DELETE|PATCH)\s+(\S+)(?:\s+([\s\S]*))?$`)
 )
 
@@ -825,10 +844,86 @@ func stripIdentQuotes(s string) string {
 	return strings.Trim(s, "\"`'[]")
 }
 
+func lookupPayloadPath(payload map[string]any, path string) (any, bool) {
+	if payload == nil {
+		return nil, false
+	}
+	if v, ok := payload[path]; ok {
+		return v, true
+	}
+	if !strings.Contains(path, ".") {
+		return nil, false
+	}
+	segs := strings.Split(path, ".")
+	var cur any = payload
+	for _, seg := range segs {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		cur, ok = m[seg]
+		if !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+func hasBalancedOuterParens(s string) bool {
+	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
+		return false
+	}
+	depth := 0
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if ch == '"' && !inSingle {
+			inDouble = !inDouble
+		} else if !inSingle && !inDouble {
+			if ch == '(' {
+				depth++
+			} else if ch == ')' {
+				depth--
+				if depth == 0 && i < len(s)-1 {
+					return false
+				}
+			}
+		}
+	}
+	return depth == 0
+}
+
+func splitCommaTopLevel(s string) []string {
+	var parts []string
+	var buf strings.Builder
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if ch == '"' && !inSingle {
+			inDouble = !inDouble
+		} else if ch == ',' && !inSingle && !inDouble {
+			parts = append(parts, buf.String())
+			buf.Reset()
+			continue
+		}
+		buf.WriteByte(ch)
+	}
+	parts = append(parts, buf.String())
+	return parts
+}
+
 func parseScalarLiteral(rawVal string) any {
 	rawVal = strings.TrimSpace(rawVal)
-	if (strings.HasPrefix(rawVal, "'") && strings.HasSuffix(rawVal, "'") && len(rawVal) >= 2) ||
-		(strings.HasPrefix(rawVal, `"`) && strings.HasSuffix(rawVal, `"`) && len(rawVal) >= 2) {
+	if strings.HasPrefix(rawVal, "'") && strings.HasSuffix(rawVal, "'") && len(rawVal) >= 2 {
+		return strings.ReplaceAll(rawVal[1:len(rawVal)-1], "''", "'")
+	}
+	if strings.HasPrefix(rawVal, `"`) && strings.HasSuffix(rawVal, `"`) && len(rawVal) >= 2 {
 		return rawVal[1 : len(rawVal)-1]
 	}
 	if strings.EqualFold(rawVal, "true") {
@@ -901,11 +996,12 @@ func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 	if where == "" {
 		return nil, nil
 	}
-	if strings.HasPrefix(where, "(") && strings.HasSuffix(where, ")") {
+	for hasBalancedOuterParens(where) {
 		inner := strings.TrimSpace(where[1 : len(where)-1])
-		if inner != "" {
-			where = inner
+		if inner == "" {
+			break
 		}
+		where = inner
 	}
 
 	// Allow raw Qdrant filter JSON directly in WHERE
@@ -946,11 +1042,13 @@ func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 	var must []map[string]any
 	var mustNot []map[string]any
 
-	isNullRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+IS\s+(NOT\s+)?NULL\s*$`)
-	inRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+(NOT\s+)?IN\s*\((.+)\)\s*$`)
-	betweenRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+(NOT\s+)?BETWEEN\s+(.+?)\s*\x00\s*(.+?)\s*$`)
-	likeRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+(NOT\s+)?(I?LIKE|CONTAINS)\s+(.+?)\s*$`)
-	cmpRe := regexp.MustCompile(`^\s*([a-zA-Z0-9_."` + "`" + `]+)\s*(!=|<>|>=|<=|=|>|<)\s*(.+?)\s*$`)
+	identPattern := `("[^"]+"|` + "`[^`]+`" + `|[a-zA-Z0-9_.\-]+)`
+	isNullRe := regexp.MustCompile(`(?i)^\s*` + identPattern + `\s+IS\s+(NOT\s+)?NULL\s*$`)
+	isEmptyRe := regexp.MustCompile(`(?i)^\s*` + identPattern + `\s+IS\s+(NOT\s+)?EMPTY\s*$`)
+	inRe := regexp.MustCompile(`(?i)^\s*` + identPattern + `\s+(NOT\s+)?IN\s*\((.+)\)\s*$`)
+	betweenRe := regexp.MustCompile(`(?i)^\s*` + identPattern + `\s+(NOT\s+)?BETWEEN\s+(.+?)\s*\x00\s*(.+?)\s*$`)
+	likeRe := regexp.MustCompile(`(?i)^\s*` + identPattern + `\s+(NOT\s+)?(I?LIKE|CONTAINS)\s+(.+?)\s*$`)
+	cmpRe := regexp.MustCompile(`^\s*` + identPattern + `\s*(!=|<>|>=|<=|=|>|<)\s*(.+?)\s*$`)
 
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
@@ -958,7 +1056,7 @@ func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 			continue
 		}
 		// Handle balanced outer parentheses (including nested OR / AND like `(a = 1 OR b = 2)`)
-		if strings.HasPrefix(p, "(") && strings.HasSuffix(p, ")") {
+		if hasBalancedOuterParens(p) {
 			inner := strings.TrimSpace(p[1 : len(p)-1])
 			if inner != "" {
 				if len(splitKeywordTopLevel(inner, "OR")) > 1 || len(splitKeywordTopLevel(inner, "AND")) > 1 {
@@ -978,6 +1076,17 @@ func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 		if m := isNullRe.FindStringSubmatch(p); len(m) == 3 {
 			key := strings.Trim(m[1], "\"`")
 			cond := map[string]any{"is_null": map[string]any{"key": key}}
+			if strings.TrimSpace(m[2]) != "" {
+				mustNot = append(mustNot, cond)
+			} else {
+				must = append(must, cond)
+			}
+			continue
+		}
+
+		if m := isEmptyRe.FindStringSubmatch(p); len(m) == 3 {
+			key := strings.Trim(m[1], "\"`")
+			cond := map[string]any{"is_empty": map[string]any{"key": key}}
 			if strings.TrimSpace(m[2]) != "" {
 				mustNot = append(mustNot, cond)
 			} else {
@@ -1021,7 +1130,7 @@ func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 		if m := inRe.FindStringSubmatch(p); len(m) == 4 {
 			key := strings.Trim(m[1], "\"`")
 			isNot := strings.TrimSpace(m[2]) != ""
-			rawItems := strings.Split(m[3], ",")
+			rawItems := splitCommaTopLevel(m[3])
 			vals := make([]any, 0, len(rawItems))
 			for _, item := range rawItems {
 				item = strings.TrimSpace(item)
@@ -1074,15 +1183,29 @@ func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 
 		switch op {
 		case "=":
-			must = append(must, map[string]any{
-				"key":   key,
-				"match": map[string]any{"value": val},
-			})
+			if fv, isFloat := val.(float64); isFloat {
+				must = append(must, map[string]any{
+					"key":   key,
+					"range": map[string]any{"gte": fv, "lte": fv},
+				})
+			} else {
+				must = append(must, map[string]any{
+					"key":   key,
+					"match": map[string]any{"value": val},
+				})
+			}
 		case "!=", "<>":
-			mustNot = append(mustNot, map[string]any{
-				"key":   key,
-				"match": map[string]any{"value": val},
-			})
+			if fv, isFloat := val.(float64); isFloat {
+				mustNot = append(mustNot, map[string]any{
+					"key":   key,
+					"range": map[string]any{"gte": fv, "lte": fv},
+				})
+			} else {
+				mustNot = append(mustNot, map[string]any{
+					"key":   key,
+					"match": map[string]any{"value": val},
+				})
+			}
 		case ">", ">=", "<", "<=":
 			rangeKey := map[string]string{
 				">":  "gt",
@@ -1123,7 +1246,7 @@ func sortPointsInMemory(pts []qdrantPoint, col, dir string) {
 			return *pt.Score, true
 		}
 		if pt.Payload != nil {
-			v, ok := pt.Payload[col]
+			v, ok := lookupPayloadPath(pt.Payload, col)
 			return v, ok && v != nil
 		}
 		return nil, false

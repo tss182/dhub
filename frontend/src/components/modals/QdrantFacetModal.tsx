@@ -129,11 +129,18 @@ export const QdrantFacetModal: React.FC<QdrantFacetModalProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          const lit =
-                            typeof h.value === 'number' || typeof h.value === 'boolean'
-                              ? String(h.value)
-                              : `'${String(h.value).replace(/'/g, "''")}'`;
-                          onFilterByValue(`${fieldName} = ${lit}`);
+                          const safeField = /^[a-zA-Z0-9_.]+$/.test(fieldName)
+                            ? fieldName
+                            : `"${fieldName.replace(/"/g, '')}"`;
+                          if (h.value === null || h.value === undefined) {
+                            onFilterByValue(`${safeField} IS NULL`);
+                          } else {
+                            const lit =
+                              typeof h.value === 'number' || typeof h.value === 'boolean'
+                                ? String(h.value)
+                                : `'${String(h.value).replace(/'/g, "''")}'`;
+                            onFilterByValue(`${safeField} = ${lit}`);
+                          }
                           onClose();
                         }}
                         className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-600/25 hover:bg-blue-600 text-blue-300 hover:text-white text-[10px] cursor-pointer transition-all shrink-0"

@@ -148,12 +148,33 @@ function parseQdrantScalar(rawVal: string): any {
   return t;
 }
 
+function hasBalancedOuterParens(s: string): boolean {
+  if (s.length < 2 || !s.startsWith('(') || !s.endsWith(')')) return false;
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle) inDouble = !inDouble;
+    else if (!inSingle && !inDouble) {
+      if (ch === '(') depth++;
+      else if (ch === ')') {
+        depth--;
+        if (depth === 0 && i < s.length - 1) return false;
+      }
+    }
+  }
+  return depth === 0;
+}
+
 function parseSimpleQdrantFilter(raw: string): Record<string, any> | null {
   let trimmed = raw.trim();
   if (!trimmed) return null;
-  if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
+  while (hasBalancedOuterParens(trimmed)) {
     const inner = trimmed.slice(1, -1).trim();
-    if (inner) trimmed = inner;
+    if (!inner) break;
+    trimmed = inner;
   }
 
   const orBranches = splitTopLevelKw(trimmed, 'OR');
@@ -440,11 +461,13 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     const trimmed = raw.trim();
     if (!trimmed) return undefined;
     try {
-      return JSON.parse(trimmed);
-    } catch {
-      const fallback = parseSimpleQdrantFilter(trimmed);
-      return fallback || undefined;
-    }
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {}
+    const fallback = parseSimpleQdrantFilter(trimmed);
+    return fallback || undefined;
   };
 
   const buildSearchQuery = (vec: number[] | null): string => {
@@ -504,15 +527,33 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
           }
           return /^-?\d+$/.test(t) ? Number(t) : t;
         };
-        const contextPairs = discoverContext
-          .split(',')
-          .map((pair) => pair.trim())
-          .filter(Boolean)
+        const splitContextPairs = (raw: string): string[] => {
+          const pairs: string[] = [];
+          let cur = '';
+          let bracketDepth = 0;
+          for (let i = 0; i < raw.length; i++) {
+            const ch = raw[i];
+            if (ch === '[') bracketDepth++;
+            else if (ch === ']' && bracketDepth > 0) bracketDepth--;
+            else if (ch === ',' && bracketDepth === 0) {
+              if (cur.trim()) pairs.push(cur.trim());
+              cur = '';
+              continue;
+            }
+            cur += ch;
+          }
+          if (cur.trim()) pairs.push(cur.trim());
+          return pairs;
+        };
+        const contextPairs = splitContextPairs(discoverContext)
           .map((pair) => {
-            const [pos, neg] = pair.split(':').map((s) => s.trim());
+            const colonIdx = pair.indexOf(':');
+            if (colonIdx === -1) return { positive: '', negative: '' };
+            const pos = pair.slice(0, colonIdx).trim();
+            const neg = pair.slice(colonIdx + 1).trim();
             return {
-              positive: parseIdOrVec(pos || ''),
-              negative: parseIdOrVec(neg || ''),
+              positive: parseIdOrVec(pos),
+              negative: parseIdOrVec(neg),
             };
           })
           .filter((p) => p.positive !== '' && p.negative !== '');
@@ -1099,7 +1140,11 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                   else if (!Number.isNaN(Number(raw))) typedVal = Number(raw);
 
                   let clause: any;
-                  if (fbOp === 'text') clause = { key, match: { text: String(typedVal) } };
+                  if (key.toLowerCase() === 'id') {
+                    const idVal =
+                      /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : raw;
+                    clause = { has_id: [idVal] };
+                  } else if (fbOp === 'text') clause = { key, match: { text: String(typedVal) } };
                   else if (fbOp === '=' || fbOp === '!=') clause = { key, match: { value: typedVal } };
                   else {
                     const rk = fbOp === '>' ? 'gt' : fbOp === '>=' ? 'gte' : fbOp === '<' ? 'lt' : 'lte';

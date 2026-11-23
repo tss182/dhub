@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +85,15 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 		}
 	}
 
+	if cfg != nil && strings.EqualFold(strings.TrimSpace(cfg.Driver), "qdrant") {
+		cleanUpper := strings.ToUpper(strings.TrimSpace(driver.StripLeadingComments(req.SQL)))
+		if strings.HasPrefix(cleanUpper, "EXPLAIN ") || cleanUpper == "EXPLAIN" {
+			errMsg := "EXPLAIN is not supported by Qdrant; use Vector Search or REST Query stats instead"
+			q.emitStatus(req.ExecutionID, "error", errMsg)
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+	}
+
 	var activeTxSession *TxSession
 	if req.TabID != "" {
 		q.mu.Lock()
@@ -141,7 +151,13 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 	} else if res != nil {
 		res.ElapsedMs = elapsed
 		rowsAffected = res.RowsAffected
-		q.emitStatus(req.ExecutionID, "completed", fmt.Sprintf("Fetched %d rows in %dms", len(res.Rows), elapsed))
+		if res.Error != "" {
+			status = "error"
+			errMsg = res.Error
+			q.emitStatus(req.ExecutionID, "error", errMsg)
+		} else {
+			q.emitStatus(req.ExecutionID, "completed", fmt.Sprintf("Fetched %d rows in %dms", len(res.Rows), elapsed))
+		}
 	}
 
 	_ = q.store.RecordQueryHistory(store.QueryHistoryEntry{
