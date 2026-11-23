@@ -8,9 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -136,6 +139,99 @@ func (q *QdrantDriver) ServerVersion(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return root.Version, nil
+}
+
+// DownloadSnapshot streams a Qdrant collection or full storage snapshot directly to savePath.
+func (q *QdrantDriver) DownloadSnapshot(ctx context.Context, collectionName, snapshotName, savePath string) (int64, error) {
+	if strings.TrimSpace(snapshotName) == "" {
+		return 0, fmt.Errorf("snapshot name is required")
+	}
+	path := "/snapshots/" + url.PathEscape(snapshotName)
+	if strings.TrimSpace(collectionName) != "" {
+		path = "/collections/" + url.PathEscape(collectionName) + "/snapshots/" + url.PathEscape(snapshotName)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, q.baseURL+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	if q.apiKey != "" {
+		req.Header.Set("api-key", q.apiKey)
+	}
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return 0, fmt.Errorf("qdrant snapshot download HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	out, err := os.Create(savePath)
+	if err != nil {
+		return 0, fmt.Errorf("create snapshot file: %w", err)
+	}
+	n, copyErr := io.Copy(out, resp.Body)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return n, copyErr
+	}
+	if closeErr != nil {
+		return n, closeErr
+	}
+	return n, nil
+}
+
+// UploadSnapshot streams a local .snapshot file to Qdrant via multipart upload.
+func (q *QdrantDriver) UploadSnapshot(ctx context.Context, collectionName, filePath string) error {
+	if strings.TrimSpace(collectionName) == "" {
+		return fmt.Errorf("collection name is required")
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open snapshot file: %w", err)
+	}
+	defer f.Close()
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+
+	go func() {
+		part, pErr := mw.CreateFormFile("snapshot", filepath.Base(filePath))
+		if pErr != nil {
+			_ = pw.CloseWithError(pErr)
+			return
+		}
+		if _, cErr := io.Copy(part, f); cErr != nil {
+			_ = pw.CloseWithError(cErr)
+			return
+		}
+		if cErr := mw.Close(); cErr != nil {
+			_ = pw.CloseWithError(cErr)
+			return
+		}
+		_ = pw.Close()
+	}()
+
+	path := "/collections/" + url.PathEscape(collectionName) + "/snapshots/upload?wait=true"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.baseURL+path, pr)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if q.apiKey != "" {
+		req.Header.Set("api-key", q.apiKey)
+	}
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("qdrant snapshot upload HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
+	}
+	q.invalidateCursorCache(collectionName)
+	return nil
 }
 
 func (q *QdrantDriver) Close() error {

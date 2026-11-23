@@ -12,13 +12,17 @@ import {
   Loader2,
   Sliders,
   RotateCcw,
+  Download,
+  Upload,
+  Server,
 } from 'lucide-react';
+import { Dialogs } from '@wailsio/runtime';
 import { ConnectionConfig } from '../../types/domain';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertError, alertSuccess, confirmDialog } from '../../stores/useAlertStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 
-type PayloadFieldType = 'keyword' | 'integer' | 'float' | 'bool' | 'datetime' | 'text' | 'geo';
+type PayloadFieldType = 'keyword' | 'integer' | 'float' | 'bool' | 'datetime' | 'text' | 'geo' | 'uuid';
 
 const PAYLOAD_FIELD_TYPES: PayloadFieldType[] = [
   'keyword',
@@ -28,6 +32,7 @@ const PAYLOAD_FIELD_TYPES: PayloadFieldType[] = [
   'datetime',
   'text',
   'geo',
+  'uuid',
 ];
 
 interface PayloadIndexEntry {
@@ -68,15 +73,30 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
   collectionName,
   onUpdated,
 }) => {
-  const [activeTab, setActiveTab] = useState<'indexes' | 'aliases' | 'snapshots' | 'settings' | 'info'>('indexes');
+  const [activeTab, setActiveTab] = useState<'indexes' | 'aliases' | 'snapshots' | 'shards' | 'settings' | 'info'>('indexes');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collectionInfo, setCollectionInfo] = useState<any>(null);
+  const [clusterInfo, setClusterInfo] = useState<any>(null);
   const [indexes, setIndexes] = useState<PayloadIndexEntry[]>([]);
   const [snapshots, setSnapshots] = useState<SnapshotEntry[]>([]);
   const [aliases, setAliases] = useState<string[]>([]);
   const [newAliasName, setNewAliasName] = useState('');
+  const [renamingAlias, setRenamingAlias] = useState<{ oldName: string; newName: string } | null>(null);
   const [recoverUrl, setRecoverUrl] = useState('');
+  const [newShardKey, setNewShardKey] = useState('');
+
+  // Rich payload index options
+  const [showIndexOpts, setShowIndexOpts] = useState(false);
+  const [idxOnDisk, setIdxOnDisk] = useState(false);
+  const [idxIsTenant, setIdxIsTenant] = useState(false);
+  const [idxTokenizer, setIdxTokenizer] = useState<'word' | 'whitespace' | 'prefix' | 'multilingual'>('word');
+  const [idxMinTokenLen, setIdxMinTokenLen] = useState('');
+  const [idxMaxTokenLen, setIdxMaxTokenLen] = useState('');
+  const [idxLowercase, setIdxLowercase] = useState(true);
+  const [idxPhraseMatching, setIdxPhraseMatching] = useState(false);
+  const [idxLookup, setIdxLookup] = useState(true);
+  const [idxRange, setIdxRange] = useState(true);
 
   // Runtime PATCH settings
   const [indexingThreshold, setIndexingThreshold] = useState('');
@@ -85,6 +105,12 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
   const [hnswM, setHnswM] = useState('');
   const [hnswEfConstruct, setHnswEfConstruct] = useState('');
   const [hnswOnDisk, setHnswOnDisk] = useState(false);
+  // Strict mode settings
+  const [strictEnabled, setStrictEnabled] = useState(false);
+  const [strictMaxLimit, setStrictMaxLimit] = useState('');
+  const [strictMaxTimeout, setStrictMaxTimeout] = useState('');
+  const [strictMaxEf, setStrictMaxEf] = useState('');
+  const [strictAllowUnindexed, setStrictAllowUnindexed] = useState(true);
 
   const [newFieldName, setNewFieldName] = useState('');
   const [newFieldType, setNewFieldType] = useState<PayloadFieldType>('keyword');
@@ -123,14 +149,23 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      const [infoRes, snapRes, aliasRes] = await Promise.all([
+      const [infoRes, snapRes, aliasRes, clusterRes] = await Promise.all([
         runQdrantRest(`GET /collections/${encodeURIComponent(collectionName)}`),
         runQdrantRest(`GET /collections/${encodeURIComponent(collectionName)}/snapshots`).catch(() => null),
         runQdrantRest(`GET /collections/${encodeURIComponent(collectionName)}/aliases`).catch(() => null),
+        runQdrantRest(`GET /collections/${encodeURIComponent(collectionName)}/cluster`).catch(() => null),
       ]);
 
       const info = infoRes?.result ?? infoRes ?? {};
       setCollectionInfo(info);
+      setClusterInfo(clusterRes?.result ?? clusterRes ?? null);
+
+      const strict = info?.config?.strict_mode_config ?? {};
+      setStrictEnabled(Boolean(strict.enabled));
+      setStrictMaxLimit(strict.max_query_limit != null ? String(strict.max_query_limit) : '');
+      setStrictMaxTimeout(strict.max_timeout != null ? String(strict.max_timeout) : '');
+      setStrictMaxEf(strict.search_max_hnsw_ef != null ? String(strict.search_max_hnsw_ef) : '');
+      setStrictAllowUnindexed(strict.unindexed_filtering_retrieve !== false);
 
       const opt = info?.config?.optimizer_config ?? {};
       setIndexingThreshold(opt.indexing_threshold != null ? String(opt.indexing_threshold) : '');
@@ -203,7 +238,31 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
     if (!field) return;
     setIsBusyAction(true);
     try {
-      const body = JSON.stringify({ field_name: field, field_schema: newFieldType });
+      let fieldSchema: any = newFieldType;
+      if (showIndexOpts) {
+        const schemaObj: Record<string, any> = { type: newFieldType };
+        if (idxOnDisk) schemaObj.on_disk = true;
+        if ((newFieldType === 'keyword' || newFieldType === 'integer' || newFieldType === 'uuid') && idxIsTenant) {
+          schemaObj.is_tenant = true;
+        }
+        if (newFieldType === 'integer') {
+          schemaObj.lookup = idxLookup;
+          schemaObj.range = idxRange;
+        }
+        if (newFieldType === 'text') {
+          schemaObj.tokenizer = idxTokenizer;
+          schemaObj.lowercase = idxLowercase;
+          if (idxPhraseMatching) schemaObj.phrase_matching = true;
+          if (idxMinTokenLen.trim() && Number.isFinite(Number(idxMinTokenLen))) {
+            schemaObj.min_token_len = Math.max(1, Math.floor(Number(idxMinTokenLen)));
+          }
+          if (idxMaxTokenLen.trim() && Number.isFinite(Number(idxMaxTokenLen))) {
+            schemaObj.max_token_len = Math.max(1, Math.floor(Number(idxMaxTokenLen)));
+          }
+        }
+        fieldSchema = schemaObj;
+      }
+      const body = JSON.stringify({ field_name: field, field_schema: fieldSchema });
       await runQdrantRest(`PUT /collections/${encodeURIComponent(collectionName)}/index?wait=true\n${body}`);
       alertSuccess(`Created ${newFieldType} payload index on "${field}".`, 'Payload Index Created');
       setNewFieldName('');
@@ -362,11 +421,112 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
       }
       patchBody.hnsw_config = hnsw;
 
+      const strictCfg: Record<string, any> = {
+        enabled: strictEnabled,
+        unindexed_filtering_retrieve: strictAllowUnindexed,
+      };
+      if (strictMaxLimit.trim() !== '' && Number.isFinite(Number(strictMaxLimit))) {
+        strictCfg.max_query_limit = Math.max(1, Math.floor(Number(strictMaxLimit)));
+      }
+      if (strictMaxTimeout.trim() !== '' && Number.isFinite(Number(strictMaxTimeout))) {
+        strictCfg.max_timeout = Math.max(1, Math.floor(Number(strictMaxTimeout)));
+      }
+      if (strictMaxEf.trim() !== '' && Number.isFinite(Number(strictMaxEf))) {
+        strictCfg.search_max_hnsw_ef = Math.max(1, Math.floor(Number(strictMaxEf)));
+      }
+      patchBody.strict_mode_config = strictCfg;
+
       await runQdrantRest(`PATCH /collections/${encodeURIComponent(collectionName)}\n${JSON.stringify(patchBody)}`);
       alertSuccess(`Updated runtime settings for "${collectionName}".`, 'Collection Updated');
       await loadAll();
     } catch (err: any) {
       alertError(err?.message || String(err), 'Failed to Update Collection');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
+  const handleDownloadSnapshot = async (snapName: string) => {
+    if (!connection) return;
+    try {
+      const savePath = await Dialogs.SaveFile({
+        Title: `Save Snapshot — ${collectionName}`,
+        Filename: snapName,
+        CanCreateDirectories: true,
+        Filters: [{ DisplayName: 'Snapshot Files (*.snapshot)', Pattern: '*.snapshot' }],
+      });
+      if (!savePath || typeof savePath !== 'string') return;
+      setIsBusyAction(true);
+      const bytes = await SchemaService.DownloadQdrantSnapshot(connection.id, collectionName, snapName, savePath);
+      alertSuccess(`Downloaded snapshot (${formatBytes(bytes)}) to ${savePath}`, 'Snapshot Downloaded');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Snapshot Download Failed');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
+  const handleUploadSnapshot = async () => {
+    if (!connection) return;
+    try {
+      const chosen = await Dialogs.OpenFile({
+        Title: `Upload Local Snapshot to ${collectionName}`,
+        CanChooseFiles: true,
+        AllowsMultipleSelection: false,
+        Filters: [{ DisplayName: 'Snapshot Files (*.snapshot)', Pattern: '*.snapshot' }, { DisplayName: 'All Files (*.*)', Pattern: '*.*' }],
+      });
+      if (!chosen || typeof chosen !== 'string') return;
+      const ok = await confirmDialog({
+        title: 'Upload & Recover Snapshot',
+        message: `Upload "${chosen}" to overwrite/recover collection "${collectionName}"?`,
+        confirmLabel: 'Upload & Recover',
+        isDanger: true,
+      });
+      if (!ok) return;
+      setIsBusyAction(true);
+      await SchemaService.UploadQdrantSnapshot(connection.id, collectionName, chosen);
+      alertSuccess(`Uploaded and recovered snapshot for "${collectionName}".`, 'Snapshot Restored');
+      await loadAll();
+      await refreshExplorerObjects();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Snapshot Upload Failed');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
+  const handleRenameAlias = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renamingAlias || !renamingAlias.newName.trim()) return;
+    setIsBusyAction(true);
+    try {
+      const body = JSON.stringify({
+        actions: [{ rename_alias: { old_alias_name: renamingAlias.oldName, new_alias_name: renamingAlias.newName.trim() } }],
+      });
+      await runQdrantRest(`POST /collections/aliases\n${body}`);
+      alertSuccess(`Renamed alias "${renamingAlias.oldName}" -> "${renamingAlias.newName.trim()}".`, 'Alias Renamed');
+      setRenamingAlias(null);
+      await loadAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Rename Alias');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
+  const handleCreateShardKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const sk = newShardKey.trim();
+    if (!sk) return;
+    setIsBusyAction(true);
+    try {
+      const body = JSON.stringify({ create_sharding_key: { shard_key: sk } });
+      await runQdrantRest(`PUT /collections/${encodeURIComponent(collectionName)}/cluster\n${body}`);
+      alertSuccess(`Created shard key "${sk}".`, 'Shard Key Created');
+      setNewShardKey('');
+      await loadAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Create Shard Key');
     } finally {
       setIsBusyAction(false);
     }
@@ -487,6 +647,18 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('shards')}
+            className={`flex items-center gap-1.5 px-3 py-2 border-b-2 font-medium cursor-pointer transition-colors ${
+              activeTab === 'shards'
+                ? 'border-blue-500 text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Server className="h-3.5 w-3.5" />
+            <span>Shards</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('settings')}
             className={`flex items-center gap-1.5 px-3 py-2 border-b-2 font-medium cursor-pointer transition-colors ${
               activeTab === 'settings'
@@ -552,6 +724,17 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                     </select>
                   </div>
                   <button
+                    type="button"
+                    onClick={() => setShowIndexOpts((v) => !v)}
+                    className={`px-2.5 py-1.5 rounded border text-[11px] cursor-pointer ${
+                      showIndexOpts
+                        ? 'bg-violet-600/20 border-violet-500/40 text-violet-200'
+                        : 'bg-[#1a1c24] border-[#2f3240] text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    Options
+                  </button>
+                  <button
                     type="submit"
                     disabled={isBusyAction || !newFieldName.trim()}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium cursor-pointer"
@@ -559,6 +742,70 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                     {isBusyAction ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                     <span>Add Index</span>
                   </button>
+                  {showIndexOpts && (
+                    <div className="w-full pt-2 mt-1 border-t border-[#242732] flex flex-wrap items-center gap-3 text-[11px] text-zinc-300">
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={idxOnDisk} onChange={(e) => setIdxOnDisk(e.target.checked)} />
+                        <span>on_disk</span>
+                      </label>
+                      {(newFieldType === 'keyword' || newFieldType === 'integer' || newFieldType === 'uuid') && (
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" checked={idxIsTenant} onChange={(e) => setIdxIsTenant(e.target.checked)} />
+                          <span>is_tenant</span>
+                        </label>
+                      )}
+                      {newFieldType === 'integer' && (
+                        <>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input type="checkbox" checked={idxLookup} onChange={(e) => setIdxLookup(e.target.checked)} />
+                            <span>lookup</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input type="checkbox" checked={idxRange} onChange={(e) => setIdxRange(e.target.checked)} />
+                            <span>range</span>
+                          </label>
+                        </>
+                      )}
+                      {newFieldType === 'text' && (
+                        <>
+                          <select
+                            value={idxTokenizer}
+                            onChange={(e) => setIdxTokenizer(e.target.value as any)}
+                            className="rounded border border-[#2f3240] bg-[#101116] px-2 py-1 text-[11px] font-mono"
+                          >
+                            <option value="word">tokenizer: word</option>
+                            <option value="whitespace">tokenizer: whitespace</option>
+                            <option value="prefix">tokenizer: prefix</option>
+                            <option value="multilingual">tokenizer: multilingual</option>
+                          </select>
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="min_len"
+                            value={idxMinTokenLen}
+                            onChange={(e) => setIdxMinTokenLen(e.target.value)}
+                            className="w-20 rounded border border-[#2f3240] bg-[#101116] px-2 py-1 text-[11px] font-mono"
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="max_len"
+                            value={idxMaxTokenLen}
+                            onChange={(e) => setIdxMaxTokenLen(e.target.value)}
+                            className="w-20 rounded border border-[#2f3240] bg-[#101116] px-2 py-1 text-[11px] font-mono"
+                          />
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="checkbox" checked={idxLowercase} onChange={(e) => setIdxLowercase(e.target.checked)} />
+                            <span>lowercase</span>
+                          </label>
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input type="checkbox" checked={idxPhraseMatching} onChange={(e) => setIdxPhraseMatching(e.target.checked)} />
+                            <span>phrase_matching</span>
+                          </label>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </form>
               )}
 
@@ -640,6 +887,27 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                 </form>
               )}
 
+              {renamingAlias && (
+                <form
+                  onSubmit={handleRenameAlias}
+                  className="flex items-center gap-2 p-2.5 rounded-lg border border-cyan-500/40 bg-cyan-950/20"
+                >
+                  <span className="font-mono text-zinc-300 text-[11px]">{renamingAlias.oldName} →</span>
+                  <input
+                    type="text"
+                    value={renamingAlias.newName}
+                    onChange={(e) => setRenamingAlias({ ...renamingAlias, newName: e.target.value })}
+                    className="flex-1 rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1 font-mono text-zinc-100"
+                  />
+                  <button type="submit" className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-medium cursor-pointer">
+                    Rename
+                  </button>
+                  <button type="button" onClick={() => setRenamingAlias(null)} className="px-2 py-1 rounded bg-[#23252f] text-zinc-300 cursor-pointer">
+                    Cancel
+                  </button>
+                </form>
+              )}
+
               <div className="rounded-lg border border-[#282b36] bg-[#14151b] overflow-hidden">
                 {aliases.length === 0 ? (
                   <div className="p-6 text-center text-zinc-500">
@@ -651,15 +919,25 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                       <div key={a} className="flex items-center justify-between px-3 py-2">
                         <span className="font-mono text-cyan-300">{a}</span>
                         {!connection?.isReadOnly && (
-                          <button
-                            type="button"
-                            disabled={isBusyAction}
-                            onClick={() => handleDeleteAlias(a)}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-rose-400 hover:bg-rose-500/15 cursor-pointer"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            <span>Remove</span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={isBusyAction}
+                              onClick={() => setRenamingAlias({ oldName: a, newName: a })}
+                              className="px-2 py-0.5 rounded text-cyan-300 hover:bg-cyan-500/15 cursor-pointer"
+                            >
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isBusyAction}
+                              onClick={() => handleDeleteAlias(a)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-rose-400 hover:bg-rose-500/15 cursor-pointer"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              <span>Remove</span>
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))}
@@ -676,15 +954,26 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                   Manage point-in-time Qdrant collection snapshots
                 </span>
                 {!connection?.isReadOnly && (
-                  <button
-                    type="button"
-                    disabled={isBusyAction}
-                    onClick={handleCreateSnapshot}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium cursor-pointer"
-                  >
-                    {isBusyAction ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-                    <span>Create Snapshot</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isBusyAction}
+                      onClick={handleUploadSnapshot}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600/25 hover:bg-blue-600/40 border border-blue-500/40 disabled:opacity-50 text-blue-200 font-medium cursor-pointer"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>Upload .snapshot</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusyAction}
+                      onClick={handleCreateSnapshot}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium cursor-pointer"
+                    >
+                      {isBusyAction ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                      <span>Create Snapshot</span>
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -737,17 +1026,28 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                           </td>
                           <td className="py-2 px-3 font-mono text-zinc-300">{formatBytes(s.size)}</td>
                           <td className="py-2 px-3 text-right">
-                            {!connection?.isReadOnly && (
+                            <div className="inline-flex items-center gap-1.5">
                               <button
                                 type="button"
                                 disabled={isBusyAction}
-                                onClick={() => handleDeleteSnapshot(s.name)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-rose-400 hover:bg-rose-500/15 cursor-pointer disabled:opacity-40"
+                                onClick={() => handleDownloadSnapshot(s.name)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-blue-300 hover:bg-blue-500/15 cursor-pointer disabled:opacity-40"
                               >
-                                <Trash2 className="h-3 w-3" />
-                                <span>Delete</span>
+                                <Download className="h-3 w-3" />
+                                <span>Download</span>
                               </button>
-                            )}
+                              {!connection?.isReadOnly && (
+                                <button
+                                  type="button"
+                                  disabled={isBusyAction}
+                                  onClick={() => handleDeleteSnapshot(s.name)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-rose-400 hover:bg-rose-500/15 cursor-pointer disabled:opacity-40"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                  <span>Delete</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -755,6 +1055,41 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                   </table>
                 )}
               </div>
+            </div>
+          )}
+
+          {activeTab === 'shards' && (
+            <div className="space-y-3">
+              {!connection?.isReadOnly && (
+                <form
+                  onSubmit={handleCreateShardKey}
+                  className="flex items-end gap-2 p-3 rounded-lg border border-[#282b36] bg-[#14151b]"
+                >
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-zinc-400 mb-1">
+                      Create Shard Key (requires custom sharding_method collection)
+                    </label>
+                    <input
+                      type="text"
+                      value={newShardKey}
+                      onChange={(e) => setNewShardKey(e.target.value)}
+                      placeholder="e.g. tenant_acme"
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 text-xs text-zinc-100 font-mono"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isBusyAction || !newShardKey.trim()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Add Shard Key</span>
+                  </button>
+                </form>
+              )}
+              <pre className="rounded-lg border border-[#282b36] bg-[#111217] p-3 text-[11px] font-mono text-zinc-300 overflow-auto max-h-80 select-text">
+                {clusterInfo ? JSON.stringify(clusterInfo, null, 2) : 'No cluster / shard info available.'}
+              </pre>
             </div>
           )}
 
@@ -823,6 +1158,59 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                 <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
                   <input type="checkbox" checked={hnswOnDisk} onChange={(e) => setHnswOnDisk(e.target.checked)} />
                   <span>Store HNSW graph on disk</span>
+                </label>
+              </div>
+
+              <div className="rounded-lg border border-[#282b36] bg-[#14151b] p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-semibold text-zinc-200">Strict Mode Config</div>
+                  <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                    <input type="checkbox" checked={strictEnabled} onChange={(e) => setStrictEnabled(e.target.checked)} />
+                    <span>Enable Strict Mode</span>
+                  </label>
+                </div>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">max_query_limit</label>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="unlimited"
+                      value={strictMaxLimit}
+                      onChange={(e) => setStrictMaxLimit(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">max_timeout (sec)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="unlimited"
+                      value={strictMaxTimeout}
+                      onChange={(e) => setStrictMaxTimeout(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">search_max_hnsw_ef</label>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="unlimited"
+                      value={strictMaxEf}
+                      onChange={(e) => setStrictMaxEf(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#101116] px-2.5 py-1.5 font-mono text-zinc-100"
+                    />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={strictAllowUnindexed}
+                    onChange={(e) => setStrictAllowUnindexed(e.target.checked)}
+                  />
+                  <span>Allow unindexed filtering on retrieve</span>
                 </label>
               </div>
 

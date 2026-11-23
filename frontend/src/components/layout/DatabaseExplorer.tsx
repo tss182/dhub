@@ -261,6 +261,32 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     connectionId: string;
     connectionName: string;
   }>({ isOpen: false, connectionId: '', connectionName: '' });
+  const [qdrantAliasesByConn, setQdrantAliasesByConn] = useState<Record<string, Record<string, string[]>>>({});
+
+  const fetchQdrantAliases = React.useCallback(async (connId: string) => {
+    try {
+      const res = await QueryService.ExecuteQuery({
+        executionId: `qdrant-aliases-${Date.now()}`,
+        connectionId: connId,
+        database: 'default',
+        schema: 'default',
+        sql: 'GET /aliases',
+        limit: 100,
+        offset: 0,
+      } as any);
+      const raw = res?.rows?.[0]?.[0];
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const list = Array.isArray(parsed?.result?.aliases) ? parsed.result.aliases : [];
+      const map: Record<string, string[]> = {};
+      for (const a of list) {
+        if (a?.collection_name && a?.alias_name) {
+          map[a.collection_name] = map[a.collection_name] || [];
+          map[a.collection_name].push(a.alias_name);
+        }
+      }
+      setQdrantAliasesByConn((prev) => ({ ...prev, [connId]: map }));
+    } catch {}
+  }, []);
 
   const handleOpenDatabaseFilter = (conn: ConnectionConfig, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -1821,6 +1847,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     try {
       const objects = (await SchemaService.GetObjects(connId, dbName, targetSchema)) ?? [];
       setTreeObjects(schemaKey, objects as any);
+      if (conn?.driver === 'qdrant') {
+        fetchQdrantAliases(connId);
+      }
       alertSuccess(`Database "${dbName}" refreshed.`, 'Refreshed');
     } catch (err: any) {
       alertError(err?.message || String(err), 'Failed to Refresh Database');
@@ -3751,6 +3780,17 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                     {!isView && c.driver === 'redis' && (
                                       <span className="ml-auto text-[9px] font-mono px-1 rounded bg-[#272932] text-zinc-400 uppercase shrink-0">
                                         {obj.type || 'key'}
+                                      </span>
+                                    )}
+                                    {!isView && c.driver === 'qdrant' && (qdrantAliasesByConn[c.id]?.[obj.name]?.length ?? 0) > 0 && (
+                                      <span
+                                        className="ml-auto text-[9px] font-mono px-1 rounded bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 shrink-0 truncate max-w-[90px]"
+                                        title={`Aliases: ${qdrantAliasesByConn[c.id][obj.name].join(', ')}`}
+                                      >
+                                        → {qdrantAliasesByConn[c.id][obj.name][0]}
+                                        {qdrantAliasesByConn[c.id][obj.name].length > 1
+                                          ? ` +${qdrantAliasesByConn[c.id][obj.name].length - 1}`
+                                          : ''}
                                       </span>
                                     )}
                                   </div>

@@ -237,3 +237,42 @@ func (s *SchemaService) emitSync(connID, db, schema, status, message string) {
 		})
 	}
 }
+
+// DownloadQdrantSnapshot streams a Qdrant collection or full-instance snapshot to savePath.
+func (s *SchemaService) DownloadQdrantSnapshot(connectionID, collectionName, snapshotName, savePath string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+	if err != nil {
+		return 0, err
+	}
+	qd, ok := drv.(interface {
+		DownloadSnapshot(context.Context, string, string, string) (int64, error)
+	})
+	if !ok {
+		return 0, fmt.Errorf("connection does not support Qdrant snapshot download")
+	}
+	return qd.DownloadSnapshot(ctx, collectionName, snapshotName, savePath)
+}
+
+// UploadQdrantSnapshot uploads a local .snapshot file to recover a Qdrant collection.
+func (s *SchemaService) UploadQdrantSnapshot(connectionID, collectionName, filePath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	if cfg, cErr := s.store.GetConnection(ctx, connectionID); cErr == nil && cfg != nil && cfg.IsReadOnly {
+		return fmt.Errorf("snapshot upload blocked: connection %q is configured as read-only", cfg.Name)
+	}
+	drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+	if err != nil {
+		return err
+	}
+	qd, ok := drv.(interface {
+		UploadSnapshot(context.Context, string, string) error
+	})
+	if !ok {
+		return fmt.Errorf("connection does not support Qdrant snapshot upload")
+	}
+	return qd.UploadSnapshot(ctx, collectionName, filePath)
+}
