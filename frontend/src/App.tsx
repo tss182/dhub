@@ -429,6 +429,7 @@ export function App() {
     Record<string, { active: boolean; loading: boolean; error: string | null; stats: VectorSearchStats | null }>
   >({});
   const [vectorVizByTab, setVectorVizByTab] = useState<Record<string, boolean>>({});
+  const [excludeVectorsByTab, setExcludeVectorsByTab] = useState<Record<string, boolean>>({});
 
   const handleExecuteVectorSearch = async (tab: WorkbenchTab, sql: string) => {
     if (!tab.connectionId || !tab.table) return;
@@ -1516,7 +1517,16 @@ export function App() {
       }
 
       // 3. Query table data using dialect-aware pagination via ExecuteQuery limit/offset
-      const sql = `SELECT * FROM ${fullTablePath}${combinedWhere}${orderByClause};`;
+      let selectProjection = '*';
+      if (effectiveDriver === 'elasticsearch' && excludeVectorsByTab[tab.id] && structureColumns.length > 0) {
+        const nonVecCols = structureColumns
+          .filter((c) => c.rawType !== 'vector')
+          .map((c) => c.name);
+        if (nonVecCols.length > 0) {
+          selectProjection = nonVecCols.join(', ');
+        }
+      }
+      const sql = `SELECT ${selectProjection} FROM ${fullTablePath}${combinedWhere}${orderByClause};`;
 
       const execId = 'exec-tab-' + Date.now();
       const res = await QueryService.ExecuteQuery({
@@ -3320,6 +3330,15 @@ export function App() {
                             [activeTab.id]: !prev[activeTab.id],
                           }))
                         }
+                        excludeVectors={Boolean(excludeVectorsByTab[activeTab.id])}
+                        onToggleExcludeVectors={() => {
+                          const nextVal = !excludeVectorsByTab[activeTab.id];
+                          setExcludeVectorsByTab((prev) => ({
+                            ...prev,
+                            [activeTab.id]: nextVal,
+                          }));
+                          setTimeout(() => loadTableData(activeTab), 0);
+                        }}
                       />
                       <div className="flex-1 min-h-0">
                         {isVectorViz ? (

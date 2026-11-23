@@ -78,6 +78,8 @@ export interface VectorSearchPanelProps {
   onResetSearch: () => void;
   showVisualization?: boolean;
   onToggleVisualization?: () => void;
+  excludeVectors?: boolean;
+  onToggleExcludeVectors?: () => void;
 }
 
 function quotePgIdent(ident: string): string {
@@ -308,6 +310,8 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   onResetSearch,
   showVisualization = false,
   onToggleVisualization,
+  excludeVectors = false,
+  onToggleExcludeVectors,
 }) => {
   const vectorColumns = useMemo(
     () => columns.filter((c) => isVectorColumn(c.dataType, c.rawType)),
@@ -318,6 +322,22 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const [qdrantMode, setQdrantMode] = useState<
     'similarity' | 'hybrid' | 'sparse' | 'recommend' | 'discover' | 'groupby' | 'formula' | 'matrix'
   >('similarity');
+  // Elasticsearch Search Studio state
+  const [esMode, setEsMode] = useState<'fulltext' | 'knn' | 'hybrid' | 'mlt'>(() =>
+    vectorColumns.length > 0 ? 'knn' : 'fulltext'
+  );
+  const [esBm25Query, setEsBm25Query] = useState('');
+  const [esTargetFields, setEsTargetFields] = useState('');
+  const [esFuzziness, setEsFuzziness] = useState<'AUTO' | '0' | '1' | '2'>('AUTO');
+  const [esOperator, setEsOperator] = useState<'OR' | 'AND'>('OR');
+  const [esHighlight, setEsHighlight] = useState(true);
+  const [esNumCandidates, setEsNumCandidates] = useState<string>('50');
+  const [esSimilarity, setEsSimilarity] = useState<string>('');
+  const [esOpenSearchKnn, setEsOpenSearchKnn] = useState(false);
+  const [esQueryBoost, setEsQueryBoost] = useState<string>('1.0');
+  const [esKnnBoost, setEsKnnBoost] = useState<string>('1.0');
+  const [esMltLike, setEsMltLike] = useState('');
+  const [esMltById, setEsMltById] = useState(false);
   const [discoverTarget, setDiscoverTarget] = useState('');
   const [discoverContext, setDiscoverContext] = useState('');
   const [formulaExpr, setFormulaExpr] = useState(
@@ -370,7 +390,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     return vectorColumns[0]?.name || (driver === 'qdrant' ? 'vector' : 'embedding');
   }, [selectedCol, vectorColumns, driver]);
 
-  if (vectorColumns.length === 0 && driver !== 'qdrant') {
+  if (vectorColumns.length === 0 && driver !== 'qdrant' && driver !== 'elasticsearch') {
     return null;
   }
 
@@ -712,29 +732,161 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     }
 
     if (driver === 'elasticsearch') {
-      const knnClause: Record<string, any> = {
-        field: activeVectorCol,
-        query_vector: vec,
-        k,
-        num_candidates: Math.max(k * 5, 50),
-      };
-      if (filter) {
-        if (filter.startsWith('{')) {
+      const idxEsc = encodeURIComponent(tableName);
+      const numCand = Math.max(k, Number(esNumCandidates) || Math.max(k * 5, 50));
+      const simVal =
+        esSimilarity.trim() !== '' && !Number.isNaN(Number(esSimilarity)) ? Number(esSimilarity) : null;
+      const targetFieldsArr = esTargetFields
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const parseEsFilter = (rawF: string): any => {
+        if (!rawF) return undefined;
+        if (rawF.startsWith('{')) {
           try {
-            knnClause.filter = JSON.parse(filter);
+            return JSON.parse(rawF);
           } catch {}
-        } else {
-          knnClause.filter = { query_string: { query: filter } };
         }
-      }
+        return { query_string: { query: rawF } };
+      };
+      const parsedEsFilter = parseEsFilter(filter);
+
       const body: Record<string, any> = {
-        knn: knnClause,
         size: k,
       };
       if (threshold !== null) {
         body.min_score = threshold;
       }
-      return `POST /${encodeURIComponent(tableName)}/_search\n${JSON.stringify(body, null, 2)}`;
+
+      if (esMode === 'fulltext') {
+        const qText = esBm25Query.trim() || '*';
+        const matchObj: Record<string, any> =
+          targetFieldsArr.length > 0
+            ? {
+                multi_match: {
+                  query: qText,
+                  fields: targetFieldsArr,
+                  operator: esOperator,
+                  ...(esFuzziness !== '0' ? { fuzziness: esFuzziness } : {}),
+                },
+              }
+            : {
+                query_string: {
+                  query: qText,
+                  default_operator: esOperator,
+                },
+              };
+        body.query = parsedEsFilter
+          ? { bool: { must: [matchObj], filter: [parsedEsFilter] } }
+          : matchObj;
+        if (esHighlight) {
+          body.highlight = {
+            pre_tags: ['**'],
+            post_tags: ['**'],
+            fields: { '*': {} },
+          };
+        }
+        return `POST /${idxEsc}/_search\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      if (esMode === 'mlt') {
+        const mltLikeRaw = esMltLike.trim();
+        const mltLikeVal = esMltById
+          ? [{ _index: tableName, _id: mltLikeRaw }]
+          : mltLikeRaw;
+        const mltQuery: Record<string, any> = {
+          more_like_this: {
+            like: mltLikeVal,
+            min_term_freq: 1,
+            min_doc_freq: 1,
+            ...(targetFieldsArr.length > 0 ? { fields: targetFieldsArr } : {}),
+          },
+        };
+        body.query = parsedEsFilter
+          ? { bool: { must: [mltQuery], filter: [parsedEsFilter] } }
+          : mltQuery;
+        return `POST /${idxEsc}/_search\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      if (esMode === 'hybrid') {
+        const qText = esBm25Query.trim();
+        const qBoost = Number(esQueryBoost) || 1.0;
+        const kBoost = Number(esKnnBoost) || 1.0;
+        if (qText) {
+          const textQ: Record<string, any> =
+            targetFieldsArr.length > 0
+              ? {
+                  multi_match: {
+                    query: qText,
+                    fields: targetFieldsArr,
+                    operator: esOperator,
+                    boost: qBoost,
+                  },
+                }
+              : {
+                  query_string: {
+                    query: qText,
+                    default_operator: esOperator,
+                    boost: qBoost,
+                  },
+                };
+          body.query = textQ;
+        }
+        if (vec && vec.length > 0) {
+          if (esOpenSearchKnn) {
+            body.query = {
+              bool: {
+                should: [
+                  ...(body.query ? [body.query] : []),
+                  { knn: { [activeVectorCol]: { vector: vec, k, boost: kBoost } } },
+                ],
+                ...(parsedEsFilter ? { filter: [parsedEsFilter] } : {}),
+              },
+            };
+          } else {
+            const knnClause: Record<string, any> = {
+              field: activeVectorCol,
+              query_vector: vec,
+              k,
+              num_candidates: numCand,
+              boost: kBoost,
+            };
+            if (parsedEsFilter) knnClause.filter = parsedEsFilter;
+            if (simVal !== null) knnClause.similarity = simVal;
+            body.knn = knnClause;
+          }
+        }
+        if (esHighlight && qText) {
+          body.highlight = { pre_tags: ['**'], post_tags: ['**'], fields: { '*': {} } };
+        }
+        return `POST /${idxEsc}/_search\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      // Default: kNN Vector
+      if (esOpenSearchKnn) {
+        const osKnn: Record<string, any> = {
+          knn: {
+            [activeVectorCol]: {
+              vector: vec,
+              k,
+              ...(parsedEsFilter ? { filter: parsedEsFilter } : {}),
+            },
+          },
+        };
+        body.query = osKnn;
+      } else {
+        const knnClause: Record<string, any> = {
+          field: activeVectorCol,
+          query_vector: vec,
+          k,
+          num_candidates: numCand,
+        };
+        if (parsedEsFilter) knnClause.filter = parsedEsFilter;
+        if (simVal !== null) knnClause.similarity = simVal;
+        body.knn = knnClause;
+      }
+      return `POST /${idxEsc}/_search\n${JSON.stringify(body, null, 2)}`;
     }
 
     if (driver === 'redis') {
@@ -821,6 +973,16 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         setEmbedError('Enter matching comma-separated sparse indices and values.');
         return;
       }
+    } else if (driver === 'elasticsearch' && esMode === 'fulltext') {
+      if (!esBm25Query.trim() && !filterInput.trim()) {
+        setEmbedError('Enter a search query or filter for Full-Text (BM25) search.');
+        return;
+      }
+    } else if (driver === 'elasticsearch' && esMode === 'mlt') {
+      if (!esMltLike.trim()) {
+        setEmbedError('Enter sample text or Document _id for More Like This search.');
+        return;
+      }
     } else if (inputMode === 'vector') {
       vec = parseVectorText(vectorText);
       if (!vec && !(driver === 'qdrant' && qdrantMode === 'hybrid' && sparseIndices.trim())) {
@@ -862,9 +1024,24 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
             className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-violet-500/15 hover:bg-violet-500/25 text-violet-300 border border-violet-500/30 font-medium transition-colors cursor-pointer"
           >
             <Sparkles className="h-3 w-3" />
-            <span>Vector Search</span>
+            <span>{driver === 'elasticsearch' ? 'Search Studio' : 'Vector Search'}</span>
             {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </button>
+
+          {driver === 'elasticsearch' && onToggleExcludeVectors && vectorColumns.length > 0 && (
+            <button
+              type="button"
+              onClick={onToggleExcludeVectors}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] cursor-pointer transition-colors ${
+                excludeVectors
+                  ? 'bg-amber-600/20 border-amber-500/40 text-amber-200 font-medium'
+                  : 'bg-[#1e2028] hover:bg-[#272a35] text-zinc-400 border-[#2d303c]'
+              }`}
+              title="Exclude dense_vector / knn_vector fields from _source when browsing for faster loads"
+            >
+              <span>{excludeVectors ? 'Vectors Hidden (_source.excludes)' : 'Hide Vector Fields'}</span>
+            </button>
+          )}
 
           {isVectorSearchActive && searchStats && (
             <div className="flex items-center gap-2 text-[11px] text-zinc-400 truncate">
@@ -989,10 +1166,40 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
               </div>
             )}
 
+            {/* Elasticsearch Search Mode Selector */}
+            {driver === 'elasticsearch' && (
+              <div className="inline-flex flex-wrap rounded bg-[#101115] border border-[#272932] p-0.5">
+                {(
+                  [
+                    { id: 'fulltext', label: 'Full-Text (BM25)' },
+                    { id: 'knn', label: 'kNN Vector' },
+                    { id: 'hybrid', label: 'Hybrid (BM25 + kNN)' },
+                    { id: 'mlt', label: 'More Like This' },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setEsMode(m.id)}
+                    className={`px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
+                      esMode === m.id
+                        ? 'bg-emerald-600 text-white font-medium'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Input mode toggle */}
             {!(
               driver === 'qdrant' &&
               (qdrantMode === 'recommend' || qdrantMode === 'discover' || qdrantMode === 'sparse' || qdrantMode === 'matrix')
+            ) && !(
+              driver === 'elasticsearch' &&
+              (esMode === 'fulltext' || esMode === 'mlt')
             ) && (
               <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
                 <button
@@ -1126,6 +1333,118 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
               </>
             )}
           </div>
+
+          {/* Elasticsearch Advanced Options */}
+          {driver === 'elasticsearch' && (
+            <div className="flex flex-wrap items-center gap-3 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              {(esMode === 'fulltext' || esMode === 'hybrid' || esMode === 'mlt') && (
+                <label className="flex items-center gap-1.5 text-zinc-400">
+                  <span>Target Fields:</span>
+                  <input
+                    type="text"
+                    placeholder="all fields (or title, body)"
+                    value={esTargetFields}
+                    onChange={(e) => setEsTargetFields(e.target.value)}
+                    className="w-44 rounded bg-[#161820] border border-[#272932] px-2 py-0.5 text-zinc-200 font-mono"
+                  />
+                </label>
+              )}
+              {(esMode === 'fulltext' || esMode === 'hybrid') && (
+                <>
+                  <label className="flex items-center gap-1.5 text-zinc-400">
+                    <span>Operator:</span>
+                    <select
+                      value={esOperator}
+                      onChange={(e) => setEsOperator(e.target.value as 'OR' | 'AND')}
+                      className="rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200"
+                    >
+                      <option value="OR">OR</option>
+                      <option value="AND">AND</option>
+                    </select>
+                  </label>
+                  {esMode === 'fulltext' && (
+                    <label className="flex items-center gap-1.5 text-zinc-400">
+                      <span>Fuzziness:</span>
+                      <select
+                        value={esFuzziness}
+                        onChange={(e) => setEsFuzziness(e.target.value as any)}
+                        className="rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200"
+                      >
+                        <option value="AUTO">AUTO</option>
+                        <option value="0">0 (Exact)</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                      </select>
+                    </label>
+                  )}
+                  <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                    <input type="checkbox" checked={esHighlight} onChange={(e) => setEsHighlight(e.target.checked)} />
+                    <span>Highlight</span>
+                  </label>
+                </>
+              )}
+              {(esMode === 'knn' || esMode === 'hybrid') && (
+                <>
+                  <label className="flex items-center gap-1.5 text-zinc-400">
+                    <span>num_candidates:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={esNumCandidates}
+                      onChange={(e) => setEsNumCandidates(e.target.value)}
+                      className="w-16 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5 text-zinc-400">
+                    <span>similarity:</span>
+                    <input
+                      type="text"
+                      placeholder="optional"
+                      value={esSimilarity}
+                      onChange={(e) => setEsSimilarity(e.target.value)}
+                      className="w-16 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={esOpenSearchKnn}
+                      onChange={(e) => setEsOpenSearchKnn(e.target.checked)}
+                    />
+                    <span>OpenSearch kNN</span>
+                  </label>
+                </>
+              )}
+              {esMode === 'hybrid' && (
+                <>
+                  <label className="flex items-center gap-1.5 text-zinc-400">
+                    <span>BM25 boost:</span>
+                    <input
+                      type="text"
+                      value={esQueryBoost}
+                      onChange={(e) => setEsQueryBoost(e.target.value)}
+                      className="w-12 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1.5 text-zinc-400">
+                    <span>kNN boost:</span>
+                    <input
+                      type="text"
+                      value={esKnnBoost}
+                      onChange={(e) => setEsKnnBoost(e.target.value)}
+                      className="w-12 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                    />
+                  </label>
+                </>
+              )}
+              {esMode === 'mlt' && (
+                <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                  <input type="checkbox" checked={esMltById} onChange={(e) => setEsMltById(e.target.checked)} />
+                  <span>Like Document _id (instead of raw text)</span>
+                </label>
+              )}
+            </div>
+          )}
 
           {/* Qdrant Search Params */}
           {driver === 'qdrant' && showQdrantAdvanced && (
@@ -1489,6 +1808,49 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
               ) : driver === 'qdrant' && qdrantMode === 'sparse' ? (
                 <div className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-400">
                   Sparse-only query using <span className="font-mono text-zinc-200">{sparseCol || 'bm25'}</span> indices &amp; values above.
+                </div>
+              ) : driver === 'elasticsearch' && esMode === 'fulltext' ? (
+                <input
+                  type="text"
+                  placeholder="Full-Text BM25 query (e.g. elasticsearch vector search)..."
+                  value={esBm25Query}
+                  onChange={(e) => setEsBm25Query(e.target.value)}
+                  className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 focus:border-emerald-500 focus:outline-none"
+                />
+              ) : driver === 'elasticsearch' && esMode === 'mlt' ? (
+                <input
+                  type="text"
+                  placeholder={esMltById ? 'Enter source Document _id...' : 'Enter sample text to find similar documents...'}
+                  value={esMltLike}
+                  onChange={(e) => setEsMltLike(e.target.value)}
+                  className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 font-mono focus:border-emerald-500 focus:outline-none"
+                />
+              ) : driver === 'elasticsearch' && esMode === 'hybrid' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="BM25 text query (e.g. wireless headphones)..."
+                    value={esBm25Query}
+                    onChange={(e) => setEsBm25Query(e.target.value)}
+                    className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 focus:border-emerald-500 focus:outline-none"
+                  />
+                  {inputMode === 'vector' ? (
+                    <input
+                      type="text"
+                      placeholder="kNN vector array [0.01, -0.04, ...]"
+                      value={vectorText}
+                      onChange={(e) => setVectorText(e.target.value)}
+                      className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 font-mono focus:border-violet-500 focus:outline-none"
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder={`Embed text via ${embedCfg.model}...`}
+                      value={textQuery}
+                      onChange={(e) => setTextQuery(e.target.value)}
+                      className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 focus:border-violet-500 focus:outline-none"
+                    />
+                  )}
                 </div>
               ) : inputMode === 'vector' ? (
                 <input

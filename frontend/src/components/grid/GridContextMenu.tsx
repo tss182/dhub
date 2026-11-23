@@ -60,6 +60,8 @@ interface GridContextMenuProps {
   onOpenQdrantFacet?: (colName: string) => void;
   onOpenESDocumentModal?: (globalRowIndex: number, mode: 'edit' | 'clone') => void;
   onRemoveESFieldFromDoc?: (globalRowIndex: number, colName: string) => void;
+  onOpenESAgg?: (colName: string, colType?: string) => void;
+  onFindSimilarDoc?: (globalRowIndex: number) => void;
   onSetSelectedToNull: (vIdx: number, cIdx: number) => void;
   onToggleFreeze: (colName: string) => void;
   onUnfreezeAll: () => void;
@@ -104,6 +106,8 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   onOpenQdrantFacet,
   onOpenESDocumentModal,
   onRemoveESFieldFromDoc,
+  onOpenESAgg,
+  onFindSimilarDoc,
   onSetSelectedToNull,
   onToggleFreeze,
   onUnfreezeAll,
@@ -229,6 +233,29 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
             <div className="my-1 border-t border-[#272932]" />
           </>
         )}
+
+        {isElasticsearch &&
+          onOpenESAgg &&
+          col.name !== '_id' &&
+          col.name !== '_score' &&
+          col.rawType !== 'vector' && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenESAgg(col.name, col.dataType);
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                  <span>Aggregations &amp; Distribution...</span>
+                </div>
+              </button>
+              <div className="my-1 border-t border-[#272932]" />
+            </>
+          )}
 
         <button
           type="button"
@@ -583,6 +610,23 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-3.5 w-3.5 text-violet-400 group-hover:text-white" />
                     <span>Find Similar Points</span>
+                  </div>
+                </button>
+              )}
+
+              {isElasticsearch && onFindSimilarDoc && vr && vr.globalRowIndex !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rowIdx = vr.globalRowIndex!;
+                    onClose();
+                    onFindSimilarDoc(rowIdx);
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-violet-600 hover:text-white text-violet-300 transition-colors text-left cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-3.5 w-3.5 text-violet-400 group-hover:text-white" />
+                    <span>Find Similar Documents</span>
                   </div>
                 </button>
               )}

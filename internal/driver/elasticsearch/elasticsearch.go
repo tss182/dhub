@@ -1283,6 +1283,105 @@ func parseESBulkResponseToQueryResult(execID string, respBytes []byte, elapsedMs
 }
 
 
+func (e *ElasticsearchDriver) executeDeepSearch(ctx context.Context, idxName string, baseBody map[string]any, offset, limit int) ([]byte, error) {
+	// Deep pagination beyond index.max_result_window (10,000) using PIT + search_after (with _doc fallback for OpenSearch)
+	var pitID string
+	pitRespBytes, _, pitErr := e.doRequest(ctx, http.MethodPost, "/"+url.PathEscape(idxName)+"/_pit?keep_alive=1m", nil)
+	if pitErr == nil {
+		var pitEnv struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(pitRespBytes, &pitEnv) == nil && pitEnv.ID != "" {
+			pitID = pitEnv.ID
+			defer func() {
+				_, _, _ = e.doRequest(ctx, http.MethodDelete, "/_pit", map[string]any{"id": pitID})
+			}()
+		}
+	}
+
+	var baseSorts []map[string]any
+	if existing, ok := baseBody["sort"].([]map[string]any); ok {
+		baseSorts = append(baseSorts, existing...)
+	}
+	if pitID != "" {
+		baseSorts = append(baseSorts, map[string]any{"_shard_doc": "asc"})
+	} else {
+		baseSorts = append(baseSorts, map[string]any{"_doc": "asc"})
+	}
+
+	var searchAfter []any
+	remaining := offset
+	for remaining > 0 {
+		step := remaining
+		if step > 1000 {
+			step = 1000
+		}
+		stepBody := map[string]any{
+			"size":             step,
+			"sort":             baseSorts,
+			"_source":          false,
+			"track_total_hits": false,
+		}
+		if q, ok := baseBody["query"]; ok {
+			stepBody["query"] = q
+		}
+		if len(searchAfter) > 0 {
+			stepBody["search_after"] = searchAfter
+		}
+		endpoint := "/" + url.PathEscape(idxName) + "/_search"
+		if pitID != "" {
+			stepBody["pit"] = map[string]any{"id": pitID, "keep_alive": "1m"}
+			endpoint = "/_search"
+		}
+		rawStep, _, err := e.doRequest(ctx, http.MethodPost, endpoint, stepBody)
+		if err != nil {
+			return nil, err
+		}
+		var stepResp struct {
+			Hits struct {
+				Hits []struct {
+					Sort []any `json:"sort"`
+				} `json:"hits"`
+			} `json:"hits"`
+		}
+		if err := decodeJSONUseNumber(rawStep, &stepResp); err != nil {
+			return nil, err
+		}
+		if len(stepResp.Hits.Hits) == 0 {
+			return rawStep, nil
+		}
+		lastSort := stepResp.Hits.Hits[len(stepResp.Hits.Hits)-1].Sort
+		if len(lastSort) == 0 {
+			break
+		}
+		searchAfter = lastSort
+		remaining -= len(stepResp.Hits.Hits)
+		if len(stepResp.Hits.Hits) < step {
+			break
+		}
+	}
+
+	finalBody := make(map[string]any, len(baseBody))
+	for k, v := range baseBody {
+		if k == "from" {
+			continue
+		}
+		finalBody[k] = v
+	}
+	finalBody["size"] = limit
+	finalBody["sort"] = baseSorts
+	if len(searchAfter) > 0 {
+		finalBody["search_after"] = searchAfter
+	}
+	endpoint := "/" + url.PathEscape(idxName) + "/_search"
+	if pitID != "" {
+		finalBody["pit"] = map[string]any{"id": pitID, "keep_alive": "1m"}
+		endpoint = "/_search"
+	}
+	finalBytes, _, err := e.doRequest(ctx, http.MethodPost, endpoint, finalBody)
+	return finalBytes, err
+}
+
 func (e *ElasticsearchDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
 	start := time.Now()
 	stmts := driver.SplitHTTPOrSQLStatements(req.SQL)
@@ -1530,7 +1629,13 @@ func (e *ElasticsearchDriver) executeSingle(ctx context.Context, req driver.Quer
 			}
 		}
 
-		respBytes, _, err := e.doRequest(ctx, http.MethodPost, "/"+url.PathEscape(idxName)+"/_search", body)
+		var respBytes []byte
+		var err error
+		if offset+limit > 10000 {
+			respBytes, err = e.executeDeepSearch(ctx, idxName, body, offset, limit)
+		} else {
+			respBytes, _, err = e.doRequest(ctx, http.MethodPost, "/"+url.PathEscape(idxName)+"/_search", body)
+		}
 		if err != nil {
 			return nil, err
 		}

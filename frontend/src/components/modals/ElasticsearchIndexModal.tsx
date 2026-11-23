@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Lock,
   Unlock,
+  Sparkles,
 } from 'lucide-react';
 import { ConnectionConfig } from '../../types/domain';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
@@ -76,7 +77,7 @@ export const ElasticsearchIndexModal: React.FC<ElasticsearchIndexModalProps> = (
   indexName,
   onUpdated,
 }) => {
-  const [activeTab, setActiveTab] = useState<'mappings' | 'settings' | 'aliases' | 'shards' | 'maintenance'>('mappings');
+  const [activeTab, setActiveTab] = useState<'mappings' | 'settings' | 'aliases' | 'shards' | 'maintenance' | 'analyze'>('mappings');
   const [isLoading, setIsLoading] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +93,20 @@ export const ElasticsearchIndexModal: React.FC<ElasticsearchIndexModalProps> = (
     storeSize: string;
     segmentsCount: number;
   } | null>(null);
+
+  // Text Analyzer Playground state
+  const [analyzeTargetMode, setAnalyzeTargetMode] = useState<'analyzer' | 'field'>('analyzer');
+  const [analyzeAnalyzer, setAnalyzeAnalyzer] = useState('standard');
+  const [analyzeField, setAnalyzeField] = useState('');
+  const [analyzeText, setAnalyzeText] = useState('Quick brown fox jumps over 2 lazy dogs!');
+  const [analyzeTokens, setAnalyzeTokens] = useState<Array<{
+    token: string;
+    position: number;
+    start_offset: number;
+    end_offset: number;
+    type: string;
+  }>>([]);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Add Field form
   const [newFieldName, setNewFieldName] = useState('');
@@ -395,6 +410,7 @@ export const ElasticsearchIndexModal: React.FC<ElasticsearchIndexModalProps> = (
               { id: 'aliases', label: `Aliases (${aliases.length})`, icon: Tag },
               { id: 'shards', label: `Shards (${shards.length})`, icon: Server },
               { id: 'maintenance', label: 'Stats & Maintenance', icon: Wrench },
+              { id: 'analyze', label: 'Text Analyzer', icon: Sparkles },
             ] as const
           ).map((t) => {
             const Icon = t.icon;
@@ -869,6 +885,140 @@ export const ElasticsearchIndexModal: React.FC<ElasticsearchIndexModalProps> = (
               )}
             </div>
           )}
+
+              {activeTab === 'analyze' && (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-[#272934] bg-[#14151b] p-3 space-y-3">
+                    <div className="text-[11px] font-semibold text-zinc-200">
+                      Text Analyzer Playground (<code>POST /{indexName}/_analyze</code>)
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-zinc-400 mb-1">Mode</label>
+                        <select
+                          value={analyzeTargetMode}
+                          onChange={(e) => setAnalyzeTargetMode(e.target.value as 'analyzer' | 'field')}
+                          className="w-full rounded bg-[#101116] border border-[#272932] px-2 py-1.5 text-zinc-200"
+                        >
+                          <option value="analyzer">By Analyzer Name</option>
+                          <option value="field">By Index Field</option>
+                        </select>
+                      </div>
+                      {analyzeTargetMode === 'analyzer' ? (
+                        <div className="md:col-span-2">
+                          <label className="block text-[10px] text-zinc-400 mb-1">Analyzer</label>
+                          <div className="flex gap-2">
+                            <select
+                              value={['standard', 'simple', 'whitespace', 'stop', 'keyword', 'english', 'fingerprint'].includes(analyzeAnalyzer) ? analyzeAnalyzer : '__custom__'}
+                              onChange={(e) => {
+                                if (e.target.value !== '__custom__') setAnalyzeAnalyzer(e.target.value);
+                              }}
+                              className="rounded bg-[#101116] border border-[#272932] px-2 py-1.5 text-zinc-200"
+                            >
+                              <option value="standard">standard</option>
+                              <option value="simple">simple</option>
+                              <option value="whitespace">whitespace</option>
+                              <option value="stop">stop</option>
+                              <option value="keyword">keyword</option>
+                              <option value="english">english</option>
+                              <option value="fingerprint">fingerprint</option>
+                              <option value="__custom__">custom...</option>
+                            </select>
+                            <input
+                              type="text"
+                              value={analyzeAnalyzer}
+                              onChange={(e) => setAnalyzeAnalyzer(e.target.value)}
+                              placeholder="custom_analyzer_name"
+                              className="flex-1 rounded bg-[#101116] border border-[#272932] px-2 py-1.5 font-mono text-zinc-200"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="md:col-span-2">
+                          <label className="block text-[10px] text-zinc-400 mb-1">Index Field</label>
+                          <select
+                            value={analyzeField || fields.find((f) => f.type === 'text')?.field || fields[0]?.field || ''}
+                            onChange={(e) => setAnalyzeField(e.target.value)}
+                            className="w-full rounded bg-[#101116] border border-[#272932] px-2 py-1.5 font-mono text-zinc-200"
+                          >
+                            {fields.map((f) => (
+                              <option key={f.field} value={f.field}>
+                                {f.field} ({f.type})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-zinc-400 mb-1">Sample Text</label>
+                      <textarea
+                        rows={3}
+                        value={analyzeText}
+                        onChange={(e) => setAnalyzeText(e.target.value)}
+                        className="w-full rounded bg-[#101116] border border-[#272932] p-2 font-mono text-[11px] text-zinc-200 focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        disabled={isAnalyzing || !analyzeText.trim()}
+                        onClick={async () => {
+                          setError(null);
+                          setIsAnalyzing(true);
+                          try {
+                            const body: Record<string, any> = { text: analyzeText };
+                            if (analyzeTargetMode === 'field') {
+                              const chosenField =
+                                analyzeField || fields.find((f) => f.type === 'text')?.field || fields[0]?.field;
+                              if (!chosenField) throw new Error('Select a field to analyze.');
+                              body.field = chosenField;
+                            } else {
+                              body.analyzer = analyzeAnalyzer.trim() || 'standard';
+                            }
+                            const resp = await runESRest(
+                              `POST /${encodeURIComponent(indexName)}/_analyze\n${JSON.stringify(body)}`
+                            );
+                            const toks = Array.isArray(resp?.tokens) ? resp.tokens : [];
+                            setAnalyzeTokens(toks);
+                          } catch (err: any) {
+                            setError(err?.message || String(err));
+                          } finally {
+                            setIsAnalyzing(false);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-medium cursor-pointer"
+                      >
+                        {isAnalyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        <span>Analyze Tokens</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {analyzeTokens.length > 0 && (
+                    <div className="rounded-lg border border-[#272934] bg-[#14151b] p-3 space-y-2">
+                      <div className="text-[11px] text-zinc-400">
+                        Generated Tokens: <strong className="text-emerald-300">{analyzeTokens.length}</strong>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {analyzeTokens.map((tk, i) => (
+                          <div
+                            key={i}
+                            className="rounded-lg border border-[#2f3342] bg-[#1a1c24] px-2.5 py-1.5 space-y-0.5"
+                          >
+                            <div className="font-mono text-xs font-semibold text-cyan-300">{tk.token}</div>
+                            <div className="text-[9px] font-mono text-zinc-500">
+                              pos:{tk.position} [{tk.start_offset}..{tk.end_offset}] {tk.type}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
         </div>
       </div>
     </div>

@@ -25,6 +25,7 @@ import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
 import { QdrantPointModal } from '../modals/QdrantPointModal';
 import { QdrantFacetModal } from '../modals/QdrantFacetModal';
 import { ElasticsearchDocumentModal } from '../modals/ElasticsearchDocumentModal';
+import { ElasticsearchAggModal } from '../modals/ElasticsearchAggModal';
 import { CopyAsModal } from '../modals/CopyAsModal';
 
 const ExportModal = lazy(() =>
@@ -241,6 +242,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     mode: 'insert' | 'edit' | 'clone';
     initialRow?: any[];
   }>({ isOpen: false, mode: 'insert' });
+  const [esAggCol, setEsAggCol] = useState<{ name: string; dataType?: string } | null>(null);
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
@@ -1276,6 +1278,36 @@ export const DataGrid: React.FC<DataGridProps> = ({
       currentTab?.database || '',
       currentTab?.schema || '',
       `similar_${tableName || 'points'}.qdrant`,
+      queryStr
+    );
+  };
+
+  const handleFindSimilarDoc = (rowIndex: number) => {
+    const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+    const targetRow = rows[rowInArray] || rows[rowIndex];
+    const idColIdx = columns.findIndex((c) => c.name === '_id');
+    const rawId = idColIdx !== -1 ? targetRow?.[idColIdx] : undefined;
+    if (rawId === undefined || rawId === null) return;
+    const docId = String(rawId).trim();
+    const idx = encodeURIComponent(tableName || 'index');
+    const body = {
+      size: 20,
+      query: {
+        more_like_this: {
+          like: [{ _index: tableName || 'index', _id: docId }],
+          min_term_freq: 1,
+          min_doc_freq: 1,
+        },
+      },
+    };
+    const queryStr = `POST /${idx}/_search\n${JSON.stringify(body, null, 2)}`;
+    const workbenchStore = useWorkbenchStore.getState();
+    const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
+    workbenchStore.createConsole(
+      currentTab?.connectionId || '',
+      currentTab?.database || '',
+      currentTab?.schema || '',
+      `similar_${tableName || 'docs'}.es`,
       queryStr
     );
   };
@@ -3259,9 +3291,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
         onOpenRedisRenameModal={(oldKeyName) => setRedisRenameModal({ isOpen: true, oldKeyName })}
         onOpenUpdateQueryInTab={openUpdateQueryInTab}
         onFindSimilarPoint={isQdrant ? handleFindSimilarPoint : undefined}
+        onFindSimilarDoc={isElasticsearch ? handleFindSimilarDoc : undefined}
         onOpenQdrantFacet={
           isQdrant && tableName
             ? (colName) => setQdrantFacetCol(colName)
+            : undefined
+        }
+        onOpenESAgg={
+          isElasticsearch && tableName
+            ? (colName, colType) => setEsAggCol({ name: colName, dataType: colType })
             : undefined
         }
         onOpenQdrantEditPoint={
@@ -3483,6 +3521,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
           initialRow={esDocModal.initialRow}
           onClose={() => setEsDocModal({ isOpen: false, mode: 'insert' })}
           onSaved={() => onRefresh?.()}
+        />
+      )}
+
+      {isElasticsearch && tableName && esAggCol && (
+        <ElasticsearchAggModal
+          isOpen={!!esAggCol}
+          onClose={() => setEsAggCol(null)}
+          connectionId={connectionId || ''}
+          indexName={tableName}
+          fieldName={esAggCol.name}
+          fieldDataType={esAggCol.dataType}
+          onFilterByValue={(whereExpr) => {
+            setWhereInput(whereExpr);
+            onApplyWhere?.(whereExpr);
+          }}
         />
       )}
 

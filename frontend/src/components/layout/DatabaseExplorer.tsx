@@ -13,6 +13,8 @@ import { QdrantInfoModal } from '../modals/QdrantInfoModal';
 import { QdrantBatchOpsModal } from '../modals/QdrantBatchOpsModal';
 import { QdrantCloneModal } from '../modals/QdrantCloneModal';
 import { ElasticsearchInfoModal } from '../modals/ElasticsearchInfoModal';
+import { ElasticsearchBatchOpsModal } from '../modals/ElasticsearchBatchOpsModal';
+import { ElasticsearchReindexModal } from '../modals/ElasticsearchReindexModal';
 
 const ExportModal = lazy(() =>
   import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
@@ -281,6 +283,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     connectionId: string;
     connectionName: string;
   }>({ isOpen: false, connectionId: '', connectionName: '' });
+  const [esBatchOpsModal, setEsBatchOpsModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    indexName: string;
+  }>({ isOpen: false, connectionId: '', indexName: '' });
+  const [esReindexModal, setEsReindexModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    indexName: string;
+  }>({ isOpen: false, connectionId: '', indexName: '' });
   const [esAliasesByConn, setEsAliasesByConn] = useState<Record<string, Record<string, string[]>>>({});
   const [showESSystemIndicesByConn, setShowESSystemIndicesByConn] = useState<Record<string, boolean>>({});
   const [esSystemIndicesByConn, setEsSystemIndicesByConn] = useState<Record<string, ObjectSummary[]>>({});
@@ -6615,6 +6627,40 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </>
                   )}
 
+                  {contextMenu.connection!.driver === 'elasticsearch' && !contextMenu.connection!.isReadOnly && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setEsBatchOpsModal({ isOpen: true, connectionId: connId, indexName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Layers className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                        <span>Batch Delete / Update by Query...</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setEsReindexModal({ isOpen: true, connectionId: connId, indexName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Copy className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                        <span>Reindex / Clone Index...</span>
+                      </button>
+
+                      <div className="my-1 border-t border-[#272932]" />
+                    </>
+                  )}
+
                   {contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
                     <button
                       type="button"
@@ -7146,6 +7192,22 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         connectionName={esInfoModal.connectionName}
         isReadOnly={Boolean(connections.find((c) => c.id === esInfoModal.connectionId)?.isReadOnly)}
         onAliasesChanged={() => fetchESAliases(esInfoModal.connectionId)}
+      />
+
+      <ElasticsearchBatchOpsModal
+        isOpen={esBatchOpsModal.isOpen}
+        onClose={() => setEsBatchOpsModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={esBatchOpsModal.connectionId}
+        indexName={esBatchOpsModal.indexName}
+        onSuccess={() => handleRefreshConnection(esBatchOpsModal.connectionId)}
+      />
+
+      <ElasticsearchReindexModal
+        isOpen={esReindexModal.isOpen}
+        onClose={() => setEsReindexModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={esReindexModal.connectionId}
+        sourceIndex={esReindexModal.indexName}
+        onCompleted={() => handleRefreshConnection(esReindexModal.connectionId)}
       />
     </div>
   );
