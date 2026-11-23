@@ -315,9 +315,15 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   );
 
   const [isExpanded, setIsExpanded] = useState(false);
-  const [qdrantMode, setQdrantMode] = useState<'similarity' | 'hybrid' | 'recommend' | 'groupby' | 'discover' | 'sparse'>('similarity');
+  const [qdrantMode, setQdrantMode] = useState<
+    'similarity' | 'hybrid' | 'sparse' | 'recommend' | 'discover' | 'groupby' | 'formula' | 'matrix'
+  >('similarity');
   const [discoverTarget, setDiscoverTarget] = useState('');
   const [discoverContext, setDiscoverContext] = useState('');
+  const [formulaExpr, setFormulaExpr] = useState(
+    '{"sum": ["$score", {"mult": [0.25, {"key": "priority"}]}]}'
+  );
+  const [matrixSample, setMatrixSample] = useState<number>(20);
   const [inputMode, setInputMode] = useState<'vector' | 'text'>('vector');
   const [selectedCol, setSelectedCol] = useState<string>('');
   const [vectorText, setVectorText] = useState<string>('');
@@ -346,7 +352,9 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   // Visual filter builder
   const [showFilterBuilder, setShowFilterBuilder] = useState(false);
   const [fbField, setFbField] = useState('');
-  const [fbOp, setFbOp] = useState<'=' | '!=' | '>' | '>=' | '<' | '<=' | 'text'>('=');
+  const [fbOp, setFbOp] = useState<
+    '=' | '!=' | '>' | '>=' | '<' | '<=' | 'text' | 'geo_radius' | 'geo_bbox' | 'dt_gte' | 'dt_lte' | 'is_null' | 'is_empty'
+  >('=');
   const [fbVal, setFbVal] = useState('');
   const [showEmbedSettings, setShowEmbedSettings] = useState(false);
   const [embedCfg, setEmbedCfg] = useState<EmbeddingConfig>(loadEmbeddingConfig);
@@ -641,6 +649,37 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
       }
 
+      if (qdrantMode === 'matrix') {
+        const body: Record<string, any> = {
+          sample: Math.max(2, Math.min(200, Number(matrixSample) || 20)),
+          limit: k,
+        };
+        if (usingName) body.using = usingName;
+        if (parsedFilter) body.filter = parsedFilter;
+        return `POST /collections/${collEsc}/points/search/matrix/pairs\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      if (qdrantMode === 'formula') {
+        let parsedFormula: any = { sum: ['$score'] };
+        try {
+          parsedFormula = JSON.parse(formulaExpr.trim() || '{"sum":["$score"]}');
+        } catch {}
+        const prefetch: Record<string, any> = { query: vec, limit: k * 2 };
+        if (usingName) prefetch.using = usingName;
+        if (parsedFilter) prefetch.filter = parsedFilter;
+        const body: Record<string, any> = {
+          prefetch,
+          query: { formula: parsedFormula },
+          limit: k,
+          offset: searchOffset > 0 ? searchOffset : undefined,
+          with_payload: true,
+          with_vector: withVectorResult,
+        };
+        if (threshold !== null) body.score_threshold = threshold;
+        if (Object.keys(paramsObj).length > 0) body.params = paramsObj;
+        return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
+      }
+
       if (qdrantMode === 'groupby') {
         const body: Record<string, any> = {
           query: vec,
@@ -772,6 +811,8 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         setEmbedError('Enter a target Point ID or vector array for Discover.');
         return;
       }
+    } else if (driver === 'qdrant' && qdrantMode === 'matrix') {
+      // Distance matrix samples points directly without needing a query vector
     } else if (driver === 'qdrant' && qdrantMode === 'sparse') {
       const idxArr = sparseIndices.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
       const valArr = sparseValues.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
@@ -919,6 +960,8 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                     { id: 'recommend', label: 'Recommend' },
                     { id: 'discover', label: 'Discover' },
                     { id: 'groupby', label: 'Group By' },
+                    { id: 'formula', label: 'Score Boost' },
+                    { id: 'matrix', label: 'Distance Matrix' },
                   ] as const
                 ).map((m) => (
                   <button
@@ -938,7 +981,10 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
             )}
 
             {/* Input mode toggle */}
-            {!(driver === 'qdrant' && (qdrantMode === 'recommend' || qdrantMode === 'discover' || qdrantMode === 'sparse')) && (
+            {!(
+              driver === 'qdrant' &&
+              (qdrantMode === 'recommend' || qdrantMode === 'discover' || qdrantMode === 'sparse' || qdrantMode === 'matrix')
+            ) && (
               <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
                 <button
                   type="button"
@@ -1133,27 +1179,62 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 <option value="<">&lt;</option>
                 <option value="<=">&lt;=</option>
                 <option value="text">text match</option>
+                <option value="geo_radius">geo radius (lat,lon,m)</option>
+                <option value="geo_bbox">geo bbox (t,l,b,r)</option>
+                <option value="dt_gte">datetime &gt;=</option>
+                <option value="dt_lte">datetime &lt;=</option>
+                <option value="is_null">is_null</option>
+                <option value="is_empty">is_empty</option>
               </select>
               <input
                 type="text"
-                placeholder="Value"
+                placeholder={
+                  fbOp === 'geo_radius'
+                    ? '-6.2, 106.8, 5000'
+                    : fbOp === 'geo_bbox'
+                    ? '-6.1, 106.7, -6.3, 106.9'
+                    : fbOp === 'dt_gte' || fbOp === 'dt_lte'
+                    ? '2026-01-01T00:00:00Z'
+                    : fbOp === 'is_null' || fbOp === 'is_empty'
+                    ? '(no value needed)'
+                    : 'Value'
+                }
+                disabled={fbOp === 'is_null' || fbOp === 'is_empty'}
                 value={fbVal}
                 onChange={(e) => setFbVal(e.target.value)}
-                className="w-40 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+                className="w-44 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono disabled:opacity-40"
               />
               <button
                 type="button"
                 onClick={() => {
                   const key = fbField.trim();
                   const raw = fbVal.trim();
-                  if (!key || !raw) return;
+                  if (!key) return;
+                  if (fbOp !== 'is_null' && fbOp !== 'is_empty' && !raw) return;
                   let typedVal: any = raw;
                   if (/^true$/i.test(raw)) typedVal = true;
                   else if (/^false$/i.test(raw)) typedVal = false;
-                  else if (!Number.isNaN(Number(raw))) typedVal = Number(raw);
+                  else if (!Number.isNaN(Number(raw)) && raw !== '') typedVal = Number(raw);
 
                   let clause: any;
-                  if (key.toLowerCase() === 'id') {
+                  if (fbOp === 'is_null') {
+                    clause = { is_null: { key } };
+                  } else if (fbOp === 'is_empty') {
+                    clause = { is_empty: { key } };
+                  } else if (fbOp === 'geo_radius') {
+                    const [lat, lon, rad] = raw.split(',').map((s) => Number(s.trim()));
+                    if (![lat, lon, rad].every(Number.isFinite)) return;
+                    clause = { key, geo_radius: { center: { lat, lon }, radius: rad } };
+                  } else if (fbOp === 'geo_bbox') {
+                    const [tLat, lLon, bLat, rLon] = raw.split(',').map((s) => Number(s.trim()));
+                    if (![tLat, lLon, bLat, rLon].every(Number.isFinite)) return;
+                    clause = {
+                      key,
+                      geo_bounding_box: { top_left: { lat: tLat, lon: lLon }, bottom_right: { lat: bLat, lon: rLon } },
+                    };
+                  } else if (fbOp === 'dt_gte' || fbOp === 'dt_lte') {
+                    clause = { key, range: { [fbOp === 'dt_gte' ? 'gte' : 'lte']: raw } };
+                  } else if (key.toLowerCase() === 'id') {
                     const idVal =
                       /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : raw;
                     clause = { has_id: [idVal] };
@@ -1214,6 +1295,34 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                   <option value="dbsf">Fusion: DBSF</option>
                 </select>
               )}
+            </div>
+          )}
+
+          {driver === 'qdrant' && qdrantMode === 'formula' && (
+            <div className="flex items-center gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <span className="text-zinc-400 shrink-0">Score Formula JSON:</span>
+              <input
+                type="text"
+                value={formulaExpr}
+                onChange={(e) => setFormulaExpr(e.target.value)}
+                placeholder='{"sum": ["$score", {"mult": [0.25, {"key": "priority"}]}]}'
+                className="flex-1 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+            </div>
+          )}
+
+          {driver === 'qdrant' && qdrantMode === 'matrix' && (
+            <div className="flex items-center gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <span className="text-zinc-400">Sample Points:</span>
+              <input
+                type="number"
+                min={2}
+                max={200}
+                value={matrixSample}
+                onChange={(e) => setMatrixSample(Math.max(2, Number(e.target.value) || 20))}
+                className="w-20 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+              <span className="text-zinc-500">Computes pairwise similarity scores across sampled points.</span>
             </div>
           )}
 

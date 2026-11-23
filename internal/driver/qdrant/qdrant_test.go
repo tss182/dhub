@@ -526,3 +526,74 @@ func TestQdrantDriverPhase8Fixes(t *testing.T) {
 		t.Fatalf("single point GET parse failed: %+v, err=%v", ptRes, err)
 	}
 }
+
+func TestQdrantSnapshotNotSwallowed_Uint64_And_WhereEnhancements(t *testing.T) {
+	var deletedVecPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/snapshots":
+			_, _ = w.Write([]byte(`{"result":[{"name":"full-snap-1.snapshot","size":2048}],"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs/points/query/batch":
+			_, _ = w.Write([]byte(`{"result":[{"points":[{"id":9007199254740993,"score":0.95,"payload":{"meta":{"author":"alice"}}}]}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs/points/vectors/delete":
+			deletedVecPath = r.URL.Path
+			_, _ = w.Write([]byte(`{"result":{"status":"completed"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"result":{"status":"ok"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	drv, err := NewQdrantDriver(srv.URL, "", nil)
+	if err != nil {
+		t.Fatalf("NewQdrantDriver: %v", err)
+	}
+	defer drv.Close()
+	ctx := context.Background()
+
+	// 1. Snapshots must return raw JSON in `response` column, not be swallowed by []qdrantPoint
+	snapRes, err := drv.Execute(ctx, driver.QueryRequest{SQL: `GET /snapshots`})
+	if err != nil {
+		t.Fatalf("GET /snapshots failed: %v", err)
+	}
+	if len(snapRes.Columns) != 1 || snapRes.Columns[0].Name != "response" {
+		t.Fatalf("expected raw response column for /snapshots, got %+v", snapRes.Columns)
+	}
+
+	// 2. query/batch + uint64 > 2^53 preservation
+	batchRes, err := drv.Execute(ctx, driver.QueryRequest{SQL: `POST /collections/docs/points/query/batch` + "\n" + `{"searches":[]}`})
+	if err != nil || len(batchRes.Rows) != 1 {
+		t.Fatalf("query/batch failed: %+v, err=%v", batchRes, err)
+	}
+	if batchRes.Rows[0][0] != "9007199254740993" {
+		t.Fatalf("expected exact uint64 string '9007199254740993', got %#v", batchRes.Rows[0][0])
+	}
+
+	// 3. parsePointID preserves uint64 > MaxInt64
+	if got := parsePointID("9007199254740993"); got != uint64(9007199254740993) {
+		t.Fatalf("expected uint64(9007199254740993), got %#v (%T)", got, got)
+	}
+
+	// 4. Balanced outer parens, float equality via range, and IS EMPTY
+	fBal, err := parseSimpleWhereToFilter(`(a = 1) AND (b = 2)`)
+	if err != nil || len(fBal["must"].([]map[string]any)) != 2 {
+		t.Fatalf("balanced parens failed: %+v, err=%v", fBal, err)
+	}
+	fFloat, err := parseSimpleWhereToFilter(`score_val = 0.5 AND tags IS EMPTY`)
+	if err != nil {
+		t.Fatalf("float/empty WHERE failed: %v", err)
+	}
+	bFloat, _ := json.Marshal(fFloat)
+	if !strings.Contains(string(bFloat), `"range":{"gte":0.5,"lte":0.5}`) || !strings.Contains(string(bFloat), `"is_empty":{"key":"tags"}`) {
+		t.Fatalf("unexpected float/empty filter JSON: %s", string(bFloat))
+	}
+
+	// 5. Deleting a named vector via nil change routes to /points/vectors/delete
+	_, err = drv.ApplyChanges(ctx, "default", "default", "docs", []driver.RowChange{
+		{Type: "update", PrimaryKey: map[string]any{"id": "1"}, Changes: map[string]any{"vector.bm25": nil}},
+	})
+	if err != nil || deletedVecPath != "/collections/docs/points/vectors/delete" {
+		t.Fatalf("expected /points/vectors/delete call, got %q, err=%v", deletedVecPath, err)
+	}
+}

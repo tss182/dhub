@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { Dialogs } from '@wailsio/runtime';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
-import { alertError, alertSuccess } from '../../stores/useAlertStore';
+import { alertError, alertSuccess, confirmDialog } from '../../stores/useAlertStore';
 
 interface QdrantInfoModalProps {
   isOpen: boolean;
@@ -136,6 +136,48 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
     }
   };
 
+  const handleToggleWriteLock = async () => {
+    const nextWrite = !(locks?.write === true);
+    if (nextWrite) {
+      const ok = await confirmDialog({
+        title: 'Enable Qdrant Write Lock',
+        message: 'Enabling write lock blocks all point/collection writes across this Qdrant instance. Continue?',
+        confirmLabel: 'Enable Write Lock',
+        isDanger: true,
+      });
+      if (!ok) return;
+    }
+    try {
+      await runRest(
+        `POST /locks\n${JSON.stringify({
+          write: nextWrite,
+          error_message: nextWrite ? 'Write lock enabled via DHub' : '',
+        })}`
+      );
+      alertSuccess(`Write lock ${nextWrite ? 'enabled' : 'disabled'}.`, 'Locks Updated');
+      await fetchAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Update Write Lock');
+    }
+  };
+
+  const handleDeleteFullSnapshot = async (snapName: string) => {
+    const ok = await confirmDialog({
+      title: 'Delete Full Snapshot',
+      message: `Permanently delete full storage snapshot "${snapName}"?`,
+      confirmLabel: 'Delete Snapshot',
+      isDanger: true,
+    });
+    if (!ok) return;
+    try {
+      await runRest(`DELETE /snapshots/${encodeURIComponent(snapName)}`);
+      alertSuccess(`Deleted full snapshot "${snapName}".`, 'Snapshot Deleted');
+      await fetchAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Delete Snapshot Failed');
+    }
+  };
+
   const handleSwapAliasTarget = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!swapAlias || !swapAlias.target.trim()) return;
@@ -242,6 +284,27 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
                   </div>
                 </div>
               </div>
+              {!isReadOnly && (
+                <div className="flex items-center justify-between rounded-lg border border-[#282b36] bg-[#14151b] px-3 py-2">
+                  <div>
+                    <span className="font-medium text-zinc-200">Instance Write Lock: </span>
+                    <span className={locks?.write ? 'text-rose-400 font-semibold' : 'text-emerald-400 font-semibold'}>
+                      {locks?.write ? 'LOCKED (Read-Only)' : 'Unlocked'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleWriteLock}
+                    className={`px-2.5 py-1 rounded text-[11px] font-medium cursor-pointer ${
+                      locks?.write
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        : 'bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 border border-rose-500/40'
+                    }`}
+                  >
+                    {locks?.write ? 'Unlock Writes' : 'Enable Write Lock'}
+                  </button>
+                </div>
+              )}
               <pre className="rounded-lg border border-[#282b36] bg-[#111217] p-3 text-[11px] font-mono text-zinc-300 overflow-auto max-h-80 select-text">
                 {JSON.stringify({ server: rootInfo, cluster: clusterInfo, locks }, null, 2)}
               </pre>
@@ -353,19 +416,30 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
                             {s.size ? `${(s.size / (1024 * 1024)).toFixed(2)} MB` : '-'}
                           </td>
                           <td className="py-2 px-3 text-right">
-                            <button
-                              type="button"
-                              disabled={downloadingSnap === s.name}
-                              onClick={() => handleDownloadFullSnapshot(s.name)}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/35 text-blue-300 border border-blue-500/30 text-[10px] cursor-pointer disabled:opacity-50"
-                            >
-                              {downloadingSnap === s.name ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Download className="h-3 w-3" />
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={downloadingSnap === s.name}
+                                onClick={() => handleDownloadFullSnapshot(s.name)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/35 text-blue-300 border border-blue-500/30 text-[10px] cursor-pointer disabled:opacity-50"
+                              >
+                                {downloadingSnap === s.name ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Download className="h-3 w-3" />
+                                )}
+                                <span>Download</span>
+                              </button>
+                              {!isReadOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteFullSnapshot(s.name)}
+                                  className="px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 border border-rose-500/30 text-[10px] cursor-pointer"
+                                >
+                                  Delete
+                                </button>
                               )}
-                              <span>Download</span>
-                            </button>
+                            </div>
                           </td>
                         </tr>
                       ))}

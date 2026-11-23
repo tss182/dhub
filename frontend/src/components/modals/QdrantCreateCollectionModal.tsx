@@ -7,10 +7,10 @@ import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 
 type DistanceMetric = 'Cosine' | 'Euclid' | 'Dot' | 'Manhattan';
-type VectorConfigType = 'single' | 'named';
+type VectorConfigType = 'single' | 'named' | 'sparse_only';
 type QuantizationType = 'none' | 'scalar' | 'binary' | 'product';
 type VectorDatatype = 'float32' | 'float16' | 'uint8';
-type PayloadSchemaType = 'keyword' | 'integer' | 'float' | 'bool' | 'datetime' | 'text' | 'geo';
+type PayloadSchemaType = 'keyword' | 'integer' | 'float' | 'bool' | 'datetime' | 'text' | 'geo' | 'uuid';
 
 interface NamedVectorItem {
   id: string;
@@ -26,6 +26,7 @@ interface SparseVectorItem {
   id: string;
   name: string;
   onDisk: boolean;
+  idf: boolean;
 }
 
 interface InitialPayloadIndex {
@@ -43,7 +44,7 @@ interface QdrantCreateCollectionModalProps {
 }
 
 const DISTANCE_METRICS: DistanceMetric[] = ['Cosine', 'Euclid', 'Dot', 'Manhattan'];
-const PAYLOAD_SCHEMA_TYPES: PayloadSchemaType[] = ['keyword', 'integer', 'float', 'bool', 'datetime', 'text', 'geo'];
+const PAYLOAD_SCHEMA_TYPES: PayloadSchemaType[] = ['keyword', 'integer', 'float', 'bool', 'datetime', 'text', 'geo', 'uuid'];
 
 export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalProps> = ({
   isOpen,
@@ -73,6 +74,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [onDiskPayload, setOnDiskPayload] = useState(false);
   const [shardNumber, setShardNumber] = useState('');
+  const [shardingMethod, setShardingMethod] = useState<'auto' | 'custom'>('auto');
   const [replicationFactor, setReplicationFactor] = useState('');
   const [quantType, setQuantType] = useState<QuantizationType>('none');
   const [quantAlwaysRam, setQuantAlwaysRam] = useState(true);
@@ -100,6 +102,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
     setShowAdvanced(false);
     setOnDiskPayload(false);
     setShardNumber('');
+    setShardingMethod('auto');
     setReplicationFactor('');
     setQuantType('none');
     setQuantAlwaysRam(true);
@@ -133,7 +136,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
       if (singleOnDisk) vObj.on_disk = true;
       if (singleMultiVector) vObj.multivector_config = { comparator: 'max_sim' };
       body.vectors = vObj;
-    } else {
+    } else if (vectorType === 'named') {
       const vectorsMap: Record<string, any> = {};
       namedVectors.forEach((v) => {
         const key = v.name.trim();
@@ -156,7 +159,10 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
       sparseVectors.forEach((sv) => {
         const k = sv.name.trim();
         if (!k) return;
-        sparseMap[k] = sv.onDisk ? { index: { on_disk: true } } : {};
+        const svCfg: Record<string, any> = {};
+        if (sv.onDisk) svCfg.index = { on_disk: true };
+        if (sv.idf) svCfg.modifier = 'idf';
+        sparseMap[k] = svCfg;
       });
       if (Object.keys(sparseMap).length > 0) {
         body.sparse_vectors = sparseMap;
@@ -186,6 +192,9 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
     if (shardNumber.trim() !== '' && Number.isFinite(Number(shardNumber)) && Number(shardNumber) > 0) {
       body.shard_number = Math.floor(Number(shardNumber));
     }
+    if (shardingMethod === 'custom') {
+      body.sharding_method = 'custom';
+    }
     if (replicationFactor.trim() !== '' && Number.isFinite(Number(replicationFactor)) && Number(replicationFactor) > 0) {
       body.replication_factor = Math.floor(Number(replicationFactor));
     }
@@ -214,6 +223,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
     hnswOnDisk,
     onDiskPayload,
     shardNumber,
+    shardingMethod,
     replicationFactor,
     quantType,
     quantAlwaysRam,
@@ -238,7 +248,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
         alertWarning('Vector Dimensions must be a positive integer.', 'Invalid Dimensions');
         return;
       }
-    } else {
+    } else if (vectorType === 'named') {
       const validVecs = namedVectors.filter((v) => v.name.trim() !== '');
       if (validVecs.length === 0) {
         alertWarning('Please define at least one named vector.', 'Missing Named Vector');
@@ -258,11 +268,17 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
           return;
         }
       }
+    } else {
+      const validSparse = sparseVectors.filter((sv) => sv.name.trim() !== '');
+      if (validSparse.length === 0) {
+        alertWarning('Please define at least one sparse vector.', 'Missing Sparse Vector');
+        return;
+      }
     }
 
     setIsSubmitting(true);
     try {
-      await QueryService.ExecuteQuery({
+      const createRes = await QueryService.ExecuteQuery({
         executionId: 'qdrant-create-collection-' + Date.now(),
         connectionId: connection.id,
         database: database || connection.databaseName || 'default',
@@ -271,6 +287,9 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
         limit: 10,
         offset: 0,
       } as any);
+      if (createRes?.error) {
+        throw new Error(createRes.error);
+      }
 
       for (const idx of initialIndexes) {
         const field = idx.field.trim();
@@ -279,7 +298,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
           field_name: field,
           field_schema: idx.schema,
         })}`;
-        await QueryService.ExecuteQuery({
+        const idxRes = await QueryService.ExecuteQuery({
           executionId: `qdrant-init-idx-${Date.now()}`,
           connectionId: connection.id,
           database: database || connection.databaseName || 'default',
@@ -288,6 +307,9 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
           limit: 10,
           offset: 0,
         } as any);
+        if (idxRes?.error) {
+          throw new Error(`Index "${field}": ${idxRes.error}`);
+        }
       }
 
       const dbName = database || connection.databaseName || 'default';
@@ -379,7 +401,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
               <label className="block text-[11px] font-medium text-zinc-300">
                 Vector Configuration Type
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setVectorType('single')}
@@ -398,7 +420,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                   </span>
                   <div>
                     <div className="font-medium text-xs">Single Vector</div>
-                    <div className="text-[10px] text-zinc-400">One vector per point (most common)</div>
+                    <div className="text-[10px] text-zinc-400">One dense vector per point</div>
                   </div>
                 </button>
 
@@ -420,7 +442,34 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                   </span>
                   <div>
                     <div className="font-medium text-xs">Named Vectors</div>
-                    <div className="text-[10px] text-zinc-400">Multiple named vectors per point</div>
+                    <div className="text-[10px] text-zinc-400">Multiple named dense vectors</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVectorType('sparse_only');
+                    if (sparseVectors.length === 0) {
+                      setSparseVectors([{ id: `sparse-${Date.now()}`, name: 'bm25', onDisk: false, idf: true }]);
+                    }
+                  }}
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border text-left transition-colors cursor-pointer ${
+                    vectorType === 'sparse_only'
+                      ? 'bg-blue-600/15 border-blue-500 text-zinc-100'
+                      : 'bg-[#14151b] border-[#2b2e3a] text-zinc-300 hover:border-zinc-500'
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 h-3.5 w-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                      vectorType === 'sparse_only' ? 'border-blue-400' : 'border-zinc-500'
+                    }`}
+                  >
+                    {vectorType === 'sparse_only' && <span className="h-2 w-2 rounded-full bg-blue-400" />}
+                  </span>
+                  <div>
+                    <div className="font-medium text-xs">Sparse Only</div>
+                    <div className="text-[10px] text-zinc-400">Pure BM25 / SPLADE collection</div>
                   </div>
                 </button>
               </div>
@@ -483,7 +532,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                 </label>
               </div>
               </div>
-            ) : (
+            ) : vectorType === 'named' ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-medium text-zinc-300">Named Vectors</span>
@@ -623,7 +672,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                   ))}
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* Sparse Vectors (BM25 / SPLADE) */}
             <div className="pt-2 border-t border-[#222530] space-y-2">
@@ -636,7 +685,7 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                   onClick={() =>
                     setSparseVectors((prev) => [
                       ...prev,
-                      { id: `sparse-${Date.now()}`, name: prev.length === 0 ? 'bm25' : `sparse_${prev.length + 1}`, onDisk: false },
+                      { id: `sparse-${Date.now()}`, name: prev.length === 0 ? 'bm25' : `sparse_${prev.length + 1}`, onDisk: false, idf: false },
                     ])
                   }
                   className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#232632] hover:bg-[#2d3140] text-zinc-200 border border-[#343848] text-[11px] cursor-pointer"
@@ -658,6 +707,18 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                     placeholder="Sparse vector name (e.g. bm25)"
                     className="flex-1 rounded border border-[#2f3240] bg-[#101116] px-2 py-1 text-xs text-zinc-100 font-mono"
                   />
+                  <label className="flex items-center gap-1 text-[11px] text-zinc-400 cursor-pointer" title="Enable IDF modifier for BM25">
+                    <input
+                      type="checkbox"
+                      checked={sv.idf}
+                      onChange={(e) =>
+                        setSparseVectors((prev) =>
+                          prev.map((item) => (item.id === sv.id ? { ...item, idf: e.target.checked } : item))
+                        )
+                      }
+                    />
+                    <span>IDF (BM25)</span>
+                  </label>
                   <label className="flex items-center gap-1 text-[11px] text-zinc-400 cursor-pointer">
                     <input
                       type="checkbox"
@@ -792,6 +853,17 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                       onChange={(e) => setShardNumber(e.target.value)}
                       className="w-full rounded border border-[#2f3240] bg-[#121318] px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">Sharding Method</label>
+                    <select
+                      value={shardingMethod}
+                      onChange={(e) => setShardingMethod(e.target.value as 'auto' | 'custom')}
+                      className="w-full rounded border border-[#2f3240] bg-[#121318] px-2.5 py-1.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="auto">Auto (default)</option>
+                      <option value="custom">Custom (Shard Keys)</option>
+                    </select>
                   </div>
                   <div>
                     <label className="block text-[10px] text-zinc-400 mb-1">Replication Factor</label>

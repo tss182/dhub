@@ -545,6 +545,30 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
     }
   };
 
+  const handleDeleteShardKey = async (sk: string) => {
+    const clean = sk.trim();
+    if (!clean) return;
+    const ok = await confirmDialog({
+      title: 'Delete Shard Key',
+      message: `Delete shard key "${clean}" from "${collectionName}"?`,
+      confirmLabel: 'Delete Shard Key',
+      isDanger: true,
+    });
+    if (!ok) return;
+    setIsBusyAction(true);
+    try {
+      const body = JSON.stringify({ shard_key: clean });
+      await runQdrantRest(`DELETE /collections/${encodeURIComponent(collectionName)}/shards\n${body}`);
+      alertSuccess(`Deleted shard key "${clean}".`, 'Shard Key Deleted');
+      setNewShardKey('');
+      await loadAll();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Delete Shard Key');
+    } finally {
+      setIsBusyAction(false);
+    }
+  };
+
   const statusColor =
     collectionInfo?.status === 'green'
       ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
@@ -1097,6 +1121,15 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
                   >
                     <Plus className="h-3.5 w-3.5" />
                     <span>Add Shard Key</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isBusyAction || !newShardKey.trim()}
+                    onClick={() => handleDeleteShardKey(newShardKey)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-600/20 hover:bg-rose-600/35 border border-rose-500/40 disabled:opacity-50 text-rose-300 font-medium cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete Key</span>
                   </button>
                 </form>
               )}
