@@ -70,7 +70,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     } else if (drv === 'mssql') {
       sql = `SELECT r.session_id, COALESCE(s.login_name, ''), COALESCE(s.host_name, ''), COALESCE(DB_NAME(r.database_id), ''), COALESCE(r.command, ''), r.total_elapsed_time / 1000, COALESCE(r.status, ''), COALESCE(t.text, '') FROM sys.dm_exec_requests r JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t WHERE r.session_id <> @@SPID ORDER BY r.total_elapsed_time DESC;`;
     } else if (drv === 'clickhouse') {
-      sql = `SELECT query_id, user, toString(address), current_database, 'Query', round(elapsed, 2), concat('rows:', toString(read_rows)), query FROM system.processes ORDER BY elapsed DESC;`;
+      sql = `SELECT query_id, user, toString(address), current_database, 'Query', round(elapsed, 2), concat('rows:', toString(read_rows), ' mem:', formatReadableSize(memory_usage)), query FROM system.processes WHERE query_id != currentQueryID() ORDER BY elapsed DESC;`;
     } else if (drv === 'oracle') {
       sql = `SELECT SID || ',' || SERIAL#, USERNAME, MACHINE, SCHEMANAME, COMMAND, LAST_CALL_ET, STATUS, SQL_ID FROM V$SESSION WHERE TYPE = 'USER' ORDER BY LAST_CALL_ET DESC`;
     } else if (drv === 'redis') {
@@ -201,7 +201,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
       await QueryService.ExecuteQuery({
         executionId: `kill-${Date.now()}`,
         connectionId: connection.id,
-        database: connection.databaseName || (drv === 'postgres' ? 'postgres' : 'mysql'),
+        database: connection.databaseName || (drv === 'postgres' ? 'postgres' : drv === 'clickhouse' ? 'default' : 'mysql'),
         schema: drv === 'postgres' ? 'public' : '',
         sql: killSql,
         limit: 10,

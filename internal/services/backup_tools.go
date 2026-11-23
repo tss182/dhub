@@ -78,6 +78,8 @@ func getBackupToolCandidates(driverName, mode, filePath string) (primary string,
 		return "sqlplus", []string{"sqlplus"}, "Oracle Client Tools (sqlplus / Portable Dump)"
 	case "sqlite":
 		return "sqlite3", []string{"sqlite3"}, "SQLite Command Line Shell (sqlite3)"
+	case "clickhouse":
+		return "clickhouse-client", []string{"clickhouse-client", "clickhouse-local"}, "ClickHouse Client (clickhouse-client / Portable SQL)"
 	case "mongodb":
 		if isRestore {
 			return "mongorestore", []string{"mongorestore"}, "MongoDB Database Tools (mongodump & mongorestore)"

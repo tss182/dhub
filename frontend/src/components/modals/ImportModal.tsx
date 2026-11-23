@@ -83,7 +83,11 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       });
       const chosen = Array.isArray(rawChosen) ? rawChosen[0] : rawChosen;
       if (chosen && typeof chosen === 'string' && chosen.trim()) {
-        setFilePath(chosen.trim());
+        const trimmed = chosen.trim();
+        setFilePath(trimmed);
+        if (trimmed.toLowerCase().endsWith('.tsv')) {
+          setDelimiter('\t');
+        }
       }
     } catch (e: any) {
       console.warn('OpenFile dialog error:', e);
