@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -87,6 +88,7 @@ func (m *SessionManager) TestConnection(ctx context.Context, cfg store.Connectio
 	targetPort := cfg.Port
 
 	if cfg.SSHEnabled {
+		remoteHost, remotePort := resolveSSHRemoteTarget(cfg)
 		tun, err = tunnel.OpenSSHTunnel(tunnel.SSHTunnelConfig{
 			Host:       cfg.SSHHost,
 			Port:       cfg.SSHPort,
@@ -94,8 +96,8 @@ func (m *SessionManager) TestConnection(ctx context.Context, cfg store.Connectio
 			AuthType:   cfg.SSHAuthType,
 			Password:   cfg.SSHPassword,
 			KeyPath:    cfg.SSHKeyPath,
-			RemoteHost: cfg.Host,
-			RemotePort: cfg.Port,
+			RemoteHost: remoteHost,
+			RemotePort: remotePort,
 		})
 		if err != nil {
 			return fmt.Errorf("ssh tunnel connection failed: %w", err)
@@ -180,6 +182,7 @@ func (m *SessionManager) connect(ctx context.Context, cfg store.ConnectionConfig
 	targetPort := cfg.Port
 
 	if cfg.SSHEnabled {
+		remoteHost, remotePort := resolveSSHRemoteTarget(cfg)
 		tun, err = tunnel.OpenSSHTunnel(tunnel.SSHTunnelConfig{
 			Host:       cfg.SSHHost,
 			Port:       cfg.SSHPort,
@@ -187,8 +190,8 @@ func (m *SessionManager) connect(ctx context.Context, cfg store.ConnectionConfig
 			AuthType:   cfg.SSHAuthType,
 			Password:   cfg.SSHPassword,
 			KeyPath:    cfg.SSHKeyPath,
-			RemoteHost: cfg.Host,
-			RemotePort: cfg.Port,
+			RemoteHost: remoteHost,
+			RemotePort: remotePort,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("ssh tunnel failed: %w", err)
@@ -445,82 +448,12 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		u.RawQuery = q.Encode()
 		return mongodb.NewMongoDBDriver(u.String())
 	case "qdrant":
-		rawHost := strings.TrimSpace(cfg.Host)
-		var baseURL string
-		if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
-			baseURL = rawHost
-		} else {
-			if port <= 0 {
-				port = 6333
-			}
-			if host == "" {
-				host = "127.0.0.1"
-			}
-			scheme := "http"
-			if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
-				scheme = "https"
-			}
-			baseURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
-		}
-
-		var tlsCfg *tls.Config
-		if strings.HasPrefix(baseURL, "https://") || (cfg.SSLMode != "" && cfg.SSLMode != "disable") {
-			tlsCfg = &tls.Config{}
-			if cfg.SSLCAPath != "" {
-				rootCertPool := x509.NewCertPool()
-				if pem, err := os.ReadFile(cfg.SSLCAPath); err == nil {
-					rootCertPool.AppendCertsFromPEM(pem)
-					tlsCfg.RootCAs = rootCertPool
-				}
-			}
-			if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
-				if cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath); err == nil {
-					tlsCfg.Certificates = []tls.Certificate{cert}
-				}
-			}
-			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
-				tlsCfg.InsecureSkipVerify = true
-			}
-		}
+		baseURL, origHostname := resolveHTTPBaseURL(cfg, host, port, 6333)
+		tlsCfg := buildHTTPDriverTLSConfig(cfg, baseURL, origHostname)
 		return qdrant.NewQdrantDriver(baseURL, cfg.Password, tlsCfg)
 	case "elasticsearch", "es":
-		rawHost := strings.TrimSpace(cfg.Host)
-		var baseURL string
-		if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
-			baseURL = rawHost
-		} else {
-			if port <= 0 {
-				port = 9200
-			}
-			if host == "" {
-				host = "127.0.0.1"
-			}
-			scheme := "http"
-			if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
-				scheme = "https"
-			}
-			baseURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
-		}
-
-		var tlsCfg *tls.Config
-		if strings.HasPrefix(baseURL, "https://") || (cfg.SSLMode != "" && cfg.SSLMode != "disable") {
-			tlsCfg = &tls.Config{}
-			if cfg.SSLCAPath != "" {
-				rootCertPool := x509.NewCertPool()
-				if pem, err := os.ReadFile(cfg.SSLCAPath); err == nil {
-					rootCertPool.AppendCertsFromPEM(pem)
-					tlsCfg.RootCAs = rootCertPool
-				}
-			}
-			if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
-				if cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath); err == nil {
-					tlsCfg.Certificates = []tls.Certificate{cert}
-				}
-			}
-			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
-				tlsCfg.InsecureSkipVerify = true
-			}
-		}
+		baseURL, origHostname := resolveHTTPBaseURL(cfg, host, port, 9200)
+		tlsCfg := buildHTTPDriverTLSConfig(cfg, baseURL, origHostname)
 		return elasticsearch.NewElasticsearchDriver(baseURL, cfg.Username, cfg.Password, tlsCfg)
 	case "clickhouse":
 		connStr := strings.TrimSpace(cfg.Host)
@@ -600,5 +533,83 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}
+}
+
+func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
+	rawHost := strings.TrimSpace(cfg.Host)
+	remoteHost := rawHost
+	remotePort := cfg.Port
+	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
+		if u, err := url.Parse(rawHost); err == nil && u.Hostname() != "" {
+			remoteHost = u.Hostname()
+			if remotePort <= 0 {
+				if pStr := u.Port(); pStr != "" {
+					if p, pErr := strconv.Atoi(pStr); pErr == nil && p > 0 {
+						remotePort = p
+					}
+				} else if u.Scheme == "https" {
+					remotePort = 443
+				}
+			}
+		}
+	}
+	return remoteHost, remotePort
+}
+
+func resolveHTTPBaseURL(cfg store.ConnectionConfig, host string, port, defaultPort int) (baseURL, origHostname string) {
+	rawHost := strings.TrimSpace(cfg.Host)
+	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
+		if cfg.SSHEnabled {
+			if u, err := url.Parse(rawHost); err == nil {
+				origHostname = u.Hostname()
+				if port <= 0 {
+					port = defaultPort
+				}
+				if host == "" {
+					host = "127.0.0.1"
+				}
+				u.Host = fmt.Sprintf("%s:%d", host, port)
+				return strings.TrimRight(u.String(), "/"), origHostname
+			}
+		}
+		return strings.TrimRight(rawHost, "/"), ""
+	}
+	if port <= 0 {
+		port = defaultPort
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	scheme := "http"
+	if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port), ""
+}
+
+func buildHTTPDriverTLSConfig(cfg store.ConnectionConfig, baseURL, origHostname string) *tls.Config {
+	if !strings.HasPrefix(baseURL, "https://") && (cfg.SSLMode == "" || cfg.SSLMode == "disable") {
+		return nil
+	}
+	tlsCfg := &tls.Config{}
+	if cfg.SSHEnabled && origHostname != "" {
+		tlsCfg.ServerName = origHostname
+	}
+	if cfg.SSLCAPath != "" {
+		rootCertPool := x509.NewCertPool()
+		if pem, err := os.ReadFile(cfg.SSLCAPath); err == nil {
+			rootCertPool.AppendCertsFromPEM(pem)
+			tlsCfg.RootCAs = rootCertPool
+		}
+	}
+	if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
+		if cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath); err == nil {
+			tlsCfg.Certificates = []tls.Certificate{cert}
+		}
+	}
+	if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+		tlsCfg.InsecureSkipVerify = true
+	}
+	return tlsCfg
 }
 

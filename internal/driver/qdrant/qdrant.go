@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dhub/internal/driver"
@@ -21,9 +23,11 @@ import (
 
 // QdrantDriver implements driver.DatabaseDriver over Qdrant's HTTP REST API.
 type QdrantDriver struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	baseURL     string
+	apiKey      string
+	client      *http.Client
+	cursorMu    sync.Mutex
+	cursorCache map[string]map[int]any
 }
 
 // NewQdrantDriver creates a Qdrant driver targeting baseURL (e.g. http://127.0.0.1:6333).
@@ -34,6 +38,11 @@ func NewQdrantDriver(baseURL, apiKey string, tlsCfg *tls.Config) (*QdrantDriver,
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.TLSHandshakeTimeout = 15 * time.Second
 	if tlsCfg != nil {
 		transport.TLSClientConfig = tlsCfg
 	}
@@ -42,9 +51,11 @@ func NewQdrantDriver(baseURL, apiKey string, tlsCfg *tls.Config) (*QdrantDriver,
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		client: &http.Client{
-			Timeout:   30 * time.Second,
+			// Rely on request context deadlines instead of a hardcoded 30s timeout
+			// so long exports, snapshots, and heavy scrolls can complete.
 			Transport: transport,
 		},
+		cursorCache: make(map[string]map[int]any),
 	}, nil
 }
 
@@ -137,12 +148,13 @@ type collectionListResp struct {
 
 type collectionInfoResp struct {
 	Result struct {
-		Status        string `json:"status"`
-		PointsCount   *int64 `json:"points_count"`
-		VectorsCount  *int64 `json:"vectors_count"`
-		Config        struct {
+		Status       string `json:"status"`
+		PointsCount  *int64 `json:"points_count"`
+		VectorsCount *int64 `json:"vectors_count"`
+		Config       struct {
 			Params struct {
-				Vectors json.RawMessage `json:"vectors"`
+				Vectors       json.RawMessage `json:"vectors"`
+				SparseVectors json.RawMessage `json:"sparse_vectors"`
 			} `json:"params"`
 		} `json:"config"`
 		PayloadSchema map[string]struct {
@@ -151,44 +163,78 @@ type collectionInfoResp struct {
 	} `json:"result"`
 }
 
-func parseVectorConfigSummary(raw json.RawMessage) (map[string]string, string) {
+type vectorParamInfo struct {
+	Size              int             `json:"size"`
+	Distance          string          `json:"distance"`
+	Datatype          string          `json:"datatype,omitempty"`
+	OnDisk            *bool           `json:"on_disk,omitempty"`
+	MultivectorConfig json.RawMessage `json:"multivector_config,omitempty"`
+}
+
+func formatVectorTypeDesc(v vectorParamInfo) (colType string, shortDesc string) {
+	extras := []string{}
+	if v.Datatype != "" && !strings.EqualFold(v.Datatype, "float32") {
+		extras = append(extras, v.Datatype)
+	}
+	if len(v.MultivectorConfig) > 0 && string(v.MultivectorConfig) != "null" {
+		extras = append(extras, "multi")
+	}
+	if v.OnDisk != nil && *v.OnDisk {
+		extras = append(extras, "on_disk")
+	}
+	if len(extras) > 0 {
+		return fmt.Sprintf("vector(%d, %s, %s)", v.Size, v.Distance, strings.Join(extras, ", ")),
+			fmt.Sprintf("%dd %s (%s)", v.Size, v.Distance, strings.Join(extras, ","))
+	}
+	return fmt.Sprintf("vector(%d, %s)", v.Size, v.Distance),
+		fmt.Sprintf("%dd %s", v.Size, v.Distance)
+}
+
+func parseVectorConfigSummary(raw, rawSparse json.RawMessage) (map[string]string, string) {
 	configs := make(map[string]string)
-	if len(raw) == 0 || string(raw) == "null" {
-		return configs, ""
-	}
+	var parts []string
 
-	// Single unnamed vector: {"size": 1536, "distance": "Cosine"}
-	var single struct {
-		Size     int    `json:"size"`
-		Distance string `json:"distance"`
-	}
-	if err := json.Unmarshal(raw, &single); err == nil && single.Size > 0 {
-		desc := fmt.Sprintf("vector(%d, %s)", single.Size, single.Distance)
-		configs["vector"] = desc
-		return configs, fmt.Sprintf("%dd %s", single.Size, single.Distance)
-	}
-
-	// Named vectors: {"text": {"size": 768, "distance": "Cosine"}, ...}
-	var named map[string]struct {
-		Size     int    `json:"size"`
-		Distance string `json:"distance"`
-	}
-	if err := json.Unmarshal(raw, &named); err == nil && len(named) > 0 {
-		var parts []string
-		names := make([]string, 0, len(named))
-		for k := range named {
-			names = append(names, k)
+	if len(raw) > 0 && string(raw) != "null" {
+		// Single unnamed vector: {"size": 1536, "distance": "Cosine"}
+		var single vectorParamInfo
+		if err := json.Unmarshal(raw, &single); err == nil && single.Size > 0 {
+			desc, short := formatVectorTypeDesc(single)
+			configs["vector"] = desc
+			parts = append(parts, short)
+		} else {
+			// Named vectors: {"text": {"size": 768, "distance": "Cosine"}, ...}
+			var named map[string]vectorParamInfo
+			if err := json.Unmarshal(raw, &named); err == nil && len(named) > 0 {
+				names := make([]string, 0, len(named))
+				for k := range named {
+					names = append(names, k)
+				}
+				sort.Strings(names)
+				for _, k := range names {
+					desc, short := formatVectorTypeDesc(named[k])
+					configs["vector."+k] = desc
+					parts = append(parts, fmt.Sprintf("%s:%s", k, short))
+				}
+			}
 		}
-		sort.Strings(names)
-		for _, k := range names {
-			v := named[k]
-			configs["vector."+k] = fmt.Sprintf("vector(%d, %s)", v.Size, v.Distance)
-			parts = append(parts, fmt.Sprintf("%s:%dd %s", k, v.Size, v.Distance))
-		}
-		return configs, strings.Join(parts, ", ")
 	}
 
-	return configs, ""
+	if len(rawSparse) > 0 && string(rawSparse) != "null" {
+		var sparse map[string]json.RawMessage
+		if err := json.Unmarshal(rawSparse, &sparse); err == nil && len(sparse) > 0 {
+			names := make([]string, 0, len(sparse))
+			for k := range sparse {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			for _, k := range names {
+				configs["vector."+k] = "sparse_vector"
+				parts = append(parts, fmt.Sprintf("%s:sparse", k))
+			}
+		}
+	}
+
+	return configs, strings.Join(parts, ", ")
 }
 
 func (q *QdrantDriver) ListObjects(ctx context.Context, database, schema string) ([]driver.ObjectSummary, error) {
@@ -206,32 +252,58 @@ func (q *QdrantDriver) ListObjects(ctx context.Context, database, schema string)
 		return listResp.Result.Collections[i].Name < listResp.Result.Collections[j].Name
 	})
 
-	objects := make([]driver.ObjectSummary, 0, len(listResp.Result.Collections))
-	for _, c := range listResp.Result.Collections {
-		rowEst := int64(-1)
-		comment := ""
+	cols := listResp.Result.Collections
+	objects := make([]driver.ObjectSummary, len(cols))
 
-		infoBytes, _, infoErr := q.doRequest(ctx, http.MethodGet, "/collections/"+url.PathEscape(c.Name), nil)
-		if infoErr == nil {
-			var info collectionInfoResp
-			if json.Unmarshal(infoBytes, &info) == nil {
-				if info.Result.PointsCount != nil {
-					rowEst = *info.Result.PointsCount
-				} else if info.Result.VectorsCount != nil {
-					rowEst = *info.Result.VectorsCount
+	const maxConcurrency = 8
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
+	for idx, c := range cols {
+		wg.Add(1)
+		go func(i int, collName string) {
+			defer wg.Done()
+			rowEst := int64(-1)
+			comment := ""
+
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				objects[i] = driver.ObjectSummary{
+					Schema:      "default",
+					Name:        collName,
+					Type:        "table",
+					RowEstimate: rowEst,
 				}
-				_, comment = parseVectorConfigSummary(info.Result.Config.Params.Vectors)
+				return
 			}
-		}
 
-		objects = append(objects, driver.ObjectSummary{
-			Schema:      "default",
-			Name:        c.Name,
-			Type:        "table",
-			RowEstimate: rowEst,
-			Comment:     comment,
-		})
+			if ctx.Err() == nil {
+				infoBytes, _, infoErr := q.doRequest(ctx, http.MethodGet, "/collections/"+url.PathEscape(collName), nil)
+				if infoErr == nil {
+					var info collectionInfoResp
+					if json.Unmarshal(infoBytes, &info) == nil {
+						if info.Result.PointsCount != nil {
+							rowEst = *info.Result.PointsCount
+						} else if info.Result.VectorsCount != nil {
+							rowEst = *info.Result.VectorsCount
+						}
+						_, comment = parseVectorConfigSummary(info.Result.Config.Params.Vectors, info.Result.Config.Params.SparseVectors)
+					}
+				}
+			}
+
+			objects[i] = driver.ObjectSummary{
+				Schema:      "default",
+				Name:        collName,
+				Type:        "table",
+				RowEstimate: rowEst,
+				Comment:     comment,
+			}
+		}(idx, c.Name)
 	}
+	wg.Wait()
 
 	return objects, nil
 }
@@ -264,7 +336,7 @@ func (q *QdrantDriver) GetTableStructure(ctx context.Context, database, schema, 
 	}
 
 	// Vector columns
-	vecConfigs, _ := parseVectorConfigSummary(info.Result.Config.Params.Vectors)
+	vecConfigs, _ := parseVectorConfigSummary(info.Result.Config.Params.Vectors, info.Result.Config.Params.SparseVectors)
 	vecNames := make([]string, 0, len(vecConfigs))
 	for k := range vecConfigs {
 		vecNames = append(vecNames, k)
@@ -398,6 +470,10 @@ func formatCellValue(v any) any {
 }
 
 func pointsToQueryResult(execID, collection string, points []qdrantPoint, elapsedMs int64, isEditable bool) *driver.QueryResult {
+	return pointsToQueryResultWithProjection(execID, collection, points, elapsedMs, isEditable, nil)
+}
+
+func pointsToQueryResultWithProjection(execID, collection string, points []qdrantPoint, elapsedMs int64, isEditable bool, selectedCols []string) *driver.QueryResult {
 	hasScore := false
 	hasSingleVec := false
 	namedVecSet := make(map[string]bool)
@@ -421,64 +497,86 @@ func pointsToQueryResult(execID, collection string, points []qdrantPoint, elapse
 		}
 	}
 
-	columns := []driver.ColumnMeta{
-		{Name: "id", DataType: "point_id", RawType: "string", IsPrimaryKey: true, IsNullable: false},
-	}
-	if hasScore {
-		columns = append(columns, driver.ColumnMeta{Name: "score", DataType: "float", RawType: "number", IsNullable: true})
-	}
+	var columns []driver.ColumnMeta
+	if len(selectedCols) > 0 {
+		seen := make(map[string]bool)
+		for _, colName := range selectedCols {
+			if colName == "" || seen[colName] {
+				continue
+			}
+			seen[colName] = true
+			switch {
+			case strings.EqualFold(colName, "id"):
+				columns = append(columns, driver.ColumnMeta{Name: "id", DataType: "point_id", RawType: "string", IsPrimaryKey: true, IsNullable: false})
+			case strings.EqualFold(colName, "score"):
+				columns = append(columns, driver.ColumnMeta{Name: "score", DataType: "float", RawType: "number", IsNullable: true})
+			case strings.EqualFold(colName, "vector"):
+				columns = append(columns, driver.ColumnMeta{Name: "vector", DataType: "vector", RawType: "vector", IsNullable: true})
+			case strings.HasPrefix(colName, "vector."):
+				columns = append(columns, driver.ColumnMeta{Name: colName, DataType: "vector", RawType: "vector", IsNullable: true})
+			default:
+				columns = append(columns, driver.ColumnMeta{Name: colName, DataType: "json", RawType: "string", IsNullable: true})
+			}
+		}
+	} else {
+		columns = []driver.ColumnMeta{
+			{Name: "id", DataType: "point_id", RawType: "string", IsPrimaryKey: true, IsNullable: false},
+		}
+		if hasScore {
+			columns = append(columns, driver.ColumnMeta{Name: "score", DataType: "float", RawType: "number", IsNullable: true})
+		}
 
-	payloadNames := make([]string, 0, len(payloadSet))
-	for k := range payloadSet {
-		payloadNames = append(payloadNames, k)
-	}
-	sort.Strings(payloadNames)
-	for _, k := range payloadNames {
-		columns = append(columns, driver.ColumnMeta{Name: k, DataType: "json", RawType: "string", IsNullable: true})
-	}
+		payloadNames := make([]string, 0, len(payloadSet))
+		for k := range payloadSet {
+			payloadNames = append(payloadNames, k)
+		}
+		sort.Strings(payloadNames)
+		for _, k := range payloadNames {
+			columns = append(columns, driver.ColumnMeta{Name: k, DataType: "json", RawType: "string", IsNullable: true})
+		}
 
-	if hasSingleVec {
-		columns = append(columns, driver.ColumnMeta{Name: "vector", DataType: "vector", RawType: "vector", IsNullable: true})
-	}
-	namedVecNames := make([]string, 0, len(namedVecSet))
-	for k := range namedVecSet {
-		namedVecNames = append(namedVecNames, k)
-	}
-	sort.Strings(namedVecNames)
-	for _, k := range namedVecNames {
-		columns = append(columns, driver.ColumnMeta{Name: "vector." + k, DataType: "vector", RawType: "vector", IsNullable: true})
+		if hasSingleVec {
+			columns = append(columns, driver.ColumnMeta{Name: "vector", DataType: "vector", RawType: "vector", IsNullable: true})
+		}
+		namedVecNames := make([]string, 0, len(namedVecSet))
+		for k := range namedVecSet {
+			namedVecNames = append(namedVecNames, k)
+		}
+		sort.Strings(namedVecNames)
+		for _, k := range namedVecNames {
+			columns = append(columns, driver.ColumnMeta{Name: "vector." + k, DataType: "vector", RawType: "vector", IsNullable: true})
+		}
 	}
 
 	rows := make([][]any, len(points))
 	for rIdx, pt := range points {
 		row := make([]any, 0, len(columns))
-		row = append(row, formatCellValue(pt.ID))
-		if hasScore {
-			if pt.Score != nil {
-				row = append(row, *pt.Score)
-			} else {
-				row = append(row, nil)
-			}
-		}
-		for _, k := range payloadNames {
-			if pt.Payload != nil {
-				row = append(row, formatCellValue(pt.Payload[k]))
-			} else {
-				row = append(row, nil)
-			}
-		}
-		if hasSingleVec {
-			if _, isMap := pt.Vector.(map[string]any); !isMap {
-				row = append(row, formatCellValue(pt.Vector))
-			} else {
-				row = append(row, nil)
-			}
-		}
-		if len(namedVecNames) > 0 {
-			m, _ := pt.Vector.(map[string]any)
-			for _, k := range namedVecNames {
-				if m != nil {
-					row = append(row, formatCellValue(m[k]))
+		for _, col := range columns {
+			switch {
+			case col.Name == "id":
+				row = append(row, formatCellValue(pt.ID))
+			case col.Name == "score":
+				if pt.Score != nil {
+					row = append(row, *pt.Score)
+				} else {
+					row = append(row, nil)
+				}
+			case col.Name == "vector":
+				if _, isMap := pt.Vector.(map[string]any); !isMap {
+					row = append(row, formatCellValue(pt.Vector))
+				} else {
+					row = append(row, nil)
+				}
+			case strings.HasPrefix(col.Name, "vector."):
+				vecKey := strings.TrimPrefix(col.Name, "vector.")
+				if m, ok := pt.Vector.(map[string]any); ok && m != nil {
+					row = append(row, formatCellValue(m[vecKey]))
+				} else {
+					row = append(row, nil)
+				}
+			default:
+				if pt.Payload != nil {
+					row = append(row, formatCellValue(pt.Payload[col.Name]))
 				} else {
 					row = append(row, nil)
 				}
@@ -500,6 +598,42 @@ func pointsToQueryResult(execID, collection string, points []qdrantPoint, elapse
 	}
 }
 
+func (q *QdrantDriver) buildEmptyCollectionColumns(ctx context.Context, coll string, selectedCols []string) []driver.ColumnMeta {
+	if len(selectedCols) > 0 {
+		return pointsToQueryResultWithProjection("", coll, nil, 0, true, selectedCols).Columns
+	}
+	cols := []driver.ColumnMeta{
+		{Name: "id", DataType: "point_id", RawType: "string", IsPrimaryKey: true, IsNullable: false},
+	}
+	infoBytes, _, err := q.doRequest(ctx, http.MethodGet, "/collections/"+url.PathEscape(coll), nil)
+	if err != nil {
+		return cols
+	}
+	var info collectionInfoResp
+	if json.Unmarshal(infoBytes, &info) != nil {
+		return cols
+	}
+	payloadNames := make([]string, 0, len(info.Result.PayloadSchema))
+	for k := range info.Result.PayloadSchema {
+		payloadNames = append(payloadNames, k)
+	}
+	sort.Strings(payloadNames)
+	for _, k := range payloadNames {
+		dt := info.Result.PayloadSchema[k].DataType
+		cols = append(cols, driver.ColumnMeta{Name: k, DataType: dt, RawType: rawTypeFromJSONType(dt), IsNullable: true})
+	}
+	vecConfigs, _ := parseVectorConfigSummary(info.Result.Config.Params.Vectors, info.Result.Config.Params.SparseVectors)
+	vecNames := make([]string, 0, len(vecConfigs))
+	for k := range vecConfigs {
+		vecNames = append(vecNames, k)
+	}
+	sort.Strings(vecNames)
+	for _, vn := range vecNames {
+		cols = append(cols, driver.ColumnMeta{Name: vn, DataType: vecConfigs[vn], RawType: "vector", IsNullable: true})
+	}
+	return cols
+}
+
 var (
 	sqlSelectCountRegex = regexp.MustCompile(`(?i)^\s*SELECT\s+COUNT\(\*\)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
 	sqlSelectRegex      = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*;?\s*$`)
@@ -510,9 +644,13 @@ var (
 
 func stripIdentQuotes(s string) string {
 	s = strings.TrimSpace(s)
-	if strings.Contains(s, ".") {
-		parts := strings.SplitN(s, ".", 2)
-		s = parts[1]
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "default.") {
+		s = s[len("default."):]
+	} else if strings.HasPrefix(lower, `"default".`) {
+		s = s[len(`"default".`):]
+	} else if strings.HasPrefix(lower, "`default`.") {
+		s = s[len("`default`."):]
 	}
 	return strings.Trim(s, "\"`'[]")
 }
@@ -538,12 +676,61 @@ func parseScalarLiteral(rawVal string) any {
 	return rawVal
 }
 
-func parseSimpleWhereToFilter(where string) map[string]any {
+func splitKeywordTopLevel(s, kw string) []string {
+	var parts []string
+	var buf strings.Builder
+	inSingle := false
+	inDouble := false
+	parenDepth := 0
+	kwUpper := strings.ToUpper(kw)
+	kwLen := len(kwUpper)
+
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			buf.WriteByte(ch)
+			i++
+			continue
+		}
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			buf.WriteByte(ch)
+			i++
+			continue
+		}
+		if !inSingle && !inDouble {
+			if ch == '(' {
+				parenDepth++
+			} else if ch == ')' && parenDepth > 0 {
+				parenDepth--
+			} else if parenDepth == 0 && i+kwLen <= len(s) {
+				prevSpace := i > 0 && (s[i-1] == ' ' || s[i-1] == '\t' || s[i-1] == '\n' || s[i-1] == ')')
+				nextIdx := i + kwLen
+				nextSpace := nextIdx < len(s) && (s[nextIdx] == ' ' || s[nextIdx] == '\t' || s[nextIdx] == '\n' || s[nextIdx] == '(')
+				if prevSpace && nextSpace && strings.EqualFold(s[i:nextIdx], kwUpper) {
+					parts = append(parts, strings.TrimSpace(buf.String()))
+					buf.Reset()
+					i = nextIdx
+					continue
+				}
+			}
+		}
+		buf.WriteByte(ch)
+		i++
+	}
+	if last := strings.TrimSpace(buf.String()); last != "" {
+		parts = append(parts, last)
+	}
+	return parts
+}
+
+func parseSimpleWhereToFilter(where string) (map[string]any, error) {
 	where = strings.TrimSpace(where)
 	if where == "" {
-		return nil
+		return nil, nil
 	}
-	// Strip outer parentheses if present
 	if strings.HasPrefix(where, "(") && strings.HasSuffix(where, ")") {
 		inner := strings.TrimSpace(where[1 : len(where)-1])
 		if inner != "" {
@@ -554,23 +741,58 @@ func parseSimpleWhereToFilter(where string) map[string]any {
 	// Allow raw Qdrant filter JSON directly in WHERE
 	if strings.HasPrefix(where, "{") && strings.HasSuffix(where, "}") {
 		var rawFilter map[string]any
-		if json.Unmarshal([]byte(where), &rawFilter) == nil && len(rawFilter) > 0 {
-			return rawFilter
+		if err := json.Unmarshal([]byte(where), &rawFilter); err != nil {
+			return nil, fmt.Errorf("invalid Qdrant JSON filter: %w", err)
 		}
+		if len(rawFilter) == 0 {
+			return nil, nil
+		}
+		return rawFilter, nil
 	}
 
-	parts := regexp.MustCompile(`(?i)\s+AND\s+`).Split(where, -1)
+	orBranches := splitKeywordTopLevel(where, "OR")
+	if len(orBranches) > 1 {
+		should := make([]map[string]any, 0, len(orBranches))
+		for _, br := range orBranches {
+			f, err := parseSimpleWhereToFilter(br)
+			if err != nil {
+				return nil, err
+			}
+			if f != nil {
+				should = append(should, f)
+			}
+		}
+		if len(should) == 0 {
+			return nil, nil
+		}
+		return map[string]any{"should": should}, nil
+	}
+
+	// Protect `BETWEEN a AND b` before splitting on AND
+	betweenProtectRe := regexp.MustCompile(`(?i)(\b(?:NOT\s+)?BETWEEN\s+(?:'[^']*'|"[^"]*"|\S+))\s+AND\s+('[^']*'|"[^"]*"|\S+)`)
+	protectedWhere := betweenProtectRe.ReplaceAllString(where, "$1 \x00 $2")
+
+	parts := splitKeywordTopLevel(protectedWhere, "AND")
 	var must []map[string]any
 	var mustNot []map[string]any
 
 	isNullRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+IS\s+(NOT\s+)?NULL\s*$`)
-	inRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+IN\s*\((.+)\)\s*$`)
+	inRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+(NOT\s+)?IN\s*\((.+)\)\s*$`)
+	betweenRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+(NOT\s+)?BETWEEN\s+(.+?)\s*\x00\s*(.+?)\s*$`)
+	likeRe := regexp.MustCompile(`(?i)^\s*([a-zA-Z0-9_."` + "`" + `]+)\s+(NOT\s+)?(I?LIKE|CONTAINS)\s+(.+?)\s*$`)
 	cmpRe := regexp.MustCompile(`^\s*([a-zA-Z0-9_."` + "`" + `]+)\s*(!=|<>|>=|<=|=|>|<)\s*(.+?)\s*$`)
 
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
+		}
+		// Strip balanced outer parentheses around single condition
+		if strings.HasPrefix(p, "(") && strings.HasSuffix(p, ")") {
+			inner := strings.TrimSpace(p[1 : len(p)-1])
+			if inner != "" && !strings.Contains(p[1:len(p)-1], "(") {
+				p = inner
+			}
 		}
 
 		if m := isNullRe.FindStringSubmatch(p); len(m) == 3 {
@@ -584,9 +806,42 @@ func parseSimpleWhereToFilter(where string) map[string]any {
 			continue
 		}
 
-		if m := inRe.FindStringSubmatch(p); len(m) == 3 {
+		if m := betweenRe.FindStringSubmatch(p); len(m) == 5 {
 			key := strings.Trim(m[1], "\"`")
-			rawItems := strings.Split(m[2], ",")
+			v1 := parseScalarLiteral(m[3])
+			v2 := parseScalarLiteral(m[4])
+			cond := map[string]any{
+				"key":   key,
+				"range": map[string]any{"gte": v1, "lte": v2},
+			}
+			if strings.TrimSpace(m[2]) != "" {
+				mustNot = append(mustNot, cond)
+			} else {
+				must = append(must, cond)
+			}
+			continue
+		}
+
+		if m := likeRe.FindStringSubmatch(p); len(m) == 5 {
+			key := strings.Trim(m[1], "\"`")
+			rawLit := parseScalarLiteral(m[4])
+			text := strings.Trim(fmt.Sprintf("%v", rawLit), "%*")
+			cond := map[string]any{
+				"key":   key,
+				"match": map[string]any{"text": text},
+			}
+			if strings.TrimSpace(m[2]) != "" {
+				mustNot = append(mustNot, cond)
+			} else {
+				must = append(must, cond)
+			}
+			continue
+		}
+
+		if m := inRe.FindStringSubmatch(p); len(m) == 4 {
+			key := strings.Trim(m[1], "\"`")
+			isNot := strings.TrimSpace(m[2]) != ""
+			rawItems := strings.Split(m[3], ",")
 			vals := make([]any, 0, len(rawItems))
 			for _, item := range rawItems {
 				item = strings.TrimSpace(item)
@@ -599,19 +854,26 @@ func parseSimpleWhereToFilter(where string) map[string]any {
 				}
 				vals = append(vals, v)
 			}
-			if len(vals) > 0 {
-				if strings.EqualFold(key, "id") {
-					must = append(must, map[string]any{"has_id": vals})
-				} else {
-					must = append(must, map[string]any{"key": key, "match": map[string]any{"any": vals}})
-				}
+			if len(vals) == 0 {
+				return nil, fmt.Errorf("empty IN list in WHERE clause: %s", p)
+			}
+			var cond map[string]any
+			if strings.EqualFold(key, "id") {
+				cond = map[string]any{"has_id": vals}
+			} else {
+				cond = map[string]any{"key": key, "match": map[string]any{"any": vals}}
+			}
+			if isNot {
+				mustNot = append(mustNot, cond)
+			} else {
+				must = append(must, cond)
 			}
 			continue
 		}
 
 		m := cmpRe.FindStringSubmatch(p)
 		if len(m) != 4 {
-			continue
+			return nil, fmt.Errorf("unsupported WHERE condition for Qdrant: %s", strings.ReplaceAll(p, "\x00", "AND"))
 		}
 		key := strings.Trim(m[1], "\"`")
 		op := m[2]
@@ -619,10 +881,13 @@ func parseSimpleWhereToFilter(where string) map[string]any {
 
 		if strings.EqualFold(key, "id") {
 			idVal := parsePointID(val)
-			if op == "=" {
+			switch op {
+			case "=":
 				must = append(must, map[string]any{"has_id": []any{idVal}})
-			} else if op == "!=" || op == "<>" {
+			case "!=", "<>":
 				mustNot = append(mustNot, map[string]any{"has_id": []any{idVal}})
+			default:
+				return nil, fmt.Errorf("operator %s is not supported on Qdrant point id", op)
 			}
 			continue
 		}
@@ -653,7 +918,7 @@ func parseSimpleWhereToFilter(where string) map[string]any {
 	}
 
 	if len(must) == 0 && len(mustNot) == 0 {
-		return nil
+		return nil, nil
 	}
 	filter := make(map[string]any)
 	if len(must) > 0 {
@@ -662,7 +927,7 @@ func parseSimpleWhereToFilter(where string) map[string]any {
 	if len(mustNot) > 0 {
 		filter["must_not"] = mustNot
 	}
-	return filter
+	return filter, nil
 }
 
 func sortPointsInMemory(pts []qdrantPoint, col, dir string) {
@@ -731,7 +996,245 @@ func toFloat64(v any) (float64, bool) {
 	}
 }
 
+var restMethodLineRe = regexp.MustCompile(`(?i)^(GET|POST|PUT|DELETE|PATCH)\s+/\S*`)
+var sqlStartLineRe = regexp.MustCompile(`(?i)^(SELECT|SHOW|TRUNCATE|DELETE\s+FROM)\b`)
+
+func splitQdrantStatements(raw string) []string {
+	lines := strings.Split(raw, "\n")
+	var stmts []string
+	var cur strings.Builder
+	hasNonComment := false
+	curIsREST := false
+	inSingle := false
+	inDouble := false
+	braceDepth := 0
+	bracketDepth := 0
+
+	flush := func() {
+		s := strings.TrimSpace(cur.String())
+		s = strings.TrimRight(s, "; \t\r\n")
+		if strings.TrimSpace(driver.StripLeadingComments(s)) != "" {
+			stmts = append(stmts, s)
+		}
+		cur.Reset()
+		hasNonComment = false
+		curIsREST = false
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isCommentLine := trimmed == "" || strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#")
+
+		if !inSingle && !inDouble && braceDepth == 0 && bracketDepth == 0 && hasNonComment {
+			if restMethodLineRe.MatchString(trimmed) || (curIsREST && sqlStartLineRe.MatchString(trimmed)) {
+				flush()
+			}
+		}
+
+		if !isCommentLine && !hasNonComment {
+			hasNonComment = true
+			if restMethodLineRe.MatchString(trimmed) {
+				curIsREST = true
+			}
+		}
+
+		for i := 0; i < len(line); i++ {
+			ch := line[i]
+			if ch == '\\' && (inSingle || inDouble) && i+1 < len(line) {
+				cur.WriteByte(ch)
+				i++
+				cur.WriteByte(line[i])
+				continue
+			}
+			if ch == '\'' && !inDouble {
+				inSingle = !inSingle
+			} else if ch == '"' && !inSingle {
+				inDouble = !inDouble
+			} else if !inSingle && !inDouble {
+				switch ch {
+				case '{':
+					braceDepth++
+				case '}':
+					if braceDepth > 0 {
+						braceDepth--
+					}
+				case '[':
+					bracketDepth++
+				case ']':
+					if bracketDepth > 0 {
+						bracketDepth--
+					}
+				case ';':
+					if braceDepth == 0 && bracketDepth == 0 && !curIsREST {
+						flush()
+						continue
+					}
+				}
+			}
+			cur.WriteByte(ch)
+		}
+		cur.WriteByte('\n')
+	}
+	flush()
+	return stmts
+}
+
+func (q *QdrantDriver) getCursor(key string, offset int) (int, any) {
+	q.cursorMu.Lock()
+	defer q.cursorMu.Unlock()
+	m, ok := q.cursorCache[key]
+	if !ok {
+		return 0, nil
+	}
+	if c, exact := m[offset]; exact {
+		return offset, c
+	}
+	bestOff := 0
+	var bestCursor any
+	for off, c := range m {
+		if off < offset && off > bestOff && c != nil {
+			bestOff = off
+			bestCursor = c
+		}
+	}
+	return bestOff, bestCursor
+}
+
+func (q *QdrantDriver) setCursor(key string, offset int, cursor any) {
+	if cursor == nil || offset <= 0 {
+		return
+	}
+	q.cursorMu.Lock()
+	defer q.cursorMu.Unlock()
+	if len(q.cursorCache) > 64 {
+		q.cursorCache = make(map[string]map[int]any)
+	}
+	m, ok := q.cursorCache[key]
+	if !ok {
+		m = make(map[int]any)
+		q.cursorCache[key] = m
+	}
+	m[offset] = cursor
+}
+
+func parseSelectProjection(selectExpr string) (selectedCols []string, withPayload any, withVector any) {
+	trimmed := strings.TrimSpace(selectExpr)
+	if trimmed == "" || trimmed == "*" {
+		return nil, true, true
+	}
+	rawCols := strings.Split(trimmed, ",")
+	var payloadCols []string
+	var namedVecs []string
+	wantAllVec := false
+
+	for _, rc := range rawCols {
+		col := strings.Trim(strings.TrimSpace(rc), "\"`'[]")
+		if col == "" {
+			continue
+		}
+		if col == "*" {
+			return nil, true, true
+		}
+		selectedCols = append(selectedCols, col)
+		switch {
+		case strings.EqualFold(col, "id") || strings.EqualFold(col, "score"):
+			// handled automatically
+		case strings.EqualFold(col, "vector"):
+			wantAllVec = true
+		case strings.HasPrefix(col, "vector."):
+			namedVecs = append(namedVecs, strings.TrimPrefix(col, "vector."))
+		default:
+			payloadCols = append(payloadCols, col)
+		}
+	}
+
+	if len(payloadCols) > 0 {
+		withPayload = payloadCols
+	} else {
+		withPayload = false
+	}
+
+	if wantAllVec {
+		withVector = true
+	} else if len(namedVecs) > 0 {
+		withVector = namedVecs
+	} else {
+		withVector = false
+	}
+	return selectedCols, withPayload, withVector
+}
+
 func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
+	start := time.Now()
+	stmts := splitQdrantStatements(req.SQL)
+	if len(stmts) == 0 {
+		return &driver.QueryResult{
+			ExecutionID: req.ExecutionID,
+			Columns:     []driver.ColumnMeta{},
+			Rows:        [][]any{},
+		}, nil
+	}
+	if len(stmts) == 1 {
+		singleReq := req
+		singleReq.SQL = stmts[0]
+		return q.executeSingle(ctx, singleReq)
+	}
+
+	allResults := make([]driver.StatementResult, 0, len(stmts))
+	var lastRes *driver.QueryResult
+	var lastErr string
+
+	for _, stmt := range stmts {
+		stmtStart := time.Now()
+		subReq := req
+		subReq.SQL = stmt
+		res, err := q.executeSingle(ctx, subReq)
+		if err != nil {
+			errMsg := err.Error()
+			allResults = append(allResults, driver.StatementResult{
+				SQL:       stmt,
+				Columns:   []driver.ColumnMeta{},
+				Rows:      [][]any{},
+				ElapsedMs: time.Since(stmtStart).Milliseconds(),
+				Error:     errMsg,
+			})
+			lastErr = errMsg
+			continue
+		}
+		allResults = append(allResults, driver.StatementResult{
+			SQL:          stmt,
+			Columns:      res.Columns,
+			Rows:         res.Rows,
+			RowsAffected: res.RowsAffected,
+			ElapsedMs:    res.ElapsedMs,
+			HasMore:      res.HasMore,
+		})
+		lastRes = res
+		lastErr = ""
+	}
+
+	out := &driver.QueryResult{
+		ExecutionID: req.ExecutionID,
+		Columns:     []driver.ColumnMeta{},
+		Rows:        [][]any{},
+		ElapsedMs:   time.Since(start).Milliseconds(),
+		Error:       lastErr,
+		Results:     allResults,
+	}
+	if lastRes != nil {
+		out.Columns = lastRes.Columns
+		out.Rows = lastRes.Rows
+		out.RowsAffected = lastRes.RowsAffected
+		out.HasMore = lastRes.HasMore
+		out.IsEditable = lastRes.IsEditable
+		out.SourceSchema = lastRes.SourceSchema
+		out.SourceTable = lastRes.SourceTable
+		out.PrimaryKeys = lastRes.PrimaryKeys
+	}
+	return out, nil
+}
+
+func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
 	start := time.Now()
 	rawSQL := strings.TrimSpace(driver.StripLeadingComments(req.SQL))
 	if rawSQL == "" {
@@ -804,10 +1307,12 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 		coll := stripIdentQuotes(match[1])
 		filter := map[string]any{}
 		if len(match) > 2 && strings.TrimSpace(match[2]) != "" {
-			if f := parseSimpleWhereToFilter(match[2]); f != nil {
+			f, fErr := parseSimpleWhereToFilter(match[2])
+			if fErr != nil {
+				return nil, fErr
+			}
+			if f != nil {
 				filter = f
-			} else {
-				return nil, fmt.Errorf("unsupported WHERE clause for Qdrant DELETE: %s", match[2])
 			}
 		}
 		body := map[string]any{"filter": filter}
@@ -830,7 +1335,11 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 		coll := stripIdentQuotes(match[1])
 		body := map[string]any{"exact": true}
 		if len(match) > 2 && strings.TrimSpace(match[2]) != "" {
-			if f := parseSimpleWhereToFilter(match[2]); f != nil {
+			f, fErr := parseSimpleWhereToFilter(match[2])
+			if fErr != nil {
+				return nil, fErr
+			}
+			if f != nil {
 				body["filter"] = f
 			}
 		}
@@ -860,6 +1369,8 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 	// 3. Pseudo-SQL SELECT ... FROM <collection>
 	if match := sqlSelectRegex.FindStringSubmatch(rawSQL); len(match) > 2 {
 		coll := stripIdentQuotes(match[2])
+		selectedCols, withPayload, withVector := parseSelectProjection(match[1])
+
 		limit := 100
 		if match[5] != "" {
 			if l, err := strconv.Atoi(match[5]); err == nil && l > 0 {
@@ -878,20 +1389,17 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 			offset = req.Offset
 		}
 
-		// Qdrant scroll uses cursor-based offset; request +1 extra row so HasMore is accurate.
-		fetchLimit := limit + offset + 1
-		body := map[string]any{
-			"limit":        fetchLimit,
-			"with_payload": true,
-			"with_vector":  true,
-		}
+		var filter map[string]any
 		if match[3] != "" {
-			if f := parseSimpleWhereToFilter(match[3]); f != nil {
-				body["filter"] = f
+			f, fErr := parseSimpleWhereToFilter(match[3])
+			if fErr != nil {
+				return nil, fErr
 			}
+			filter = f
 		}
 
 		var sortCol, sortDir string
+		var orderByBody map[string]any
 		usedServerOrderBy := false
 		if strings.TrimSpace(match[4]) != "" {
 			firstSort := strings.Split(match[4], ",")[0]
@@ -903,7 +1411,7 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 					sortDir = "desc"
 				}
 				if sortCol != "" && !strings.EqualFold(sortCol, "id") && !strings.EqualFold(sortCol, "vector") && !strings.HasPrefix(strings.ToLower(sortCol), "vector.") {
-					body["order_by"] = map[string]any{
+					orderByBody = map[string]any{
 						"key":       sortCol,
 						"direction": sortDir,
 					}
@@ -912,32 +1420,143 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 			}
 		}
 
-		respBytes, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/scroll", body)
-		if err != nil && usedServerOrderBy {
-			// Fallback if Qdrant rejects order_by (e.g. unindexed or non-numeric/datetime field)
-			delete(body, "order_by")
-			usedServerOrderBy = false
-			respBytes, _, err = q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(coll)+"/points/scroll", body)
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		var scrollResp struct {
+		type scrollResult struct {
 			Result struct {
 				Points         []qdrantPoint `json:"points"`
 				NextPageOffset any           `json:"next_page_offset"`
 			} `json:"result"`
 		}
+
+		scrollEndpoint := "/collections/" + url.PathEscape(coll) + "/points/scroll"
+
+		// Fast cursor-based pagination when no in-memory sort fallback is needed.
+		runCursorScroll := func() (*driver.QueryResult, error) {
+			filterKey := ""
+			if filter != nil {
+				if fb, err := json.Marshal(filter); err == nil {
+					filterKey = string(fb)
+				}
+			}
+			cacheKey := fmt.Sprintf("%s|%s|%s|%s", coll, filterKey, sortCol, sortDir)
+
+			var cursor any
+			if offset > 0 {
+				curOff, curVal := q.getCursor(cacheKey, offset)
+				cursor = curVal
+				for curOff < offset {
+					step := offset - curOff
+					if step > 500 {
+						step = 500
+					}
+					stepBody := map[string]any{
+						"limit":        step,
+						"with_payload": false,
+						"with_vector":  false,
+					}
+					if filter != nil {
+						stepBody["filter"] = filter
+					}
+					if orderByBody != nil && usedServerOrderBy {
+						stepBody["order_by"] = orderByBody
+					}
+					if cursor != nil {
+						stepBody["offset"] = cursor
+					}
+					stepBytes, _, stepErr := q.doRequest(ctx, http.MethodPost, scrollEndpoint, stepBody)
+					if stepErr != nil {
+						return nil, stepErr
+					}
+					var stepResp scrollResult
+					if err := json.Unmarshal(stepBytes, &stepResp); err != nil {
+						return nil, err
+					}
+					curOff += len(stepResp.Result.Points)
+					cursor = stepResp.Result.NextPageOffset
+					if cursor == nil {
+						// Reached end before target offset
+						res := pointsToQueryResultWithProjection(req.ExecutionID, coll, nil, time.Since(start).Milliseconds(), len(selectedCols) == 0, selectedCols)
+						if len(selectedCols) == 0 {
+							res.Columns = q.buildEmptyCollectionColumns(ctx, coll, nil)
+						}
+						return res, nil
+					}
+					q.setCursor(cacheKey, curOff, cursor)
+				}
+			}
+
+			body := map[string]any{
+				"limit":        limit,
+				"with_payload": withPayload,
+				"with_vector":  withVector,
+			}
+			if filter != nil {
+				body["filter"] = filter
+			}
+			if orderByBody != nil && usedServerOrderBy {
+				body["order_by"] = orderByBody
+			}
+			if cursor != nil {
+				body["offset"] = cursor
+			}
+
+			respBytes, _, err := q.doRequest(ctx, http.MethodPost, scrollEndpoint, body)
+			if err != nil {
+				return nil, err
+			}
+			var scrollResp scrollResult
+			if err := json.Unmarshal(respBytes, &scrollResp); err != nil {
+				return nil, err
+			}
+
+			pts := scrollResp.Result.Points
+			hasMore := scrollResp.Result.NextPageOffset != nil
+			if hasMore {
+				q.setCursor(cacheKey, offset+len(pts), scrollResp.Result.NextPageOffset)
+			}
+
+			res := pointsToQueryResultWithProjection(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), len(selectedCols) == 0, selectedCols)
+			if len(pts) == 0 && len(selectedCols) == 0 {
+				res.Columns = q.buildEmptyCollectionColumns(ctx, coll, nil)
+			}
+			res.HasMore = hasMore
+			return res, nil
+		}
+
+		if sortCol == "" || usedServerOrderBy {
+			res, err := runCursorScroll()
+			if err == nil {
+				return res, nil
+			}
+			if !usedServerOrderBy {
+				return nil, err
+			}
+			// Fallback if Qdrant rejects order_by (e.g. unindexed or non-numeric/datetime field)
+			usedServerOrderBy = false
+		}
+
+		// In-memory sort fallback (for unindexed sortCol or id)
+		fetchLimit := limit + offset + 1
+		body := map[string]any{
+			"limit":        fetchLimit,
+			"with_payload": withPayload,
+			"with_vector":  withVector,
+		}
+		if filter != nil {
+			body["filter"] = filter
+		}
+		respBytes, _, err := q.doRequest(ctx, http.MethodPost, scrollEndpoint, body)
+		if err != nil {
+			return nil, err
+		}
+		var scrollResp scrollResult
 		if err := json.Unmarshal(respBytes, &scrollResp); err != nil {
 			return nil, err
 		}
 
 		pts := scrollResp.Result.Points
-		if sortCol != "" && !usedServerOrderBy {
+		if sortCol != "" {
 			sortPointsInMemory(pts, sortCol, sortDir)
 		}
-
 		if offset > 0 {
 			if offset >= len(pts) {
 				pts = []qdrantPoint{}
@@ -952,12 +1571,15 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 			hasMore = true
 		}
 
-		res := pointsToQueryResult(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), true)
+		res := pointsToQueryResultWithProjection(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), len(selectedCols) == 0, selectedCols)
+		if len(pts) == 0 && len(selectedCols) == 0 {
+			res.Columns = q.buildEmptyCollectionColumns(ctx, coll, nil)
+		}
 		res.HasMore = hasMore
 		return res, nil
 	}
 
-	// 4. REST-style command: GET/POST/PUT/DELETE /collections/... [\n {json}]
+	// 4. REST-style command: GET/POST/PUT/DELETE/PATCH /collections/... [\n {json}]
 	if match := httpCmdRegex.FindStringSubmatch(rawSQL); len(match) >= 3 {
 		method := strings.ToUpper(match[1])
 		path := match[2]
@@ -981,20 +1603,85 @@ func (q *QdrantDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 			}
 		}
 
-		// Check if response contains points array (search/query/scroll)
 		var env struct {
 			Result json.RawMessage `json:"result"`
 		}
 		if json.Unmarshal(respBytes, &env) == nil && len(env.Result) > 0 {
+			// 4a. Standard points array (search/recommend/discover)
 			var pts []qdrantPoint
 			if json.Unmarshal(env.Result, &pts) == nil && pts != nil {
 				return pointsToQueryResult(req.ExecutionID, coll, pts, time.Since(start).Milliseconds(), false), nil
 			}
+			// 4b. Scroll / Query API result.points
 			var scrollObj struct {
 				Points []qdrantPoint `json:"points"`
 			}
 			if json.Unmarshal(env.Result, &scrollObj) == nil && scrollObj.Points != nil {
 				return pointsToQueryResult(req.ExecutionID, coll, scrollObj.Points, time.Since(start).Milliseconds(), coll != ""), nil
+			}
+			// 4c. Grouped search/query result.groups
+			var groupsObj struct {
+				Groups []struct {
+					ID   any           `json:"id"`
+					Hits []qdrantPoint `json:"hits"`
+				} `json:"groups"`
+			}
+			if json.Unmarshal(env.Result, &groupsObj) == nil && groupsObj.Groups != nil {
+				var flat []qdrantPoint
+				for _, g := range groupsObj.Groups {
+					for _, h := range g.Hits {
+						if h.Payload == nil {
+							h.Payload = make(map[string]any)
+						}
+						if _, exists := h.Payload["_group_id"]; !exists {
+							h.Payload["_group_id"] = g.ID
+						}
+						flat = append(flat, h)
+					}
+				}
+				return pointsToQueryResult(req.ExecutionID, coll, flat, time.Since(start).Milliseconds(), false), nil
+			}
+			// 4d. Batch search/query [][]qdrantPoint
+			var batchPts [][]qdrantPoint
+			if json.Unmarshal(env.Result, &batchPts) == nil && batchPts != nil {
+				var flat []qdrantPoint
+				for bIdx, grp := range batchPts {
+					for _, h := range grp {
+						if h.Payload == nil {
+							h.Payload = make(map[string]any)
+						}
+						if _, exists := h.Payload["_batch_index"]; !exists {
+							h.Payload["_batch_index"] = bIdx
+						}
+						flat = append(flat, h)
+					}
+				}
+				return pointsToQueryResult(req.ExecutionID, coll, flat, time.Since(start).Milliseconds(), false), nil
+			}
+			// 4e. Facet API result.hits
+			var facetObj struct {
+				Hits []struct {
+					Value any   `json:"value"`
+					Count int64 `json:"count"`
+				} `json:"hits"`
+			}
+			if json.Unmarshal(env.Result, &facetObj) == nil && facetObj.Hits != nil {
+				rows := make([][]any, len(facetObj.Hits))
+				for i, h := range facetObj.Hits {
+					rows[i] = []any{formatCellValue(h.Value), h.Count}
+				}
+				return &driver.QueryResult{
+					ExecutionID: req.ExecutionID,
+					Columns: []driver.ColumnMeta{
+						{Name: "value", DataType: "string", RawType: "string"},
+						{Name: "count", DataType: "int64", RawType: "number"},
+					},
+					Rows:         rows,
+					RowsAffected: int64(len(rows)),
+					ElapsedMs:    time.Since(start).Milliseconds(),
+					SourceSchema: "default",
+					SourceTable:  coll,
+				}, nil
 			}
 		}
 
@@ -1055,35 +1742,41 @@ func parsePayloadValue(v any) any {
 	return v
 }
 
+func buildPointForInsert(changes map[string]any) map[string]any {
+	pt := map[string]any{"payload": map[string]any{}}
+	payload := pt["payload"].(map[string]any)
+	for k, v := range changes {
+		if k == "id" {
+			pt["id"] = parsePointID(v)
+		} else if k == "vector" {
+			pt["vector"] = parseVectorValue(v)
+		} else if strings.HasPrefix(k, "vector.") {
+			vecMap, ok := pt["vector"].(map[string]any)
+			if !ok {
+				vecMap = make(map[string]any)
+				pt["vector"] = vecMap
+			}
+			vecMap[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
+		} else {
+			payload[k] = parsePayloadValue(v)
+		}
+	}
+	return pt
+}
+
 func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	escapedTable := url.PathEscape(table)
 	for _, c := range changes {
 		switch c.Type {
 		case "insert":
-			pt := map[string]any{"payload": map[string]any{}}
-			payload := pt["payload"].(map[string]any)
-			for k, v := range c.Changes {
-				if k == "id" {
-					pt["id"] = parsePointID(v)
-				} else if k == "vector" {
-					pt["vector"] = parseVectorValue(v)
-				} else if strings.HasPrefix(k, "vector.") {
-					vecMap, ok := pt["vector"].(map[string]any)
-					if !ok {
-						vecMap = make(map[string]any)
-						pt["vector"] = vecMap
-					}
-					vecMap[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
-				} else {
-					payload[k] = parsePayloadValue(v)
-				}
-			}
+			pt := buildPointForInsert(c.Changes)
 			b, _ := json.Marshal(map[string]any{"points": []any{pt}})
 			statements = append(statements, fmt.Sprintf("PUT /collections/%s/points?wait=true\n%s", escapedTable, string(b)))
 		case "update":
 			idVal := parsePointID(c.PrimaryKey["id"])
 			payload := make(map[string]any)
+			var deleteKeys []string
 			var singleVec any
 			namedVecs := make(map[string]any)
 
@@ -1094,6 +1787,8 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 					singleVec = parseVectorValue(v)
 				} else if strings.HasPrefix(k, "vector.") {
 					namedVecs[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
+				} else if v == nil {
+					deleteKeys = append(deleteKeys, k)
 				} else {
 					payload[k] = parsePayloadValue(v)
 				}
@@ -1101,6 +1796,11 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 			if len(payload) > 0 {
 				b, _ := json.Marshal(map[string]any{"payload": payload, "points": []any{idVal}})
 				statements = append(statements, fmt.Sprintf("POST /collections/%s/points/payload?wait=true\n%s", escapedTable, string(b)))
+			}
+			if len(deleteKeys) > 0 {
+				sort.Strings(deleteKeys)
+				b, _ := json.Marshal(map[string]any{"keys": deleteKeys, "points": []any{idVal}})
+				statements = append(statements, fmt.Sprintf("POST /collections/%s/points/payload/delete?wait=true\n%s", escapedTable, string(b)))
 			}
 			if singleVec != nil || len(namedVecs) > 0 {
 				var vecPayload any = singleVec
@@ -1125,39 +1825,64 @@ func (q *QdrantDriver) GenerateDMLPreview(database, schema, table string, change
 
 func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
 	var totalAffected int64
+	escapedTable := url.PathEscape(table)
+
+	var insertBatch []map[string]any
+	var deleteBatch []any
+
+	flushInserts := func() error {
+		if len(insertBatch) == 0 {
+			return nil
+		}
+		body := map[string]any{"points": insertBatch}
+		if _, _, err := q.doRequest(ctx, http.MethodPut, "/collections/"+escapedTable+"/points?wait=true", body); err != nil {
+			return err
+		}
+		totalAffected += int64(len(insertBatch))
+		insertBatch = nil
+		return nil
+	}
+
+	flushDeletes := func() error {
+		if len(deleteBatch) == 0 {
+			return nil
+		}
+		body := map[string]any{"points": deleteBatch}
+		if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+escapedTable+"/points/delete?wait=true", body); err != nil {
+			return err
+		}
+		totalAffected += int64(len(deleteBatch))
+		deleteBatch = nil
+		return nil
+	}
+
 	for _, c := range changes {
 		switch c.Type {
 		case "insert":
-			pt := map[string]any{"payload": map[string]any{}}
-			payload := pt["payload"].(map[string]any)
-			for k, v := range c.Changes {
-				if k == "id" {
-					pt["id"] = parsePointID(v)
-				} else if k == "vector" {
-					pt["vector"] = parseVectorValue(v)
-				} else if strings.HasPrefix(k, "vector.") {
-					vecMap, ok := pt["vector"].(map[string]any)
-					if !ok {
-						vecMap = make(map[string]any)
-						pt["vector"] = vecMap
-					}
-					vecMap[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
-				} else {
-					payload[k] = parsePayloadValue(v)
-				}
+			if err := flushDeletes(); err != nil {
+				return totalAffected, err
 			}
+			pt := buildPointForInsert(c.Changes)
 			if _, ok := pt["id"]; !ok {
 				pt["id"] = time.Now().UnixNano()
 			}
-			body := map[string]any{"points": []any{pt}}
-			if _, _, err := q.doRequest(ctx, http.MethodPut, "/collections/"+url.PathEscape(table)+"/points?wait=true", body); err != nil {
-				return totalAffected, err
+			insertBatch = append(insertBatch, pt)
+			if len(insertBatch) >= 250 {
+				if err := flushInserts(); err != nil {
+					return totalAffected, err
+				}
 			}
-			totalAffected++
 
 		case "update":
+			if err := flushInserts(); err != nil {
+				return totalAffected, err
+			}
+			if err := flushDeletes(); err != nil {
+				return totalAffected, err
+			}
 			idVal := parsePointID(c.PrimaryKey["id"])
 			payload := make(map[string]any)
+			var deleteKeys []string
 			var singleVec any
 			namedVecs := make(map[string]any)
 
@@ -1168,6 +1893,8 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 					singleVec = parseVectorValue(v)
 				} else if strings.HasPrefix(k, "vector.") {
 					namedVecs[strings.TrimPrefix(k, "vector.")] = parseVectorValue(v)
+				} else if v == nil {
+					deleteKeys = append(deleteKeys, k)
 				} else {
 					payload[k] = parsePayloadValue(v)
 				}
@@ -1178,7 +1905,16 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 					"payload": payload,
 					"points":  []any{idVal},
 				}
-				if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(table)+"/points/payload?wait=true", body); err != nil {
+				if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+escapedTable+"/points/payload?wait=true", body); err != nil {
+					return totalAffected, err
+				}
+			}
+			if len(deleteKeys) > 0 {
+				body := map[string]any{
+					"keys":   deleteKeys,
+					"points": []any{idVal},
+				}
+				if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+escapedTable+"/points/payload/delete?wait=true", body); err != nil {
 					return totalAffected, err
 				}
 			}
@@ -1192,20 +1928,31 @@ func (q *QdrantDriver) ApplyChanges(ctx context.Context, database, schema, table
 						{"id": idVal, "vector": vecPayload},
 					},
 				}
-				if _, _, err := q.doRequest(ctx, http.MethodPut, "/collections/"+url.PathEscape(table)+"/points/vectors?wait=true", body); err != nil {
+				if _, _, err := q.doRequest(ctx, http.MethodPut, "/collections/"+escapedTable+"/points/vectors?wait=true", body); err != nil {
 					return totalAffected, err
 				}
 			}
 			totalAffected++
 
 		case "delete":
-			idVal := parsePointID(c.PrimaryKey["id"])
-			body := map[string]any{"points": []any{idVal}}
-			if _, _, err := q.doRequest(ctx, http.MethodPost, "/collections/"+url.PathEscape(table)+"/points/delete?wait=true", body); err != nil {
+			if err := flushInserts(); err != nil {
 				return totalAffected, err
 			}
-			totalAffected++
+			idVal := parsePointID(c.PrimaryKey["id"])
+			deleteBatch = append(deleteBatch, idVal)
+			if len(deleteBatch) >= 500 {
+				if err := flushDeletes(); err != nil {
+					return totalAffected, err
+				}
+			}
 		}
+	}
+
+	if err := flushInserts(); err != nil {
+		return totalAffected, err
+	}
+	if err := flushDeletes(); err != nil {
+		return totalAffected, err
 	}
 	return totalAffected, nil
 }

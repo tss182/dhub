@@ -192,15 +192,18 @@ func TestQdrantDriverCommentsFiltersPagingAndDML(t *testing.T) {
 	}
 
 	// 4. Filter parsing (has_id, range, must_not, is_null, raw JSON)
-	f1 := parseSimpleWhereToFilter(`id = 42 AND views >= 10 AND category != 'spam' AND tag IS NOT NULL`)
+	f1, err := parseSimpleWhereToFilter(`id = 42 AND views >= 10 AND category != 'spam' AND tag IS NOT NULL`)
+	if err != nil {
+		t.Fatalf("parseSimpleWhereToFilter f1: %v", err)
+	}
 	b1, _ := json.Marshal(f1)
 	s1 := string(b1)
 	if !strings.Contains(s1, `"has_id":[42]`) || !strings.Contains(s1, `"gte":10`) || !strings.Contains(s1, `"must_not"`) || !strings.Contains(s1, `"is_null"`) {
 		t.Fatalf("unexpected filter JSON: %s", s1)
 	}
-	fRaw := parseSimpleWhereToFilter(`{"must":[{"key":"tag","match":{"value":"go"}}]}`)
-	if fRaw == nil || fRaw["must"] == nil {
-		t.Fatalf("expected raw JSON filter to parse, got %#v", fRaw)
+	fRaw, err := parseSimpleWhereToFilter(`{"must":[{"key":"tag","match":{"value":"go"}}]}`)
+	if err != nil || fRaw == nil || fRaw["must"] == nil {
+		t.Fatalf("expected raw JSON filter to parse, got %#v, err=%v", fRaw, err)
 	}
 
 	// 5. GenerateDMLPreview with named vectors, vector update, and JSON payload
@@ -233,5 +236,178 @@ func TestQdrantDriverCommentsFiltersPagingAndDML(t *testing.T) {
 	}
 	if !strings.Contains(stmts[1], `/points/payload?wait=true`) || !strings.Contains(stmts[2], `/points/vectors?wait=true`) {
 		t.Fatalf("unexpected update previews: %s | %s", stmts[1], stmts[2])
+	}
+}
+
+func TestQdrantDriverPhase4Features(t *testing.T) {
+	var scrollBodies []map[string]any
+	var putPointsCalls int
+	var deletePointsCalls int
+	var deletePayloadKeysCalls int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections":
+			_, _ = w.Write([]byte(`{"result":{"collections":[{"name":"docs.v1"},{"name":"empty_col"}]},"status":"ok"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/docs.v1":
+			_, _ = w.Write([]byte(`{
+				"result": {
+					"status": "green",
+					"points_count": 4,
+					"config": {
+						"params": {
+							"vectors": {"text": {"size": 128, "distance": "Cosine", "datatype": "float16", "multivector_config": {"comparator": "max_sim"}}},
+							"sparse_vectors": {"bm25": {}}
+						}
+					},
+					"payload_schema": {"title": {"data_type": "text"}}
+				},
+				"status": "ok"
+			}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/empty_col":
+			_, _ = w.Write([]byte(`{
+				"result": {
+					"status": "green",
+					"points_count": 0,
+					"config": {"params": {"vectors": {"size": 4, "distance": "Cosine"}}},
+					"payload_schema": {"category": {"data_type": "keyword"}}
+				},
+				"status": "ok"
+			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/empty_col/points/scroll":
+			_, _ = w.Write([]byte(`{"result":{"points":[]},"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs.v1/points/scroll":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			scrollBodies = append(scrollBodies, body)
+			if body["offset"] == "cursor_2" {
+				_, _ = w.Write([]byte(`{
+					"result": {
+						"points": [{"id": 3, "payload": {"title": "p3"}}, {"id": 4, "payload": {"title": "p4"}}]
+					},
+					"status": "ok"
+				}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{
+				"result": {
+					"points": [{"id": 1, "payload": {"title": "p1"}}, {"id": 2, "payload": {"title": "p2"}}],
+					"next_page_offset": "cursor_2"
+				},
+				"status": "ok"
+			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs.v1/points/search/groups":
+			_, _ = w.Write([]byte(`{"result":{"groups":[{"id":"g1","hits":[{"id":1,"score":0.9,"payload":{"title":"a"}}]}]},"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs.v1/points/search/batch":
+			_, _ = w.Write([]byte(`{"result":[[{"id":2,"score":0.8,"payload":{"title":"b"}}]],"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs.v1/facet":
+			_, _ = w.Write([]byte(`{"result":{"hits":[{"value":"ai","count":12}]},"status":"ok"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/docs.v1/points":
+			putPointsCalls++
+			_, _ = w.Write([]byte(`{"result":{"status":"completed"},"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs.v1/points/delete":
+			deletePointsCalls++
+			_, _ = w.Write([]byte(`{"result":{"status":"completed"},"status":"ok"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/docs.v1/points/payload/delete":
+			deletePayloadKeysCalls++
+			_, _ = w.Write([]byte(`{"result":{"status":"completed"},"status":"ok"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	drv, err := NewQdrantDriver(srv.URL, "", nil)
+	if err != nil {
+		t.Fatalf("NewQdrantDriver: %v", err)
+	}
+	defer drv.Close()
+	ctx := context.Background()
+
+	// 1. Dotted collection name + sparse/multivector metadata
+	st, err := drv.GetTableStructure(ctx, "default", "default", "docs.v1")
+	if err != nil {
+		t.Fatalf("GetTableStructure dotted: %v", err)
+	}
+	var hasSparse, hasMulti bool
+	for _, c := range st.Columns {
+		if c.Name == "vector.bm25" && c.DataType == "sparse_vector" {
+			hasSparse = true
+		}
+		if c.Name == "vector.text" && strings.Contains(c.DataType, "multi") && strings.Contains(c.DataType, "float16") {
+			hasMulti = true
+		}
+	}
+	if !hasSparse || !hasMulti {
+		t.Fatalf("expected sparse and multi vector columns, got: %+v", st.Columns)
+	}
+
+	// 2. Empty collection returns vector + indexed payload columns
+	emptyRes, err := drv.Execute(ctx, driver.QueryRequest{SQL: `SELECT * FROM empty_col LIMIT 10`})
+	if err != nil {
+		t.Fatalf("empty_col SELECT: %v", err)
+	}
+	if len(emptyRes.Columns) != 3 {
+		t.Fatalf("expected 3 columns (id, category, vector) for empty collection, got %+v", emptyRes.Columns)
+	}
+
+	// 3. Projection + cursor pagination
+	p1, err := drv.Execute(ctx, driver.QueryRequest{SQL: `SELECT id, title FROM "docs.v1" LIMIT 2 OFFSET 0`})
+	if err != nil || !p1.HasMore || len(p1.Columns) != 2 {
+		t.Fatalf("page 1 failed: %+v, err=%v", p1, err)
+	}
+	if scrollBodies[0]["with_vector"] != false {
+		t.Fatalf("expected with_vector=false for projection without vector, got %v", scrollBodies[0]["with_vector"])
+	}
+	p2, err := drv.Execute(ctx, driver.QueryRequest{SQL: `SELECT id, title FROM "docs.v1" LIMIT 2 OFFSET 2`})
+	if err != nil || p2.HasMore || len(p2.Rows) != 2 || p2.Rows[0][0] != int64(3) {
+		t.Fatalf("page 2 cursor pagination failed: %+v, err=%v", p2, err)
+	}
+
+	// 4. Advanced WHERE filters & explicit error on invalid syntax
+	fAdv, err := parseSimpleWhereToFilter(`(category NOT IN ('a', 'b') AND views BETWEEN 10 AND 50 AND title LIKE '%hello%') OR status = 'pinned'`)
+	if err != nil {
+		t.Fatalf("advanced WHERE parse: %v", err)
+	}
+	bAdv, _ := json.Marshal(fAdv)
+	sAdv := string(bAdv)
+	if !strings.Contains(sAdv, `"should"`) || !strings.Contains(sAdv, `"must_not"`) || !strings.Contains(sAdv, `"gte":10`) || !strings.Contains(sAdv, `"text":"hello"`) {
+		t.Fatalf("unexpected advanced filter JSON: %s", sAdv)
+	}
+	if _, err := parseSimpleWhereToFilter(`invalid_clause_without_operator`); err == nil {
+		t.Fatalf("expected explicit error for unsupported WHERE clause")
+	}
+
+	// 5. Tabular parsers: groups, batch, facet + Multi-statement execution
+	multiRes, err := drv.Execute(ctx, driver.QueryRequest{
+		SQL: "POST /collections/docs.v1/points/search/groups\n{\"vector\":[0.1],\"group_by\":\"cat\"}\n\n" +
+			"POST /collections/docs.v1/points/search/batch\n{\"searches\":[]}\n\n" +
+			"POST /collections/docs.v1/facet\n{\"key\":\"category\"}",
+	})
+	if err != nil {
+		t.Fatalf("multi-statement Execute: %v", err)
+	}
+	if len(multiRes.Results) != 3 {
+		t.Fatalf("expected 3 statement results, got %d", len(multiRes.Results))
+	}
+	if len(multiRes.Rows) != 1 || multiRes.Rows[0][0] != "ai" {
+		t.Fatalf("expected facet result on final statement, got %+v", multiRes)
+	}
+
+	// 6. Batched ApplyChanges + payload key deletion
+	affected, err := drv.ApplyChanges(ctx, "default", "default", "docs.v1", []driver.RowChange{
+		{Type: "insert", Changes: map[string]any{"id": 10, "title": "a"}},
+		{Type: "insert", Changes: map[string]any{"id": 11, "title": "b"}},
+		{Type: "update", PrimaryKey: map[string]any{"id": 10}, Changes: map[string]any{"old_key": nil}},
+		{Type: "delete", PrimaryKey: map[string]any{"id": 12}},
+		{Type: "delete", PrimaryKey: map[string]any{"id": 13}},
+	})
+	if err != nil || affected != 5 {
+		t.Fatalf("ApplyChanges batched failed: affected=%d, err=%v", affected, err)
+	}
+	if putPointsCalls != 1 || deletePointsCalls != 1 || deletePayloadKeysCalls != 1 {
+		t.Fatalf("expected 1 batched put, 1 batched delete, 1 payload/delete, got put=%d del=%d keyDel=%d",
+			putPointsCalls, deletePointsCalls, deletePayloadKeysCalls)
 	}
 }
