@@ -3,7 +3,6 @@ package elasticsearch
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -175,6 +174,11 @@ func TestElasticsearchAdvancedQueriesAndBulk(t *testing.T) {
 				"schema": [{"name": "status", "type": "keyword"}],
 				"datarows": [["ok"]]
 			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/_query":
+			_, _ = w.Write([]byte(`{
+				"columns": [{"name": "status", "type": "keyword"}, {"name": "cnt", "type": "long"}],
+				"values": [["ok", 42]]
+			}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -207,12 +211,12 @@ func TestElasticsearchAdvancedQueriesAndBulk(t *testing.T) {
 		t.Fatalf("expected int64 precision preserved as string above 2^53-1, got %#v", res.Rows)
 	}
 
-	// Aggregations with size: 0 (empty hits.hits) must return aggregation JSON
+	// Aggregations with size: 0 (empty hits.hits) must return tabular aggregation bucket rows
 	aggRes, err := drv.Execute(ctx, driver.QueryRequest{
 		SQL: "POST /logs-2026.11.23/_search\n" + `{"size":0,"aggs":{"by_status":{"terms":{"field":"status.keyword"}}}}`,
 	})
-	if err != nil || len(aggRes.Rows) == 0 || !strings.Contains(fmt.Sprintf("%v", aggRes.Rows[0][0]), "aggregations") {
-		t.Fatalf("expected aggregations JSON when hits is empty, got %+v, err=%v", aggRes, err)
+	if err != nil || len(aggRes.Rows) != 1 || len(aggRes.Columns) < 3 {
+		t.Fatalf("expected tabular aggregation bucket rows when hits is empty, got %+v, err=%v", aggRes, err)
 	}
 
 	// Bulk ApplyChanges with NDJSON
@@ -251,6 +255,14 @@ func TestElasticsearchAdvancedQueriesAndBulk(t *testing.T) {
 	})
 	if err != nil || len(osSQLRes.Rows) != 1 || osSQLRes.Rows[0][0] != "ok" {
 		t.Fatalf("expected OpenSearch /_plugins/_sql fallback to succeed, got %+v, err=%v", osSQLRes, err)
+	}
+
+	// ES|QL piped query support (FROM ... | STATS ... | LIMIT ...)
+	esqlRes, err := drv.Execute(ctx, driver.QueryRequest{
+		SQL: `FROM logs-2026.11.23 | STATS cnt = COUNT(*) BY status | LIMIT 10`,
+	})
+	if err != nil || len(esqlRes.Columns) != 2 || len(esqlRes.Rows) != 1 || esqlRes.Rows[0][1] != int64(42) {
+		t.Fatalf("expected ES|QL query result, got %+v, err=%v", esqlRes, err)
 	}
 }
 

@@ -3,7 +3,15 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 import { APP_DEFAULTS } from '../config/defaults';
 
 export type ThemeMode = 'dark' | 'light';
-export type CopyFormat = 'csv' | 'json' | 'markdown' | 'sql_insert' | 'sql_update' | 'sql_upsert' | 'qdrant_upsert';
+export type CopyFormat =
+  | 'csv'
+  | 'json'
+  | 'markdown'
+  | 'sql_insert'
+  | 'sql_update'
+  | 'sql_upsert'
+  | 'qdrant_upsert'
+  | 'es_bulk';
 export type AiProvider = 'openai' | 'gemini';
 export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'ai' | 'backup' | 'version';
 

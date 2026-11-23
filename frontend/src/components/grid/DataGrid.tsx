@@ -485,7 +485,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     let insertText = item.name;
     if (item.type === 'column' && /[^a-zA-Z0-9_]/.test(insertText)) {
-      insertText = `\`${insertText}\``;
+      insertText = isElasticsearch || isQdrant ? `"${insertText}"` : `\`${insertText}\``;
     }
 
     const needsSpaceAfter = !after.startsWith(' ');

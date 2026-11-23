@@ -32,7 +32,11 @@ export function getWhereColumnIconType(
     upper.includes('FLOAT') ||
     upper.includes('DOUBLE') ||
     upper.includes('REAL') ||
-    upper.includes('SERIAL')
+    upper.includes('SERIAL') ||
+    upper === 'LONG' ||
+    upper === 'UNSIGNED_LONG' ||
+    upper === 'SHORT' ||
+    upper === 'BYTE'
   ) {
     return 'number';
   }

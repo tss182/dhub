@@ -44,6 +44,11 @@ export const COPY_FORMAT_OPTIONS: CopyFormatOption[] = [
     label: 'Qdrant Upsert REST',
     description: 'Generates PUT /collections/<name>/points?wait=true REST payload for Qdrant.',
   },
+  {
+    id: 'es_bulk',
+    label: 'Elasticsearch Bulk',
+    description: 'Generates POST /<index>/_bulk?refresh=wait_for NDJSON payload for Elasticsearch / OpenSearch.',
+  },
 ];
 
 export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = COPY_FORMAT_OPTIONS.reduce(
@@ -104,10 +109,10 @@ export const CopyFormatSelector: React.FC<{
           </div>
           {COPY_FORMAT_OPTIONS.filter((opt) =>
             isQdrant
-              ? !opt.id.startsWith('sql_')
+              ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk'
               : isElasticsearch
               ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
-              : opt.id !== 'qdrant_upsert'
+              : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
           ).map((opt) => (
             <button
               key={opt.id}

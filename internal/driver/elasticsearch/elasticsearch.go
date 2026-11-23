@@ -1091,6 +1091,165 @@ func jsonArrayToQueryResult(execID string, arr []map[string]any, elapsedMs int64
 	}
 }
 
+var esqlStartRegex = regexp.MustCompile(`(?is)^\s*(?:FROM|ROW|SHOW\s+INFO)\b`)
+
+func parseESQLOrSQLColumnsResult(execID string, respBytes []byte, elapsedMs int64) (*driver.QueryResult, bool) {
+	var sqlResp struct {
+		Columns []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"columns"`
+		Schema []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"schema"`
+		Values   [][]any `json:"values"`   // ES|QL /_query format
+		Rows     [][]any `json:"rows"`     // ES /_sql format
+		Datarows [][]any `json:"datarows"` // OpenSearch /_plugins/_sql format
+	}
+	if err := decodeJSONUseNumber(respBytes, &sqlResp); err != nil {
+		return nil, false
+	}
+	colDefs := sqlResp.Columns
+	if len(colDefs) == 0 && len(sqlResp.Schema) > 0 {
+		colDefs = sqlResp.Schema
+	}
+	if len(colDefs) == 0 {
+		return nil, false
+	}
+	rowData := sqlResp.Rows
+	if len(rowData) == 0 && len(sqlResp.Values) > 0 {
+		rowData = sqlResp.Values
+	}
+	if len(rowData) == 0 && len(sqlResp.Datarows) > 0 {
+		rowData = sqlResp.Datarows
+	}
+	cols := make([]driver.ColumnMeta, len(colDefs))
+	for i, c := range colDefs {
+		cols[i] = driver.ColumnMeta{
+			Name:     c.Name,
+			DataType: c.Type,
+			RawType:  rawTypeFromESType(c.Type),
+		}
+	}
+	for rIdx := range rowData {
+		for cIdx := range rowData[rIdx] {
+			rowData[rIdx][cIdx] = formatESCellValue(rowData[rIdx][cIdx])
+		}
+	}
+	return &driver.QueryResult{
+		ExecutionID:  execID,
+		Columns:      cols,
+		Rows:         rowData,
+		RowsAffected: int64(len(rowData)),
+		ElapsedMs:    elapsedMs,
+	}, true
+}
+
+func parseESAggregationsToQueryResult(execID string, aggs map[string]any, elapsedMs int64) *driver.QueryResult {
+	var items []map[string]any
+	aggNames := make([]string, 0, len(aggs))
+	for name := range aggs {
+		aggNames = append(aggNames, name)
+	}
+	sort.Strings(aggNames)
+
+	for _, name := range aggNames {
+		aggObj, ok := aggs[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		if bucketsRaw, hasB := aggObj["buckets"]; hasB {
+			switch bList := bucketsRaw.(type) {
+			case []any:
+				for _, bItem := range bList {
+					if bMap, ok := bItem.(map[string]any); ok {
+						row := map[string]any{"aggregation": name}
+						for k, v := range bMap {
+							if subMap, isSub := v.(map[string]any); isSub {
+								if val, hasVal := subMap["value"]; hasVal && len(subMap) <= 2 {
+									row[k] = val
+									continue
+								}
+							}
+							row[k] = v
+						}
+						items = append(items, row)
+					}
+				}
+			case map[string]any:
+				bKeys := make([]string, 0, len(bList))
+				for k := range bList {
+					bKeys = append(bKeys, k)
+				}
+				sort.Strings(bKeys)
+				for _, bk := range bKeys {
+					if bMap, ok := bList[bk].(map[string]any); ok {
+						row := map[string]any{"aggregation": name, "bucket_key": bk}
+						for k, v := range bMap {
+							row[k] = v
+						}
+						items = append(items, row)
+					}
+				}
+			}
+		} else if len(aggObj) > 0 {
+			row := map[string]any{"aggregation": name}
+			for k, v := range aggObj {
+				row[k] = v
+			}
+			items = append(items, row)
+		}
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+	return jsonArrayToQueryResult(execID, items, elapsedMs)
+}
+
+func parseESBulkResponseToQueryResult(execID string, respBytes []byte, elapsedMs int64) (*driver.QueryResult, bool) {
+	var bulkResp struct {
+		Took   int64             `json:"took"`
+		Errors bool              `json:"errors"`
+		Items  []map[string]any  `json:"items"`
+	}
+	if err := decodeJSONUseNumber(respBytes, &bulkResp); err != nil || len(bulkResp.Items) == 0 {
+		return nil, false
+	}
+	rows := make([]map[string]any, 0, len(bulkResp.Items))
+	var okCount int64
+	for _, item := range bulkResp.Items {
+		for action, rawDetails := range item {
+			details, ok := rawDetails.(map[string]any)
+			if !ok {
+				continue
+			}
+			row := map[string]any{
+				"action": action,
+				"_index": details["_index"],
+				"_id":    details["_id"],
+				"status": details["status"],
+				"result": details["result"],
+			}
+			if errObj, hasErr := details["error"].(map[string]any); hasErr && errObj != nil {
+				row["error"] = fmt.Sprintf("%v: %v", errObj["type"], errObj["reason"])
+			} else {
+				row["error"] = nil
+				okCount++
+			}
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) == 0 {
+		return nil, false
+	}
+	res := jsonArrayToQueryResult(execID, rows, elapsedMs)
+	res.RowsAffected = okCount
+	return res, true
+}
+
+
 func (e *ElasticsearchDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
 	start := time.Now()
 	stmts := driver.SplitHTTPOrSQLStatements(req.SQL)
@@ -1368,49 +1527,23 @@ func (e *ElasticsearchDriver) executeSingle(ctx context.Context, req driver.Quer
 		if err != nil {
 			return nil, err
 		}
-		var sqlResp struct {
-			Columns []struct {
-				Name string `json:"name"`
-				Type string `json:"type"`
-			} `json:"columns"`
-			Schema []struct {
-				Name string `json:"name"`
-				Type string `json:"type"`
-			} `json:"schema"` // OpenSearch SQL format
-			Rows     [][]any `json:"rows"`
-			Datarows [][]any `json:"datarows"` // OpenSearch SQL format
+		if res, ok := parseESQLOrSQLColumnsResult(req.ExecutionID, respBytes, time.Since(start).Milliseconds()); ok {
+			return res, nil
 		}
-		if err := decodeJSONUseNumber(respBytes, &sqlResp); err != nil {
+	}
+
+	// 4b. ES|QL piped query syntax: FROM <index> | WHERE ... | STATS ... | SORT ... | LIMIT ...
+	if esqlStartRegex.MatchString(rawSQL) {
+		esqlPayload := map[string]any{
+			"query": strings.TrimRight(rawSQL, ";"),
+		}
+		respBytes, _, err := e.doRequest(ctx, http.MethodPost, "/_query?format=json", esqlPayload)
+		if err != nil {
 			return nil, err
 		}
-		colDefs := sqlResp.Columns
-		if len(colDefs) == 0 && len(sqlResp.Schema) > 0 {
-			colDefs = sqlResp.Schema
+		if res, ok := parseESQLOrSQLColumnsResult(req.ExecutionID, respBytes, time.Since(start).Milliseconds()); ok {
+			return res, nil
 		}
-		rowData := sqlResp.Rows
-		if len(rowData) == 0 && len(sqlResp.Datarows) > 0 {
-			rowData = sqlResp.Datarows
-		}
-		cols := make([]driver.ColumnMeta, len(colDefs))
-		for i, c := range colDefs {
-			cols[i] = driver.ColumnMeta{
-				Name:     c.Name,
-				DataType: c.Type,
-				RawType:  rawTypeFromESType(c.Type),
-			}
-		}
-		for rIdx := range rowData {
-			for cIdx := range rowData[rIdx] {
-				rowData[rIdx][cIdx] = formatESCellValue(rowData[rIdx][cIdx])
-			}
-		}
-		return &driver.QueryResult{
-			ExecutionID:  req.ExecutionID,
-			Columns:      cols,
-			Rows:         rowData,
-			RowsAffected: int64(len(rowData)),
-			ElapsedMs:    time.Since(start).Milliseconds(),
-		}, nil
 	}
 
 	// 5. Kibana DevTools HTTP syntax: GET/POST/PUT/DELETE/PATCH/HEAD /path [\n {json}]
@@ -1442,10 +1575,23 @@ func (e *ElasticsearchDriver) executeSingle(ctx context.Context, req driver.Quer
 			return jsonArrayToQueryResult(req.ExecutionID, arrResp, time.Since(start).Milliseconds()), nil
 		}
 
+		// Render ES|QL or /_sql REST responses as tabular rows
+		cleanPathLower := strings.ToLower(strings.SplitN(path, "?", 2)[0])
+		if cleanPathLower == "/_query" || cleanPathLower == "/_sql" || cleanPathLower == "/_plugins/_sql" {
+			if res, ok := parseESQLOrSQLColumnsResult(req.ExecutionID, respBytes, time.Since(start).Milliseconds()); ok {
+				return res, nil
+			}
+		}
+
+		// Render /_bulk responses as tabular action summary rows
+		if isNDJSONPath(path) && strings.HasSuffix(cleanPathLower, "/_bulk") {
+			if res, ok := parseESBulkResponseToQueryResult(req.ExecutionID, respBytes, time.Since(start).Milliseconds()); ok {
+				return res, nil
+			}
+		}
+
 		var searchResp esSearchResponse
 		if decodeJSONUseNumber(respBytes, &searchResp) == nil && searchResp.Hits.Hits != nil {
-			// Only convert to hits table if there are actual hits OR there are no aggregations to display.
-			// When size=0 with aggregations, returning an empty hits table would swallow the aggregation results!
 			if len(searchResp.Hits.Hits) > 0 || len(searchResp.Aggregations) == 0 {
 				idxName := ""
 				cleanPath := strings.SplitN(strings.TrimPrefix(path, "/"), "?", 2)[0]
@@ -1454,6 +1600,11 @@ func (e *ElasticsearchDriver) executeSingle(ctx context.Context, req driver.Quer
 					idxName = segs[0]
 				}
 				return e.hitsToQueryResult(ctx, req.ExecutionID, idxName, searchResp, 0, 0, time.Since(start).Milliseconds(), idxName != "" && !strings.Contains(idxName, ","), nil), nil
+			}
+			if len(searchResp.Aggregations) > 0 {
+				if aggRes := parseESAggregationsToQueryResult(req.ExecutionID, searchResp.Aggregations, time.Since(start).Milliseconds()); aggRes != nil {
+					return aggRes, nil
+				}
 			}
 		}
 

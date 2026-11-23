@@ -705,6 +705,44 @@ export function formatSelectedCells(params: {
     return `PUT /collections/${coll}/points?wait=true\n${JSON.stringify({ points }, null, 2)}`;
   }
 
+  if (targetFormat === 'es_bulk') {
+    const idx = encodeURIComponent(tableName || 'index_name');
+    const lines: string[] = [];
+    for (const r of selectedRowIndices) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      const doc: Record<string, any> = {};
+      let docId: string | undefined;
+      for (const c of selectedColIndices) {
+        if (isMultiRange && !isCellSelected(r, c)) continue;
+        const col = columns[c];
+        if (!col) continue;
+        if (col.name === '_score') continue;
+        const val = getVal(vr, c, col.name);
+        if (col.name === '_id') {
+          if (val !== null && val !== undefined && String(val).trim() !== '') {
+            docId = String(val).trim();
+          }
+          continue;
+        }
+        if (typeof val === 'string') {
+          const t = val.trim();
+          if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+            try {
+              doc[col.name] = JSON.parse(t);
+              continue;
+            } catch {}
+          }
+        }
+        doc[col.name] = val;
+      }
+      const meta = docId !== undefined ? { index: { _id: docId } } : { index: {} };
+      lines.push(JSON.stringify(meta));
+      lines.push(JSON.stringify(doc));
+    }
+    return `POST /${idx}/_bulk?refresh=wait_for\n${lines.join('\n')}\n`;
+  }
+
   if (targetFormat === 'sql_upsert') {
     const selectedColsWithIdx: Array<{ col: ColumnMeta; cIdx: number }> = [];
     for (const c of selectedColIndices) {

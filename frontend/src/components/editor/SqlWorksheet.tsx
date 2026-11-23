@@ -14,6 +14,7 @@ import {
   Zap,
   HelpCircle,
   BookOpen,
+  Terminal,
 } from 'lucide-react';
 import { ConnectionConfig, ColumnMeta, ForeignKeyMeta, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -1270,7 +1271,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             }
           }
 
-          // 7. Elasticsearch snippets
+          // 7. Elasticsearch snippets & REST DevTools autocomplete
           if (driver === 'elasticsearch') {
             const esSnippets = [
               {
@@ -1284,6 +1285,36 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 insertText: 'POST /${1:index_name}/_search\n{\n  "query": {\n    "match": {\n      "${2:title}": "${3:search term}"\n    }\n  },\n  "size": ${4:20}\n}',
               },
               {
+                label: 'ES BOOL FILTER & MUST',
+                detail: 'Compound boolean query with must and filter clauses',
+                insertText: 'POST /${1:index_name}/_search\n{\n  "query": {\n    "bool": {\n      "must": [\n        { "match": { "${2:title}": "${3:keyword}" } }\n      ],\n      "filter": [\n        { "term": { "${4:status}": "${5:active}" } }\n      ]\n    }\n  },\n  "size": ${6:20}\n}',
+              },
+              {
+                label: 'ES TERMS AGGREGATION',
+                detail: 'Bucket aggregation by field value',
+                insertText: 'POST /${1:index_name}/_search\n{\n  "size": 0,\n  "aggs": {\n    "by_${2:field}": {\n      "terms": {\n        "field": "${2:field}",\n        "size": ${3:10}\n      }\n    }\n  }\n}',
+              },
+              {
+                label: 'ES|QL PIPED QUERY',
+                detail: 'Run ES|QL piped query via /_query',
+                insertText: 'FROM ${1:index_name}\n| WHERE ${2:status} == "${3:active}"\n| STATS count = COUNT(*) BY ${2:status}\n| SORT count DESC\n| LIMIT ${4:20}',
+              },
+              {
+                label: 'ES BULK NDJSON',
+                detail: 'Bulk index/update/delete documents (NDJSON)',
+                insertText: 'POST /${1:index_name}/_bulk?refresh=wait_for\n{"index":{"_id":"${2:1}"}}\n{"${3:title}":"${4:Document 1}"}\n',
+              },
+              {
+                label: 'ES ANALYZE TEXT',
+                detail: 'Test text tokenization with an analyzer',
+                insertText: 'POST /_analyze\n{\n  "analyzer": "${1:standard}",\n  "text": "${2:Quick brown fox}"\n}',
+              },
+              {
+                label: 'ES REINDEX',
+                detail: 'Copy documents from source index to destination index',
+                insertText: 'POST /_reindex?refresh=true\n{\n  "source": { "index": "${1:source_index}" },\n  "dest": { "index": "${2:dest_index}" }\n}',
+              },
+              {
                 label: 'ES SQL QUERY',
                 detail: 'Run native SQL against Elasticsearch /_sql',
                 insertText: 'SELECT * FROM "${1:index_name}" LIMIT ${2:20};',
@@ -1294,7 +1325,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 label: snip.label,
                 kind: monaco.languages.CompletionItemKind.Snippet,
                 detail: snip.detail,
-                filterText: `${snip.label.toLowerCase()} elasticsearch knn vector`,
+                filterText: `${snip.label.toLowerCase()} elasticsearch knn vector esql bulk aggs`,
                 insertText: snip.insertText,
                 insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
                 sortText: `4_z_${snip.label}`,
@@ -1302,8 +1333,36 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               });
             });
 
-            // Index name autocomplete after HTTP method + /
-            if (/\b(?:GET|POST|PUT|DELETE|HEAD)\s+\/[a-zA-Z0-9_.-]*$/i.test(textUntilPosition)) {
+            // Endpoint & Index name autocomplete after HTTP method + /
+            if (/\b(?:GET|POST|PUT|DELETE|HEAD)\s+\/[a-zA-Z0-9_./?-]*$/i.test(textUntilPosition)) {
+              const globalEndpoints = [
+                { path: '_cat/indices?format=json', detail: 'List all indices (tabular)' },
+                { path: '_cat/aliases?format=json', detail: 'List all aliases (tabular)' },
+                { path: '_cat/nodes?format=json', detail: 'List cluster nodes (tabular)' },
+                { path: '_cat/shards?format=json', detail: 'List shard allocation (tabular)' },
+                { path: '_cat/health?format=json', detail: 'Cluster health summary' },
+                { path: '_cluster/health', detail: 'Cluster health JSON' },
+                { path: '_cluster/settings', detail: 'Cluster settings' },
+                { path: '_aliases', detail: 'List or update index aliases' },
+                { path: '_analyze', detail: 'Analyze text tokens' },
+                { path: '_query?format=json', detail: 'Execute ES|QL query' },
+                { path: '_sql?format=json', detail: 'Execute SQL query' },
+                { path: '_reindex', detail: 'Reindex documents between indices' },
+                { path: '_bulk', detail: 'Bulk index/update/delete NDJSON' },
+                { path: '_msearch', detail: 'Multi-search NDJSON' },
+                { path: '_tasks?detailed=true', detail: 'List running cluster tasks' },
+              ];
+              globalEndpoints.forEach((ep) => {
+                suggestions.push({
+                  label: ep.path,
+                  kind: monaco.languages.CompletionItemKind.Method,
+                  detail: `ES Endpoint • ${ep.detail}`,
+                  insertText: ep.path,
+                  sortText: `0_ep_${ep.path}`,
+                  range,
+                });
+              });
+
               tableMap.forEach((tbl) => {
                 suggestions.push({
                   label: tbl.name,
@@ -1312,6 +1371,16 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                   insertText: tbl.name,
                   sortText: `0_idx_${tbl.name}`,
                   range,
+                });
+                ['_search', '_count', '_mapping', '_settings', '_doc', '_bulk', '_delete_by_query', '_update_by_query', '_refresh', '_flush', '_forcemerge'].forEach((sub) => {
+                  suggestions.push({
+                    label: `${tbl.name}/${sub}`,
+                    kind: monaco.languages.CompletionItemKind.Method,
+                    detail: `Index Endpoint • /${tbl.name}/${sub}`,
+                    insertText: `${tbl.name}/${sub}`,
+                    sortText: `0_idx_ep_${tbl.name}_${sub}`,
+                    range,
+                  });
                 });
               });
             }
@@ -1483,13 +1552,28 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       const drv = connection?.driver || 'sqlite';
       if (drv === 'qdrant' || drv === 'elasticsearch') {
         const formatted = sql
-          .split(/\n(?=(?:GET|POST|PUT|DELETE|PATCH)\s+\/)/i)
+          .split(/\n(?=(?:GET|POST|PUT|DELETE|PATCH|HEAD)\s+\/)/i)
           .map((block) => {
             const nl = block.indexOf('\n');
             if (nl === -1) return block;
             const header = block.slice(0, nl).trim();
             const body = block.slice(nl + 1).trim();
             if (!body) return header;
+            // Preserve 1-line-per-JSON NDJSON format for /_bulk and /_msearch!
+            if (/\/_(?:bulk|msearch)\b/i.test(header)) {
+              const ndLines = body
+                .split(/\r?\n/)
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .map((l) => {
+                  try {
+                    return JSON.stringify(JSON.parse(l));
+                  } catch {
+                    return l;
+                  }
+                });
+              return `${header}\n${ndLines.join('\n')}\n`;
+            }
             try {
               return `${header}\n${JSON.stringify(JSON.parse(body), null, 2)}`;
             } catch {
@@ -1800,10 +1884,65 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             type="button"
             onClick={handleFormatSql}
             className="flex items-center justify-center rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] p-1.5 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-            title="Format SQL (Shift+Alt+F)"
+            title={
+              connection?.driver === 'elasticsearch' || connection?.driver === 'qdrant'
+                ? 'Format REST JSON Body (Shift+Alt+F)'
+                : 'Format SQL (Shift+Alt+F)'
+            }
           >
             <AlignLeft className="h-3.5 w-3.5 text-zinc-400" />
           </button>
+
+          {(connection?.driver === 'elasticsearch' || connection?.driver === 'qdrant') && (
+            <button
+              type="button"
+              onClick={() => {
+                const activeStmt = stripLeadingSqlComments(extractActiveStatement()).trim();
+                if (!activeStmt) return;
+                const rawHost = (connection?.host || 'localhost').trim();
+                const defaultPort = connection?.driver === 'elasticsearch' ? 9200 : 6333;
+                const baseUrl =
+                  rawHost.startsWith('http://') || rawHost.startsWith('https://')
+                    ? rawHost.replace(/\/+$/, '')
+                    : `${connection?.sslMode && connection.sslMode !== 'disable' ? 'https' : 'http'}://${rawHost}:${connection?.port || defaultPort}`;
+                const restMatch = /^(GET|POST|PUT|DELETE|PATCH|HEAD)\s+(\/[^\s]*)(?:\s+([\s\S]*))?$/i.exec(activeStmt);
+                let curlCmd = '';
+                const authFlag =
+                  connection?.username
+                    ? ` -u "${connection.username}:<PASSWORD>"`
+                    : connection?.driver === 'qdrant'
+                    ? ''
+                    : '';
+                if (restMatch) {
+                  const method = restMatch[1].toUpperCase();
+                  const path = restMatch[2];
+                  const body = (restMatch[3] || '').trim();
+                  const isNdjson = /\/_(?:bulk|msearch)\b/i.test(path);
+                  const ct = isNdjson ? 'application/x-ndjson' : 'application/json';
+                  if (body) {
+                    const bodyPayload = isNdjson && !body.endsWith('\n') ? `${body}\n` : body;
+                    curlCmd = `curl -X ${method}${authFlag} "${baseUrl}${path}" \\\n  -H "Content-Type: ${ct}" \\\n  -d '${bodyPayload.replace(/'/g, "'\\''")}'`;
+                  } else {
+                    curlCmd = `curl -X ${method}${authFlag} "${baseUrl}${path}"`;
+                  }
+                } else if (connection?.driver === 'elasticsearch') {
+                  const isEsql = /^\s*(?:FROM|ROW|SHOW\s+INFO)\b/i.test(activeStmt);
+                  const ep = isEsql ? '/_query?format=json' : '/_sql?format=json';
+                  const payload = JSON.stringify({ query: activeStmt.replace(/;+\s*$/, '') });
+                  curlCmd = `curl -X POST${authFlag} "${baseUrl}${ep}" \\\n  -H "Content-Type: application/json" \\\n  -d '${payload.replace(/'/g, "'\\''")}'`;
+                }
+                if (curlCmd) {
+                  navigator.clipboard.writeText(curlCmd).catch(() => {});
+                  alertSuccess('cURL command copied to clipboard', 'Copied as cURL');
+                }
+              }}
+              className="flex items-center gap-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#272932] px-2 py-1 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+              title="Copy active statement as cURL command"
+            >
+              <Terminal className="h-3.5 w-3.5 text-amber-400" />
+              <span>cURL</span>
+            </button>
+          )}
 
           {/* Transaction Controls (hidden for Qdrant & Elasticsearch) */}
           {connection?.driver !== 'qdrant' && connection?.driver !== 'elasticsearch' && (

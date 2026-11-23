@@ -307,7 +307,7 @@ export function App() {
   const [isDataDiffOpen, setIsDataDiffOpen] = useState(false);
   const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
   const [isMockDataOpen, setIsMockDataOpen] = useState(false);
-  const [resultViewMode, setResultViewMode] = useState<'table' | 'chart'>('table');
+  const [resultViewMode, setResultViewMode] = useState<'table' | 'chart' | 'json'>('table');
 
   const { updateInfo, isUpdateModalOpen, checkUpdate, openUpdateModal } = useUpdateStore();
   const checkUpdatesPeriodically = useSettingsStore((s) => s.checkUpdatesPeriodically);
@@ -3780,7 +3780,7 @@ export function App() {
                         })()}
                       </div>
 
-                      {/* Table / Chart View Toggle & Raw Query Preview */}
+                      {/* Table / Chart / JSON View Toggle & Raw Query Preview */}
                       {activeBottomTab === 'result' && (currentActiveRes?.columns?.length ?? 0) > 0 && (
                         <div className="flex items-center rounded bg-[#101115] border border-[#272932] p-0.5 shrink-0">
                           <button
@@ -3806,6 +3806,18 @@ export function App() {
                           >
                             <BarChart3 className="h-3 w-3" />
                             <span>Chart</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setResultViewMode('json')}
+                            className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors cursor-pointer ${
+                              resultViewMode === 'json'
+                                ? 'bg-blue-600/25 text-blue-300 font-medium'
+                                : 'text-zinc-400 hover:text-zinc-200'
+                            }`}
+                          >
+                            <FileCode className="h-3 w-3" />
+                            <span>JSON</span>
                           </button>
                         </div>
                       )}
@@ -3969,6 +3981,50 @@ export function App() {
                                 rows={currentRes.rows || []}
                                 title={activeTab?.title}
                               />
+                            ) : resultViewMode === 'json' ? (
+                              (() => {
+                                const cols = resultSource?.columns || currentRes.columns || [];
+                                const rws = currentRes.rows || [];
+                                let jsonText = '';
+                                if (cols.length === 1 && cols[0]?.name === 'response' && rws.length === 1) {
+                                  jsonText = String(rws[0]?.[0] ?? '');
+                                } else {
+                                  const objs = rws.map((r: any[]) => {
+                                    const o: Record<string, any> = {};
+                                    cols.forEach((c: any, idx: number) => {
+                                      const v = r?.[idx];
+                                      if (typeof v === 'string') {
+                                        const t = v.trim();
+                                        if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+                                          try {
+                                            o[c.name] = JSON.parse(t);
+                                            return;
+                                          } catch {}
+                                        }
+                                      }
+                                      o[c.name] = v;
+                                    });
+                                    return o;
+                                  });
+                                  jsonText = JSON.stringify(objs, null, 2);
+                                }
+                                return (
+                                  <div className="relative h-full w-full bg-[#121317] overflow-auto p-3 font-mono text-xs text-emerald-300 select-text">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(jsonText).catch(() => {});
+                                        alertSuccess('JSON result copied to clipboard', 'Copied JSON');
+                                      }}
+                                      className="sticky top-1 float-right flex items-center gap-1 px-2 py-1 rounded bg-[#1e2029] hover:bg-[#282b37] text-zinc-200 border border-[#2e313d] text-[11px] cursor-pointer shadow-md"
+                                    >
+                                      <Copy className="h-3 w-3 text-blue-400" />
+                                      <span>Copy JSON</span>
+                                    </button>
+                                    <pre className="whitespace-pre-wrap break-words">{jsonText}</pre>
+                                  </div>
+                                );
+                              })()
                             ) : (
                               <DataGrid
                                 key={`result-grid-${queryResult?.executionId || ''}-${safeResultIdx}`}

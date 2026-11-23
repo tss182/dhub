@@ -26,10 +26,10 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
 
   const visibleOptions = COPY_FORMAT_OPTIONS.filter((opt) =>
     isQdrant
-      ? !opt.id.startsWith('sql_')
+      ? !opt.id.startsWith('sql_') && opt.id !== 'es_bulk'
       : isElasticsearch
       ? !opt.id.startsWith('sql_') && opt.id !== 'qdrant_upsert'
-      : opt.id !== 'qdrant_upsert'
+      : opt.id !== 'qdrant_upsert' && opt.id !== 'es_bulk'
   );
 
   useEffect(() => {
