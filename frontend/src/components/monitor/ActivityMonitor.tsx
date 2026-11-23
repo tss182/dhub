@@ -136,6 +136,32 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
           info: String(r[idxOf('info', 7)] ?? ''),
         }));
         setProcesses(parsed);
+      } else if (drv === 'mongodb') {
+        const cols: string[] = (res?.columns || []).map((c: any) => String(c.name || ''));
+        const inprogIdx = cols.indexOf('inprog');
+        let ops: any[] = [];
+        if (inprogIdx !== -1 && rows[0]?.[inprogIdx]) {
+          const rawInprog = rows[0][inprogIdx];
+          if (typeof rawInprog === 'string') {
+            try {
+              const parsedArr = JSON.parse(rawInprog);
+              if (Array.isArray(parsedArr)) ops = parsedArr;
+            } catch {}
+          } else if (Array.isArray(rawInprog)) {
+            ops = rawInprog;
+          }
+        }
+        const parsed: ProcessRow[] = ops.map((op: any) => ({
+          id: String(op.opid ?? ''),
+          user: String(op.effectiveUsers?.[0]?.user || op.desc || ''),
+          host: String(op.client || ''),
+          database: String(op.ns || 'admin'),
+          command: String(op.op || ''),
+          time: `${String(op.secs_running ?? 0)}s`,
+          state: op.waitingForLock ? 'waitingLock' : op.active ? 'active' : 'idle',
+          info: op.command ? JSON.stringify(op.command) : String(op.msg || ''),
+        }));
+        setProcesses(parsed);
       } else {
         const parsed: ProcessRow[] = rows.map((r) => ({
           id: String(r[0] ?? ''),
@@ -192,6 +218,8 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
       killSql = `ALTER SYSTEM KILL SESSION '${proc.id.replace(/'/g, "''")}' IMMEDIATE`;
     } else if (drv === 'redis') {
       killSql = `CLIENT KILL ID ${proc.id}`;
+    } else if (drv === 'mongodb') {
+      killSql = `db.killOp(${proc.id});`;
     } else {
       alertError(`Kill process is not supported for ${drv}.`);
       return;

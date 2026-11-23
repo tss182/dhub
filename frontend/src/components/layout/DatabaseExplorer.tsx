@@ -18,6 +18,9 @@ import { ElasticsearchReindexModal } from '../modals/ElasticsearchReindexModal';
 import { MongoAggregationModal } from '../modals/MongoAggregationModal';
 import { MongoBatchOpsModal } from '../modals/MongoBatchOpsModal';
 import { MongoCloneCollectionModal } from '../modals/MongoCloneCollectionModal';
+import { MongoInfoModal } from '../modals/MongoInfoModal';
+import { MongoGridFSModal } from '../modals/MongoGridFSModal';
+import { MongoChangeStreamModal } from '../modals/MongoChangeStreamModal';
 
 const ExportModal = lazy(() =>
   import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
@@ -309,6 +312,23 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     collectionName: string;
   }>({ isOpen: false, connectionId: '', database: 'admin', collectionName: '' });
   const [mongoCloneModal, setMongoCloneModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    collectionName: string;
+  }>({ isOpen: false, connectionId: '', database: 'admin', collectionName: '' });
+  const [mongoInfoModal, setMongoInfoModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    connectionName: string;
+  }>({ isOpen: false, connectionId: '', connectionName: '' });
+  const [mongoGridFSModal, setMongoGridFSModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    bucketPrefix: string;
+  }>({ isOpen: false, connectionId: '', database: 'admin', bucketPrefix: 'fs' });
+  const [mongoTailModal, setMongoTailModal] = useState<{
     isOpen: boolean;
     connectionId: string;
     database: string;
@@ -5543,6 +5563,26 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </button>
               )}
 
+              {contextMenu.connection.driver === 'mongodb' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const connId = contextMenu.connection!.id;
+                    const connName = contextMenu.connection!.name;
+                    closeContextMenu();
+                    setMongoInfoModal({
+                      isOpen: true,
+                      connectionId: connId,
+                      connectionName: connName,
+                    });
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-emerald-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Activity className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                  <span>MongoDB Server &amp; Replica Info...</span>
+                </button>
+              )}
+
               {contextMenu.connection.driver?.toLowerCase() === 'redis' && (
                 <>
                   <button
@@ -6715,6 +6755,39 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                         <span>Aggregation Pipeline Builder...</span>
                       </button>
 
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const db = contextMenu.database || 'admin';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setMongoTailModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Activity className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                        <span>Live Tail (Watch)...</span>
+                      </button>
+
+                      {contextMenu.table!.name.endsWith('.files') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const connId = contextMenu.connection!.id;
+                            const db = contextMenu.database || 'admin';
+                            const tbl = contextMenu.table!.name;
+                            const prefix = tbl.slice(0, -'.files'.length);
+                            closeContextMenu();
+                            setMongoGridFSModal({ isOpen: true, connectionId: connId, database: db, bucketPrefix: prefix });
+                          }}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-emerald-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+                        >
+                          <FileCode className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                          <span>Open GridFS Browser...</span>
+                        </button>
+                      )}
+
                       {!contextMenu.connection!.isReadOnly && (
                         <>
                           <button
@@ -6803,6 +6876,39 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                         <Layers className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
                         <span>Aggregation Pipeline Builder...</span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const db = contextMenu.database || 'admin';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setMongoTailModal({ isOpen: true, connectionId: connId, database: db, collectionName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Activity className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                        <span>Live Tail (Watch)...</span>
+                      </button>
+
+                      {contextMenu.table!.name.endsWith('.files') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const connId = contextMenu.connection!.id;
+                            const db = contextMenu.database || 'admin';
+                            const tbl = contextMenu.table!.name;
+                            const prefix = tbl.slice(0, -'.files'.length);
+                            closeContextMenu();
+                            setMongoGridFSModal({ isOpen: true, connectionId: connId, database: db, bucketPrefix: prefix });
+                          }}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-emerald-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+                        >
+                          <FileCode className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                          <span>Open GridFS Browser...</span>
+                        </button>
+                      )}
 
                       {!contextMenu.connection!.isReadOnly && (
                         <>
@@ -7428,6 +7534,30 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         database={mongoCloneModal.database}
         collectionName={mongoCloneModal.collectionName}
         onSuccess={() => handleRefreshDatabase(mongoCloneModal.connectionId, mongoCloneModal.database)}
+      />
+
+      <MongoInfoModal
+        isOpen={mongoInfoModal.isOpen}
+        onClose={() => setMongoInfoModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={mongoInfoModal.connectionId}
+        connectionName={mongoInfoModal.connectionName}
+      />
+
+      <MongoGridFSModal
+        isOpen={mongoGridFSModal.isOpen}
+        onClose={() => setMongoGridFSModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={mongoGridFSModal.connectionId}
+        database={mongoGridFSModal.database}
+        bucketPrefix={mongoGridFSModal.bucketPrefix}
+        isReadOnly={Boolean(connections.find((c) => c.id === mongoGridFSModal.connectionId)?.isReadOnly)}
+      />
+
+      <MongoChangeStreamModal
+        isOpen={mongoTailModal.isOpen}
+        onClose={() => setMongoTailModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={mongoTailModal.connectionId}
+        database={mongoTailModal.database}
+        collectionName={mongoTailModal.collectionName}
       />
     </div>
   );

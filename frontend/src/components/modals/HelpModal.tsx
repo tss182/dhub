@@ -68,34 +68,34 @@ const HELP_TABS: Array<{ id: HelpTab; label: string; icon: React.FC<{ className?
 
 const MONGODB_SNIPPETS: SnippetItem[] = [
   {
-    label: 'Find Documents (Mongo Shell)',
-    code: 'db.users.find({ "status": "active" });',
-    description: 'Query documents using standard JSON filter syntax (returns up to 100 docs).',
+    label: 'Find with Sort, Projection & Limit',
+    code: 'db.users.find({ status: "active" }, { name: 1, email: 1 }).sort({ createdAt: -1 }).limit(50);',
+    description: 'Query documents using relaxed or strict MQL filter syntax with chained cursor modifiers.',
   },
   {
-    label: 'Count Documents',
-    code: 'db.users.countDocuments({ "role": "admin" });',
-    description: 'Count matching documents inside a collection.',
+    label: 'Aggregation Pipeline ($match + $group)',
+    code: 'db.orders.aggregate([\n  { $match: { status: "paid" } },\n  { $group: { _id: "$customerId", total: { $sum: "$amount" }, count: { $sum: 1 } } },\n  { $sort: { total: -1 } },\n  { $limit: 20 }\n]);',
+    description: 'Run multi-stage aggregation pipelines directly in the Query Console.',
   },
   {
-    label: 'Insert One Document',
-    code: 'db.users.insertOne({ "name": "Alice", "role": "editor", "active": true });',
-    description: 'Insert a new JSON/BSON document into the collection.',
+    label: 'Insert & Update Documents',
+    code: 'db.users.insertOne({ name: "Alice", role: "editor", createdAt: ISODate("2026-01-01T00:00:00Z") });\ndb.users.updateOne({ _id: ObjectId("65f1a2b3c4d5e6f7a8b9c0d1") }, { $set: { role: "admin" } });',
+    description: 'Insert or update documents using BSON constructors like ObjectId() and ISODate().',
+  },
+  {
+    label: 'Create Index & Explain Query Plan',
+    code: 'db.users.createIndex({ email: 1 }, { unique: true, name: "idx_users_email" });\ndb.users.find({ email: "alice@example.com" }).explain("executionStats");',
+    description: 'Manage indexes and inspect winningPlan / executionStats visually in the Explain Plan tab.',
   },
   {
     label: 'Delete One / Many Documents',
-    code: 'db.users.deleteOne({ "_id": "65f1a2b3c4d5e6f7a8b9c0d1" });\n-- Or delete multiple:\ndb.users.deleteMany({ "archived": true });',
-    description: 'Remove documents matching a filter (ObjectId hex strings are parsed automatically).',
+    code: 'db.users.deleteOne({ _id: ObjectId("65f1a2b3c4d5e6f7a8b9c0d1") });\ndb.users.deleteMany({ archived: true });',
+    description: 'Remove documents matching an MQL filter.',
   },
   {
-    label: 'SQL-Like Collection Query',
-    code: "SELECT name, email FROM users WHERE status = 'active' LIMIT 50 OFFSET 0;",
-    description: 'Run familiar SELECT / COUNT(*) queries against MongoDB collections.',
-  },
-  {
-    label: 'Discovery & Raw JSON Commands',
-    code: 'SHOW DBS;\nSHOW COLLECTIONS;\n{ "ping": 1 }',
-    description: 'List databases/collections or run raw MongoDB database commands.',
+    label: 'Shell Discovery & Raw Commands',
+    code: 'use mydb;\nshow dbs;\nshow collections;\ndb.stats();\n{ ping: 1 };',
+    description: 'Switch active database, list collections, inspect stats, or run raw database commands.',
   },
 ];
 

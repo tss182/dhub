@@ -18,6 +18,22 @@ export const SQL_WHERE_KEYWORDS = [
   'LIMIT',
 ];
 
+export const MONGO_FILTER_OPERATORS = [
+  '$eq',
+  '$ne',
+  '$gt',
+  '$gte',
+  '$lt',
+  '$lte',
+  '$in',
+  '$nin',
+  '$regex',
+  '$exists',
+  '$and',
+  '$or',
+  '$elemMatch',
+];
+
 export function getWhereColumnIconType(
   dataType?: string,
   isPK?: boolean

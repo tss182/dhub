@@ -731,6 +731,31 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
     }
 
+    if (driver === 'mongodb') {
+      let parsedMongoFilter: any = undefined;
+      if (filter.trim().startsWith('{')) {
+        try {
+          parsedMongoFilter = JSON.parse(filter.trim());
+        } catch {}
+      }
+      const vectorStage: Record<string, any> = {
+        $vectorSearch: {
+          index: 'vector_index',
+          path: selectedCol || 'embedding',
+          queryVector: vec,
+          numCandidates: Math.max(k * 10, 100),
+          limit: k,
+          ...(parsedMongoFilter ? { filter: parsedMongoFilter } : {}),
+        },
+      };
+      const addFieldsStage = {
+        $addFields: {
+          _score: { $meta: 'vectorSearchScore' },
+        },
+      };
+      return `db.getCollection(${JSON.stringify(tableName)}).aggregate(${JSON.stringify([vectorStage, addFieldsStage], null, 2)});`;
+    }
+
     if (driver === 'elasticsearch') {
       const idxEsc = encodeURIComponent(tableName);
       const numCand = Math.max(k, Number(esNumCandidates) || Math.max(k * 5, 50));

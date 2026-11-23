@@ -475,6 +475,10 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
         parts.push(
           'ELASTICSEARCH DIALECT RULES: Elasticsearch/OpenSearch is a distributed search & analytics engine, NOT a relational SQL database. Do NOT generate SQL JOINs, CREATE TABLE, ALTER TABLE, or transactions. Use Kibana DevTools REST syntax (`GET /_cat/indices?format=json`, `POST /<index>/_search\\n{...}`, `POST /<index>/_count\\n{...}`, `POST /<index>/_bulk\\n...`) or ES|QL (`FROM <index> | WHERE ... | STATS ... | SORT ... | LIMIT ...`) inside the ```sql block. For `open_table` "where" filters, use simple expressions (`status = \'active\' AND views >= 10`, `title LIKE \'%search%\'`, `_id IN (\'1\', \'2\')`) or raw Query DSL JSON (`{"bool":{"must":[...]}}`).'
         );
+      } else if (activeConn.driver === 'mongodb') {
+        parts.push(
+          'MONGODB DIALECT RULES: MongoDB is a NoSQL BSON document database, NOT a relational SQL engine. Do NOT generate SQL JOINs, CREATE TABLE, ALTER TABLE, or BEGIN/COMMIT transactions. Always generate MongoDB Shell (MQL) syntax inside the code block: `db.<collection>.find({ ... }).sort({ ... }).limit(50)`, `db.<collection>.aggregate([ ... ])`, `db.<collection>.insertOne(...)`, `db.<collection>.updateOne({ ... }, { $set: { ... } })`, `db.<collection>.deleteOne({ ... })`, `db.<collection>.createIndex({ ... })`, `db.<collection>.find(...).explain("executionStats")`, `show collections`, `use <db>`. Support BSON helpers like `ObjectId("...")`, `ISODate("...")`, `NumberDecimal("...")`.'
+        );
       }
     }
 

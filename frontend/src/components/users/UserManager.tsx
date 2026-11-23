@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { ConnectionConfig, WorkbenchTab, resolveConnectionEnv } from '../../types/domain';
+import { MongoUserManagerPanel } from './MongoUserManagerPanel';
 import { QueryService } from '../../../bindings/dhub/internal/services';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { alertSuccess, alertError, alertWarning, confirmDialog } from '../../stores/useAlertStore';
@@ -1016,21 +1017,9 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     );
   }
 
-  // MongoDB Message
+  // MongoDB RBAC Manager
   if (connection.driver === 'mongodb') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#191a20] p-6 text-center select-none">
-        <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-4 shadow-lg">
-          <AlertCircle className="h-7 w-7" />
-        </div>
-        <h3 className="text-base font-semibold text-zinc-100 mb-1">
-          MongoDB User Management
-        </h3>
-        <p className="text-xs text-zinc-400 max-w-md leading-relaxed mb-4">
-          MongoDB uses role-based access control (RBAC). You can manage users, roles, and authentication directly in the Query Console using commands such as <code className="font-mono text-zinc-200">db.createUser(...)</code>, <code className="font-mono text-zinc-200">db.updateUser(...)</code>, or <code className="font-mono text-zinc-200">db.dropUser(...)</code>.
-        </p>
-      </div>
-    );
+    return <MongoUserManagerPanel connection={connection} />;
   }
 
   // SQLite Message
