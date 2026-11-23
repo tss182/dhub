@@ -161,14 +161,37 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   );
 
   const [isExpanded, setIsExpanded] = useState(false);
+  const [qdrantMode, setQdrantMode] = useState<'similarity' | 'hybrid' | 'recommend' | 'groupby'>('similarity');
   const [inputMode, setInputMode] = useState<'vector' | 'text'>('vector');
   const [selectedCol, setSelectedCol] = useState<string>('');
   const [vectorText, setVectorText] = useState<string>('');
   const [textQuery, setTextQuery] = useState<string>('');
   const [topK, setTopK] = useState<number>(10);
+  const [searchOffset, setSearchOffset] = useState<number>(0);
   const [scoreThreshold, setScoreThreshold] = useState<string>('');
   const [metric, setMetric] = useState<VectorDistanceMetric>('cosine');
   const [filterInput, setFilterInput] = useState<string>('');
+  const [showQdrantAdvanced, setShowQdrantAdvanced] = useState(false);
+  const [hnswEf, setHnswEf] = useState<string>('');
+  const [exactSearch, setExactSearch] = useState<boolean>(false);
+  const [quantRescore, setQuantRescore] = useState<boolean>(true);
+  const [withVectorResult, setWithVectorResult] = useState<boolean>(true);
+  // Hybrid fields
+  const [sparseCol, setSparseCol] = useState<string>('');
+  const [sparseIndices, setSparseIndices] = useState<string>('');
+  const [sparseValues, setSparseValues] = useState<string>('');
+  const [fusionType, setFusionType] = useState<'rrf' | 'dbsf'>('rrf');
+  // Recommend fields
+  const [positiveIds, setPositiveIds] = useState<string>('');
+  const [negativeIds, setNegativeIds] = useState<string>('');
+  // GroupBy fields
+  const [groupByField, setGroupByField] = useState<string>('');
+  const [groupSize, setGroupSize] = useState<number>(3);
+  // Visual filter builder
+  const [showFilterBuilder, setShowFilterBuilder] = useState(false);
+  const [fbField, setFbField] = useState('');
+  const [fbOp, setFbOp] = useState<'=' | '!=' | '>' | '>=' | '<' | '<=' | 'text'>('=');
+  const [fbVal, setFbVal] = useState('');
   const [showEmbedSettings, setShowEmbedSettings] = useState(false);
   const [embedCfg, setEmbedCfg] = useState<EmbeddingConfig>(loadEmbeddingConfig);
   const [embedError, setEmbedError] = useState<string | null>(null);
@@ -269,39 +292,125 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     return vec;
   };
 
-  const buildSearchQuery = (vec: number[]): string => {
+  const resolveQdrantFilter = (raw: string): Record<string, any> | undefined => {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      const fallback = parseSimpleQdrantFilter(trimmed);
+      return fallback || undefined;
+    }
+  };
+
+  const buildSearchQuery = (vec: number[] | null): string => {
     const k = Math.max(1, Math.min(1000, Number(topK) || 10));
     const threshold = scoreThreshold.trim() !== '' && !Number.isNaN(Number(scoreThreshold))
       ? Number(scoreThreshold)
       : null;
-    const vecJson = JSON.stringify(vec);
+    const vecJson = vec ? JSON.stringify(vec) : '[]';
     const filter = filterInput.trim();
 
     if (driver === 'qdrant') {
+      const collEsc = encodeURIComponent(tableName);
+      const parsedFilter = resolveQdrantFilter(filter);
+      const usingName = activeVectorCol.startsWith('vector.')
+        ? activeVectorCol.slice('vector.'.length)
+        : undefined;
+
+      const paramsObj: Record<string, any> = {};
+      if (hnswEf.trim() && Number.isFinite(Number(hnswEf))) paramsObj.hnsw_ef = Math.floor(Number(hnswEf));
+      if (exactSearch) paramsObj.exact = true;
+      if (!quantRescore) paramsObj.quantization = { rescore: false };
+
+      if (qdrantMode === 'recommend') {
+        const parseIdList = (rawIds: string) =>
+          rawIds
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map((s) => (/^-?\d+$/.test(s) ? Number(s) : s));
+        const body: Record<string, any> = {
+          query: {
+            recommend: {
+              positive: parseIdList(positiveIds),
+              negative: parseIdList(negativeIds),
+            },
+          },
+          limit: k,
+          offset: searchOffset > 0 ? searchOffset : undefined,
+          with_payload: true,
+          with_vector: withVectorResult,
+        };
+        if (usingName) body.using = usingName;
+        if (threshold !== null) body.score_threshold = threshold;
+        if (parsedFilter) body.filter = parsedFilter;
+        if (Object.keys(paramsObj).length > 0) body.params = paramsObj;
+        return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      if (qdrantMode === 'hybrid') {
+        const idxArr = sparseIndices.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+        const valArr = sparseValues.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+        const sparseUsing = (sparseCol || 'bm25').replace(/^vector\./, '');
+        const prefetch: any[] = [];
+        if (vec && vec.length > 0) {
+          const pDense: Record<string, any> = { query: vec, limit: k * 2 };
+          if (usingName) pDense.using = usingName;
+          if (parsedFilter) pDense.filter = parsedFilter;
+          prefetch.push(pDense);
+        }
+        if (idxArr.length > 0 && idxArr.length === valArr.length) {
+          const pSparse: Record<string, any> = {
+            query: { indices: idxArr, values: valArr },
+            using: sparseUsing,
+            limit: k * 2,
+          };
+          if (parsedFilter) pSparse.filter = parsedFilter;
+          prefetch.push(pSparse);
+        }
+        const body: Record<string, any> = {
+          prefetch,
+          query: { fusion: fusionType },
+          limit: k,
+          offset: searchOffset > 0 ? searchOffset : undefined,
+          with_payload: true,
+          with_vector: withVectorResult,
+        };
+        if (threshold !== null) body.score_threshold = threshold;
+        if (Object.keys(paramsObj).length > 0) body.params = paramsObj;
+        return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      if (qdrantMode === 'groupby') {
+        const body: Record<string, any> = {
+          query: vec,
+          group_by: groupByField.trim() || 'category',
+          group_size: Math.max(1, Number(groupSize) || 3),
+          limit: k,
+          with_payload: true,
+          with_vector: withVectorResult,
+        };
+        if (usingName) body.using = usingName;
+        if (threshold !== null) body.score_threshold = threshold;
+        if (parsedFilter) body.filter = parsedFilter;
+        if (Object.keys(paramsObj).length > 0) body.params = paramsObj;
+        return `POST /collections/${collEsc}/points/query/groups\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      // Default: Universal Query API for similarity
       const body: Record<string, any> = {
+        query: vec,
         limit: k,
         with_payload: true,
-        with_vector: true,
+        with_vector: withVectorResult,
       };
-      if (activeVectorCol.startsWith('vector.')) {
-        body.vector = { name: activeVectorCol.slice('vector.'.length), vector: vec };
-      } else {
-        body.vector = vec;
-      }
-      if (threshold !== null) {
-        body.score_threshold = threshold;
-      }
-      if (filter) {
-        try {
-          body.filter = JSON.parse(filter);
-        } catch {
-          const fallback = parseSimpleQdrantFilter(filter);
-          if (fallback) {
-            body.filter = fallback;
-          }
-        }
-      }
-      return `POST /collections/${encodeURIComponent(tableName)}/points/search\n${JSON.stringify(body, null, 2)}`;
+      if (searchOffset > 0) body.offset = searchOffset;
+      if (usingName) body.using = usingName;
+      if (threshold !== null) body.score_threshold = threshold;
+      if (parsedFilter) body.filter = parsedFilter;
+      if (Object.keys(paramsObj).length > 0) body.params = paramsObj;
+      return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
     }
 
     if (driver === 'elasticsearch') {
@@ -394,9 +503,14 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     }
 
     let vec: number[] | null = null;
-    if (inputMode === 'vector') {
+    if (driver === 'qdrant' && qdrantMode === 'recommend') {
+      if (!positiveIds.trim()) {
+        setEmbedError('Enter at least one positive Point ID for Recommend.');
+        return;
+      }
+    } else if (inputMode === 'vector') {
       vec = parseVectorText(vectorText);
-      if (!vec) {
+      if (!vec && !(driver === 'qdrant' && qdrantMode === 'hybrid' && sparseIndices.trim())) {
         setEmbedError('Enter a valid numeric vector array, e.g. [0.12, -0.04, 0.88]');
         return;
       }
@@ -487,27 +601,56 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       {isExpanded && (
         <form onSubmit={handleRunSearch} className="px-3 pb-3 pt-1 space-y-2.5 border-t border-[#22242c]">
           <div className="flex flex-wrap items-center gap-2">
+            {/* Qdrant Query Mode Selector */}
+            {driver === 'qdrant' && (
+              <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
+                {(
+                  [
+                    { id: 'similarity', label: 'Similarity' },
+                    { id: 'hybrid', label: 'Hybrid (RRF)' },
+                    { id: 'recommend', label: 'Recommend' },
+                    { id: 'groupby', label: 'Group By' },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setQdrantMode(m.id)}
+                    className={`px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
+                      qdrantMode === m.id
+                        ? 'bg-emerald-600 text-white font-medium'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Input mode toggle */}
-            <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
-              <button
-                type="button"
-                onClick={() => setInputMode('vector')}
-                className={`px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
-                  inputMode === 'vector' ? 'bg-violet-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Raw Vector
-              </button>
-              <button
-                type="button"
-                onClick={() => setInputMode('text')}
-                className={`px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
-                  inputMode === 'text' ? 'bg-violet-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Text (Embed)
-              </button>
-            </div>
+            {!(driver === 'qdrant' && qdrantMode === 'recommend') && (
+              <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setInputMode('vector')}
+                  className={`px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
+                    inputMode === 'vector' ? 'bg-violet-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  Raw Vector
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputMode('text')}
+                  className={`px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
+                    inputMode === 'text' ? 'bg-violet-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  Text (Embed)
+                </button>
+              </div>
+            )}
 
             {/* Vector Column */}
             <div className="flex items-center gap-1">
@@ -590,7 +733,196 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 <span>Embedding API</span>
               </button>
             )}
+
+            {driver === 'qdrant' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowQdrantAdvanced((v) => !v)}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] cursor-pointer ${
+                    showQdrantAdvanced
+                      ? 'bg-blue-600/20 border-blue-500/40 text-blue-200'
+                      : 'bg-[#1b1d25] hover:bg-[#252833] text-zinc-300 border-[#2d303c]'
+                  }`}
+                >
+                  <SlidersHorizontal className="h-3 w-3" />
+                  <span>Search Params</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFilterBuilder((v) => !v)}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] cursor-pointer ${
+                    showFilterBuilder
+                      ? 'bg-amber-600/20 border-amber-500/40 text-amber-200'
+                      : 'bg-[#1b1d25] hover:bg-[#252833] text-zinc-300 border-[#2d303c]'
+                  }`}
+                >
+                  <span>+ Filter Builder</span>
+                </button>
+              </>
+            )}
           </div>
+
+          {/* Qdrant Search Params */}
+          {driver === 'qdrant' && showQdrantAdvanced && (
+            <div className="flex flex-wrap items-center gap-3 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <label className="flex items-center gap-1.5 text-zinc-400">
+                <span>hnsw_ef:</span>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="auto"
+                  value={hnswEf}
+                  onChange={(e) => setHnswEf(e.target.value)}
+                  className="w-16 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-zinc-400">
+                <span>Offset:</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={searchOffset}
+                  onChange={(e) => setSearchOffset(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-16 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                <input type="checkbox" checked={exactSearch} onChange={(e) => setExactSearch(e.target.checked)} />
+                <span>Exact Search</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                <input type="checkbox" checked={quantRescore} onChange={(e) => setQuantRescore(e.target.checked)} />
+                <span>Quantization Rescore</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                <input type="checkbox" checked={withVectorResult} onChange={(e) => setWithVectorResult(e.target.checked)} />
+                <span>Return Vectors</span>
+              </label>
+            </div>
+          )}
+
+          {/* Qdrant Visual Filter Builder */}
+          {driver === 'qdrant' && showFilterBuilder && (
+            <div className="flex flex-wrap items-center gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <input
+                type="text"
+                placeholder="Payload field (e.g. category)"
+                value={fbField}
+                onChange={(e) => setFbField(e.target.value)}
+                className="w-40 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+              <select
+                value={fbOp}
+                onChange={(e) => setFbOp(e.target.value as any)}
+                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              >
+                <option value="=">=</option>
+                <option value="!=">!=</option>
+                <option value=">">&gt;</option>
+                <option value=">=">&gt;=</option>
+                <option value="<">&lt;</option>
+                <option value="<=">&lt;=</option>
+                <option value="text">text match</option>
+              </select>
+              <input
+                type="text"
+                placeholder="Value"
+                value={fbVal}
+                onChange={(e) => setFbVal(e.target.value)}
+                className="w-40 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const key = fbField.trim();
+                  const raw = fbVal.trim();
+                  if (!key || !raw) return;
+                  let typedVal: any = raw;
+                  if (/^true$/i.test(raw)) typedVal = true;
+                  else if (/^false$/i.test(raw)) typedVal = false;
+                  else if (!Number.isNaN(Number(raw))) typedVal = Number(raw);
+
+                  let clause: any;
+                  if (fbOp === 'text') clause = { key, match: { text: String(typedVal) } };
+                  else if (fbOp === '=' || fbOp === '!=') clause = { key, match: { value: typedVal } };
+                  else {
+                    const rk = fbOp === '>' ? 'gt' : fbOp === '>=' ? 'gte' : fbOp === '<' ? 'lt' : 'lte';
+                    clause = { key, range: { [rk]: typedVal } };
+                  }
+                  let current: Record<string, any> = {};
+                  if (filterInput.trim()) {
+                    current = resolveQdrantFilter(filterInput) || {};
+                  }
+                  const bucket = fbOp === '!=' ? 'must_not' : 'must';
+                  current[bucket] = [...(Array.isArray(current[bucket]) ? current[bucket] : []), clause];
+                  setFilterInput(JSON.stringify(current));
+                  setFbField('');
+                  setFbVal('');
+                }}
+                className="px-2.5 py-1 rounded bg-amber-600/25 hover:bg-amber-600/40 border border-amber-500/40 text-amber-200 cursor-pointer"
+              >
+                Add Condition
+              </button>
+            </div>
+          )}
+
+          {/* Qdrant Hybrid / Recommend / GroupBy extra inputs */}
+          {driver === 'qdrant' && qdrantMode === 'hybrid' && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <input
+                type="text"
+                placeholder="Sparse field (e.g. bm25)"
+                value={sparseCol}
+                onChange={(e) => setSparseCol(e.target.value)}
+                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+              <input
+                type="text"
+                placeholder="Sparse indices: 12, 45, 99"
+                value={sparseIndices}
+                onChange={(e) => setSparseIndices(e.target.value)}
+                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+              <input
+                type="text"
+                placeholder="Sparse values: 0.5, 0.8, 0.2"
+                value={sparseValues}
+                onChange={(e) => setSparseValues(e.target.value)}
+                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+              <select
+                value={fusionType}
+                onChange={(e) => setFusionType(e.target.value as 'rrf' | 'dbsf')}
+                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              >
+                <option value="rrf">Fusion: RRF</option>
+                <option value="dbsf">Fusion: DBSF</option>
+              </select>
+            </div>
+          )}
+
+          {driver === 'qdrant' && qdrantMode === 'groupby' && (
+            <div className="flex items-center gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <span className="text-zinc-400">Group By Field:</span>
+              <input
+                type="text"
+                placeholder="e.g. category"
+                value={groupByField}
+                onChange={(e) => setGroupByField(e.target.value)}
+                className="w-48 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+              <span className="text-zinc-400 ml-2">Group Size:</span>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={groupSize}
+                onChange={(e) => setGroupSize(Math.max(1, Number(e.target.value) || 3))}
+                className="w-16 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
+            </div>
+          )}
 
           {/* Embedding Provider Settings (when Text mode & toggled) */}
           {inputMode === 'text' && showEmbedSettings && (
@@ -687,7 +1019,24 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
           {/* Main Query Input + Filter */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <div className="md:col-span-2">
-              {inputMode === 'vector' ? (
+              {driver === 'qdrant' && qdrantMode === 'recommend' ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="Positive Point IDs (comma-separated, e.g. 1, 2)"
+                    value={positiveIds}
+                    onChange={(e) => setPositiveIds(e.target.value)}
+                    className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 font-mono focus:border-violet-500 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Negative Point IDs (optional)"
+                    value={negativeIds}
+                    onChange={(e) => setNegativeIds(e.target.value)}
+                    className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 font-mono focus:border-violet-500 focus:outline-none"
+                  />
+                </div>
+              ) : inputMode === 'vector' ? (
                 <input
                   type="text"
                   placeholder="Paste query vector array, e.g. [0.012, -0.043, 0.089, ...]"

@@ -43,6 +43,7 @@ interface GridToolbarProps {
   maskSensitiveData?: boolean;
   onToggleMaskSensitiveData?: () => void;
   onOpenRedisAddKey: () => void;
+  onOpenQdrantAddPoint?: () => void;
   onAddRow: () => void;
   onDeleteActiveRow: () => void;
   onCopyRawSql: () => void;
@@ -87,6 +88,7 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
   maskSensitiveData = false,
   onToggleMaskSensitiveData,
   onOpenRedisAddKey,
+  onOpenQdrantAddPoint,
   onAddRow,
   onDeleteActiveRow,
   onCopyRawSql,
@@ -173,6 +175,16 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
               >
                 <Plus className="h-3.5 w-3.5 text-emerald-400" />
                 <span>Add Key</span>
+              </button>
+            ) : isQdrant && onOpenQdrantAddPoint ? (
+              <button
+                type="button"
+                onClick={onOpenQdrantAddPoint}
+                className="flex h-7 items-center gap-1.5 px-2.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-colors cursor-pointer"
+                title="Add New Qdrant Point (Vector + JSON Payload)"
+              >
+                <Plus className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Add Point</span>
               </button>
             ) : (
               <button

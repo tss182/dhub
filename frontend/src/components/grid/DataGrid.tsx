@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
+import { QdrantPointModal } from '../modals/QdrantPointModal';
 import { CopyAsModal } from '../modals/CopyAsModal';
 
 const ExportModal = lazy(() =>
@@ -216,6 +217,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
     isOpen: boolean;
     oldKeyName: string;
   }>({ isOpen: false, oldKeyName: '' });
+  const [qdrantPointModal, setQdrantPointModal] = useState<{
+    isOpen: boolean;
+    mode: 'insert' | 'edit';
+    initialRow?: any[];
+  }>({ isOpen: false, mode: 'insert' });
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
@@ -2609,6 +2615,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
         maskSensitiveData={maskSensitiveData}
         onToggleMaskSensitiveData={() => setMaskSensitiveData((prev) => !prev)}
         onOpenRedisAddKey={() => setRedisAddKeyOpen(true)}
+        onOpenQdrantAddPoint={
+          isQdrant && tableName
+            ? () => setQdrantPointModal({ isOpen: true, mode: 'insert' })
+            : undefined
+        }
         onAddRow={handleAddRow}
         onDeleteActiveRow={handleDeleteActiveRow}
         onCopyRawSql={handleCopyRawSql}
@@ -3163,6 +3174,15 @@ export const DataGrid: React.FC<DataGridProps> = ({
         onOpenRedisRenameModal={(oldKeyName) => setRedisRenameModal({ isOpen: true, oldKeyName })}
         onOpenUpdateQueryInTab={openUpdateQueryInTab}
         onFindSimilarPoint={isQdrant ? handleFindSimilarPoint : undefined}
+        onOpenQdrantEditPoint={
+          isQdrant && tableName
+            ? (rowIdx) => {
+                const rowInArray = rowIdx >= (startOffset || 0) ? rowIdx - (startOffset || 0) : rowIdx;
+                const targetRow = rows[rowInArray] || rows[rowIdx];
+                setQdrantPointModal({ isOpen: true, mode: 'edit', initialRow: targetRow });
+              }
+            : undefined
+        }
         onSetSelectedToNull={handleSetSelectedToNull}
         onToggleFreeze={handleToggleFreeze}
         onUnfreezeAll={() => setFrozenColumns([])}
@@ -3279,6 +3299,21 @@ export const DataGrid: React.FC<DataGridProps> = ({
         oldKeyName={redisRenameModal.oldKeyName}
         onSuccess={() => onRefresh?.()}
       />
+
+      {isQdrant && tableName && (
+        <QdrantPointModal
+          isOpen={qdrantPointModal.isOpen}
+          mode={qdrantPointModal.mode}
+          connectionId={connectionId || ''}
+          database={database || 'default'}
+          schema={schema || 'default'}
+          collectionName={tableName}
+          columns={columns}
+          initialRow={qdrantPointModal.initialRow}
+          onClose={() => setQdrantPointModal({ isOpen: false, mode: 'insert' })}
+          onSaved={() => onRefresh?.()}
+        />
+      )}
 
       <CopyAsModal
         isOpen={isCopyAsOpen}

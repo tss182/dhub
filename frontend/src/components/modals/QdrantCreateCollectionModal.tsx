@@ -9,6 +9,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 type DistanceMetric = 'Cosine' | 'Euclid' | 'Dot' | 'Manhattan';
 type VectorConfigType = 'single' | 'named';
 type QuantizationType = 'none' | 'scalar' | 'binary' | 'product';
+type VectorDatatype = 'float32' | 'float16' | 'uint8';
 type PayloadSchemaType = 'keyword' | 'integer' | 'float' | 'bool' | 'datetime' | 'text' | 'geo';
 
 interface NamedVectorItem {
@@ -16,6 +17,15 @@ interface NamedVectorItem {
   name: string;
   size: string;
   distance: DistanceMetric;
+  datatype: VectorDatatype;
+  onDisk: boolean;
+  isMultiVector: boolean;
+}
+
+interface SparseVectorItem {
+  id: string;
+  name: string;
+  onDisk: boolean;
 }
 
 interface InitialPayloadIndex {
@@ -46,9 +56,13 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
   const [vectorType, setVectorType] = useState<VectorConfigType>('single');
   const [dimensions, setDimensions] = useState('1536');
   const [distance, setDistance] = useState<DistanceMetric>('Cosine');
+  const [singleDatatype, setSingleDatatype] = useState<VectorDatatype>('float32');
+  const [singleOnDisk, setSingleOnDisk] = useState(false);
+  const [singleMultiVector, setSingleMultiVector] = useState(false);
   const [namedVectors, setNamedVectors] = useState<NamedVectorItem[]>([
-    { id: 'vec-1', name: 'default', size: '1536', distance: 'Cosine' },
+    { id: 'vec-1', name: 'default', size: '1536', distance: 'Cosine', datatype: 'float32', onDisk: false, isMultiVector: false },
   ]);
+  const [sparseVectors, setSparseVectors] = useState<SparseVectorItem[]>([]);
 
   const [showHnsw, setShowHnsw] = useState(false);
   const [hnswM, setHnswM] = useState('');
@@ -73,7 +87,11 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
     setVectorType('single');
     setDimensions('1536');
     setDistance('Cosine');
-    setNamedVectors([{ id: 'vec-1', name: 'default', size: '1536', distance: 'Cosine' }]);
+    setSingleDatatype('float32');
+    setSingleOnDisk(false);
+    setSingleMultiVector(false);
+    setNamedVectors([{ id: 'vec-1', name: 'default', size: '1536', distance: 'Cosine', datatype: 'float32', onDisk: false, isMultiVector: false }]);
+    setSparseVectors([]);
     setShowHnsw(false);
     setHnswM('');
     setHnswEfConstruct('');
@@ -107,22 +125,42 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
 
     if (vectorType === 'single') {
       const parsedSize = Number(dimensions);
-      body.vectors = {
+      const vObj: Record<string, any> = {
         size: Number.isFinite(parsedSize) && parsedSize > 0 ? Math.floor(parsedSize) : 1536,
         distance,
       };
+      if (singleDatatype !== 'float32') vObj.datatype = singleDatatype;
+      if (singleOnDisk) vObj.on_disk = true;
+      if (singleMultiVector) vObj.multivector_config = { comparator: 'max_sim' };
+      body.vectors = vObj;
     } else {
-      const vectorsMap: Record<string, { size: number; distance: DistanceMetric }> = {};
+      const vectorsMap: Record<string, any> = {};
       namedVectors.forEach((v) => {
         const key = v.name.trim();
         if (!key) return;
         const parsedSize = Number(v.size);
-        vectorsMap[key] = {
+        const vObj: Record<string, any> = {
           size: Number.isFinite(parsedSize) && parsedSize > 0 ? Math.floor(parsedSize) : 1536,
           distance: v.distance,
         };
+        if (v.datatype !== 'float32') vObj.datatype = v.datatype;
+        if (v.onDisk) vObj.on_disk = true;
+        if (v.isMultiVector) vObj.multivector_config = { comparator: 'max_sim' };
+        vectorsMap[key] = vObj;
       });
       body.vectors = vectorsMap;
+    }
+
+    if (sparseVectors.length > 0) {
+      const sparseMap: Record<string, any> = {};
+      sparseVectors.forEach((sv) => {
+        const k = sv.name.trim();
+        if (!k) return;
+        sparseMap[k] = sv.onDisk ? { index: { on_disk: true } } : {};
+      });
+      if (Object.keys(sparseMap).length > 0) {
+        body.sparse_vectors = sparseMap;
+      }
     }
 
     const hnswConfig: Record<string, any> = {};
@@ -165,7 +203,11 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
     vectorType,
     dimensions,
     distance,
+    singleDatatype,
+    singleOnDisk,
+    singleMultiVector,
     namedVectors,
+    sparseVectors,
     hnswM,
     hnswEfConstruct,
     hnswFullScanThreshold,
@@ -385,7 +427,8 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
             </div>
 
             {vectorType === 'single' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[11px] font-medium text-zinc-300 mb-1">
                     <span className="text-rose-400 mr-1">*</span>Vector Dimensions
@@ -397,9 +440,6 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                     onChange={(e) => setDimensions(e.target.value)}
                     className="w-full rounded-lg border border-[#2f3240] bg-[#121318] px-3 py-2 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
                   />
-                  <p className="mt-1 text-[10px] text-zinc-500">
-                    e.g., 1536 for OpenAI, 768 for many models
-                  </p>
                 </div>
 
                 <div>
@@ -417,8 +457,31 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                       </option>
                     ))}
                   </select>
-                  <p className="mt-1 text-[10px] text-zinc-500">Distance function for similarity search</p>
                 </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-zinc-300 mb-1">Datatype</label>
+                  <select
+                    value={singleDatatype}
+                    onChange={(e) => setSingleDatatype(e.target.value as VectorDatatype)}
+                    className="w-full rounded-lg border border-[#2f3240] bg-[#121318] px-3 py-2 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="float32">float32 (default)</option>
+                    <option value="float16">float16 (half RAM)</option>
+                    <option value="uint8">uint8 (byte)</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-4 text-[11px] text-zinc-300">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={singleOnDisk} onChange={(e) => setSingleOnDisk(e.target.checked)} />
+                  <span>Store vectors on disk (mmap)</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={singleMultiVector} onChange={(e) => setSingleMultiVector(e.target.checked)} />
+                  <span>Multi-Vector (ColBERT max_sim)</span>
+                </label>
+              </div>
               </div>
             ) : (
               <div className="space-y-2">
@@ -434,6 +497,9 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                           name: `vector_${prev.length + 1}`,
                           size: '1536',
                           distance: 'Cosine',
+                          datatype: 'float32',
+                          onDisk: false,
+                          isMultiVector: false,
                         },
                       ])
                     }
@@ -447,70 +513,173 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                   {namedVectors.map((vec) => (
                     <div
                       key={vec.id}
-                      className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg bg-[#14151b] border border-[#282b36]"
+                      className="space-y-2 p-2 rounded-lg bg-[#14151b] border border-[#282b36]"
                     >
-                      <input
-                        type="text"
-                        value={vec.name}
-                        onChange={(e) =>
-                          setNamedVectors((prev) =>
-                            prev.map((item) =>
-                              item.id === vec.id ? { ...item, name: e.target.value } : item
+                      <div className="grid grid-cols-12 gap-2 items-center">
+                        <input
+                          type="text"
+                          value={vec.name}
+                          onChange={(e) =>
+                            setNamedVectors((prev) =>
+                              prev.map((item) =>
+                                item.id === vec.id ? { ...item, name: e.target.value } : item
+                              )
                             )
-                          )
-                        }
-                        placeholder="Vector name"
-                        className="col-span-5 rounded border border-[#2f3240] bg-[#101116] px-2 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        value={vec.size}
-                        onChange={(e) =>
-                          setNamedVectors((prev) =>
-                            prev.map((item) =>
-                              item.id === vec.id ? { ...item, size: e.target.value } : item
+                          }
+                          placeholder="Vector name"
+                          className="col-span-4 rounded border border-[#2f3240] bg-[#101116] px-2 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          value={vec.size}
+                          onChange={(e) =>
+                            setNamedVectors((prev) =>
+                              prev.map((item) =>
+                                item.id === vec.id ? { ...item, size: e.target.value } : item
+                              )
                             )
-                          )
-                        }
-                        placeholder="Dims"
-                        className="col-span-3 rounded border border-[#2f3240] bg-[#101116] px-2 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
-                      />
-                      <select
-                        value={vec.distance}
-                        onChange={(e) =>
-                          setNamedVectors((prev) =>
-                            prev.map((item) =>
-                              item.id === vec.id
-                                ? { ...item, distance: e.target.value as DistanceMetric }
-                                : item
+                          }
+                          placeholder="Dims"
+                          className="col-span-2 rounded border border-[#2f3240] bg-[#101116] px-2 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                        />
+                        <select
+                          value={vec.distance}
+                          onChange={(e) =>
+                            setNamedVectors((prev) =>
+                              prev.map((item) =>
+                                item.id === vec.id
+                                  ? { ...item, distance: e.target.value as DistanceMetric }
+                                  : item
+                              )
                             )
-                          )
-                        }
-                        className="col-span-3 rounded border border-[#2f3240] bg-[#101116] px-2 py-1.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
-                      >
-                        {DISTANCE_METRICS.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        disabled={namedVectors.length <= 1}
-                        onClick={() =>
-                          setNamedVectors((prev) => prev.filter((item) => item.id !== vec.id))
-                        }
-                        className="col-span-1 flex items-center justify-center p-1 text-zinc-500 hover:text-rose-400 disabled:opacity-30 cursor-pointer"
-                        title="Remove vector"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                          }
+                          className="col-span-3 rounded border border-[#2f3240] bg-[#101116] px-2 py-1.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                        >
+                          {DISTANCE_METRICS.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={vec.datatype}
+                          onChange={(e) =>
+                            setNamedVectors((prev) =>
+                              prev.map((item) =>
+                                item.id === vec.id
+                                  ? { ...item, datatype: e.target.value as VectorDatatype }
+                                  : item
+                              )
+                            )
+                          }
+                          className="col-span-2 rounded border border-[#2f3240] bg-[#101116] px-1.5 py-1.5 text-[11px] text-zinc-100 focus:border-blue-500 focus:outline-none"
+                        >
+                          <option value="float32">f32</option>
+                          <option value="float16">f16</option>
+                          <option value="uint8">u8</option>
+                        </select>
+                        <button
+                          type="button"
+                          disabled={namedVectors.length <= 1}
+                          onClick={() =>
+                            setNamedVectors((prev) => prev.filter((item) => item.id !== vec.id))
+                          }
+                          className="col-span-1 flex items-center justify-center p-1 text-zinc-500 hover:text-rose-400 disabled:opacity-30 cursor-pointer"
+                          title="Remove vector"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-4 text-[10px] text-zinc-400">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={vec.onDisk}
+                            onChange={(e) =>
+                              setNamedVectors((prev) =>
+                                prev.map((item) => (item.id === vec.id ? { ...item, onDisk: e.target.checked } : item))
+                              )
+                            }
+                          />
+                          <span>On disk</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={vec.isMultiVector}
+                            onChange={(e) =>
+                              setNamedVectors((prev) =>
+                                prev.map((item) =>
+                                  item.id === vec.id ? { ...item, isMultiVector: e.target.checked } : item
+                                )
+                              )
+                            }
+                          />
+                          <span>Multi-Vector (max_sim)</span>
+                        </label>
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
+
+            {/* Sparse Vectors (BM25 / SPLADE) */}
+            <div className="pt-2 border-t border-[#222530] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-zinc-300">
+                  Sparse Vectors <span className="text-zinc-500 font-normal">(optional, e.g. BM25 / SPLADE for hybrid search)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSparseVectors((prev) => [
+                      ...prev,
+                      { id: `sparse-${Date.now()}`, name: prev.length === 0 ? 'bm25' : `sparse_${prev.length + 1}`, onDisk: false },
+                    ])
+                  }
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#232632] hover:bg-[#2d3140] text-zinc-200 border border-[#343848] text-[11px] cursor-pointer"
+                >
+                  <Plus className="h-3 w-3" />
+                  <span>Add Sparse</span>
+                </button>
+              </div>
+              {sparseVectors.map((sv) => (
+                <div key={sv.id} className="flex items-center gap-2 p-2 rounded-lg bg-[#14151b] border border-[#282b36]">
+                  <input
+                    type="text"
+                    value={sv.name}
+                    onChange={(e) =>
+                      setSparseVectors((prev) =>
+                        prev.map((item) => (item.id === sv.id ? { ...item, name: e.target.value } : item))
+                      )
+                    }
+                    placeholder="Sparse vector name (e.g. bm25)"
+                    className="flex-1 rounded border border-[#2f3240] bg-[#101116] px-2 py-1 text-xs text-zinc-100 font-mono"
+                  />
+                  <label className="flex items-center gap-1 text-[11px] text-zinc-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={sv.onDisk}
+                      onChange={(e) =>
+                        setSparseVectors((prev) =>
+                          prev.map((item) => (item.id === sv.id ? { ...item, onDisk: e.target.checked } : item))
+                        )
+                      }
+                    />
+                    <span>Index on disk</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setSparseVectors((prev) => prev.filter((item) => item.id !== sv.id))}
+                    className="p-1 text-zinc-500 hover:text-rose-400 cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
           </section>
 
           {/* HNSW Index Configuration */}
