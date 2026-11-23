@@ -239,7 +239,19 @@ export const DataGrid: React.FC<DataGridProps> = ({
   }, [tabId, tableName, columns, primaryKeysKey, primaryKeySet, disableFreeze]);
 
   useEffect(() => {
-    if (!isTableTab || !connectionId || !database || !tableName || isRedis) {
+    const drv = (driver || '').toLowerCase();
+    const skipFkFetch =
+      !isTableTab ||
+      !connectionId ||
+      !database ||
+      !tableName ||
+      isRedis ||
+      drv === 'qdrant' ||
+      drv === 'elasticsearch' ||
+      drv === 'es' ||
+      drv === 'mongodb' ||
+      drv === 'mongo';
+    if (skipFkFetch) {
       setFkMapByCol({});
       return;
     }
@@ -290,16 +302,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const isColumnEditable = useCallback(
     (colName: string, isInsert: boolean = false): boolean => {
       if (isReadOnly) return false;
+      const colNameLower = colName.toLowerCase();
       if (isRedis) {
-        const colNameLower = colName.toLowerCase();
         if (isInsert) {
           return colNameLower === 'key' || colNameLower === 'value' || colNameLower === 'ttl';
         }
         return colNameLower === 'value' || colNameLower === 'ttl';
       }
+      if (isQdrant) {
+        if (colNameLower === 'score') return false;
+        if (colNameLower === 'id') return isInsert;
+      }
       return true;
     },
-    [isReadOnly, isRedis]
+    [isReadOnly, isRedis, isQdrant]
   );
 
   const isCellEditable = useCallback(
@@ -1167,7 +1183,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     const targetRow = rows[rowInArray] || rows[rowIndex];
     const sql = buildUpdateSql({ driver, tableName, columns, primaryKeys, targetRow, colName, newVal });
     const cleanTable = tableName || 'table';
-    const consoleTitle = `update_${cleanTable}.sql`;
+    const consoleTitle = isQdrant ? `update_${cleanTable}.qdrant` : `update_${cleanTable}.sql`;
 
     const workbenchStore = useWorkbenchStore.getState();
     const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
@@ -1188,8 +1204,32 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     useAlertStore.getState().showToast({
       type: 'info',
-      message: `UPDATE query ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
+      message: `${isQdrant ? 'Qdrant REST' : 'UPDATE query'} ready in [${consoleTitle}]. Press Ctrl+Enter to execute.`,
     });
+  };
+
+  const handleFindSimilarPoint = (rowIndex: number) => {
+    const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+    const targetRow = rows[rowInArray] || rows[rowIndex];
+    const idColIdx = columns.findIndex((c) => c.name === 'id');
+    const rawId = idColIdx !== -1 ? targetRow?.[idColIdx] : undefined;
+    if (rawId === undefined || rawId === null) return;
+    const parsedId = typeof rawId === 'string' && /^-?\d+$/.test(rawId.trim()) ? Number(rawId.trim()) : rawId;
+    const coll = encodeURIComponent(tableName || 'collection');
+    const queryStr = `POST /collections/${coll}/points/query\n${JSON.stringify(
+      { query: parsedId, limit: 10, with_payload: true, with_vector: true },
+      null,
+      2
+    )}`;
+    const workbenchStore = useWorkbenchStore.getState();
+    const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
+    workbenchStore.createConsole(
+      currentTab?.connectionId || '',
+      currentTab?.database || '',
+      currentTab?.schema || '',
+      `similar_${tableName || 'points'}.qdrant`,
+      queryStr
+    );
   };
 
   const handleFinishEdit = () => {
@@ -2551,6 +2591,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         gridBarBg={gridBarBg}
         isReadOnly={isReadOnly}
         isRedis={isRedis}
+        isQdrant={isQdrant}
         rawSql={rawSql}
         copiedRawSql={copiedRawSql}
         stagedCount={stagedCount}
@@ -3099,6 +3140,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         copyFormat={copyFormat}
         isCopyAsSubmenuOpen={isCopyAsSubmenuOpen}
         isRedis={isRedis}
+        isQdrant={isQdrant}
         disableFreeze={disableFreeze}
         columns={columns}
         visualRows={visualRows}
@@ -3120,6 +3162,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         onStartEdit={handleStartEdit}
         onOpenRedisRenameModal={(oldKeyName) => setRedisRenameModal({ isOpen: true, oldKeyName })}
         onOpenUpdateQueryInTab={openUpdateQueryInTab}
+        onFindSimilarPoint={isQdrant ? handleFindSimilarPoint : undefined}
         onSetSelectedToNull={handleSetSelectedToNull}
         onToggleFreeze={handleToggleFreeze}
         onUnfreezeAll={() => setFrozenColumns([])}

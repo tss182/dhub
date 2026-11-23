@@ -1123,7 +1123,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             });
           }
 
-          // 6. Qdrant snippets
+          // 6. Qdrant snippets & collection path autocomplete
           if (driver === 'qdrant') {
             const qdrantSnippets = [
               {
@@ -1138,8 +1138,63 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               },
               {
                 label: 'QDRANT QUERY POINTS',
-                detail: 'Universal query API in Qdrant',
+                detail: 'Universal query API (dense, sparse, hybrid RRF)',
                 insertText: 'POST /collections/${1:collection_name}/points/query\n{\n  "query": [${2:0.1, 0.2, 0.3}],\n  "limit": ${3:10},\n  "with_payload": true\n}',
+              },
+              {
+                label: 'QDRANT RECOMMEND POINTS',
+                detail: 'Recommend similar points from positive/negative IDs',
+                insertText: 'POST /collections/${1:collection_name}/points/recommend\n{\n  "positive": [${2:1}],\n  "negative": [],\n  "limit": ${3:10},\n  "with_payload": true\n}',
+              },
+              {
+                label: 'QDRANT DISCOVER POINTS',
+                detail: 'Context-guided vector discovery',
+                insertText: 'POST /collections/${1:collection_name}/points/discover\n{\n  "target": [${2:0.1, 0.2, 0.3}],\n  "context": [],\n  "limit": ${3:10},\n  "with_payload": true\n}',
+              },
+              {
+                label: 'QDRANT FACET PAYLOAD',
+                detail: 'Count unique values of an indexed payload field',
+                insertText: 'POST /collections/${1:collection_name}/facet\n{\n  "key": "${2:category}",\n  "limit": ${3:20}\n}',
+              },
+              {
+                label: 'QDRANT COUNT POINTS',
+                detail: 'Exact count of points with optional filter',
+                insertText: 'POST /collections/${1:collection_name}/points/count\n{\n  "exact": true\n}',
+              },
+              {
+                label: 'QDRANT UPSERT POINTS',
+                detail: 'Insert or update points in a collection',
+                insertText: 'PUT /collections/${1:collection_name}/points?wait=true\n{\n  "points": [\n    {\n      "id": ${2:1},\n      "vector": [${3:0.1, 0.2, 0.3}],\n      "payload": { "title": "${4:example}" }\n    }\n  ]\n}',
+              },
+              {
+                label: 'QDRANT DELETE POINTS',
+                detail: 'Delete points by IDs or filter',
+                insertText: 'POST /collections/${1:collection_name}/points/delete?wait=true\n{\n  "points": [${2:1}]\n}',
+              },
+              {
+                label: 'QDRANT CREATE COLLECTION',
+                detail: 'Create a new Qdrant vector collection',
+                insertText: 'PUT /collections/${1:collection_name}\n{\n  "vectors": {\n    "size": ${2:1536},\n    "distance": "${3:Cosine}"\n  }\n}',
+              },
+              {
+                label: 'QDRANT CREATE PAYLOAD INDEX',
+                detail: 'Create an index on a payload field',
+                insertText: 'PUT /collections/${1:collection_name}/index\n{\n  "field_name": "${2:category}",\n  "field_schema": "${3:keyword}"\n}',
+              },
+              {
+                label: 'QDRANT ALIASES',
+                detail: 'List or update collection aliases',
+                insertText: 'GET /aliases',
+              },
+              {
+                label: 'QDRANT SNAPSHOTS',
+                detail: 'List snapshots of a collection',
+                insertText: 'GET /collections/${1:collection_name}/snapshots',
+              },
+              {
+                label: 'QDRANT CLUSTER INFO',
+                detail: 'Inspect Qdrant cluster and Raft peer status',
+                insertText: 'GET /cluster',
               },
             ];
             qdrantSnippets.forEach((snip) => {
@@ -1154,6 +1209,20 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 range,
               });
             });
+
+            // Collection name autocomplete after /collections/
+            if (/\/collections\/[a-zA-Z0-9_.-]*$/i.test(textUntilPosition)) {
+              tableMap.forEach((tbl) => {
+                suggestions.push({
+                  label: tbl.name,
+                  kind: monaco.languages.CompletionItemKind.Struct,
+                  detail: 'Qdrant Collection',
+                  insertText: tbl.name,
+                  sortText: `0_col_${tbl.name}`,
+                  range,
+                });
+              });
+            }
           }
 
           // 7. Elasticsearch snippets
@@ -1603,7 +1672,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             </button>
           )}
 
-          {/* Explain Split Button */}
+          {/* Explain Split Button (hidden for Qdrant) */}
+          {connection?.driver !== 'qdrant' && (
           <div className="relative" ref={explainDropdownRef}>
             <div className="flex items-center rounded bg-[#22242c] border border-[#272932]">
               <button
@@ -1644,8 +1714,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               </div>
             )}
           </div>
-
-          {/* Format SQL Button */}
+          )}
           <button
             type="button"
             onClick={handleFormatSql}
@@ -1657,7 +1726,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
 
           <div className="h-4 w-[1px] bg-[#272932] mx-1" />
 
-          {/* Transaction Controls */}
+          {/* Transaction Controls (hidden for Qdrant) */}
+          {connection?.driver !== 'qdrant' && (
           <div className="flex items-center gap-1.5">
             <div className="relative" ref={txDropdownRef}>
               <button
@@ -1745,6 +1815,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               </div>
             )}
           </div>
+          )}
 
           <div className="h-4 w-[1px] bg-[#272932] mx-1" />
 

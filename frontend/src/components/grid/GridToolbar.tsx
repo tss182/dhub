@@ -25,6 +25,7 @@ interface GridToolbarProps {
   gridBarBg: string;
   isReadOnly: boolean;
   isRedis: boolean;
+  isQdrant?: boolean;
   rawSql?: string;
   copiedRawSql: boolean;
   stagedCount: number;
@@ -68,6 +69,7 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
   gridBarBg,
   isReadOnly,
   isRedis,
+  isQdrant = false,
   rawSql,
   copiedRawSql,
   stagedCount,
@@ -222,7 +224,9 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
             {copiedRawSql ? (
               <>
                 <Check className="h-3.5 w-3.5 text-emerald-400" />
-                <span className="text-[11px] font-semibold text-emerald-300">Copied SQL!</span>
+                <span className="text-[11px] font-semibold text-emerald-300">
+                  {isQdrant ? 'Copied!' : 'Copied SQL!'}
+                </span>
               </>
             ) : (
               <>
@@ -238,7 +242,7 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
             <button
               onClick={onPreviewChanges}
               className="flex h-7 w-7 items-center justify-center rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 transition-colors cursor-pointer"
-              title="Preview SQL DML"
+              title={isQdrant ? 'Preview Qdrant REST Operations' : 'Preview SQL DML'}
             >
               <Eye className="h-4 w-4" />
             </button>
@@ -252,7 +256,7 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
                     ? 'bg-emerald-600/25 text-emerald-300'
                     : 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/30'
                 }`}
-                title="Copy SQL DML"
+                title={isQdrant ? 'Copy Qdrant REST Operations' : 'Copy SQL DML'}
               >
                 {copiedDml ? (
                   <Check className="h-3.5 w-3.5 text-emerald-400" />
@@ -315,6 +319,8 @@ export const GridToolbar: React.FC<GridToolbarProps> = ({
                 placeholder={
                   isRedis
                     ? 'Redis pattern, e.g. user:* or *session* (Enter to scan)'
+                    : isQdrant
+                    ? `Qdrant filter, e.g. category = 'news' AND views >= 10 or {"must":[...]} (Enter)`
                     : "condition, e.g. status = 'active' AND id > 10 (Enter to filter)"
                 }
                 value={whereInput}

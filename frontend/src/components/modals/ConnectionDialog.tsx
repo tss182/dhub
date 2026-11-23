@@ -674,11 +674,30 @@ export const ConnectionDialog: React.FC = () => {
                 <div className="space-y-3">
                   <div className="grid grid-cols-3 gap-2">
                     <div className="col-span-2">
-                      <label className="block text-[11px] text-zinc-400 mb-1">Host</label>
+                      <label className="block text-[11px] text-zinc-400 mb-1">
+                        {driver === 'qdrant' ? 'Host / Qdrant URL' : 'Host'}
+                      </label>
                       <input
                         type="text"
+                        placeholder={driver === 'qdrant' ? 'localhost or https://xxx.cloud.qdrant.io:6333' : undefined}
                         value={host}
-                        onChange={(e) => setHost(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setHost(val);
+                          if (driver === 'qdrant' && (val.startsWith('https://') || val.startsWith('http://'))) {
+                            try {
+                              const parsed = new URL(val.trim());
+                              if (parsed.port) {
+                                setPort(Number(parsed.port));
+                              } else if (parsed.protocol === 'https:') {
+                                setPort(6333);
+                              }
+                              if (parsed.protocol === 'https:' && sslMode === 'disable') {
+                                setSslMode('verify-full');
+                              }
+                            } catch {}
+                          }
+                        }}
                         className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                       />
                     </div>
@@ -900,7 +919,7 @@ export const ConnectionDialog: React.FC = () => {
                   className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-2 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                 >
                   <option value="disable">disable (No encryption)</option>
-                  {driver === 'postgres' ? (
+                  {driver === 'postgres' || driver === 'qdrant' || driver === 'elasticsearch' ? (
                     <>
                       <option value="require">require (Encrypt without CA verification)</option>
                       <option value="verify-ca">verify-ca (Verify server CA)</option>
@@ -1012,39 +1031,46 @@ export const ConnectionDialog: React.FC = () => {
                 />
               </div>
 
-              {/* Transaction Mode */}
-              <div className="p-3 rounded bg-[#14151a] border border-[#272932] space-y-2">
-                <div>
-                  <div className="font-semibold text-zinc-200 text-xs">Transaction Mode</div>
-                  <div className="text-[11px] text-zinc-400 mt-0.5">
-                    Choose whether statements are committed automatically or staged inside explicit transactions.
+              {/* Transaction Mode (not applicable to Qdrant) */}
+              {driver === 'qdrant' ? (
+                <div className="p-3 rounded bg-[#14151a] border border-[#272932] text-[11px] text-zinc-400">
+                  <div className="font-semibold text-zinc-200 text-xs mb-0.5">Execution Mode</div>
+                  Qdrant executes REST and vector operations immediately (Auto-Commit). Multi-statement transactions are not used by Qdrant.
+                </div>
+              ) : (
+                <div className="p-3 rounded bg-[#14151a] border border-[#272932] space-y-2">
+                  <div>
+                    <div className="font-semibold text-zinc-200 text-xs">Transaction Mode</div>
+                    <div className="text-[11px] text-zinc-400 mt-0.5">
+                      Choose whether statements are committed automatically or staged inside explicit transactions.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setTxMode('auto')}
+                      className={`flex items-center justify-center gap-2 rounded border py-2 px-3 font-medium cursor-pointer transition-colors ${
+                        txMode === 'auto'
+                          ? 'border-blue-500 bg-blue-600/20 text-blue-200'
+                          : 'border-[#272932] bg-[#191a20] text-zinc-400 hover:border-zinc-600'
+                      }`}
+                    >
+                      <span>Auto-Commit (Default)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTxMode('manual')}
+                      className={`flex items-center justify-center gap-2 rounded border py-2 px-3 font-medium cursor-pointer transition-colors ${
+                        txMode === 'manual'
+                          ? 'border-amber-500 bg-amber-600/20 text-amber-200'
+                          : 'border-[#272932] bg-[#191a20] text-zinc-400 hover:border-zinc-600'
+                      }`}
+                    >
+                      <span>Manual Commit / Rollback</span>
+                    </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setTxMode('auto')}
-                    className={`flex items-center justify-center gap-2 rounded border py-2 px-3 font-medium cursor-pointer transition-colors ${
-                      txMode === 'auto'
-                        ? 'border-blue-500 bg-blue-600/20 text-blue-200'
-                        : 'border-[#272932] bg-[#191a20] text-zinc-400 hover:border-zinc-600'
-                    }`}
-                  >
-                    <span>Auto-Commit (Default)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTxMode('manual')}
-                    className={`flex items-center justify-center gap-2 rounded border py-2 px-3 font-medium cursor-pointer transition-colors ${
-                      txMode === 'manual'
-                        ? 'border-amber-500 bg-amber-600/20 text-amber-200'
-                        : 'border-[#272932] bg-[#191a20] text-zinc-400 hover:border-zinc-600'
-                    }`}
-                  >
-                    <span>Manual Commit / Rollback</span>
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
           )}
 

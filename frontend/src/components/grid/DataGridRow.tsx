@@ -202,7 +202,7 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
                   ? isRedis && col.name.toLowerCase() === 'ttl'
                     ? 'Double-click to update TTL (Time-To-Live)'
                     : 'Click to select, type or double-click to edit'
-                  : 'Read-only: this column cannot be edited in Redis'
+                  : 'Read-only: this column cannot be edited'
               }
             >
               {isEditing ? (
@@ -229,16 +229,24 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
               ) : (() => {
                 const vec = parseVectorPreview(displayVal, col.dataType, col.rawType);
                 if (vec) {
+                  const badgeLabel =
+                    vec.kind === 'sparse'
+                      ? 'sparse'
+                      : vec.kind === 'multi'
+                      ? `${vec.dims}d multi`
+                      : `${vec.dims}d`;
+                  const badgeClass =
+                    vec.kind === 'sparse'
+                      ? isSelected
+                        ? 'bg-emerald-500/40 text-emerald-100'
+                        : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                      : isSelected
+                      ? 'bg-blue-500/40 text-blue-100'
+                      : 'bg-violet-500/15 text-violet-300 border border-violet-500/30';
                   return (
                     <span className="inline-flex items-center gap-1.5 font-mono text-[11px]">
-                      <span
-                        className={`px-1 py-0.2 rounded text-[10px] font-semibold ${
-                          isSelected
-                            ? 'bg-blue-500/40 text-blue-100'
-                            : 'bg-violet-500/15 text-violet-300 border border-violet-500/30'
-                        }`}
-                      >
-                        {vec.dims}d
+                      <span className={`px-1 py-0.2 rounded text-[10px] font-semibold ${badgeClass}`}>
+                        {badgeLabel}
                       </span>
                       <span className={isSelected ? 'text-blue-100' : 'text-zinc-300'}>
                         {vec.preview}

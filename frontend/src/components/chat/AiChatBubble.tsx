@@ -448,6 +448,11 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
           effectiveDb ? `, database=${effectiveDb}` : ''
         }${effectiveSchema ? `, schema=${effectiveSchema}` : ''}.`
       );
+      if (activeConn.driver === 'qdrant') {
+        parts.push(
+          'QDRANT DIALECT RULES: Qdrant is a vector database, NOT a relational SQL engine. Do NOT generate JOINs, GROUP BY, or CREATE TABLE SQL. For vector similarity, hybrid, recommend, or facet queries, generate Qdrant REST commands (e.g. `POST /collections/<name>/points/query`, `POST /collections/<name>/points/search`, `POST /collections/<name>/points/scroll`, `POST /collections/<name>/facet`) inside the ```sql block. For simple browsing or `open_table` "where", use Qdrant-compatible filters like `category = \'news\' AND views >= 10`, `title LIKE \'%keyword%\'`, or raw Qdrant JSON filter `{"must":[...]}`.'
+        );
+      }
     }
 
     if (attachedTable) {

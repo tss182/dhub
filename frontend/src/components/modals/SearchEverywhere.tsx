@@ -362,12 +362,14 @@ export const SearchEverywhere: React.FC = () => {
 
           const isView = item.objectType?.toLowerCase() === 'view';
 
+          const badgeLabel = isView ? 'VIEW' : driver === 'qdrant' ? 'COLLECTION' : 'TABLE';
+
           const resItem: SearchResultItem = {
             id: `obj-${dedupKey}`,
             kind: isView ? 'view' : 'table',
             title: item.objectName,
             subtitle: `› ${dbPath}`,
-            badge: isView ? 'VIEW' : 'TABLE',
+            badge: badgeLabel,
             connectionId: item.connectionId,
             database: item.databaseName,
             schema: effectiveSchema,
@@ -539,12 +541,12 @@ export const SearchEverywhere: React.FC = () => {
   const qLowerMatch = query.trim().toLowerCase();
   const isHelpMatch =
     Boolean(qLowerMatch) &&
-    ['help', 'guide', 'docs', 'documentation', 'manual', 'shortcut', 'shortcuts', 'faq', 'tutorial', 'mongo', 'mongodb', 'redis'].some(
+    ['help', 'guide', 'docs', 'documentation', 'manual', 'shortcut', 'shortcuts', 'faq', 'tutorial', 'mongo', 'mongodb', 'redis', 'qdrant', 'vector', 'embedding'].some(
       (kw) => kw.includes(qLowerMatch) || qLowerMatch.includes(kw)
     );
 
   const matchedHelpTab =
-    qLowerMatch.includes('mongo') || qLowerMatch.includes('redis')
+    qLowerMatch.includes('mongo') || qLowerMatch.includes('redis') || qLowerMatch.includes('qdrant') || qLowerMatch.includes('vector') || qLowerMatch.includes('embedding')
       ? 'databases'
       : qLowerMatch.includes('shortcut')
       ? 'shortcuts'

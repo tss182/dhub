@@ -184,6 +184,7 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
   const [angles, setAngles] = useState<{ yaw: number; pitch: number }>({ yaw: 0.5, pitch: 0.35 });
   const [dragStart, setDragStart] = useState<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
   const [hoveredPointIdx, setHoveredPointIdx] = useState<number | null>(null);
+  const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
 
   const activeVecIdx = vectorCols.some((v) => v.idx === selectedVecIdx)
     ? selectedVecIdx
@@ -232,8 +233,25 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
     }));
   }, [activeVecIdx, rows, maxPoints, columns, labelColIdx, colorColIdx]);
 
-  const groupColors = useMemo(() => {
+  const { groupColors, numericColorStats } = useMemo(() => {
     const map = new Map<string, string>();
+    const numericVals = projected
+      .map((p) => Number(p.colorGroup))
+      .filter((n, idx) => projected[idx].colorGroup !== 'NULL' && Number.isFinite(n));
+
+    if (colorColIdx >= 0 && projected.length > 1 && numericVals.length === projected.length) {
+      const minV = Math.min(...numericVals);
+      const maxV = Math.max(...numericVals);
+      const span = maxV - minV || 1;
+      for (const pt of projected) {
+        const t = Math.max(0, Math.min(1, (Number(pt.colorGroup) - minV) / span));
+        // Continuous gradient: indigo (#6366f1) -> cyan (#06b6d4) -> emerald (#10b981) -> amber (#f59e0b)
+        const hue = Math.round(240 - t * 200);
+        map.set(pt.colorGroup, `hsl(${hue}, 82%, 58%)`);
+      }
+      return { groupColors: map, numericColorStats: { min: minV, max: maxV } };
+    }
+
     let idx = 0;
     for (const pt of projected) {
       if (!map.has(pt.colorGroup)) {
@@ -241,8 +259,8 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
         idx++;
       }
     }
-    return map;
-  }, [projected]);
+    return { groupColors: map, numericColorStats: null };
+  }, [projected, colorColIdx]);
 
   const handleExportSvg = () => {
     const svg = document.getElementById('dhub-vector-pca-svg');
@@ -331,7 +349,7 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1 text-violet-300 font-medium">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>2D PCA Projection</span>
+            <span>{dimMode === '3d' ? '3D PCA Projection' : '2D PCA Projection'}</span>
           </span>
 
           <select
@@ -472,18 +490,31 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
             {/* Points */}
             {displayPoints.map((pt) => {
               const isHovered = hoveredPointIdx === pt.origIdx;
+              const isSelected = selectedIndices.includes(pt.origIdx);
               const fill = groupColors.get(pt.colorGroup) || '#8b5cf6';
               return (
                 <g key={pt.rowIdx}>
                   <circle
                     cx={pt.sx}
                     cy={pt.sy}
-                    r={isHovered ? pt.radius + 2.5 : pt.radius}
+                    r={isHovered || isSelected ? pt.radius + 2.5 : pt.radius}
                     fill={fill}
-                    fillOpacity={isHovered ? 1 : 0.82}
-                    stroke={isHovered ? '#ffffff' : '#111216'}
-                    strokeWidth={isHovered ? 2 : 1}
+                    fillOpacity={isHovered || isSelected ? 1 : 0.82}
+                    stroke={isSelected ? '#38bdf8' : isHovered ? '#ffffff' : '#111216'}
+                    strokeWidth={isSelected || isHovered ? 2 : 1}
                     className="cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedIndices((prev) => {
+                        if (prev.includes(pt.origIdx)) {
+                          return prev.filter((id) => id !== pt.origIdx);
+                        }
+                        if (prev.length >= 2) {
+                          return [prev[1], pt.origIdx];
+                        }
+                        return [...prev, pt.origIdx];
+                      });
+                    }}
                     onMouseEnter={() => setHoveredPointIdx(pt.origIdx)}
                     onMouseLeave={() => setHoveredPointIdx(null)}
                   />
@@ -491,6 +522,69 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
               );
             })}
           </svg>
+        )}
+
+        {/* Selected Points Inspector / Distance Comparison */}
+        {selectedIndices.length > 0 && (
+          <div className="absolute bottom-3 left-3 rounded bg-[#181920]/95 border border-sky-500/40 px-3 py-2 text-[11px] shadow-xl max-w-sm space-y-1">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold text-sky-300">
+                {selectedIndices.length === 2 ? 'Point Comparison (2 selected)' : 'Selected Point'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIndices([])}
+                className="text-[10px] text-zinc-400 hover:text-white cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
+            {selectedIndices.map((idx, pos) => {
+              const pt = projected[idx];
+              if (!pt) return null;
+              return (
+                <div key={idx} className="text-zinc-300 truncate">
+                  <span className="text-zinc-500 font-mono mr-1">#{pos + 1}</span>
+                  <span className="font-medium text-zinc-100">{pt.label}</span>
+                  {pt.score !== undefined && (
+                    <span className="ml-2 text-emerald-300 font-mono text-[10px]">
+                      score={pt.score.toFixed(4)}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {selectedIndices.length === 2 &&
+              projected[selectedIndices[0]] &&
+              projected[selectedIndices[1]] && (() => {
+                const a = projected[selectedIndices[0]].vec;
+                const b = projected[selectedIndices[1]].vec;
+                let dot = 0, na = 0, nb = 0, sqDist = 0;
+                for (let i = 0; i < a.length; i++) {
+                  dot += a[i] * b[i];
+                  na += a[i] * a[i];
+                  nb += b[i] * b[i];
+                  const d = a[i] - b[i];
+                  sqDist += d * d;
+                }
+                const cosSim = na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+                const euclid = Math.sqrt(sqDist);
+                return (
+                  <div className="pt-1 border-t border-[#272932] flex items-center gap-3 font-mono text-[10px] text-cyan-300">
+                    <span>Cosine: {cosSim.toFixed(4)}</span>
+                    <span>L2 Dist: {euclid.toFixed(4)}</span>
+                  </div>
+                );
+              })()}
+          </div>
+        )}
+
+        {numericColorStats && (
+          <div className="pointer-events-none absolute top-4 left-4 rounded bg-[#181920]/90 border border-[#272932] px-2 py-1 text-[10px] font-mono text-zinc-400">
+            <span>{numericColorStats.min.toFixed(3)}</span>
+            <span className="mx-1.5 inline-block h-2 w-14 rounded-sm align-middle" style={{ background: 'linear-gradient(to right, hsl(240,82%,58%), hsl(140,82%,58%), hsl(40,82%,58%))' }} />
+            <span>{numericColorStats.max.toFixed(3)}</span>
+          </div>
         )}
 
         {/* Floating Tooltip */}

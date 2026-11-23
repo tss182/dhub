@@ -25,7 +25,7 @@ import {
   PanelRight,
 } from 'lucide-react';
 
-export type ValueFormat = 'auto' | 'html' | 'json' | 'xml' | 'text';
+export type ValueFormat = 'auto' | 'html' | 'json' | 'xml' | 'text' | 'vector';
 
 interface ValueViewerPanelProps {
   isOpen?: boolean;
@@ -262,11 +262,61 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
     return String(rawValue);
   }, [rawValue]);
 
+  // Parse numeric vector if applicable
+  const parsedVector = useMemo<number[] | null>(() => {
+    if (rawValue === null || rawValue === undefined) return null;
+    if (Array.isArray(rawValue) && rawValue.length > 0 && typeof rawValue[0] === 'number') {
+      return rawValue as number[];
+    }
+    if (typeof rawValue === 'string') {
+      const t = rawValue.trim();
+      if (t.startsWith('[') && t.endsWith(']')) {
+        try {
+          const arr = JSON.parse(t);
+          if (Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'number') {
+            const isVecCol = (columnType || '').toLowerCase().includes('vector');
+            if (isVecCol || arr.length >= 8) return arr;
+          }
+        } catch {}
+      }
+    }
+    return null;
+  }, [rawValue, columnType]);
+
+  const vectorStats = useMemo(() => {
+    if (!parsedVector || parsedVector.length === 0) return null;
+    let sum = 0;
+    let sqSum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    let zeros = 0;
+    for (let i = 0; i < parsedVector.length; i++) {
+      const v = parsedVector[i];
+      sum += v;
+      sqSum += v * v;
+      if (v < min) min = v;
+      if (v > max) max = v;
+      if (v === 0) zeros++;
+    }
+    const norm = Math.sqrt(sqSum);
+    return {
+      dims: parsedVector.length,
+      norm,
+      min,
+      max,
+      mean: sum / parsedVector.length,
+      sparsityPct: (zeros / parsedVector.length) * 100,
+    };
+  }, [parsedVector]);
+
+  const [copiedNormVec, setCopiedNormVec] = useState(false);
+
   // Detected format
-  const autoDetectedFormat = useMemo<'html' | 'json' | 'xml' | 'text'>(() => {
+  const autoDetectedFormat = useMemo<'html' | 'json' | 'xml' | 'text' | 'vector'>(() => {
+    if (parsedVector) return 'vector';
     if (stringValue === null) return 'text';
     return detectFormat(stringValue);
-  }, [stringValue]);
+  }, [stringValue, parsedVector]);
 
   // Active format: either manually selected or detected
   const activeFormat = selectedFormat === 'auto' ? autoDetectedFormat : selectedFormat;
@@ -630,10 +680,11 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
       <div className="flex items-center justify-between border-b border-[#22242c] px-2.5 py-1.5 bg-[#121317] shrink-0 text-xs">
         {/* Left: Format switcher tabs */}
         <div className="flex items-center gap-1 bg-[#1a1b22] p-0.5 rounded-md border border-[#272932]">
-          {(['auto', 'html', 'json', 'xml', 'text'] as const).map((fmt) => {
+          {(['auto', ...(parsedVector ? (['vector'] as const) : []), 'html', 'json', 'xml', 'text'] as const).map((fmt) => {
             const isSelected = selectedFormat === fmt;
             const labels: Record<ValueFormat, { label: string; icon: any }> = {
               auto: { label: 'Auto', icon: Sparkles },
+              vector: { label: 'Vector', icon: Sparkles },
               html: { label: 'HTML', icon: Globe },
               json: { label: 'JSON', icon: Braces },
               xml: { label: 'XML', icon: FileCode },
@@ -808,6 +859,84 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
                 Set Value
               </button>
             )}
+          </div>
+        ) : activeFormat === 'vector' && parsedVector && vectorStats ? (
+          <div className="h-full overflow-y-auto p-3 space-y-3 text-xs">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                <div className="text-[10px] text-zinc-500">Dimensions</div>
+                <div className="font-mono text-sm font-semibold text-violet-300">{vectorStats.dims}</div>
+              </div>
+              <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                <div className="text-[10px] text-zinc-500">L2 Norm</div>
+                <div className="font-mono text-sm font-semibold text-emerald-300">{vectorStats.norm.toFixed(4)}</div>
+              </div>
+              <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                <div className="text-[10px] text-zinc-500">Sparsity (0s)</div>
+                <div className="font-mono text-sm font-semibold text-zinc-200">{vectorStats.sparsityPct.toFixed(1)}%</div>
+              </div>
+              <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                <div className="text-[10px] text-zinc-500">Min</div>
+                <div className="font-mono text-xs text-zinc-200">{vectorStats.min.toFixed(5)}</div>
+              </div>
+              <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                <div className="text-[10px] text-zinc-500">Max</div>
+                <div className="font-mono text-xs text-zinc-200">{vectorStats.max.toFixed(5)}</div>
+              </div>
+              <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                <div className="text-[10px] text-zinc-500">Mean</div>
+                <div className="font-mono text-xs text-zinc-200">{vectorStats.mean.toFixed(5)}</div>
+              </div>
+            </div>
+
+            {/* Sparkline of first 128 dimensions */}
+            <div className="rounded bg-[#16171d] border border-[#272932] p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                <span>Value Distribution (first {Math.min(128, parsedVector.length)} dims)</span>
+                <span className="font-mono text-zinc-500">
+                  [{vectorStats.min.toFixed(2)}, {vectorStats.max.toFixed(2)}]
+                </span>
+              </div>
+              <svg viewBox="0 0 256 48" className="w-full h-12 bg-[#101114] rounded border border-[#22242c]">
+                {(() => {
+                  const sample = parsedVector.slice(0, 128);
+                  const span = vectorStats.max - vectorStats.min || 1;
+                  const pts = sample
+                    .map((v, i) => {
+                      const x = sample.length === 1 ? 128 : (i / (sample.length - 1)) * 256;
+                      const y = 44 - ((v - vectorStats.min) / span) * 40;
+                      return `${x.toFixed(1)},${y.toFixed(1)}`;
+                    })
+                    .join(' ');
+                  return <polyline fill="none" stroke="#a78bfa" strokeWidth="1.5" points={pts} />;
+                })()}
+              </svg>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const n = vectorStats.norm || 1;
+                  const normalized = parsedVector.map((v) => Number((v / n).toFixed(6)));
+                  navigator.clipboard?.writeText(JSON.stringify(normalized));
+                  setCopiedNormVec(true);
+                  setTimeout(() => setCopiedNormVec(false), 1800);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/40 text-violet-200 text-[11px] font-medium cursor-pointer transition-colors"
+              >
+                {copiedNormVec ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                <span>{copiedNormVec ? 'Copied Normalized!' : 'Copy L2-Normalized Vector'}</span>
+              </button>
+            </div>
+
+            <div className="rounded bg-[#16171d] border border-[#272932] p-2.5">
+              <div className="text-[10px] text-zinc-500 mb-1">First 32 Values</div>
+              <div className="font-mono text-[11px] text-zinc-300 break-all leading-relaxed">
+                [{parsedVector.slice(0, 32).map((v) => Number(v.toFixed(5))).join(', ')}
+                {parsedVector.length > 32 ? `, … (+${parsedVector.length - 32} more)` : ''}]
+              </div>
+            </div>
           </div>
         ) : activeFormat === 'html' && htmlViewMode === 'preview' ? (
           <div className="w-full h-full relative">

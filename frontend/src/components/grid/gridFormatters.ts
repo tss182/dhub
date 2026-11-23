@@ -453,6 +453,33 @@ export function buildUpdateSql(params: {
           )}`;
   }
 
+  if ((driver || '').toLowerCase() === 'qdrant') {
+    const coll = encodeURIComponent(tableName || 'collection');
+    const pkColIdx = columns.findIndex((c) => c.name === 'id');
+    const rawId = pkColIdx !== -1 ? targetRow?.[pkColIdx] : undefined;
+    const parsedId = typeof rawId === 'string' && /^-?\d+$/.test(rawId.trim()) ? Number(rawId.trim()) : rawId;
+    if (colName === 'vector' || colName.startsWith('vector.')) {
+      let vecVal = newVal;
+      if (typeof newVal === 'string') {
+        try { vecVal = JSON.parse(newVal); } catch {}
+      }
+      const vecPayload = colName.startsWith('vector.')
+        ? { [colName.slice('vector.'.length)]: vecVal }
+        : vecVal;
+      const body = JSON.stringify({ points: [{ id: parsedId ?? 1, vector: vecPayload }] }, null, 2);
+      return `PUT /collections/${coll}/points/vectors?wait=true\n${body}`;
+    }
+    let payloadVal = newVal;
+    if (typeof newVal === 'string') {
+      const t = newVal.trim();
+      if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+        try { payloadVal = JSON.parse(t); } catch {}
+      }
+    }
+    const body = JSON.stringify({ payload: { [colName]: payloadVal }, points: [parsedId ?? 1] }, null, 2);
+    return `POST /collections/${coll}/points/payload?wait=true\n${body}`;
+  }
+
   return `UPDATE ${quotedTbl}\nSET ${quoteIdent(colName)} = ${formattedVal}\nWHERE ${whereClause};`;
 }
 
@@ -601,6 +628,53 @@ export function formatSelectedCells(params: {
     return statements.join('\n\n');
   }
 
+  if (targetFormat === 'qdrant_upsert') {
+    const coll = encodeURIComponent(tableName || 'collection');
+    const points: any[] = [];
+    for (const r of selectedRowIndices) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      const pt: Record<string, any> = { payload: {} };
+      let namedVecs: Record<string, any> | null = null;
+      for (const c of selectedColIndices) {
+        if (isMultiRange && !isCellSelected(r, c)) continue;
+        const col = columns[c];
+        if (!col) continue;
+        const val = getVal(vr, c, col.name);
+        if (col.name === 'score') continue;
+        if (col.name === 'id') {
+          pt.id = typeof val === 'string' && /^-?\d+$/.test(val.trim()) ? Number(val.trim()) : val;
+        } else if (col.name === 'vector') {
+          if (typeof val === 'string') {
+            try { pt.vector = JSON.parse(val); } catch { pt.vector = val; }
+          } else {
+            pt.vector = val;
+          }
+        } else if (col.name.startsWith('vector.')) {
+          namedVecs = namedVecs || {};
+          const vName = col.name.slice('vector.'.length);
+          if (typeof val === 'string') {
+            try { namedVecs[vName] = JSON.parse(val); } catch { namedVecs[vName] = val; }
+          } else {
+            namedVecs[vName] = val;
+          }
+        } else {
+          if (typeof val === 'string') {
+            const t = val.trim();
+            if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+              try { pt.payload[col.name] = JSON.parse(t); } catch { pt.payload[col.name] = val; }
+              continue;
+            }
+          }
+          pt.payload[col.name] = val;
+        }
+      }
+      if (namedVecs) pt.vector = namedVecs;
+      points.push(pt);
+    }
+    return `PUT /collections/${coll}/points?wait=true\n${JSON.stringify({ points }, null, 2)}`;
+  }
+
   if (targetFormat === 'sql_upsert') {
     const selectedColsWithIdx: Array<{ col: ColumnMeta; cIdx: number }> = [];
     for (const c of selectedColIndices) {
@@ -747,26 +821,58 @@ export function parseVectorPreview(
   dataType?: string,
   rawType?: string,
   maxPreview = 4
-): { dims: number; preview: string } | null {
+): { dims: number; preview: string; kind?: 'dense' | 'sparse' | 'multi' } | null {
   if (val === null || val === undefined) return null;
   const knownVector = isVectorColumn(dataType, rawType);
+  const dtLower = (dataType || '').toLowerCase();
+
+  // Sparse vector object or JSON string: {"indices": [...], "values": [...]}
+  if (typeof val === 'object' && !Array.isArray(val) && Array.isArray(val.indices) && Array.isArray(val.values)) {
+    const nnz = val.indices.length;
+    return { dims: nnz, preview: `sparse (${nnz} nnz)`, kind: 'sparse' };
+  }
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') && trimmed.includes('"indices"') && trimmed.includes('"values"')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && Array.isArray(parsed.indices) && Array.isArray(parsed.values)) {
+          const nnz = parsed.indices.length;
+          return { dims: nnz, preview: `sparse (${nnz} nnz)`, kind: 'sparse' };
+        }
+      } catch {}
+    }
+    // Multi-vector JSON string: [[0.1, 0.2], ...]
+    if (trimmed.startsWith('[[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed) && parsed.length > 0 && Array.isArray(parsed[0])) {
+          const subLen = parsed[0].length;
+          return { dims: subLen, preview: `${parsed.length}×${subLen}d multi`, kind: 'multi' };
+        }
+      } catch {}
+    }
+  }
 
   if (Array.isArray(val)) {
     const len = val.length;
-    if (len === 0) return knownVector ? { dims: 0, preview: '[]' } : null;
+    if (len === 0) return knownVector ? { dims: 0, preview: '[]', kind: 'dense' } : null;
+    if (Array.isArray(val[0]) && typeof val[0][0] === 'number') {
+      return { dims: val[0].length, preview: `${len}×${val[0].length}d multi`, kind: 'multi' };
+    }
     if (!knownVector && len < 8) return null;
     if (typeof val[0] !== 'number' || typeof val[len - 1] !== 'number') return null;
 
     const head = val.slice(0, maxPreview).map((n) => (Number.isInteger(n) ? String(n) : Number(n.toFixed(4))));
     const suffix = len > maxPreview ? ', …' : '';
-    return { dims: len, preview: `[${head.join(', ')}${suffix}]` };
+    return { dims: len, preview: `[${head.join(', ')}${suffix}]`, kind: dtLower.includes('multi') ? 'multi' : 'dense' };
   }
 
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
     const inner = trimmed.slice(1, -1).trim();
-    if (!inner) return knownVector ? { dims: 0, preview: '[]' } : null;
+    if (!inner) return knownVector ? { dims: 0, preview: '[]', kind: 'dense' } : null;
 
     // Fast validation: first token must be numeric
     const firstComma = inner.indexOf(',');
@@ -794,7 +900,7 @@ export function parseVectorPreview(
     }
 
     const suffix = dims > maxPreview ? ', …' : '';
-    return { dims, preview: `[${previewItems.join(', ')}${suffix}]` };
+    return { dims, preview: `[${previewItems.join(', ')}${suffix}]`, kind: 'dense' };
   }
 
   return null;

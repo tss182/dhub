@@ -19,6 +19,7 @@ import {
   CheckSquare,
   Eye,
   EyeOff,
+  Sparkles,
 } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { CopyFormat } from '../../stores/useSettingsStore';
@@ -32,6 +33,7 @@ interface GridContextMenuProps {
   copyFormat: CopyFormat;
   isCopyAsSubmenuOpen: boolean;
   isRedis: boolean;
+  isQdrant?: boolean;
   disableFreeze?: boolean;
   columns: ColumnMeta[];
   visualRows: VisualRow[];
@@ -50,6 +52,7 @@ interface GridContextMenuProps {
   onStartEdit: (rowId: number, cIdx: number, currentVal: any) => void;
   onOpenRedisRenameModal: (oldKeyName: string) => void;
   onOpenUpdateQueryInTab: (globalRowIndex: number, colName: string, currentVal: any) => void;
+  onFindSimilarPoint?: (globalRowIndex: number) => void;
   onSetSelectedToNull: (vIdx: number, cIdx: number) => void;
   onToggleFreeze: (colName: string) => void;
   onUnfreezeAll: () => void;
@@ -68,6 +71,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   copyFormat,
   isCopyAsSubmenuOpen,
   isRedis,
+  isQdrant = false,
   disableFreeze,
   columns,
   visualRows,
@@ -86,6 +90,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   onStartEdit,
   onOpenRedisRenameModal,
   onOpenUpdateQueryInTab,
+  onFindSimilarPoint,
   onSetSelectedToNull,
   onToggleFreeze,
   onUnfreezeAll,
@@ -307,7 +312,11 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
 
                   <div className="my-1 border-t border-[#272932]" />
 
-                  {COPY_FORMAT_OPTIONS.map((opt) => (
+                  {COPY_FORMAT_OPTIONS.filter((opt) =>
+                    isQdrant
+                      ? !opt.id.startsWith('sql_')
+                      : opt.id !== 'qdrant_upsert'
+                  ).map((opt) => (
                     <button
                       key={opt.id}
                       type="button"
@@ -493,7 +502,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 </button>
               )}
 
-              {!(disableFreeze ?? isRedis) && (
+              {!isRedis && (
                 <button
                   type="button"
                   onClick={() => {
@@ -512,7 +521,24 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 >
                   <div className="flex items-center gap-2">
                     <Code className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
-                    <span>Open UPDATE in Tab</span>
+                    <span>{isQdrant ? 'Open Qdrant Update in Tab' : 'Open UPDATE in Tab'}</span>
+                  </div>
+                </button>
+              )}
+
+              {isQdrant && onFindSimilarPoint && vr && vr.globalRowIndex !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rowIdx = vr.globalRowIndex!;
+                    onClose();
+                    onFindSimilarPoint(rowIdx);
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-violet-600 hover:text-white text-violet-300 transition-colors text-left cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-3.5 w-3.5 text-violet-400 group-hover:text-white" />
+                    <span>Find Similar Points</span>
                   </div>
                 </button>
               )}

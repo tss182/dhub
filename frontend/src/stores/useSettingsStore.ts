@@ -3,7 +3,7 @@ import { WorkspaceService } from '../../bindings/dhub/internal/services';
 import { APP_DEFAULTS } from '../config/defaults';
 
 export type ThemeMode = 'dark' | 'light';
-export type CopyFormat = 'csv' | 'json' | 'markdown' | 'sql_insert' | 'sql_update' | 'sql_upsert';
+export type CopyFormat = 'csv' | 'json' | 'markdown' | 'sql_insert' | 'sql_update' | 'sql_upsert' | 'qdrant_upsert';
 export type AiProvider = 'openai' | 'gemini';
 export type SettingsTab = 'appearance' | 'datagrid' | 'editor' | 'ai' | 'backup' | 'version';
 
@@ -116,7 +116,7 @@ function parseSettingsObject(parsed: any): SettingsValues {
     aiModel: typeof parsed?.aiModel === 'string' && parsed.aiModel.trim()
       ? parsed.aiModel.trim()
       : DEFAULT_SETTINGS.aiModel,
-    copyFormat: ['csv', 'json', 'markdown', 'sql_insert', 'sql_update', 'sql_upsert'].includes(parsed?.copyFormat)
+    copyFormat: ['csv', 'json', 'markdown', 'sql_insert', 'sql_update', 'sql_upsert', 'qdrant_upsert'].includes(parsed?.copyFormat)
       ? parsed.copyFormat
       : DEFAULT_SETTINGS.copyFormat,
     checkUpdatesOnStartup:

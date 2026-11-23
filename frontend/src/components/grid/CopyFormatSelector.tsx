@@ -39,6 +39,11 @@ export const COPY_FORMAT_OPTIONS: CopyFormatOption[] = [
     label: 'SQL UPSERT',
     description: 'Generates INSERT statements with ON CONFLICT / ON DUPLICATE KEY UPDATE for insert-or-update.',
   },
+  {
+    id: 'qdrant_upsert',
+    label: 'Qdrant Upsert REST',
+    description: 'Generates PUT /collections/<name>/points?wait=true REST payload for Qdrant.',
+  },
 ];
 
 export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = COPY_FORMAT_OPTIONS.reduce(
