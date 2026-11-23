@@ -2960,57 +2960,62 @@ export function App() {
                     {activeTab.driver?.toLowerCase() !== 'redis' &&
                       connections.find((c) => c.id === activeTab.connectionId)?.driver?.toLowerCase() !== 'redis' && (
                         <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                              openEditTableModal(
-                                conn,
-                                activeTab.database || 'main',
-                                activeTab.schema || 'main',
-                                activeTab.table
-                              );
-                            }}
-                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                            title="Edit Table Structure"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                              openDdlModal({
-                                scope: 'table',
-                                conn,
-                                database: activeTab.database || 'main',
-                                schema: activeTab.schema || 'main',
-                                tableName: activeTab.table,
-                              });
-                            }}
-                            className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                            title="View Table DDL"
-                          >
-                            DDL
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const { conn, targetDb, targetSchema, sql } = buildTableTabSql(activeTab);
-                              setTableSqlModal({
-                                isOpen: true,
-                                conn,
-                                database: targetDb,
-                                schema: targetSchema,
-                                tableName: activeTab.table || '',
-                                sql,
-                              });
-                            }}
-                            className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                            title="View Complete Table Query SQL"
-                          >
-                            SQL
-                          </button>
+                          {activeTab.driver?.toLowerCase() !== 'qdrant' &&
+                            connections.find((c) => c.id === activeTab.connectionId)?.driver?.toLowerCase() !== 'qdrant' && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                                    openEditTableModal(
+                                      conn,
+                                      activeTab.database || 'main',
+                                      activeTab.schema || 'main',
+                                      activeTab.table
+                                    );
+                                  }}
+                                  className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                                  title="Edit Table Structure"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                                    openDdlModal({
+                                      scope: 'table',
+                                      conn,
+                                      database: activeTab.database || 'main',
+                                      schema: activeTab.schema || 'main',
+                                      tableName: activeTab.table,
+                                    });
+                                  }}
+                                  className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                                  title="View Table DDL"
+                                >
+                                  DDL
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const { conn, targetDb, targetSchema, sql } = buildTableTabSql(activeTab);
+                                    setTableSqlModal({
+                                      isOpen: true,
+                                      conn,
+                                      database: targetDb,
+                                      schema: targetSchema,
+                                      tableName: activeTab.table || '',
+                                      sql,
+                                    });
+                                  }}
+                                  className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                                  title="View Complete Table Query SQL"
+                                >
+                                  SQL
+                                </button>
+                              </>
+                            )}
                           <ColumnVisibilityPopover
                             columns={tableDataByTab[activeTab.id]?.columns || []}
                             primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}

@@ -5817,43 +5817,47 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>Copy Table Name</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const conn = contextMenu.connection!;
-                      const db = contextMenu.database || 'main';
-                      const sch = contextMenu.schema || 'main';
-                      const tbl = contextMenu.table!.name;
-                      closeContextMenu();
-                      openDdlModal({
-                        scope: 'table',
-                        conn,
-                        database: db,
-                        schema: sch,
-                        tableName: tbl,
-                      });
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                    <span>View {contextMenu.table!.type === 'view' ? 'View' : 'Table'} DDL</span>
-                  </button>
+                  {contextMenu.connection!.driver !== 'qdrant' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || 'main';
+                          const sch = contextMenu.schema || 'main';
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          openDdlModal({
+                            scope: 'table',
+                            conn,
+                            database: db,
+                            schema: sch,
+                            tableName: tbl,
+                          });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Eye className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                        <span>View {contextMenu.table!.type === 'view' ? 'View' : 'Table'} DDL</span>
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleCopyTableSchema(
-                        contextMenu.connection!,
-                        contextMenu.database || 'main',
-                        contextMenu.schema || 'main',
-                        contextMenu.table!.name
-                      );
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-                  >
-                    <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-                    <span>Copy Table Schema (DDL)</span>
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleCopyTableSchema(
+                            contextMenu.connection!,
+                            contextMenu.database || 'main',
+                            contextMenu.schema || 'main',
+                            contextMenu.table!.name
+                          );
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <FileCode className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+                        <span>Copy Table Schema (DDL)</span>
+                      </button>
+                    </>
+                  )}
 
                   {(contextMenu.connection!.driver === 'postgres' || contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && !contextMenu.connection!.isReadOnly && (
                     <button
