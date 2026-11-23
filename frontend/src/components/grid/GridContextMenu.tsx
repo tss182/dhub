@@ -20,6 +20,7 @@ import {
   Eye,
   EyeOff,
   Sparkles,
+  BarChart3,
 } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { CopyFormat } from '../../stores/useSettingsStore';
@@ -54,6 +55,7 @@ interface GridContextMenuProps {
   onOpenUpdateQueryInTab: (globalRowIndex: number, colName: string, currentVal: any) => void;
   onFindSimilarPoint?: (globalRowIndex: number) => void;
   onOpenQdrantEditPoint?: (globalRowIndex: number) => void;
+  onOpenQdrantFacet?: (colName: string) => void;
   onSetSelectedToNull: (vIdx: number, cIdx: number) => void;
   onToggleFreeze: (colName: string) => void;
   onUnfreezeAll: () => void;
@@ -93,6 +95,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   onOpenUpdateQueryInTab,
   onFindSimilarPoint,
   onOpenQdrantEditPoint,
+  onOpenQdrantFacet,
   onSetSelectedToNull,
   onToggleFreeze,
   onUnfreezeAll,
@@ -196,6 +199,25 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
               </button>
             )}
 
+            <div className="my-1 border-t border-[#272932]" />
+          </>
+        )}
+
+        {isQdrant && onOpenQdrantFacet && col.name !== 'id' && col.name !== 'score' && !col.name.startsWith('vector') && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenQdrantFacet(col.name);
+              }}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                <span>Facet Value Distribution...</span>
+              </div>
+            </button>
             <div className="my-1 border-t border-[#272932]" />
           </>
         )}

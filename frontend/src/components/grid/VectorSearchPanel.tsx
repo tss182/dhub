@@ -281,7 +281,9 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   );
 
   const [isExpanded, setIsExpanded] = useState(false);
-  const [qdrantMode, setQdrantMode] = useState<'similarity' | 'hybrid' | 'recommend' | 'groupby'>('similarity');
+  const [qdrantMode, setQdrantMode] = useState<'similarity' | 'hybrid' | 'recommend' | 'groupby' | 'discover' | 'sparse'>('similarity');
+  const [discoverTarget, setDiscoverTarget] = useState('');
+  const [discoverContext, setDiscoverContext] = useState('');
   const [inputMode, setInputMode] = useState<'vector' | 'text'>('vector');
   const [selectedCol, setSelectedCol] = useState<string>('');
   const [vectorText, setVectorText] = useState<string>('');
@@ -491,6 +493,67 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
       }
 
+      if (qdrantMode === 'discover') {
+        const parseIdOrVec = (raw: string): any => {
+          const t = raw.trim();
+          if (t.startsWith('[')) {
+            try {
+              const arr = JSON.parse(t);
+              if (Array.isArray(arr)) return arr;
+            } catch {}
+          }
+          return /^-?\d+$/.test(t) ? Number(t) : t;
+        };
+        const contextPairs = discoverContext
+          .split(',')
+          .map((pair) => pair.trim())
+          .filter(Boolean)
+          .map((pair) => {
+            const [pos, neg] = pair.split(':').map((s) => s.trim());
+            return {
+              positive: parseIdOrVec(pos || ''),
+              negative: parseIdOrVec(neg || ''),
+            };
+          })
+          .filter((p) => p.positive !== '' && p.negative !== '');
+
+        const body: Record<string, any> = {
+          query: {
+            discover: {
+              target: parseIdOrVec(discoverTarget),
+              context: contextPairs,
+            },
+          },
+          limit: k,
+          offset: searchOffset > 0 ? searchOffset : undefined,
+          with_payload: true,
+          with_vector: withVectorResult,
+        };
+        if (usingName) body.using = usingName;
+        if (threshold !== null) body.score_threshold = threshold;
+        if (parsedFilter) body.filter = parsedFilter;
+        if (Object.keys(paramsObj).length > 0) body.params = paramsObj;
+        return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
+      }
+
+      if (qdrantMode === 'sparse') {
+        const idxArr = sparseIndices.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+        const valArr = sparseValues.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+        const sparseUsing = (sparseCol || 'bm25').replace(/^vector\./, '');
+        const body: Record<string, any> = {
+          query: { indices: idxArr, values: valArr },
+          using: sparseUsing,
+          limit: k,
+          offset: searchOffset > 0 ? searchOffset : undefined,
+          with_payload: true,
+          with_vector: withVectorResult,
+        };
+        if (threshold !== null) body.score_threshold = threshold;
+        if (parsedFilter) body.filter = parsedFilter;
+        if (Object.keys(paramsObj).length > 0) body.params = paramsObj;
+        return `POST /collections/${collEsc}/points/query\n${JSON.stringify(body, null, 2)}`;
+      }
+
       if (qdrantMode === 'hybrid') {
         const idxArr = sparseIndices.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
         const valArr = sparseValues.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
@@ -650,6 +713,18 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         setEmbedError('Enter at least one positive Point ID for Recommend.');
         return;
       }
+    } else if (driver === 'qdrant' && qdrantMode === 'discover') {
+      if (!discoverTarget.trim()) {
+        setEmbedError('Enter a target Point ID or vector array for Discover.');
+        return;
+      }
+    } else if (driver === 'qdrant' && qdrantMode === 'sparse') {
+      const idxArr = sparseIndices.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+      const valArr = sparseValues.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+      if (idxArr.length === 0 || idxArr.length !== valArr.length) {
+        setEmbedError('Enter matching comma-separated sparse indices and values.');
+        return;
+      }
     } else if (inputMode === 'vector') {
       vec = parseVectorText(vectorText);
       if (!vec && !(driver === 'qdrant' && qdrantMode === 'hybrid' && sparseIndices.trim())) {
@@ -781,12 +856,14 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             {/* Qdrant Query Mode Selector */}
             {driver === 'qdrant' && (
-              <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
+              <div className="inline-flex flex-wrap rounded bg-[#101115] border border-[#272932] p-0.5">
                 {(
                   [
                     { id: 'similarity', label: 'Similarity' },
                     { id: 'hybrid', label: 'Hybrid (RRF)' },
+                    { id: 'sparse', label: 'Sparse Only' },
                     { id: 'recommend', label: 'Recommend' },
+                    { id: 'discover', label: 'Discover' },
                     { id: 'groupby', label: 'Group By' },
                   ] as const
                 ).map((m) => (
@@ -807,7 +884,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
             )}
 
             {/* Input mode toggle */}
-            {!(driver === 'qdrant' && qdrantMode === 'recommend') && (
+            {!(driver === 'qdrant' && (qdrantMode === 'recommend' || qdrantMode === 'discover' || qdrantMode === 'sparse')) && (
               <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
                 <button
                   type="button"
@@ -1045,9 +1122,9 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
             </div>
           )}
 
-          {/* Qdrant Hybrid / Recommend / GroupBy extra inputs */}
-          {driver === 'qdrant' && qdrantMode === 'hybrid' && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+          {/* Qdrant Hybrid / Sparse / Recommend / GroupBy extra inputs */}
+          {driver === 'qdrant' && (qdrantMode === 'hybrid' || qdrantMode === 'sparse') && (
+            <div className={`grid grid-cols-1 ${qdrantMode === 'hybrid' ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]`}>
               <input
                 type="text"
                 placeholder="Sparse field (e.g. bm25)"
@@ -1069,14 +1146,16 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 onChange={(e) => setSparseValues(e.target.value)}
                 className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
               />
-              <select
-                value={fusionType}
-                onChange={(e) => setFusionType(e.target.value as 'rrf' | 'dbsf')}
-                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
-              >
-                <option value="rrf">Fusion: RRF</option>
-                <option value="dbsf">Fusion: DBSF</option>
-              </select>
+              {qdrantMode === 'hybrid' && (
+                <select
+                  value={fusionType}
+                  onChange={(e) => setFusionType(e.target.value as 'rrf' | 'dbsf')}
+                  className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+                >
+                  <option value="rrf">Fusion: RRF</option>
+                  <option value="dbsf">Fusion: DBSF</option>
+                </select>
+              )}
             </div>
           )}
 
@@ -1213,6 +1292,27 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                     onChange={(e) => setNegativeIds(e.target.value)}
                     className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 font-mono focus:border-violet-500 focus:outline-none"
                   />
+                </div>
+              ) : driver === 'qdrant' && qdrantMode === 'discover' ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="Target Point ID or [vector] (e.g. 10)"
+                    value={discoverTarget}
+                    onChange={(e) => setDiscoverTarget(e.target.value)}
+                    className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 font-mono focus:border-violet-500 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Context pos:neg pairs (e.g. 1:2, 3:4)"
+                    value={discoverContext}
+                    onChange={(e) => setDiscoverContext(e.target.value)}
+                    className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-200 font-mono focus:border-violet-500 focus:outline-none"
+                  />
+                </div>
+              ) : driver === 'qdrant' && qdrantMode === 'sparse' ? (
+                <div className="w-full rounded bg-[#101115] border border-[#272932] px-2.5 py-1.5 text-[11px] text-zinc-400">
+                  Sparse-only query using <span className="font-mono text-zinc-200">{sparseCol || 'bm25'}</span> indices &amp; values above.
                 </div>
               ) : inputMode === 'vector' ? (
                 <input

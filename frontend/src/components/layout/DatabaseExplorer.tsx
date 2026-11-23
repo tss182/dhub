@@ -10,6 +10,8 @@ import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisFlushModal } from '../modals/RedisFlushModal';
 import { RedisInfoModal } from '../modals/RedisInfoModal';
 import { QdrantInfoModal } from '../modals/QdrantInfoModal';
+import { QdrantBatchOpsModal } from '../modals/QdrantBatchOpsModal';
+import { QdrantCloneModal } from '../modals/QdrantCloneModal';
 
 const ExportModal = lazy(() =>
   import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
@@ -261,6 +263,16 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     connectionId: string;
     connectionName: string;
   }>({ isOpen: false, connectionId: '', connectionName: '' });
+  const [qdrantBatchOpsModal, setQdrantBatchOpsModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    collectionName: string;
+  }>({ isOpen: false, connectionId: '', collectionName: '' });
+  const [qdrantCloneModal, setQdrantCloneModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    collectionName: string;
+  }>({ isOpen: false, connectionId: '', collectionName: '' });
   const [qdrantAliasesByConn, setQdrantAliasesByConn] = useState<Record<string, Record<string, string[]>>>({});
 
   const fetchQdrantAliases = React.useCallback(async (connId: string) => {
@@ -6165,6 +6177,40 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
 
                   <div className="my-1 border-t border-[#272932]" />
 
+                  {contextMenu.connection!.driver === 'qdrant' && !contextMenu.connection!.isReadOnly && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setQdrantBatchOpsModal({ isOpen: true, connectionId: connId, collectionName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Layers className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                        <span>Batch Delete / Update by Filter...</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const connId = contextMenu.connection!.id;
+                          const tbl = contextMenu.table!.name;
+                          closeContextMenu();
+                          setQdrantCloneModal({ isOpen: true, connectionId: connId, collectionName: tbl });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Copy className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                        <span>Clone / Reindex Collection...</span>
+                      </button>
+
+                      <div className="my-1 border-t border-[#272932]" />
+                    </>
+                  )}
+
                   {contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
                     <button
                       type="button"
@@ -6663,6 +6709,22 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         onClose={() => setQdrantInfoModal((prev) => ({ ...prev, isOpen: false }))}
         connectionId={qdrantInfoModal.connectionId}
         connectionName={qdrantInfoModal.connectionName}
+      />
+
+      <QdrantBatchOpsModal
+        isOpen={qdrantBatchOpsModal.isOpen}
+        onClose={() => setQdrantBatchOpsModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={qdrantBatchOpsModal.connectionId}
+        collectionName={qdrantBatchOpsModal.collectionName}
+        onSuccess={() => handleRefreshConnection(qdrantBatchOpsModal.connectionId)}
+      />
+
+      <QdrantCloneModal
+        isOpen={qdrantCloneModal.isOpen}
+        onClose={() => setQdrantCloneModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={qdrantCloneModal.connectionId}
+        sourceCollection={qdrantCloneModal.collectionName}
+        onCloned={() => handleRefreshConnection(qdrantCloneModal.connectionId)}
       />
     </div>
   );

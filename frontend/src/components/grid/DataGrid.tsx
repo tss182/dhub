@@ -23,6 +23,7 @@ import {
 import { RedisAddKeyModal } from '../modals/RedisAddKeyModal';
 import { RedisRenameKeyModal } from '../modals/RedisRenameKeyModal';
 import { QdrantPointModal } from '../modals/QdrantPointModal';
+import { QdrantFacetModal } from '../modals/QdrantFacetModal';
 import { CopyAsModal } from '../modals/CopyAsModal';
 
 const ExportModal = lazy(() =>
@@ -222,6 +223,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
     mode: 'insert' | 'edit';
     initialRow?: any[];
   }>({ isOpen: false, mode: 'insert' });
+  const [qdrantFacetCol, setQdrantFacetCol] = useState<string | null>(null);
 
   useEffect(() => {
     const currentKey = `${tabId || ''}::${tableName || ''}`;
@@ -3174,6 +3176,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
         onOpenRedisRenameModal={(oldKeyName) => setRedisRenameModal({ isOpen: true, oldKeyName })}
         onOpenUpdateQueryInTab={openUpdateQueryInTab}
         onFindSimilarPoint={isQdrant ? handleFindSimilarPoint : undefined}
+        onOpenQdrantFacet={
+          isQdrant && tableName
+            ? (colName) => setQdrantFacetCol(colName)
+            : undefined
+        }
         onOpenQdrantEditPoint={
           isQdrant && tableName
             ? (rowIdx) => {
@@ -3312,6 +3319,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
           initialRow={qdrantPointModal.initialRow}
           onClose={() => setQdrantPointModal({ isOpen: false, mode: 'insert' })}
           onSaved={() => onRefresh?.()}
+        />
+      )}
+
+      {isQdrant && tableName && qdrantFacetCol && (
+        <QdrantFacetModal
+          isOpen={!!qdrantFacetCol}
+          onClose={() => setQdrantFacetCol(null)}
+          connectionId={connectionId || ''}
+          collectionName={tableName}
+          fieldName={qdrantFacetCol}
+          onFilterByValue={(whereExpr) => {
+            setWhereInput(whereExpr);
+            onApplyWhere?.(whereExpr);
+          }}
         />
       )}
 
