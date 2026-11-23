@@ -301,11 +301,15 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 							SourceType: sc.DataType,
 							Detail:     fmt.Sprintf("Missing in target (%s)", sc.DataType),
 						})
-						nullStr := "NULL"
-						if !sc.IsNullable {
-							nullStr = "NOT NULL"
+						if dstDriverType == "clickhouse" {
+							alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType))
+						} else {
+							nullStr := "NULL"
+							if !sc.IsNullable {
+								nullStr = "NOT NULL"
+							}
+							alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr))
 						}
-						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr))
 					} else if !strings.EqualFold(sc.DataType, dc.DataType) || sc.IsNullable != dc.IsNullable {
 						colDiffs = append(colDiffs, ColumnDiff{
 							ColumnName: sc.Name,
@@ -370,6 +374,20 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						}
 						idxBody, _ := json.Marshal(map[string]any{"field_name": fieldName, "field_schema": fieldType})
 						alterStmts = append(alterStmts, fmt.Sprintf("PUT /collections/%s/index?wait=true\n%s", url.PathEscape(tblName), string(idxBody)))
+					} else if dstDriverType == "clickhouse" {
+						expr := sIdx.Expression
+						if expr == "" {
+							expr = strings.Join(sIdx.Columns, ", ")
+						}
+						gran := sIdx.Granularity
+						if gran <= 0 {
+							gran = 4
+						}
+						idxType := sIdx.Type
+						if idxType == "" {
+							idxType = "minmax"
+						}
+						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD INDEX %s %s TYPE %s GRANULARITY %d;", qTable, quoteIdentifier(dstDriverType, sIdx.Name), expr, idxType, gran))
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("CREATE %sINDEX %s ON %s (%s);", uniqueKw, quoteIdentifier(dstDriverType, sIdx.Name), qTable, strings.Join(qIdxCols, ", ")))
 					}

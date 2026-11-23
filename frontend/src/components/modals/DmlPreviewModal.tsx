@@ -69,6 +69,15 @@ export const DmlPreviewModal: React.FC<DmlPreviewModalProps> = ({
           </button>
         </div>
         <div className="p-4">
+          {connection?.driver?.toLowerCase() === 'clickhouse' &&
+            statements.some((s) => /^\s*ALTER\s+TABLE\s+[\s\S]*\b(?:UPDATE|DELETE)\b/i.test(s)) && (
+              <div className="mb-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                <strong>ClickHouse Mutation:</strong> UPDATE/DELETE executes an asynchronous{' '}
+                <code className="font-mono">ALTER TABLE ... SETTINGS mutations_sync = 1</code> mutation.
+                In ClickHouse, primary/sorting keys are not guaranteed to be unique — verify the{' '}
+                <code className="font-mono">WHERE</code> clause before applying.
+              </div>
+            )}
           <pre className="p-3 bg-[#121317] rounded border border-[#272932] font-mono text-xs text-emerald-400 max-h-60 overflow-auto">
             {sqlText}
           </pre>

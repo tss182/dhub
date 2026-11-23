@@ -277,7 +277,8 @@ export const DataGrid: React.FC<DataGridProps> = ({
       drv === 'elasticsearch' ||
       drv === 'es' ||
       drv === 'mongodb' ||
-      drv === 'mongo';
+      drv === 'mongo' ||
+      drv === 'clickhouse';
     if (skipFkFetch) {
       setFkMapByCol({});
       return;

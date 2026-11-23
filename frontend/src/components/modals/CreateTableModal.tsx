@@ -1598,10 +1598,19 @@ function generateCreateTableSql({
     columns.forEach((col) => {
       const cName = col.name.trim();
       if (!cName) return;
-      let colDef = `  \`${cName}\` ${col.dataType.toUpperCase()}`;
+      // ClickHouse types are strictly case-sensitive (e.g. UInt64, String, DateTime64)
+      let colType = col.dataType.trim();
       if (col.lengthOrValues.trim()) {
-        colDef += `(${col.lengthOrValues.trim()})`;
+        colType += `(${col.lengthOrValues.trim()})`;
       }
+      if (!col.isNotNull && !col.isPrimaryKey && !/^Nullable\(/i.test(colType) && !/^LowCardinality\(Nullable\(/i.test(colType)) {
+        if (/^LowCardinality\(/i.test(colType)) {
+          colType = `LowCardinality(Nullable(${colType.slice('LowCardinality('.length, -1)}))`;
+        } else {
+          colType = `Nullable(${colType})`;
+        }
+      }
+      let colDef = `  \`${cName}\` ${colType}`;
       if (col.defaultValue.trim()) {
         const val = col.defaultValue.trim();
         colDef += ` DEFAULT ${val}`;
@@ -1611,7 +1620,12 @@ function generateCreateTableSql({
       }
       lines.push(colDef);
     });
-    const orderCols = pkCols.length > 0 ? pkCols.map((c) => `\`${c.name.trim()}\``).join(', ') : 'tuple()';
+    const orderCols =
+      pkCols.length > 1
+        ? `(${pkCols.map((c) => `\`${c.name.trim()}\``).join(', ')})`
+        : pkCols.length === 1
+        ? `\`${pkCols[0].name.trim()}\``
+        : 'tuple()';
     return `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE = MergeTree() ORDER BY ${orderCols};`;
   } else {
     // SQLite
@@ -1975,10 +1989,17 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         {
           id: 'col-1',
           name: 'id',
-          dataType: driver === 'sqlite' ? 'INTEGER' : driver === 'postgres' ? 'BIGINT' : 'INT',
+          dataType:
+            driver === 'clickhouse'
+              ? 'UInt64'
+              : driver === 'sqlite'
+              ? 'INTEGER'
+              : driver === 'postgres'
+              ? 'BIGINT'
+              : 'INT',
           lengthOrValues: '',
           isPrimaryKey: true,
-          isAutoIncrement: true,
+          isAutoIncrement: driver !== 'clickhouse',
           isNotNull: true,
           defaultValue: '',
           comment: '',
@@ -2004,8 +2025,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
     const newCol: ColumnDefinition = {
       id: 'col-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       name: `col_${columns.length + 1}`,
-      dataType: driver === 'sqlite' ? 'TEXT' : 'VARCHAR',
-      lengthOrValues: driver === 'sqlite' ? '' : '255',
+      dataType: driver === 'clickhouse' ? 'String' : driver === 'sqlite' ? 'TEXT' : 'VARCHAR',
+      lengthOrValues: driver === 'clickhouse' || driver === 'sqlite' ? '' : '255',
       isPrimaryKey: false,
       isAutoIncrement: false,
       isNotNull: false,

@@ -261,6 +261,29 @@ func (s *SchemaService) GetObjectDDL(connectionID, database, schema, objectType,
 		q := fmt.Sprintf(`SELECT sql FROM sqlite_master WHERE name = '%s' LIMIT 1`, escLit(objName))
 		return execSingleCell(q, 0)
 
+	case "clickhouse":
+		targetDB := database
+		if targetDB == "" || targetDB == "main" {
+			targetDB = "default"
+		}
+		switch objType {
+		case "database":
+			q := fmt.Sprintf(`SHOW CREATE DATABASE %s`, quoteIdentifier(drvName, objName))
+			return execSingleCell(q, 0)
+		case "dictionary":
+			q := fmt.Sprintf(`SHOW CREATE DICTIONARY %s.%s`, quoteIdentifier(drvName, targetDB), quoteIdentifier(drvName, objName))
+			return execSingleCell(q, 0)
+		case "function":
+			q := fmt.Sprintf(`SELECT create_query FROM system.functions WHERE origin = 'SQLUserDefined' AND name = '%s' LIMIT 1`, escLit(objName))
+			return execSingleCell(q, 0)
+		case "view", "materialized_view":
+			q := fmt.Sprintf(`SHOW CREATE VIEW %s.%s`, quoteIdentifier(drvName, targetDB), quoteIdentifier(drvName, objName))
+			return execSingleCell(q, 0)
+		default:
+			q := fmt.Sprintf(`SHOW CREATE TABLE %s.%s`, quoteIdentifier(drvName, targetDB), quoteIdentifier(drvName, objName))
+			return execSingleCell(q, 0)
+		}
+
 	case "oracle":
 		oraType := strings.ToUpper(objType)
 		if oraType == "ROUTINE" {

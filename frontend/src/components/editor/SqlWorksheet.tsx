@@ -265,6 +265,16 @@ function isDangerousQuery(sqlText: string): boolean {
       return true;
     }
   }
+  // ClickHouse destructive mutations & partition/table drops
+  if (/^ALTER\s+TABLE\s+[\s\S]*\b(?:DELETE|UPDATE)\b[\s\S]*\bWHERE\s+(?:1\s*=\s*1|1|TRUE)\s*(?:SETTINGS\b|;|$)/i.test(clean)) {
+    return true;
+  }
+  if (/^ALTER\s+TABLE\s+[\s\S]*\bDROP\s+PARTITION\b/i.test(upper)) {
+    return true;
+  }
+  if (/^(?:TRUNCATE\s+TABLE|DROP\s+DATABASE)\b/i.test(upper)) {
+    return true;
+  }
   // Qdrant destructive REST commands: DELETE /collections/<name> or POST .../points/delete with empty filter {}
   if (/^DELETE\s+\/collections\//i.test(clean) && !/\/index\//i.test(clean)) {
     return true;
