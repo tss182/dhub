@@ -48,6 +48,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [result, setResult] = useState<{ rows: number; size: number; ms: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  React.useEffect(() => {
+    if (isOpen) {
+      setFilePath('');
+      setResult(null);
+      setError(null);
+    }
+  }, [isOpen, table]);
+
   if (!isOpen) return null;
 
   const getFileExt = (fmt: string) =>

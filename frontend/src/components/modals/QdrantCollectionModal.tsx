@@ -1107,7 +1107,16 @@ export const QdrantCollectionModal: React.FC<QdrantCollectionModalProps> = ({
           )}
 
           {activeTab === 'settings' && (
-            <form onSubmit={handlePatchSettings} className="space-y-4">
+            <form
+              onSubmit={(e) => {
+                if (connection?.isReadOnly) {
+                  e.preventDefault();
+                  return;
+                }
+                handlePatchSettings(e);
+              }}
+              className="space-y-4"
+            >
               <div className="rounded-lg border border-[#282b36] bg-[#14151b] p-3 space-y-3">
                 <div className="font-semibold text-zinc-200">Optimizers Config</div>
                 <div className="grid grid-cols-3 gap-2.5">

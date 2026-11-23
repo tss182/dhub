@@ -848,7 +848,7 @@ export const HelpModal: React.FC = () => {
                         Supported Database Engines &amp; Query Guides
                       </h3>
                       <p className="text-[11px] text-zinc-400 mt-1">
-                        DHub ships with 8 built-in drivers. Select any example below to copy it or
+                        DHub ships with built-in drivers. Select any example below to copy it or
                         insert it directly into your active Query Console.
                       </p>
                     </div>
@@ -865,6 +865,7 @@ export const HelpModal: React.FC = () => {
                         { id: 'clickhouse', name: 'ClickHouse', port: '9000', tag: 'OLAP' },
                         { id: 'mongodb', name: 'MongoDB', port: '27017', tag: 'NoSQL' },
                         { id: 'redis', name: 'Redis', port: '6379', tag: 'Key-Value' },
+                        { id: 'qdrant', name: 'Qdrant', port: '6333', tag: 'Vector' },
                       ].map((drv) => (
                         <div
                           key={drv.id}

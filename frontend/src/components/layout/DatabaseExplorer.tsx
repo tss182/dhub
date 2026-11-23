@@ -1427,10 +1427,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       setTreeDatabases(connId, safeDbs);
 
       // Refresh currently selected database objects
-      const currentDb = activeDatabase || safeDbs[0];
-      const targetSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : currentDb;
+      const isQdrant = conn?.driver?.toLowerCase() === 'qdrant';
+      const currentDb = isQdrant ? 'default' : activeDatabase || safeDbs[0];
+      const targetSchema = isQdrant
+        ? 'default'
+        : conn?.driver === 'postgres'
+        ? 'public'
+        : conn?.driver === 'mssql'
+        ? 'dbo'
+        : currentDb;
       const objects = (await SchemaService.GetObjects(connId, currentDb, targetSchema)) ?? [];
       setTreeObjects(`${connId}:${currentDb}:${targetSchema}`, objects as any);
+      if (isQdrant) {
+        fetchQdrantAliases(connId);
+      }
     } catch (e: any) {
       console.error('Failed to refresh connection:', e);
       setFailedConnErrors((prev) => ({
@@ -2885,7 +2895,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
             )}
 
             {/* Users Node (Yellow with User icon, placed at the top) */}
-            {c.driver?.toLowerCase() !== 'redis' && (
+            {c.driver?.toLowerCase() !== 'redis' && c.driver?.toLowerCase() !== 'qdrant' && (
               <div
                 onClick={() => {
                   handleItemMouseLeave();
@@ -3126,7 +3136,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                               <Layers className="h-3 w-3 text-cyan-400" />
                             </button>
                           )}
-                          {c.driver !== 'redis' && (
+                          {c.driver !== 'redis' && !c.isReadOnly && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -4888,17 +4898,19 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   <span>New Table...</span>
                 </button>
               ) : contextMenu.connection.driver === 'qdrant' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeContextMenu();
-                    handleOpenCreateTable(contextMenu.connection!, 'default', 'default');
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
-                >
-                  <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                  <span>New Collection...</span>
-                </button>
+                !contextMenu.connection.isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeContextMenu();
+                      handleOpenCreateTable(contextMenu.connection!, 'default', 'default');
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                    <span>New Collection...</span>
+                  </button>
+                )
               ) : (
                 <button
                   type="button"
@@ -6233,26 +6245,28 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeContextMenu();
-                      handleDeleteTable(
-                        contextMenu.connection!,
-                        contextMenu.database || 'main',
-                        contextMenu.schema || 'main',
-                        contextMenu.table!
-                      );
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                    <span>
-                      {contextMenu.connection!.driver === 'qdrant'
-                        ? 'Drop Collection...'
-                        : `Drop ${contextMenu.table!.type === 'view' ? 'View' : 'Table'}...`}
-                    </span>
-                  </button>
+                  {!contextMenu.connection!.isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeContextMenu();
+                        handleDeleteTable(
+                          contextMenu.connection!,
+                          contextMenu.database || 'main',
+                          contextMenu.schema || 'main',
+                          contextMenu.table!
+                        );
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-400 transition-colors text-left cursor-pointer group"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+                      <span>
+                        {contextMenu.connection!.driver === 'qdrant'
+                          ? 'Drop Collection...'
+                          : `Drop ${contextMenu.table!.type === 'view' ? 'View' : 'Table'}...`}
+                      </span>
+                    </button>
+                  )}
                 </>
               )}
             </>
@@ -6709,6 +6723,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         onClose={() => setQdrantInfoModal((prev) => ({ ...prev, isOpen: false }))}
         connectionId={qdrantInfoModal.connectionId}
         connectionName={qdrantInfoModal.connectionName}
+        isReadOnly={Boolean(connections.find((c) => c.id === qdrantInfoModal.connectionId)?.isReadOnly)}
+        onAliasesChanged={() => fetchQdrantAliases(qdrantInfoModal.connectionId)}
       />
 
       <QdrantBatchOpsModal

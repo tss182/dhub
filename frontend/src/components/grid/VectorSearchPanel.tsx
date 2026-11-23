@@ -84,14 +84,27 @@ function quotePgIdent(ident: string): string {
   return `"${ident.replace(/"/g, '""')}"`;
 }
 
-function parseVectorText(raw: string): number[] | null {
+function parseVectorText(raw: string): number[] | number[][] | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const normalized = trimmed.startsWith('[') ? trimmed : `[${trimmed}]`;
   try {
     const parsed = JSON.parse(normalized);
-    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((x) => typeof x === 'number' && Number.isFinite(x))) {
-      return parsed;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      if (parsed.every((x) => typeof x === 'number' && Number.isFinite(x))) {
+        return parsed;
+      }
+      if (
+        Array.isArray(parsed[0]) &&
+        parsed.every(
+          (sub) =>
+            Array.isArray(sub) &&
+            sub.length > 0 &&
+            sub.every((x) => typeof x === 'number' && Number.isFinite(x))
+        )
+      ) {
+        return parsed;
+      }
     }
   } catch {}
   return null;
@@ -470,7 +483,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     return fallback || undefined;
   };
 
-  const buildSearchQuery = (vec: number[] | null): string => {
+  const buildSearchQuery = (vec: number[] | number[][] | null): string => {
     const k = Math.max(1, Math.min(1000, Number(topK) || 10));
     const threshold = scoreThreshold.trim() !== '' && !Number.isNaN(Number(scoreThreshold))
       ? Number(scoreThreshold)
@@ -748,7 +761,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       }
     }
 
-    let vec: number[] | null = null;
+    let vec: number[] | number[][] | null = null;
     if (driver === 'qdrant' && qdrantMode === 'recommend') {
       if (!positiveIds.trim()) {
         setEmbedError('Enter at least one positive Point ID for Recommend.');
@@ -1264,7 +1277,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                   placeholder={
                     embedCfg.provider === 'gemini'
                       ? 'https://generativelanguage.googleapis.com/v1beta'
-                      : 'https://api.openai.com/v1/embeddings atau http://localhost:11434/v1/embeddings'
+                      : 'https://api.openai.com/v1/embeddings or http://localhost:11434/v1/embeddings'
                   }
                   onChange={(e) => saveEmbedCfg({ ...embedCfg, endpoint: e.target.value })}
                   className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"

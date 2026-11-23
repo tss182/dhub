@@ -514,7 +514,8 @@ export const SearchEverywhere: React.FC = () => {
     if (item.kind === 'connection' && item.connectionId) {
       const conn = connections.find((c) => c.id === item.connectionId);
       if (conn) {
-        setActiveConnection(conn.id, conn.databaseName || 'main', conn.driver === 'postgres' ? 'public' : 'main');
+        const defaultDb = conn.driver === 'qdrant' ? 'default' : 'main';
+        setActiveConnection(conn.id, conn.databaseName || defaultDb, conn.driver === 'postgres' ? 'public' : defaultDb);
       }
     }
   };

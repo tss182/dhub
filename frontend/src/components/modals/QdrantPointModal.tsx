@@ -437,7 +437,7 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
               const colMeta = vectorCols.find((c) => c.name === vecCol);
               const dt = (colMeta?.dataType || '').toLowerCase();
               const dimMatch = dt.match(/vector\s*\(\s*(\d+)/);
-              const dims = dimMatch ? Math.max(1, Math.min(4096, Number(dimMatch[1]))) : 4;
+              const dims = dimMatch ? Math.max(1, Number(dimMatch[1])) : 4;
               const handleRandomVec = () => {
                 if (dt === 'sparse_vector' || dt.includes('sparse')) {
                   const indices = [1, 14, 42, 88];
@@ -445,12 +445,10 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
                   setVectorInputs((prev) => ({ ...prev, [vecCol]: JSON.stringify({ indices, values }) }));
                   return;
                 }
-                if (dt.includes('uint8')) {
-                  const arr = Array.from({ length: dims }, () => Math.floor(Math.random() * 256));
-                  setVectorInputs((prev) => ({ ...prev, [vecCol]: JSON.stringify(arr) }));
-                  return;
-                }
                 const genUnit = () => {
+                  if (dt.includes('uint8')) {
+                    return Array.from({ length: dims }, () => Math.floor(Math.random() * 256));
+                  }
                   const raw = Array.from({ length: dims }, () => Number((Math.random() * 2 - 1).toFixed(4)));
                   const norm = Math.sqrt(raw.reduce((a, b) => a + b * b, 0)) || 1;
                   return raw.map((v) => Number((v / norm).toFixed(4)));

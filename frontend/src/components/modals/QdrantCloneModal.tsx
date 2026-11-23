@@ -80,9 +80,14 @@ export const QdrantCloneModal: React.FC<QdrantCloneModalProps> = ({
       };
       if (params.sparse_vectors) createBody.sparse_vectors = params.sparse_vectors;
       if (params.shard_number) createBody.shard_number = params.shard_number;
+      if (params.sharding_method) createBody.sharding_method = params.sharding_method;
       if (params.replication_factor) createBody.replication_factor = params.replication_factor;
+      if (params.write_consistency_factor) createBody.write_consistency_factor = params.write_consistency_factor;
       if (params.on_disk_payload !== undefined) createBody.on_disk_payload = params.on_disk_payload;
       if (info?.config?.hnsw_config) createBody.hnsw_config = info.config.hnsw_config;
+      if (info?.config?.optimizer_config) createBody.optimizers_config = info.config.optimizer_config;
+      if (info?.config?.wal_config) createBody.wal_config = info.config.wal_config;
+      if (info?.config?.strict_mode_config) createBody.strict_mode_config = info.config.strict_mode_config;
 
       if (quantization === 'preserve' && info?.config?.quantization_config) {
         createBody.quantization_config = info.config.quantization_config;
@@ -146,12 +151,20 @@ export const QdrantCloneModal: React.FC<QdrantCloneModalProps> = ({
               }
             } else if (name === 'vector') {
               if (rawVal !== null && rawVal !== undefined && rawVal !== '') {
-                defaultVec = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal;
+                try {
+                  defaultVec = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal;
+                } catch {
+                  defaultVec = rawVal;
+                }
               }
             } else if (name.startsWith('vector.')) {
               const vName = name.slice('vector.'.length);
               if (rawVal !== null && rawVal !== undefined && rawVal !== '') {
-                namedVecs[vName] = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal;
+                try {
+                  namedVecs[vName] = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal;
+                } catch {
+                  namedVecs[vName] = rawVal;
+                }
               }
             } else if (name !== 'score' && rawVal !== null && rawVal !== undefined) {
               if (typeof rawVal === 'string' && (rawVal.startsWith('{') || rawVal.startsWith('['))) {

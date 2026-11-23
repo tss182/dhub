@@ -35,6 +35,16 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [tableColumns, setTableColumns] = useState<string[]>([]);
   const [mappings, setMappings] = useState<Record<string, string>>({}); // fileCol -> tableCol
 
+  React.useEffect(() => {
+    if (isOpen) {
+      setStep('select');
+      setFilePath('');
+      setPreviewColumns([]);
+      setPreviewRows([]);
+      setMappings({});
+    }
+  }, [isOpen, table]);
+
   const connections = useConnectionStore((s) => s.connections);
   const activeDriver = connections.find((c) => c.id === connectionId)?.driver || '';
   const isSchemaless = activeDriver === 'qdrant' || activeDriver === 'mongodb' || activeDriver === 'elasticsearch';

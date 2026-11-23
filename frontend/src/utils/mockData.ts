@@ -266,11 +266,11 @@ export function generateMockValue(
   }
   if (t.startsWith('vector') || (col.rawType || '').toLowerCase() === 'vector') {
     const dimMatch = t.match(/vector\s*\(\s*(\d+)/);
-    const dims = dimMatch ? Math.max(1, Math.min(4096, Number(dimMatch[1]))) : 4;
-    if (t.includes('uint8')) {
-      return JSON.stringify(Array.from({ length: dims }, () => Math.floor(Math.random() * 256)));
-    }
+    const dims = dimMatch ? Math.max(1, Number(dimMatch[1])) : 4;
     const genNormVec = () => {
+      if (t.includes('uint8')) {
+        return Array.from({ length: dims }, () => Math.floor(Math.random() * 256));
+      }
       const raw = Array.from({ length: dims }, () => Number((Math.random() * 2 - 1).toFixed(4)));
       const norm = Math.sqrt(raw.reduce((acc, v) => acc + v * v, 0)) || 1;
       return raw.map((v) => Number((v / norm).toFixed(4)));

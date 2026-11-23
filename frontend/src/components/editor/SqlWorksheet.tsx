@@ -264,6 +264,21 @@ function isDangerousQuery(sqlText: string): boolean {
       return true;
     }
   }
+  // Qdrant destructive REST commands: DELETE /collections/<name> or POST .../points/delete with empty filter {}
+  if (/^DELETE\s+\/collections\//i.test(clean) && !/\/index\//i.test(clean)) {
+    return true;
+  }
+  if (/^POST\s+\/collections\/[^\s]+\/points\/delete/i.test(clean)) {
+    const bodyMatch = clean.match(/\{[\s\S]*\}/);
+    if (bodyMatch) {
+      try {
+        const parsed = JSON.parse(bodyMatch[0]);
+        if (parsed?.filter && typeof parsed.filter === 'object' && Object.keys(parsed.filter).length === 0) {
+          return true;
+        }
+      } catch {}
+    }
+  }
   return false;
 }
 
@@ -1422,7 +1437,26 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   const handleFormatSql = async () => {
     try {
       const drv = connection?.driver || 'sqlite';
-      if (drv === 'redis' || drv === 'mongodb' || drv === 'qdrant' || drv === 'elasticsearch') return;
+      if (drv === 'qdrant' || drv === 'elasticsearch') {
+        const formatted = sql
+          .split(/\n(?=(?:GET|POST|PUT|DELETE|PATCH)\s+\/)/i)
+          .map((block) => {
+            const nl = block.indexOf('\n');
+            if (nl === -1) return block;
+            const header = block.slice(0, nl).trim();
+            const body = block.slice(nl + 1).trim();
+            if (!body) return header;
+            try {
+              return `${header}\n${JSON.stringify(JSON.parse(body), null, 2)}`;
+            } catch {
+              return block;
+            }
+          })
+          .join('\n\n');
+        onChange(formatted);
+        return;
+      }
+      if (drv === 'redis' || drv === 'mongodb') return;
       let lang: any = 'sql';
       if (drv === 'postgres') lang = 'postgresql';
       else if (drv === 'mariadb') lang = 'mariadb';

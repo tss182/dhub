@@ -35,6 +35,7 @@ interface GridContextMenuProps {
   isCopyAsSubmenuOpen: boolean;
   isRedis: boolean;
   isQdrant?: boolean;
+  isReadOnly?: boolean;
   disableFreeze?: boolean;
   columns: ColumnMeta[];
   visualRows: VisualRow[];
@@ -75,6 +76,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
   isCopyAsSubmenuOpen,
   isRedis,
   isQdrant = false,
+  isReadOnly = false,
   disableFreeze,
   columns,
   visualRows,
@@ -366,76 +368,80 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
           })()}
       </div>
 
-      <button
-        type="button"
-        onClick={() => {
-          onClose();
-          navigator.clipboard
-            ?.readText?.()
-            .then((text) => {
-              if (text) onPaste(text);
-            })
-            .catch(() => {});
-        }}
-        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-      >
-        <div className="flex items-center gap-2">
-          <ClipboardPaste className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
-          <span>Paste</span>
-        </div>
-        <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+V</kbd>
-      </button>
+      {!isReadOnly && (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              navigator.clipboard
+                ?.readText?.()
+                .then((text) => {
+                  if (text) onPaste(text);
+                })
+                .catch(() => {});
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <ClipboardPaste className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
+              <span>Paste</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+V</kbd>
+          </button>
 
-      <div className="my-1 border-t border-[#272932]" />
+          <div className="my-1 border-t border-[#272932]" />
 
-      <button
-        type="button"
-        onClick={() => {
-          onClose();
-          onDuplicateRow();
-        }}
-        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-      >
-        <div className="flex items-center gap-2">
-          <Copy className="h-3.5 w-3.5 text-sky-400 group-hover:text-white" />
-          <span>Duplicate Row(s)</span>
-        </div>
-        <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+D</kbd>
-      </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onDuplicateRow();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Copy className="h-3.5 w-3.5 text-sky-400 group-hover:text-white" />
+              <span>Duplicate Row(s)</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+D</kbd>
+          </button>
 
-      <button
-        type="button"
-        onClick={() => {
-          onClose();
-          onAddRow();
-        }}
-        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-      >
-        <div className="flex items-center gap-2">
-          <Plus className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
-          <span>Add New Row</span>
-        </div>
-        <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+I</kbd>
-      </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onAddRow();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Plus className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+              <span>Add New Row</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">{modKey}+I</kbd>
+          </button>
 
-      <button
-        type="button"
-        onClick={() => {
-          onClose();
-          onDeleteActiveRow();
-        }}
-        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-300 transition-colors text-left cursor-pointer group"
-      >
-        <div className="flex items-center gap-2">
-          <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-          <span>Delete Row(s)</span>
-        </div>
-        <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">
-          {isMac ? 'Cmd+⌫' : 'Del'}
-        </kbd>
-      </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onDeleteActiveRow();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-rose-600 hover:text-white text-rose-300 transition-colors text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
+              <span>Delete Row(s)</span>
+            </div>
+            <kbd className="text-[10px] text-zinc-500 group-hover:text-white/80 font-mono">
+              {isMac ? 'Cmd+⌫' : 'Del'}
+            </kbd>
+          </button>
 
-      <div className="my-1 border-t border-[#272932]" />
+          <div className="my-1 border-t border-[#272932]" />
+        </>
+      )}
 
       {contextMenu.vIdx !== null &&
         contextMenu.cIdx !== null &&
@@ -567,7 +573,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 </button>
               )}
 
-              {isQdrant && onOpenQdrantEditPoint && vr && vr.globalRowIndex !== undefined && (
+              {isQdrant && !isReadOnly && onOpenQdrantEditPoint && vr && vr.globalRowIndex !== undefined && (
                 <button
                   type="button"
                   onClick={() => {

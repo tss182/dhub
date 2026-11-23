@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { Download, AlertCircle, Sparkles } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
@@ -139,9 +139,9 @@ function computePca3D(vectors: number[][]): Array<[number, number, number]> {
   const pc1 = powerIter(G, []);
   const pc2 = powerIter(G, [pc1.vec]);
   const pc3 = powerIter(G, [pc1.vec, pc2.vec]);
-  const s1 = Math.sqrt(pc1.val) || 1;
-  const s2 = Math.sqrt(pc2.val) || 1;
-  const s3 = Math.sqrt(pc3.val) || 1;
+  const s1 = Math.sqrt(Math.max(0, pc1.val));
+  const s2 = Math.sqrt(Math.max(0, pc2.val));
+  const s3 = Math.sqrt(Math.max(0, pc3.val));
 
   const coords: Array<[number, number, number]> = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -151,11 +151,14 @@ function computePca3D(vectors: number[][]): Array<[number, number, number]> {
 }
 
 export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, title }) => {
+  const svgDomId = useId();
   const vectorCols = useMemo(
     () =>
       columns
         .map((c, idx) => ({ col: c, idx }))
         .filter(({ col, idx }) => {
+          const dt = (col.dataType || '').toLowerCase();
+          if (dt.includes('sparse') || dt.includes('multi')) return false;
           if (isVectorColumn(col.dataType, col.rawType)) return true;
           return rows.some((r) => parseNumericVector(r?.[idx]) !== null);
         }),
@@ -185,6 +188,15 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
   const [dragStart, setDragStart] = useState<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
   const [hoveredPointIdx, setHoveredPointIdx] = useState<number | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
+
+  useEffect(() => {
+    const prefLabel = labelCols.find((c) => /title|name|category|label|id|_id/i.test(c.col.name));
+    setLabelColIdx(prefLabel?.idx ?? labelCols[0]?.idx ?? 0);
+    const prefColor = labelCols.find((c) => /category|type|group|label|score|_score/i.test(c.col.name));
+    setColorColIdx(prefColor?.idx ?? -1);
+    setSelectedIndices([]);
+    setHoveredPointIdx(null);
+  }, [columns, labelCols]);
 
   const activeVecIdx = vectorCols.some((v) => v.idx === selectedVecIdx)
     ? selectedVecIdx
@@ -263,7 +275,7 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
   }, [projected, colorColIdx]);
 
   const handleExportSvg = () => {
-    const svg = document.getElementById('dhub-vector-pca-svg');
+    const svg = document.getElementById(svgDomId);
     if (!svg) return;
     const source = new XMLSerializer().serializeToString(svg);
     const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
@@ -455,7 +467,7 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
           <div className="text-zinc-500 text-xs">No valid vectors to project.</div>
         ) : (
           <svg
-            id="dhub-vector-pca-svg"
+            id={svgDomId}
             viewBox={`0 0 ${width} ${height}`}
             className={`w-full h-full max-w-[960px] max-h-full ${dimMode === '3d' ? 'cursor-grab active:cursor-grabbing' : ''}`}
             onMouseDown={(e) => {

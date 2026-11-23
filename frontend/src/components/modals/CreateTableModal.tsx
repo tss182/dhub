@@ -2525,7 +2525,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         connection={connection}
         database={database}
         collectionName={initialTableName || ''}
-        onUpdated={() => onTableCreated?.(initialTableName || '')}
+        onUpdated={() => onTableUpdated?.(initialTableName || '')}
       />
     );
   }

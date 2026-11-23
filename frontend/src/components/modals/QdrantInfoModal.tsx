@@ -20,6 +20,8 @@ interface QdrantInfoModalProps {
   onClose: () => void;
   connectionId: string;
   connectionName: string;
+  isReadOnly?: boolean;
+  onAliasesChanged?: () => void;
 }
 
 export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
@@ -27,6 +29,8 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
   onClose,
   connectionId,
   connectionName,
+  isReadOnly = false,
+  onAliasesChanged,
 }) => {
   const [activeTab, setActiveTab] = useState<'cluster' | 'aliases' | 'snapshots' | 'telemetry'>('cluster');
   const [loading, setLoading] = useState(false);
@@ -146,6 +150,7 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
       alertSuccess(`Alias "${swapAlias.alias}" switched to "${swapAlias.target.trim()}".`, 'Alias Swapped');
       setSwapAlias(null);
       await fetchAll();
+      onAliasesChanged?.();
     } catch (err: any) {
       alertError(err?.message || String(err), 'Alias Swap Failed');
     }
@@ -291,13 +296,15 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
                           <td className="py-2 px-3 font-mono text-cyan-300">{a.alias_name}</td>
                           <td className="py-2 px-3 font-mono text-zinc-200">{a.collection_name}</td>
                           <td className="py-2 px-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => setSwapAlias({ alias: a.alias_name, target: a.collection_name })}
-                              className="px-2 py-0.5 rounded bg-cyan-600/20 hover:bg-cyan-600/35 text-cyan-300 border border-cyan-500/30 text-[10px] cursor-pointer"
-                            >
-                              Switch Target
-                            </button>
+                            {!isReadOnly && (
+                              <button
+                                type="button"
+                                onClick={() => setSwapAlias({ alias: a.alias_name, target: a.collection_name })}
+                                className="px-2 py-0.5 rounded bg-cyan-600/20 hover:bg-cyan-600/35 text-cyan-300 border border-cyan-500/30 text-[10px] cursor-pointer"
+                              >
+                                Switch Target
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -312,15 +319,17 @@ export const QdrantInfoModal: React.FC<QdrantInfoModalProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-zinc-400">Full instance storage snapshots</span>
-                <button
-                  type="button"
-                  disabled={creatingSnap}
-                  onClick={handleCreateFullSnapshot}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium cursor-pointer"
-                >
-                  {creatingSnap ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                  <span>Create Full Snapshot</span>
-                </button>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    disabled={creatingSnap}
+                    onClick={handleCreateFullSnapshot}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium cursor-pointer"
+                  >
+                    {creatingSnap ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    <span>Create Full Snapshot</span>
+                  </button>
+                )}
               </div>
               <div className="rounded-lg border border-[#282b36] bg-[#14151b] overflow-hidden">
                 {snapshots.length === 0 ? (

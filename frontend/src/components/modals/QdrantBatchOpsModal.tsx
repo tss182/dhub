@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Filter, Trash2, Edit3, Loader2, Eye } from 'lucide-react';
 import { QueryService } from '../../../bindings/dhub/internal/services';
 import { alertError, alertSuccess, confirmDialog } from '../../stores/useAlertStore';
@@ -26,6 +26,17 @@ export const QdrantBatchOpsModal: React.FC<QdrantBatchOpsModalProps> = ({
   const [isCounting, setIsCounting] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setOpType('set_payload');
+      setFilterJson('{\n  "must": [\n    { "key": "status", "match": { "value": "archived" } }\n  ]\n}');
+      setPayloadJson('{\n  "archived": true\n}');
+      setKeysInput('');
+      setPreviewCount(null);
+      setError(null);
+    }
+  }, [isOpen, collectionName]);
 
   if (!isOpen) return null;
 
@@ -110,6 +121,15 @@ export const QdrantBatchOpsModal: React.FC<QdrantBatchOpsModalProps> = ({
         setError(`Invalid Payload JSON: ${err?.message || err}`);
         return;
       }
+      if (Object.keys(filterObj).length === 0) {
+        const ok = await confirmDialog({
+          title: 'Update Payload on ALL Points',
+          message: `The filter is empty ({}). This will set payload on ALL points in "${collectionName}". Continue?`,
+          confirmLabel: 'Update All',
+          isDanger: true,
+        });
+        if (!ok) return;
+      }
       cmd = `POST /collections/${collEsc}/points/payload?wait=true\n${JSON.stringify({
         payload: payloadObj,
         filter: filterObj,
@@ -122,6 +142,15 @@ export const QdrantBatchOpsModal: React.FC<QdrantBatchOpsModalProps> = ({
       if (keys.length === 0) {
         setError('Enter at least one payload key to delete.');
         return;
+      }
+      if (Object.keys(filterObj).length === 0) {
+        const ok = await confirmDialog({
+          title: 'Delete Payload Keys on ALL Points',
+          message: `The filter is empty ({}). This will delete keys [${keys.join(', ')}] from ALL points in "${collectionName}". Continue?`,
+          confirmLabel: 'Delete Keys on All',
+          isDanger: true,
+        });
+        if (!ok) return;
       }
       cmd = `POST /collections/${collEsc}/points/payload/delete?wait=true\n${JSON.stringify({
         keys,

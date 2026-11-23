@@ -473,24 +473,47 @@ export function App() {
         }
       }
 
-      setTableDataByTab((prev) => ({
-        ...prev,
-        [tab.id]: {
-          ...(prev[tab.id] || { pageSize: 100, page: 1 }),
-          columns: resRows.length > 0 || !prev[tab.id]?.columns?.length ? cols : prev[tab.id].columns,
-          rows: resRows,
-          primaryKeys: (res?.primaryKeys as string[]) || prev[tab.id]?.primaryKeys || [],
-          isLoading: false,
-          isLoadingMore: false,
-          isLoadingPrevious: false,
-          error: null,
-          totalCount: resRows.length,
-          hasMore: false,
-          hasPrevious: false,
-          startOffset: 0,
-          page: 1,
-        },
-      }));
+      setTableDataByTab((prev) => {
+        const prevCols = prev[tab.id]?.columns || [];
+        let mergedCols = resRows.length > 0 || !prevCols.length ? cols : prevCols;
+        if (prevCols.length > 0 && resRows.length > 0) {
+          const prevByName = new Map(prevCols.map((c) => [c.name, c]));
+          mergedCols = cols.map((c) => {
+            const old = prevByName.get(c.name);
+            if (old && old.dataType && old.dataType.includes('(')) {
+              return { ...c, dataType: old.dataType, rawType: old.rawType };
+            }
+            return c;
+          });
+          // Keep vector columns from schema metadata even if Return Vectors was unchecked
+          for (const old of prevCols) {
+            if (
+              (old.name === 'vector' || old.name.startsWith('vector.') || old.rawType === 'vector') &&
+              !mergedCols.some((c) => c.name === old.name)
+            ) {
+              mergedCols.push(old);
+            }
+          }
+        }
+        return {
+          ...prev,
+          [tab.id]: {
+            ...(prev[tab.id] || { pageSize: 100, page: 1 }),
+            columns: mergedCols,
+            rows: resRows,
+            primaryKeys: (res?.primaryKeys as string[]) || prev[tab.id]?.primaryKeys || [],
+            isLoading: false,
+            isLoadingMore: false,
+            isLoadingPrevious: false,
+            error: null,
+            totalCount: resRows.length,
+            hasMore: false,
+            hasPrevious: false,
+            startOffset: 0,
+            page: 1,
+          },
+        };
+      });
 
       setVectorSearchByTab((prev) => ({
         ...prev,
@@ -1424,8 +1447,16 @@ export function App() {
       const targetDb = tab.database || conn?.databaseName || 'main';
       const targetSchema = tab.schema || (effectiveDriver === 'postgres' ? 'public' : isMSSQL ? 'dbo' : effectiveDriver === 'oracle' ? '' : targetDb);
 
+      // Clear active vector search banner when reloading normal table browse (sort/page/filter/refresh)
+      setVectorSearchByTab((prev) => {
+        if (!prev[tab.id]?.active) return prev;
+        const next = { ...prev };
+        delete next[tab.id];
+        return next;
+      });
+
       // 1. Fetch table structure for primary keys & detailed column definitions (size, nullability, comment, etc.)
-      if (primaryKeys.length === 0 || structureColumns.length === 0 || !structureColumns[0]?.dataType?.includes('(')) {
+      if (primaryKeys.length === 0 || structureColumns.length === 0 || !structureColumns.some((c) => c.dataType?.includes('('))) {
         try {
           const structure = await SchemaService.GetTableStructure(
             connId,
@@ -1973,13 +2004,22 @@ export function App() {
     if (!cleanSql) return;
 
     try {
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === queryPagination.connectionId);
+      let countSql = `SELECT COUNT(*) FROM (${cleanSql}) _dhub_count_subq`;
+      if (conn?.driver === 'qdrant') {
+        const fromMatch = cleanSql.match(/\bFROM\s+[`"\[]?([a-zA-Z0-9_.-]+)[`"\]]?/i);
+        const restMatch = cleanSql.match(/\/collections\/([^\/\s?]+)/i);
+        const coll = fromMatch?.[1] || (restMatch?.[1] ? decodeURIComponent(restMatch[1]) : '');
+        if (!coll) return;
+        countSql = `SELECT COUNT(*) FROM "${coll}"`;
+      }
       const countRes = await QueryService.ExecuteQuery({
         executionId: 'exec-qcount-' + Date.now(),
         connectionId: queryPagination.connectionId,
         tabId: queryPagination.tabId || currentTabId || '',
         database: queryPagination.database,
         schema: queryPagination.schema,
-        sql: `SELECT COUNT(*) FROM (${cleanSql}) _dhub_count_subq`,
+        sql: countSql,
         limit: 1,
         offset: 0,
       } as any);

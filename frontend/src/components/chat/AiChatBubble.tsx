@@ -122,16 +122,18 @@ export const AiChatBubble: React.FC = () => {
   const effectiveConnId = manualConnId !== undefined ? manualConnId : autoConnId;
   const activeConn = connections.find((c) => c.id === effectiveConnId);
   const effectiveDriver = activeConn?.driver || '';
+  const defaultDbForDriver =
+    effectiveDriver === 'sqlite' ? 'main' : effectiveDriver === 'qdrant' ? 'default' : '';
   const autoDb =
     activeTab?.database ||
     activeDatabase ||
     activeConn?.databaseName ||
-    (effectiveDriver === 'sqlite' ? 'main' : '');
+    defaultDbForDriver;
   const effectiveDb =
     manualDb !== undefined
       ? manualDb
       : manualConnId !== undefined
-      ? activeConn?.databaseName || (effectiveDriver === 'sqlite' ? 'main' : '')
+      ? activeConn?.databaseName || defaultDbForDriver
       : autoDb;
   const effectiveSchema =
     (manualConnId === undefined && manualDb === undefined ? activeTab?.schema || activeSchema : '') ||
@@ -339,17 +341,30 @@ export const AiChatBubble: React.FC = () => {
     ? `${activeConn.name}${effectiveDb ? ` • ${effectiveDb}` : ''}`
     : `${providerLabel} • ${activeModelName}`;
 
-  const quickPrompts = attachedTable
-    ? [
-        `Buka tabel ${attachedTable.table} dengan filter terbaru`,
-        `Jelaskan struktur kolom tabel ${attachedTable.table}`,
-        `Buatkan query agregasi untuk ${attachedTable.table}`,
-      ]
-    : [
-        'Buka tabel dengan filter WHERE',
-        'Buatkan query SELECT dengan filter & pagination',
-        'Jelaskan cara optimasi query yang lambat',
-      ];
+  const quickPrompts =
+    effectiveDriver === 'qdrant'
+      ? attachedTable
+        ? [
+            `Cari point di ${attachedTable.table} dengan filter payload`,
+            `Jelaskan struktur vector & payload index ${attachedTable.table}`,
+            `Buatkan query Hybrid / Similarity search untuk ${attachedTable.table}`,
+          ]
+        : [
+            'Buatkan Qdrant REST vector search query',
+            'Buatkan query SELECT dengan filter payload',
+            'Jelaskan cara membuat payload index di Qdrant',
+          ]
+      : attachedTable
+      ? [
+          `Buka tabel ${attachedTable.table} dengan filter terbaru`,
+          `Jelaskan struktur kolom tabel ${attachedTable.table}`,
+          `Buatkan query agregasi untuk ${attachedTable.table}`,
+        ]
+      : [
+          'Buka tabel dengan filter WHERE',
+          'Buatkan query SELECT dengan filter & pagination',
+          'Jelaskan cara optimasi query yang lambat',
+        ];
 
   const handleCopySql = async (id: string, sql: string) => {
     try {
@@ -567,7 +582,7 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
           .replace(/\s+LIMIT\s+\d+(?:\s*,\s*\d+)?\s*$/i, '')
           .trim();
         const selectMatch = cleanedSql.match(
-          /^\s*SELECT\s+[\s\S]+?\s+FROM\s+[`"\[]?(?:([a-zA-Z0-9_]+)\.)?([a-zA-Z0-9_]+)[`"\]]?(?:\s+WHERE\s+([\s\S]+?))?(?:\s+ORDER\s+BY\s+[`"\[]?([a-zA-Z0-9_]+)[`"\]]?(?:\s+(ASC|DESC))?)?\s*$/i
+          /^\s*SELECT\s+[\s\S]+?\s+FROM\s+[`"\[]?(?:([a-zA-Z0-9_-]+)\.)?([a-zA-Z0-9_-]+)[`"\]]?(?:\s+WHERE\s+([\s\S]+?))?(?:\s+ORDER\s+BY\s+[`"\[]?([a-zA-Z0-9_.-]+)[`"\]]?(?:\s+(ASC|DESC))?)?\s*$/i
         );
         if (selectMatch) {
           const tableName = selectMatch[2];

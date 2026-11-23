@@ -203,8 +203,11 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
       ? 'bg-emerald-950/75 border-emerald-800/70'
       : 'bg-[#14151a] border-[#272932]';
 
+  const isQdrant = connection?.driver === 'qdrant';
   const title =
-    scope === 'table'
+    isQdrant && scope === 'table'
+      ? `Collection Config (JSON) — ${tableName}`
+      : scope === 'table'
       ? `Table DDL — ${tableName}`
       : scope === 'schema'
       ? `Schema DDL — ${schema || database}`
@@ -223,7 +226,7 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
         ? `${database}_${schema || 'schema'}`
         : database || 'database';
     const safe = base.replace(/[^a-zA-Z0-9_-]+/g, '_');
-    return `${safe}_ddl.sql`;
+    return isQdrant && scope === 'table' ? `${safe}_config.json` : `${safe}_ddl.sql`;
   })();
 
   const handleCopy = async () => {

@@ -1228,11 +1228,20 @@ export const DataGrid: React.FC<DataGridProps> = ({
         ? Number(trimmedId)
         : rawId;
     const coll = encodeURIComponent(tableName || 'collection');
-    const queryStr = `POST /collections/${coll}/points/query\n${JSON.stringify(
-      { query: parsedId, limit: 10, with_payload: true, with_vector: true },
-      null,
-      2
-    )}`;
+    const namedDenseCol = columns.find(
+      (c) => c.name.startsWith('vector.') && !(c.dataType || '').toLowerCase().includes('sparse')
+    );
+    const hasUnnamedVector = columns.some((c) => c.name === 'vector');
+    const queryBody: Record<string, any> = {
+      query: parsedId,
+      limit: 20,
+      with_payload: true,
+      with_vector: true,
+    };
+    if (!hasUnnamedVector && namedDenseCol) {
+      queryBody.using = namedDenseCol.name.slice('vector.'.length);
+    }
+    const queryStr = `POST /collections/${coll}/points/query\n${JSON.stringify(queryBody, null, 2)}`;
     const workbenchStore = useWorkbenchStore.getState();
     const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
     workbenchStore.createConsole(
@@ -2309,7 +2318,9 @@ export const DataGrid: React.FC<DataGridProps> = ({
       !isImportOpen &&
       !showAllSortsModal &&
       !showAllFrozenModal &&
-      !isCopyAsOpen;
+      !isCopyAsOpen &&
+      !qdrantPointModal.isOpen &&
+      !qdrantFacetCol;
 
     if (!isTyping && !isMod && !e.altKey && e.key === 'Backspace') {
       if (selectionFocus && visualRows.length > 0 && columns.length > 0 && noModalOpen) {
@@ -2380,7 +2391,11 @@ export const DataGrid: React.FC<DataGridProps> = ({
 
     if (e.key === 'i' || e.key === 'I') {
       e.preventDefault();
-      handleAddRow();
+      if (isQdrant && tableName) {
+        setQdrantPointModal({ isOpen: true, mode: 'insert' });
+      } else {
+        handleAddRow();
+      }
       return;
     }
 
@@ -3173,6 +3188,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         isCopyAsSubmenuOpen={isCopyAsSubmenuOpen}
         isRedis={isRedis}
         isQdrant={isQdrant}
+        isReadOnly={isReadOnly}
         disableFreeze={disableFreeze}
         columns={columns}
         visualRows={visualRows}
@@ -3359,6 +3375,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         isOpen={isCopyAsOpen}
         defaultFormat={copyFormat}
         selectionSummary={selectionSummary}
+        isQdrant={isQdrant}
         onClose={() => setIsCopyAsOpen(false)}
         onCopy={(fmt) => {
           const text = getFormattedCopyText(fmt);

@@ -54,7 +54,10 @@ export const COPY_FORMAT_LABELS: Record<CopyFormat, string> = COPY_FORMAT_OPTION
   {} as Record<CopyFormat, string>
 );
 
-export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className = '' }) => {
+export const CopyFormatSelector: React.FC<{ className?: string; isQdrant?: boolean }> = ({
+  className = '',
+  isQdrant = false,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const copyFormat = useSettingsStore((state) => state.copyFormat);
@@ -87,7 +90,7 @@ export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className
             ? 'bg-[#2b2d38] text-white'
             : 'bg-transparent hover:bg-[#2b2d38] text-zinc-300 hover:text-white'
         }`}
-        title="Format yang disalin saat melakukan Copy (Ctrl+C)"
+        title="Format used when copying cells (Ctrl+C)"
       >
         <span>{COPY_FORMAT_LABELS[copyFormat] || 'CSV'}</span>
         <ChevronDown className="h-3 w-3 text-zinc-400" />
@@ -98,7 +101,9 @@ export const CopyFormatSelector: React.FC<{ className?: string }> = ({ className
           <div className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 border-b border-[#272932] mb-1">
             Copy Format
           </div>
-          {COPY_FORMAT_OPTIONS.map((opt) => (
+          {COPY_FORMAT_OPTIONS.filter((opt) =>
+            isQdrant ? !opt.id.startsWith('sql_') : opt.id !== 'qdrant_upsert'
+          ).map((opt) => (
             <button
               key={opt.id}
               type="button"

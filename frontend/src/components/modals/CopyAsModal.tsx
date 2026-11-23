@@ -7,6 +7,7 @@ interface CopyAsModalProps {
   isOpen: boolean;
   defaultFormat: CopyFormat;
   selectionSummary?: string;
+  isQdrant?: boolean;
   onClose: () => void;
   onCopy: (format: CopyFormat) => void;
 }
@@ -15,6 +16,7 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
   isOpen,
   defaultFormat,
   selectionSummary,
+  isQdrant = false,
   onClose,
   onCopy,
 }) => {
@@ -112,7 +114,9 @@ export const CopyAsModal: React.FC<CopyAsModalProps> = ({
 
             {/* Rows */}
             <div className="max-h-80 overflow-y-auto divide-y divide-[#22242e]">
-              {COPY_FORMAT_OPTIONS.map((opt) => {
+              {COPY_FORMAT_OPTIONS.filter((opt) =>
+                isQdrant ? !opt.id.startsWith('sql_') : opt.id !== 'qdrant_upsert'
+              ).map((opt) => {
                 const isSelected = opt.id === selectedFormat;
                 const isDefault = opt.id === defaultFormat;
                 return (
