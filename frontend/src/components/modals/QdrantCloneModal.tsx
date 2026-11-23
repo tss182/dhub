@@ -125,7 +125,7 @@ export const QdrantCloneModal: React.FC<QdrantCloneModalProps> = ({
         if (pageRes?.error) throw new Error(pageRes.error);
 
         const cols = pageRes?.columns || [];
-        const rows = pageRes?.rows || [];
+        const rows = (pageRes?.rows || []).filter((row): row is any[] => row !== null);
         if (rows.length === 0) break;
 
         const points = rows.map((row: any[]) => {
