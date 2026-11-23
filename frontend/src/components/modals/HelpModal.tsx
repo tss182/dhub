@@ -127,6 +127,29 @@ const REDIS_SNIPPETS: SnippetItem[] = [
   },
 ];
 
+const QDRANT_SNIPPETS: SnippetItem[] = [
+  {
+    label: 'List Collections & Browse Points',
+    code: 'SHOW COLLECTIONS;\nSELECT * FROM docs LIMIT 50;',
+    description: 'Inspect Qdrant collections and browse points with payload & vectors.',
+  },
+  {
+    label: 'Filter by Point ID or Payload',
+    code: "SELECT * FROM docs WHERE id = 1;\nSELECT * FROM docs WHERE category = 'ai' AND views >= 10;",
+    description: 'Filter points using has_id, equality, range, IN, or raw Qdrant filter JSON.',
+  },
+  {
+    label: 'Vector Similarity Search (REST)',
+    code: 'POST /collections/docs/points/search\n{\n  "vector": [0.1, 0.2, 0.3],\n  "limit": 10,\n  "with_payload": true\n}',
+    description: 'Run nearest-neighbor vector similarity search via Qdrant HTTP REST API.',
+  },
+  {
+    label: 'Create Payload Index',
+    code: 'PUT /collections/docs/index?wait=true\n{\n  "field_name": "category",\n  "field_schema": "keyword"\n}',
+    description: 'Create a payload index to enable fast filtering and server-side sorting.',
+  },
+];
+
 const SQL_SNIPPETS: SnippetItem[] = [
   {
     label: 'Dynamic Named Parameters',
@@ -272,6 +295,16 @@ const SEARCHABLE_TOPICS: SearchableTopic[] = [
     summary:
       'Switch between logical databases db0–db15, inspect keys by type & TTL, manage keys via modals, and run Redis CLI commands or pseudo-SQL.',
     snippets: REDIS_SNIPPETS,
+  },
+  {
+    id: 'db-qdrant',
+    tab: 'databases',
+    tabLabel: 'Database Engines',
+    title: 'Qdrant Vector Database Guide',
+    keywords: ['qdrant', 'vector', 'embedding', 'similarity', 'hnsw', 'payload', 'index', 'snapshot'],
+    summary:
+      'Create single/named vector collections with quantization & HNSW tuning, browse/edit points, run similarity searches (raw vector or OpenAI/Gemini/Ollama text embeddings), and manage payload indexes & snapshots.',
+    snippets: QDRANT_SNIPPETS,
   },
   {
     id: 'ed-features',
@@ -891,6 +924,31 @@ export const HelpModal: React.FC = () => {
                       </p>
                       <div className="grid grid-cols-1 gap-2.5">
                         {REDIS_SNIPPETS.map((s, idx) => (
+                          <SnippetBlock
+                            key={idx}
+                            item={s}
+                            canInsert={canInsertToConsole}
+                            onInsert={handleInsertToConsole}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Qdrant Guide */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <DbDriverIcon driver="qdrant" className="h-4 w-4" />
+                        <h4 className="text-xs font-semibold text-zinc-100 uppercase tracking-wider">
+                          Qdrant Vector Database Guide
+                        </h4>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 leading-relaxed">
+                        Browse collections, run <strong>Vector Search</strong> (raw array or text-to-embedding),
+                        visualize 2D/3D PCA projections, manage <strong>Payload Indexes</strong> and{' '}
+                        <strong>Snapshots</strong>, or execute pseudo-SQL and Qdrant REST API commands.
+                      </p>
+                      <div className="grid grid-cols-1 gap-2.5">
+                        {QDRANT_SNIPPETS.map((s, idx) => (
                           <SnippetBlock
                             key={idx}
                             item={s}

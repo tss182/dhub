@@ -1851,17 +1851,22 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               const drv = (connection?.driver || 'sql').toLowerCase();
               const isMongo = drv === 'mongodb';
               const isRedis = drv === 'redis';
+              const isQdrant = drv === 'qdrant';
 
               const title = isMongo
                 ? 'MongoDB Query Cheat-Sheet'
                 : isRedis
                 ? 'Redis Command Cheat-Sheet'
+                : isQdrant
+                ? 'Qdrant Vector & REST Cheat-Sheet'
                 : 'SQL Worksheet Tips & Syntax';
 
               const subtitle = isMongo
                 ? 'Click an example to insert it into the console'
                 : isRedis
                 ? 'Click a Redis CLI or pseudo-SQL example to insert'
+                : isQdrant
+                ? 'Click a Qdrant pseudo-SQL or REST API command to insert'
                 : 'Dynamic parameters (:param, $1, ?), FK joins & formatting';
 
               const examples = isMongo
@@ -1881,6 +1886,24 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                     { label: 'Read Hash Fields', code: 'HGETALL myhash' },
                     { label: 'Read Sorted Set', code: 'ZRANGE myzset 0 -1 WITHSCORES' },
                     { label: 'Server Info', code: 'INFO' },
+                  ]
+                : isQdrant
+                ? [
+                    { label: 'List Collections', code: 'SHOW COLLECTIONS;' },
+                    { label: 'Browse Points (Pseudo-SQL)', code: 'SELECT * FROM collection_name LIMIT 50;' },
+                    { label: 'Filter by Point ID or Payload', code: "SELECT * FROM collection_name WHERE id = 1;" },
+                    {
+                      label: 'Vector Similarity Search',
+                      code: 'POST /collections/collection_name/points/search\n{\n  "vector": [0.1, 0.2, 0.3],\n  "limit": 10,\n  "with_payload": true\n}',
+                    },
+                    {
+                      label: 'Universal Query API',
+                      code: 'POST /collections/collection_name/points/query\n{\n  "query": [0.1, 0.2, 0.3],\n  "limit": 10,\n  "with_payload": true\n}',
+                    },
+                    {
+                      label: 'Create Payload Index',
+                      code: 'PUT /collections/collection_name/index?wait=true\n{\n  "field_name": "category",\n  "field_schema": "keyword"\n}',
+                    },
                   ]
                 : [
                     { label: 'Named Parameter (:param)', code: 'SELECT * FROM table_name WHERE id = :id;' },
@@ -1902,7 +1925,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                     <div className="text-[10px] text-zinc-400 mt-0.5">{subtitle}</div>
                   </div>
 
-                  {!isMongo && !isRedis && (
+                  {!isMongo && !isRedis && !isQdrant && (
                     <ul className="mb-2.5 space-y-1 text-[10px] text-zinc-400 bg-[#14151a] border border-[#272932] rounded p-2">
                       <li>• <strong className="text-zinc-200">FK Join Autocomplete:</strong> Type <code>JOIN </code> after a table to get foreign-key <code>ON</code> hints.</li>
                       <li>• <strong className="text-zinc-200">Transactions:</strong> Click <code>Tx: AUTO</code> to toggle manual Commit/Rollback.</li>

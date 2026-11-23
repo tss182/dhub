@@ -8,12 +8,20 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 
 type DistanceMetric = 'Cosine' | 'Euclid' | 'Dot' | 'Manhattan';
 type VectorConfigType = 'single' | 'named';
+type QuantizationType = 'none' | 'scalar' | 'binary' | 'product';
+type PayloadSchemaType = 'keyword' | 'integer' | 'float' | 'bool' | 'datetime' | 'text' | 'geo';
 
 interface NamedVectorItem {
   id: string;
   name: string;
   size: string;
   distance: DistanceMetric;
+}
+
+interface InitialPayloadIndex {
+  id: string;
+  field: string;
+  schema: PayloadSchemaType;
 }
 
 interface QdrantCreateCollectionModalProps {
@@ -25,6 +33,7 @@ interface QdrantCreateCollectionModalProps {
 }
 
 const DISTANCE_METRICS: DistanceMetric[] = ['Cosine', 'Euclid', 'Dot', 'Manhattan'];
+const PAYLOAD_SCHEMA_TYPES: PayloadSchemaType[] = ['keyword', 'integer', 'float', 'bool', 'datetime', 'text', 'geo'];
 
 export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalProps> = ({
   isOpen,
@@ -47,6 +56,15 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
   const [hnswFullScanThreshold, setHnswFullScanThreshold] = useState('');
   const [hnswOnDisk, setHnswOnDisk] = useState(false);
 
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [onDiskPayload, setOnDiskPayload] = useState(false);
+  const [shardNumber, setShardNumber] = useState('');
+  const [replicationFactor, setReplicationFactor] = useState('');
+  const [quantType, setQuantType] = useState<QuantizationType>('none');
+  const [quantAlwaysRam, setQuantAlwaysRam] = useState(true);
+  const [productCompression, setProductCompression] = useState<'x4' | 'x8' | 'x16' | 'x32' | 'x64'>('x16');
+  const [initialIndexes, setInitialIndexes] = useState<InitialPayloadIndex[]>([]);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -61,6 +79,14 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
     setHnswEfConstruct('');
     setHnswFullScanThreshold('');
     setHnswOnDisk(false);
+    setShowAdvanced(false);
+    setOnDiskPayload(false);
+    setShardNumber('');
+    setReplicationFactor('');
+    setQuantType('none');
+    setQuantAlwaysRam(true);
+    setProductCompression('x16');
+    setInitialIndexes([]);
     setIsSubmitting(false);
   }, [isOpen]);
 
@@ -116,6 +142,23 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
       body.hnsw_config = hnswConfig;
     }
 
+    if (onDiskPayload) {
+      body.on_disk_payload = true;
+    }
+    if (shardNumber.trim() !== '' && Number.isFinite(Number(shardNumber)) && Number(shardNumber) > 0) {
+      body.shard_number = Math.floor(Number(shardNumber));
+    }
+    if (replicationFactor.trim() !== '' && Number.isFinite(Number(replicationFactor)) && Number(replicationFactor) > 0) {
+      body.replication_factor = Math.floor(Number(replicationFactor));
+    }
+    if (quantType === 'scalar') {
+      body.quantization_config = { scalar: { type: 'int8', always_ram: quantAlwaysRam } };
+    } else if (quantType === 'binary') {
+      body.quantization_config = { binary: { always_ram: quantAlwaysRam } };
+    } else if (quantType === 'product') {
+      body.quantization_config = { product: { compression: productCompression, always_ram: quantAlwaysRam } };
+    }
+
     return `PUT /collections/${encodeURIComponent(cleanName)}\n${JSON.stringify(body, null, 2)}`;
   }, [
     collectionName,
@@ -127,6 +170,12 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
     hnswEfConstruct,
     hnswFullScanThreshold,
     hnswOnDisk,
+    onDiskPayload,
+    shardNumber,
+    replicationFactor,
+    quantType,
+    quantAlwaysRam,
+    productCompression,
   ]);
 
   if (!isOpen) return null;
@@ -180,6 +229,24 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
         limit: 10,
         offset: 0,
       } as any);
+
+      for (const idx of initialIndexes) {
+        const field = idx.field.trim();
+        if (!field) continue;
+        const idxCmd = `PUT /collections/${encodeURIComponent(cleanName)}/index?wait=true\n${JSON.stringify({
+          field_name: field,
+          field_schema: idx.schema,
+        })}`;
+        await QueryService.ExecuteQuery({
+          executionId: `qdrant-init-idx-${Date.now()}`,
+          connectionId: connection.id,
+          database: database || connection.databaseName || 'default',
+          schema: database || connection.databaseName || 'default',
+          sql: idxCmd,
+          limit: 10,
+          offset: 0,
+        } as any);
+      }
 
       const dbName = database || connection.databaseName || 'default';
       const schemaKey = `${connection.id}:${dbName}:${dbName}`;
@@ -508,6 +575,165 @@ export const QdrantCreateCollectionModal: React.FC<QdrantCreateCollectionModalPr
                   />
                   <span>Store HNSW index on disk (on_disk)</span>
                 </label>
+              </div>
+            )}
+          </section>
+
+          {/* Quantization, Sharding & Initial Payload Indexes */}
+          <section className="border-t border-[#272934] pt-3">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200 hover:text-white cursor-pointer"
+            >
+              {showAdvanced ? (
+                <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
+              )}
+              <span>Quantization, Sharding &amp; Payload Indexes</span>
+            </button>
+            <p className="text-[11px] text-zinc-500 ml-5 mt-0.5">
+              Optional vector quantization, shard topology, and initial payload indexes
+            </p>
+
+            {showAdvanced && (
+              <div className="mt-3 ml-5 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">Quantization</label>
+                    <select
+                      value={quantType}
+                      onChange={(e) => setQuantType(e.target.value as QuantizationType)}
+                      className="w-full rounded border border-[#2f3240] bg-[#121318] px-2.5 py-1.5 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="none">None</option>
+                      <option value="scalar">Scalar (int8)</option>
+                      <option value="binary">Binary (1-bit)</option>
+                      <option value="product">Product (PQ)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">Shard Number</label>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="1"
+                      value={shardNumber}
+                      onChange={(e) => setShardNumber(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#121318] px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-zinc-400 mb-1">Replication Factor</label>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="1"
+                      value={replicationFactor}
+                      onChange={(e) => setReplicationFactor(e.target.value)}
+                      className="w-full rounded border border-[#2f3240] bg-[#121318] px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {quantType !== 'none' && (
+                  <div className="flex flex-wrap items-center gap-4">
+                    {quantType === 'product' && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-zinc-400">Compression:</span>
+                        <select
+                          value={productCompression}
+                          onChange={(e) => setProductCompression(e.target.value as any)}
+                          className="rounded border border-[#2f3240] bg-[#121318] px-2 py-1 text-xs text-zinc-100"
+                        >
+                          {(['x4', 'x8', 'x16', 'x32', 'x64'] as const).map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <label className="inline-flex items-center gap-2 text-[11px] text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={quantAlwaysRam}
+                        onChange={(e) => setQuantAlwaysRam(e.target.checked)}
+                        className="rounded border-zinc-600 bg-[#121318]"
+                      />
+                      <span>Keep quantized vectors in RAM (always_ram)</span>
+                    </label>
+                  </div>
+                )}
+
+                <label className="inline-flex items-center gap-2 text-[11px] text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={onDiskPayload}
+                    onChange={(e) => setOnDiskPayload(e.target.checked)}
+                    className="rounded border-zinc-600 bg-[#121318]"
+                  />
+                  <span>Store payload on disk (on_disk_payload)</span>
+                </label>
+
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-zinc-300">Initial Payload Indexes</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInitialIndexes((prev) => [
+                          ...prev,
+                          { id: `idx-${Date.now()}`, field: '', schema: 'keyword' },
+                        ])
+                      }
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#232632] hover:bg-[#2d3140] text-zinc-200 border border-[#343848] text-[11px] cursor-pointer"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>Add Index</span>
+                    </button>
+                  </div>
+                  {initialIndexes.map((idx) => (
+                    <div key={idx.id} className="grid grid-cols-12 gap-2 items-center">
+                      <input
+                        type="text"
+                        value={idx.field}
+                        onChange={(e) =>
+                          setInitialIndexes((prev) =>
+                            prev.map((item) => (item.id === idx.id ? { ...item, field: e.target.value } : item))
+                          )
+                        }
+                        placeholder="Field name (e.g. category)"
+                        className="col-span-7 rounded border border-[#2f3240] bg-[#101116] px-2 py-1 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                      />
+                      <select
+                        value={idx.schema}
+                        onChange={(e) =>
+                          setInitialIndexes((prev) =>
+                            prev.map((item) =>
+                              item.id === idx.id ? { ...item, schema: e.target.value as PayloadSchemaType } : item
+                            )
+                          )
+                        }
+                        className="col-span-4 rounded border border-[#2f3240] bg-[#101116] px-2 py-1 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                      >
+                        {PAYLOAD_SCHEMA_TYPES.map((st) => (
+                          <option key={st} value={st}>
+                            {st}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setInitialIndexes((prev) => prev.filter((item) => item.id !== idx.id))}
+                        className="col-span-1 flex items-center justify-center p-1 text-zinc-500 hover:text-rose-400 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </section>

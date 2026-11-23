@@ -2969,24 +2969,22 @@ export function App() {
                         const isQdrantTab = effectiveTabDriver === 'qdrant';
                         return (
                         <>
-                          {!isQdrantTab && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                                openEditTableModal(
-                                  conn,
-                                  activeTab.database || 'main',
-                                  activeTab.schema || 'main',
-                                  activeTab.table
-                                );
-                              }}
-                              className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
-                              title="Edit Table Structure"
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
+                              openEditTableModal(
+                                conn,
+                                activeTab.database || 'main',
+                                activeTab.schema || 'main',
+                                activeTab.table
+                              );
+                            }}
+                            className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer shrink-0"
+                            title={isQdrantTab ? 'Manage Collection, Indexes & Snapshots' : 'Edit Table Structure'}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
                           <button
                             type="button"
                             onClick={() => {

@@ -37,6 +37,7 @@ import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertSto
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { QdrantCreateCollectionModal } from './QdrantCreateCollectionModal';
+import { QdrantCollectionModal } from './QdrantCollectionModal';
 
 export interface ColumnDefinition {
   id: string;
@@ -2512,6 +2513,19 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         connection={connection}
         database={database}
         onCollectionCreated={onTableCreated}
+      />
+    );
+  }
+
+  if (driver === 'qdrant' && isEditMode) {
+    return (
+      <QdrantCollectionModal
+        isOpen={isOpen}
+        onClose={onClose}
+        connection={connection}
+        database={database}
+        collectionName={initialTableName || ''}
+        onUpdated={() => onTableCreated?.(initialTableName || '')}
       />
     );
   }
