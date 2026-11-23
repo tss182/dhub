@@ -3077,7 +3077,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                 handleOpenCreateTable(c, dbName, targetSchema);
                               }}
                               className="p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-colors cursor-pointer"
-                              title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
+                              title={
+                                c.driver === 'mongodb' || c.driver === 'qdrant'
+                                  ? `Create New Collection in "${dbName}"`
+                                  : `Create New Table in "${dbName}"`
+                              }
                             >
                               <Plus className="h-3 w-3" />
                             </button>
@@ -4000,17 +4004,32 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                         </button>
                                       )}
                                       {c.driver === 'redis' || c.driver === 'qdrant' || c.driver === 'elasticsearch' ? (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleRefreshDatabase(c.id, dbName);
-                                          }}
-                                          className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                          title={`Refresh ${c.driver === 'redis' ? 'keys' : c.driver === 'qdrant' ? 'collections' : 'indices'} in "${dbName}"`}
-                                        >
-                                          <RefreshCw className="h-2.5 w-2.5" />
-                                        </button>
+                                        <div className="flex items-center gap-0.5">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleRefreshDatabase(c.id, dbName);
+                                            }}
+                                            className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                            title={`Refresh ${c.driver === 'redis' ? 'keys' : c.driver === 'qdrant' ? 'collections' : 'indices'} in "${dbName}"`}
+                                          >
+                                            <RefreshCw className="h-2.5 w-2.5" />
+                                          </button>
+                                          {c.driver === 'qdrant' && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenCreateTable(c, dbName, targetSchema);
+                                              }}
+                                              className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
+                                              title={`Create New Collection in "${dbName}"`}
+                                            >
+                                              <Plus className="h-2.5 w-2.5" />
+                                            </button>
+                                          )}
+                                        </div>
                                       ) : (
                                         <button
                                           type="button"
@@ -4019,7 +4038,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             handleOpenCreateTable(c, dbName, targetSchema);
                                           }}
                                           className="opacity-0 group-hover/tbl:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white hover:bg-[#2c303c] transition-opacity cursor-pointer"
-                                          title={c.driver === 'mongodb' ? `Create New Collection in "${dbName}"` : `Create New Table in "${dbName}"`}
+                                          title={
+                                c.driver === 'mongodb'
+                                  ? `Create New Collection in "${dbName}"`
+                                  : `Create New Table in "${dbName}"`
+                              }
                                         >
                                           <Plus className="h-2.5 w-2.5" />
                                         </button>
@@ -5121,7 +5144,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
                 >
                   <Plus className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                  <span>New Table...</span>
+                  <span>
+                    {contextMenu.connection.driver === 'mongodb' || contextMenu.connection.driver === 'qdrant'
+                      ? 'New Collection...'
+                      : 'New Table...'}
+                  </span>
                 </button>
               )}
 

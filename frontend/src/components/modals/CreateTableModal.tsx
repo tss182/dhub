@@ -36,6 +36,7 @@ import { QueryService, SchemaService } from '../../../bindings/dhub/internal/ser
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
+import { QdrantCreateCollectionModal } from './QdrantCreateCollectionModal';
 
 export interface ColumnDefinition {
   id: string;
@@ -2502,6 +2503,18 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   }, [connection, database, targetSchema, isOpen]);
 
   if (!isOpen) return null;
+
+  if (driver === 'qdrant' && !isEditMode) {
+    return (
+      <QdrantCreateCollectionModal
+        isOpen={isOpen}
+        onClose={onClose}
+        connection={connection}
+        database={database}
+        onCollectionCreated={onTableCreated}
+      />
+    );
+  }
 
   const pkCols = columns.filter((c) => c.isPrimaryKey && c.name.trim());
   const activeCol =
