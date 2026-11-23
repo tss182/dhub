@@ -5097,26 +5097,6 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
           {/* Database Menu Items */}
           {contextMenu.type === 'database' && contextMenu.connection && contextMenu.database && (
             <>
-              {contextMenu.connection.driver?.toLowerCase() === 'qdrant' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const connId = contextMenu.connection!.id;
-                    const connName = contextMenu.connection!.name;
-                    closeContextMenu();
-                    setQdrantInfoModal({
-                      isOpen: true,
-                      connectionId: connId,
-                      connectionName: connName,
-                    });
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
-                >
-                  <Activity className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
-                  <span>Server &amp; Cluster Info...</span>
-                </button>
-              )}
-
               {contextMenu.connection.driver?.toLowerCase() === 'redis' && (
                 <>
                   <button

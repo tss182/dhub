@@ -4,6 +4,7 @@ import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, X, ArrowRight, Ta
 import * as ExportService from '../../../bindings/dhub/internal/services/exportservice';
 import * as SchemaService from '../../../bindings/dhub/internal/services/schemaservice';
 import { ImportRequest, ColumnMapping } from '../../../bindings/dhub/internal/services/models';
+import { useConnectionStore } from '../../stores/useConnectionStore';
 
 export interface ImportModalProps {
   isOpen: boolean;
@@ -33,6 +34,10 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [previewRows, setPreviewRows] = useState<string[][]>([]);
   const [tableColumns, setTableColumns] = useState<string[]>([]);
   const [mappings, setMappings] = useState<Record<string, string>>({}); // fileCol -> tableCol
+
+  const connections = useConnectionStore((s) => s.connections);
+  const activeDriver = connections.find((c) => c.id === connectionId)?.driver || '';
+  const isSchemaless = activeDriver === 'qdrant' || activeDriver === 'mongodb' || activeDriver === 'elasticsearch';
 
   const [loading, setLoading] = useState<boolean>(false);
   const [importing, setImporting] = useState<boolean>(false);
@@ -90,7 +95,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         setPreviewColumns(cols);
         setPreviewRows(safeRows);
 
-        // Auto map matching column names (case-insensitive)
+        // Auto map matching column names (case-insensitive); for schemaless engines, auto-map new payload fields 1:1
         const initialMap: Record<string, string> = {};
         cols.forEach((fCol) => {
           const matched = tableColumns.find(
@@ -99,7 +104,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           if (matched) {
             initialMap[fCol] = matched;
           } else {
-            initialMap[fCol] = '';
+            initialMap[fCol] = isSchemaless ? fCol : '';
           }
         });
         setMappings(initialMap);
@@ -128,14 +133,20 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         throw new Error('Please map at least one file column to a table column.');
       }
 
-      const isJson = filePath.trim().toLowerCase().endsWith('.json');
+      const lowerPath = filePath.trim().toLowerCase();
+      const fmt =
+        lowerPath.endsWith('.jsonl') || lowerPath.endsWith('.ndjson')
+          ? 'jsonl'
+          : lowerPath.endsWith('.json')
+          ? 'json'
+          : 'csv';
       const req: ImportRequest = {
         connectionId,
         database,
         schema,
         table,
         filePath: filePath.trim(),
-        format: isJson ? 'json' : 'csv',
+        format: fmt,
         delimiter,
         hasHeader,
         mappings: mappingList,
@@ -209,11 +220,18 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 </div>
               </div>
 
-              {filePath.trim().toLowerCase().endsWith('.json') ? (
+              {(() => {
+                const lp = filePath.trim().toLowerCase();
+                return lp.endsWith('.json') || lp.endsWith('.jsonl') || lp.endsWith('.ndjson');
+              })() ? (
                 <div className="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-blue-400">
                   <FileText className="h-4 w-4 shrink-0" />
                   <div>
-                    <span className="font-semibold">JSON Format Detected</span>
+                    <span className="font-semibold">
+                      {filePath.trim().toLowerCase().endsWith('.jsonl') || filePath.trim().toLowerCase().endsWith('.ndjson')
+                        ? 'JSONL Format Detected'
+                        : 'JSON Format Detected'}
+                    </span>
                     <p className="text-[11px] opacity-80 mt-0.5">
                       Column keys will be automatically extracted from the JSON object fields.
                     </p>
@@ -288,6 +306,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                             className="w-full rounded border border-[#272932] bg-[#191a20] px-2 py-1 text-zinc-200 outline-none focus:border-blue-500"
                           >
                             <option value="">[ Do not import / Skip ]</option>
+                            {isSchemaless && !tableColumns.some((tCol) => tCol.toLowerCase() === fCol.toLowerCase()) && (
+                              <option value={fCol}>+ New field: {fCol}</option>
+                            )}
                             {tableColumns.map((tCol) => (
                               <option key={tCol} value={tCol}>
                                 {tCol}

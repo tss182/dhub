@@ -10,9 +10,12 @@ import {
   AlertCircle,
   Loader2,
   ScatterChart,
+  Terminal,
+  Check,
 } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
+import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 
 export type VectorDistanceMetric = 'cosine' | 'l2' | 'ip';
 
@@ -94,28 +97,145 @@ function parseVectorText(raw: string): number[] | null {
   return null;
 }
 
+function splitTopLevelKw(input: string, kw: string): string[] {
+  const parts: string[] = [];
+  let buf = '';
+  let inSingle = false;
+  let inDouble = false;
+  let depth = 0;
+  const upperKw = kw.toUpperCase();
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      buf += ch;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      buf += ch;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      if (ch === '(') depth++;
+      else if (ch === ')' && depth > 0) depth--;
+      else if (depth === 0 && i + upperKw.length <= input.length) {
+        const prevSpace = i > 0 && /[\s)]/.test(input[i - 1]);
+        const nextIdx = i + upperKw.length;
+        const nextSpace = nextIdx < input.length && /[\s(]/.test(input[nextIdx]);
+        if (prevSpace && nextSpace && input.slice(i, nextIdx).toUpperCase() === upperKw) {
+          if (buf.trim()) parts.push(buf.trim());
+          buf = '';
+          i = nextIdx - 1;
+          continue;
+        }
+      }
+    }
+    buf += ch;
+  }
+  if (buf.trim()) parts.push(buf.trim());
+  return parts;
+}
+
+function parseQdrantScalar(rawVal: string): any {
+  const t = rawVal.trim();
+  if ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"'))) {
+    return t.slice(1, -1);
+  }
+  if (/^true$/i.test(t)) return true;
+  if (/^false$/i.test(t)) return false;
+  if (t !== '' && !Number.isNaN(Number(t))) return Number(t);
+  return t;
+}
+
 function parseSimpleQdrantFilter(raw: string): Record<string, any> | null {
-  const trimmed = raw.trim();
+  let trimmed = raw.trim();
   if (!trimmed) return null;
-  const parts = trimmed.split(/\s+AND\s+/i);
+  if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
+    const inner = trimmed.slice(1, -1).trim();
+    if (inner) trimmed = inner;
+  }
+
+  const orBranches = splitTopLevelKw(trimmed, 'OR');
+  if (orBranches.length > 1) {
+    const should = orBranches
+      .map((br) => parseSimpleQdrantFilter(br))
+      .filter((f): f is Record<string, any> => f !== null);
+    return should.length > 0 ? { should } : null;
+  }
+
+  const protectedBetween = trimmed.replace(
+    /(\b(?:NOT\s+)?BETWEEN\s+(?:'[^']*'|"[^"]*"|\S+))\s+AND\s+('[^']*'|"[^"]*"|\S+)/gi,
+    '$1 \x00 $2'
+  );
+  const parts = splitTopLevelKw(protectedBetween, 'AND');
   const must: any[] = [];
   const mustNot: any[] = [];
-  for (const part of parts) {
-    const m = part.trim().match(/^([a-zA-Z0-9_."`]+)\s*(!=|<>|>=|<=|=|>|<)\s*(.+)$/);
-    if (!m) continue;
+
+  for (let part of parts) {
+    part = part.trim();
+    if (!part) continue;
+    if (part.startsWith('(') && part.endsWith(')')) {
+      const inner = part.slice(1, -1).trim();
+      if (inner && (splitTopLevelKw(inner, 'OR').length > 1 || splitTopLevelKw(inner, 'AND').length > 1)) {
+        const sub = parseSimpleQdrantFilter(inner.replace(/\x00/g, 'AND'));
+        if (sub) must.push(sub);
+        continue;
+      }
+      if (inner) part = inner;
+    }
+
+    const nullMatch = part.match(/^([a-zA-Z0-9_."`]+)\s+IS\s+(NOT\s+)?NULL$/i);
+    if (nullMatch) {
+      const key = nullMatch[1].replace(/^["`]|["`]$/g, '');
+      const cond = { is_null: { key } };
+      if (nullMatch[2]) mustNot.push(cond);
+      else must.push(cond);
+      continue;
+    }
+
+    const btwMatch = part.match(/^([a-zA-Z0-9_."`]+)\s+(NOT\s+)?BETWEEN\s+(.+?)\s*\x00\s*(.+)$/i);
+    if (btwMatch) {
+      const key = btwMatch[1].replace(/^["`]|["`]$/g, '');
+      const cond = { key, range: { gte: parseQdrantScalar(btwMatch[3]), lte: parseQdrantScalar(btwMatch[4]) } };
+      if (btwMatch[2]) mustNot.push(cond);
+      else must.push(cond);
+      continue;
+    }
+
+    const likeMatch = part.match(/^([a-zA-Z0-9_."`]+)\s+(NOT\s+)?(I?LIKE|CONTAINS)\s+(.+)$/i);
+    if (likeMatch) {
+      const key = likeMatch[1].replace(/^["`]|["`]$/g, '');
+      const text = String(parseQdrantScalar(likeMatch[4])).replace(/^[%*]+|[%*]+$/g, '');
+      const cond = { key, match: { text } };
+      if (likeMatch[2]) mustNot.push(cond);
+      else must.push(cond);
+      continue;
+    }
+
+    const inMatch = part.match(/^([a-zA-Z0-9_."`]+)\s+(NOT\s+)?IN\s*\((.+)\)$/i);
+    if (inMatch) {
+      const key = inMatch[1].replace(/^["`]|["`]$/g, '');
+      const vals = inMatch[3]
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => {
+          const v = parseQdrantScalar(s);
+          return key.toLowerCase() === 'id' && typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+        });
+      if (vals.length === 0) return null;
+      const cond = key.toLowerCase() === 'id' ? { has_id: vals } : { key, match: { any: vals } };
+      if (inMatch[2]) mustNot.push(cond);
+      else must.push(cond);
+      continue;
+    }
+
+    const m = part.match(/^([a-zA-Z0-9_."`]+)\s*(!=|<>|>=|<=|=|>|<)\s*(.+)$/);
+    if (!m) return null;
     const key = m[1].replace(/^["`]|["`]$/g, '');
     const op = m[2];
-    const rawVal = m[3].trim();
-    let val: any = rawVal;
-    if ((rawVal.startsWith("'") && rawVal.endsWith("'")) || (rawVal.startsWith('"') && rawVal.endsWith('"'))) {
-      val = rawVal.slice(1, -1);
-    } else if (/^true$/i.test(rawVal)) {
-      val = true;
-    } else if (/^false$/i.test(rawVal)) {
-      val = false;
-    } else if (!Number.isNaN(Number(rawVal))) {
-      val = Number(rawVal);
-    }
+    const val = parseQdrantScalar(m[3]);
 
     if (key.toLowerCase() === 'id') {
       const idVal = typeof val === 'string' && /^\d+$/.test(val) ? Number(val) : val;
@@ -197,6 +317,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const [embedError, setEmbedError] = useState<string | null>(null);
   const [embedTestMsg, setEmbedTestMsg] = useState<string | null>(null);
   const [isEmbedding, setIsEmbedding] = useState(false);
+  const [copiedRest, setCopiedRest] = useState(false);
 
   const activeVectorCol = useMemo(() => {
     if (selectedCol && vectorColumns.some((c) => c.name === selectedCol)) {
@@ -222,6 +343,27 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     for (const row of rows) {
       const val = row?.[colIdx];
       if (val === null || val === undefined) continue;
+      if (typeof val === 'object' && !Array.isArray(val) && Array.isArray((val as any).indices)) {
+        setSparseCol(activeVectorCol.replace(/^vector\./, ''));
+        setSparseIndices(((val as any).indices || []).join(', '));
+        setSparseValues(((val as any).values || []).join(', '));
+        if (driver === 'qdrant') setQdrantMode('hybrid');
+        setEmbedError(null);
+        return;
+      }
+      if (typeof val === 'string' && val.trim().startsWith('{')) {
+        try {
+          const parsed = JSON.parse(val);
+          if (parsed && Array.isArray(parsed.indices) && Array.isArray(parsed.values)) {
+            setSparseCol(activeVectorCol.replace(/^vector\./, ''));
+            setSparseIndices(parsed.indices.join(', '));
+            setSparseValues(parsed.values.join(', '));
+            if (driver === 'qdrant') setQdrantMode('hybrid');
+            setEmbedError(null);
+            return;
+          }
+        } catch {}
+      }
       if (Array.isArray(val)) {
         setVectorText(JSON.stringify(val));
         setInputMode('vector');
@@ -568,6 +710,42 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {isVectorSearchActive && searchStats?.querySql && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(searchStats.querySql);
+                  setCopiedRest(true);
+                  setTimeout(() => setCopiedRest(false), 1800);
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#1e2028] hover:bg-[#272a35] text-zinc-300 border border-[#2d303c] text-[11px] cursor-pointer"
+                title="Copy generated search query"
+              >
+                {copiedRest ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                <span>{copiedRest ? 'Copied!' : driver === 'qdrant' ? 'Copy REST' : 'Copy SQL'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const wb = useWorkbenchStore.getState();
+                  const activeTab = wb.tabs.find((t) => t.id === wb.activeTabId);
+                  wb.createConsole(
+                    activeTab?.connectionId || '',
+                    activeTab?.database || '',
+                    activeTab?.schema || '',
+                    `search_${tableName || 'vector'}.${driver === 'qdrant' ? 'qdrant' : 'sql'}`,
+                    searchStats.querySql
+                  );
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#1e2028] hover:bg-[#272a35] text-zinc-300 border border-[#2d303c] text-[11px] cursor-pointer"
+                title="Open generated query in Console tab"
+              >
+                <Terminal className="h-3 w-3 text-blue-400" />
+                <span>Open in Console</span>
+              </button>
+            </>
+          )}
           {onToggleVisualization && (
             <button
               type="button"

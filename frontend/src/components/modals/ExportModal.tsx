@@ -31,6 +31,16 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [format, setFormat] = useState<'csv' | 'xlsx' | 'json' | 'jsonl' | 'markdown' | 'sql_insert'>(
     isQdrant ? 'jsonl' : 'csv'
   );
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setFormat((prev) => {
+        if (isQdrant && (prev === 'sql_insert' || prev === 'csv')) return 'jsonl';
+        if (!isQdrant && prev === 'jsonl') return 'csv';
+        return prev;
+      });
+    }
+  }, [isOpen, isQdrant]);
   const [delimiter, setDelimiter] = useState<string>(',');
   const [includeHeader, setIncludeHeader] = useState<boolean>(true);
   const [filePath, setFilePath] = useState<string>('');

@@ -214,6 +214,11 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
       }
     }
 
+    if (mode === 'insert' && vectorCols.length > 0 && !hasSingleVector && Object.keys(parsedVectors).length === 0) {
+      setError('Provide at least one vector (or click Random / Embed) when inserting a point.');
+      return;
+    }
+
     const collEsc = encodeURIComponent(collectionName);
     const idVal = parsePointIdValue(pointId);
     setIsSaving(true);
@@ -379,18 +384,59 @@ export const QdrantPointModal: React.FC<QdrantPointModalProps> = ({
               </button>
             </div>
 
-            {Object.entries(vectorInputs).map(([vecCol, val]) => (
-              <div key={vecCol}>
-                <label className="block text-[11px] font-mono text-zinc-400 mb-1">{vecCol}</label>
-                <textarea
-                  rows={2}
-                  value={val}
-                  onChange={(e) => setVectorInputs((prev) => ({ ...prev, [vecCol]: e.target.value }))}
-                  placeholder="[0.012, -0.045, ...]"
-                  className="w-full rounded-lg border border-[#2f3240] bg-[#121318] px-3 py-1.5 font-mono text-[11px] text-zinc-200 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            ))}
+            {Object.entries(vectorInputs).map(([vecCol, val]) => {
+              const colMeta = vectorCols.find((c) => c.name === vecCol);
+              const dt = (colMeta?.dataType || '').toLowerCase();
+              const dimMatch = dt.match(/vector\s*\(\s*(\d+)/);
+              const dims = dimMatch ? Math.max(1, Math.min(4096, Number(dimMatch[1]))) : 4;
+              const handleRandomVec = () => {
+                if (dt === 'sparse_vector' || dt.includes('sparse')) {
+                  const indices = [1, 14, 42, 88];
+                  const values = indices.map(() => Number((Math.random() * 0.9 + 0.1).toFixed(4)));
+                  setVectorInputs((prev) => ({ ...prev, [vecCol]: JSON.stringify({ indices, values }) }));
+                  return;
+                }
+                if (dt.includes('uint8')) {
+                  const arr = Array.from({ length: dims }, () => Math.floor(Math.random() * 256));
+                  setVectorInputs((prev) => ({ ...prev, [vecCol]: JSON.stringify(arr) }));
+                  return;
+                }
+                const genUnit = () => {
+                  const raw = Array.from({ length: dims }, () => Number((Math.random() * 2 - 1).toFixed(4)));
+                  const norm = Math.sqrt(raw.reduce((a, b) => a + b * b, 0)) || 1;
+                  return raw.map((v) => Number((v / norm).toFixed(4)));
+                };
+                const vecVal = dt.includes('multi') ? [genUnit(), genUnit()] : genUnit();
+                setVectorInputs((prev) => ({ ...prev, [vecCol]: JSON.stringify(vecVal) }));
+              };
+
+              return (
+                <div key={vecCol}>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-mono text-zinc-400">
+                      {vecCol}
+                      {colMeta?.dataType && (
+                        <span className="ml-2 text-[10px] text-violet-300/80">({colMeta.dataType})</span>
+                      )}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleRandomVec}
+                      className="text-[10px] px-2 py-0.5 rounded bg-[#232632] hover:bg-[#2d3140] text-zinc-300 border border-[#343848] cursor-pointer"
+                    >
+                      Random Vector
+                    </button>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={val}
+                    onChange={(e) => setVectorInputs((prev) => ({ ...prev, [vecCol]: e.target.value }))}
+                    placeholder="[0.012, -0.045, ...]"
+                    className="w-full rounded-lg border border-[#2f3240] bg-[#121318] px-3 py-1.5 font-mono text-[11px] text-zinc-200 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              );
+            })}
           </div>
 
           {/* Schemaless JSON Payload */}

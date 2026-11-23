@@ -707,15 +707,18 @@ export function App() {
 
     const tableName = tab.table;
     const ok = await confirmDialog({
-      title: 'Truncate Table',
-      message: `Are you sure you want to TRUNCATE table "${tableName}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
+      title: driver === 'qdrant' ? 'Clear All Points' : 'Truncate Table',
+      message:
+        driver === 'qdrant'
+          ? `Are you sure you want to delete all points in collection "${tableName}"? The collection schema and indexes will be preserved. This action cannot be undone.`
+          : `Are you sure you want to TRUNCATE table "${tableName}"? All rows in this table will be permanently deleted and auto-increment sequences may be reset. This action cannot be undone.`,
       connectionContext: buildAlertConnectionContext(conn, {
         database: targetDb,
         schema: targetSchema,
         targetName: tableName,
-        targetLabel: 'Table',
+        targetLabel: driver === 'qdrant' ? 'Collection' : 'Table',
       }),
-      confirmLabel: 'Truncate Table',
+      confirmLabel: driver === 'qdrant' ? 'Clear All Points' : 'Truncate Table',
       isDanger: true,
     });
     if (!ok) return;

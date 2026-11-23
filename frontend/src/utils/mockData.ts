@@ -259,12 +259,26 @@ export function generateMockValue(
       ? crypto.randomUUID()
       : `00000000-0000-4000-8000-${String(rowIdx + 1).padStart(12, '0')}`;
   }
+  if (t === 'sparse_vector' || t.includes('sparse')) {
+    const indices = Array.from({ length: 4 }, (_, i) => (rowIdx * 7 + i * 13 + 1) % 1000);
+    const values = indices.map(() => Number((Math.random() * 0.9 + 0.1).toFixed(4)));
+    return JSON.stringify({ indices, values });
+  }
   if (t.startsWith('vector') || (col.rawType || '').toLowerCase() === 'vector') {
     const dimMatch = t.match(/vector\s*\(\s*(\d+)/);
     const dims = dimMatch ? Math.max(1, Math.min(4096, Number(dimMatch[1]))) : 4;
-    const raw = Array.from({ length: dims }, () => Number((Math.random() * 2 - 1).toFixed(4)));
-    const norm = Math.sqrt(raw.reduce((acc, v) => acc + v * v, 0)) || 1;
-    return JSON.stringify(raw.map((v) => Number((v / norm).toFixed(4))));
+    if (t.includes('uint8')) {
+      return JSON.stringify(Array.from({ length: dims }, () => Math.floor(Math.random() * 256)));
+    }
+    const genNormVec = () => {
+      const raw = Array.from({ length: dims }, () => Number((Math.random() * 2 - 1).toFixed(4)));
+      const norm = Math.sqrt(raw.reduce((acc, v) => acc + v * v, 0)) || 1;
+      return raw.map((v) => Number((v / norm).toFixed(4)));
+    };
+    if (t.includes('multi')) {
+      return JSON.stringify([genNormVec(), genNormVec()]);
+    }
+    return JSON.stringify(genNormVec());
   }
   if (
     t.includes('int') ||
