@@ -629,6 +629,7 @@ func IsQueryReturningRows(sql string) bool {
 		hasLeadingKeyword(upper, "PRAGMA") ||
 		hasLeadingKeyword(upper, "WITH") ||
 		hasLeadingKeyword(upper, "VALUES") ||
+		hasLeadingKeyword(upper, "EXISTS") ||
 		hasLeadingKeyword(upper, "OPTIMIZE") ||
 		hasLeadingKeyword(upper, "CHECK") ||
 		hasLeadingKeyword(upper, "REPAIR") ||
@@ -739,6 +740,7 @@ func IsReadOnlySafeQuery(sql string) bool {
 		hasLeadingKeyword(upper, "PRAGMA") ||
 		hasLeadingKeyword(upper, "WITH") ||
 		hasLeadingKeyword(upper, "VALUES") ||
+		hasLeadingKeyword(upper, "EXISTS") ||
 		hasLeadingKeyword(upper, "CHECK") ||
 		(hasLeadingKeyword(upper, "FROM") && strings.Contains(clean, "|")) ||
 		hasLeadingKeyword(upper, "ROW")
@@ -746,10 +748,19 @@ func IsReadOnlySafeQuery(sql string) bool {
 		return false
 	}
 	sanitizedUpper := strings.ToUpper(stripStringsAndComments(clean))
-	return !containsStandaloneWord(sanitizedUpper,
+	if containsStandaloneWord(sanitizedUpper,
 		"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
 		"TRUNCATE", "REPLACE", "MERGE", "GRANT", "REVOKE",
-	)
+		"SYSTEM", "KILL", "OPTIMIZE", "ATTACH", "DETACH",
+		"EXCHANGE", "RENAME", "BACKUP", "RESTORE", "SET",
+	) {
+		return false
+	}
+	// Block SELECT ... INTO OUTFILE / INTO DUMPFILE
+	if containsStandaloneWord(sanitizedUpper, "OUTFILE") || containsStandaloneWord(sanitizedUpper, "DUMPFILE") {
+		return false
+	}
+	return true
 }
 
 // TruncateSQL shortens a SQL string for display in log messages.

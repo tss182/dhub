@@ -37,6 +37,7 @@ type ConnectionConfig struct {
 	SSHKeyPath   string    `json:"sshKeyPath"`
 	SSHPassword  string    `json:"sshPassword,omitempty"`
 	OptionsJSON  string    `json:"optionsJson"`
+	Protocol     string    `json:"protocol,omitempty"` // e.g. "native" | "http" for ClickHouse
 	SortOrder    int       `json:"sortOrder"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`

@@ -31,6 +31,9 @@ function isSystemDatabase(driver: string, dbName: string): boolean {
       lower.startsWith('pg_')
     );
   }
+  if (driver === 'clickhouse') {
+    return ['system', 'information_schema'].includes(lower);
+  }
   return false;
 }
 

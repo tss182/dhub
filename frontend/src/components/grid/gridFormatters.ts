@@ -16,7 +16,7 @@ export function parseColumnTypeDetails(dataType?: string) {
   return { baseType, size, extra };
 }
 
-export function formatSqlLiteral(val: any, dataType?: string): string {
+export function formatSqlLiteral(val: any, dataType?: string, driver?: string): string {
   if (val === null || val === undefined) return 'NULL';
   const rawType = (dataType || '').toLowerCase();
   const isNum = /int|float|double|decimal|numeric|real|serial|number/.test(rawType);
@@ -26,15 +26,27 @@ export function formatSqlLiteral(val: any, dataType?: string): string {
   if (typeof val === 'boolean') {
     return val ? 'TRUE' : 'FALSE';
   }
-  return `'${String(val).replace(/'/g, "''")}'`;
+  const str = String(val);
+  if ((driver || '').toLowerCase() === 'clickhouse') {
+    return `'${str.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  }
+  return `'${str.replace(/'/g, "''")}'`;
 }
 
 export function getColumnInputType(dataType?: string): 'date' | 'datetime-local' | 'time' | 'text' {
   if (!dataType) return 'text';
-  const { baseType } = parseColumnTypeDetails(dataType);
+  // Unwrap ClickHouse LowCardinality(...) / Nullable(...) wrappers before parsing
+  let unwrapped = dataType.trim();
+  while (
+    (unwrapped.startsWith('LowCardinality(') && unwrapped.endsWith(')')) ||
+    (unwrapped.startsWith('Nullable(') && unwrapped.endsWith(')'))
+  ) {
+    unwrapped = unwrapped.slice(unwrapped.indexOf('(') + 1, -1).trim();
+  }
+  const { baseType } = parseColumnTypeDetails(unwrapped);
   const upper = baseType.toUpperCase();
 
-  if (upper === 'DATE') {
+  if (upper === 'DATE' || upper === 'DATE32') {
     return 'date';
   }
   if (upper.includes('TIMESTAMP') || upper.includes('DATETIME')) {
@@ -501,6 +513,10 @@ export function buildUpdateSql(params: {
     return `POST /${idx}/_update/${encodeURIComponent(String(rawId ?? '1'))}?refresh=wait_for\n${body}`;
   }
 
+  if ((driver || '').toLowerCase() === 'clickhouse') {
+    return `ALTER TABLE ${quotedTbl}\nUPDATE ${quoteIdent(colName)} = ${formattedVal}\nWHERE ${whereClause}\nSETTINGS mutations_sync = 1;`;
+  }
+
   return `UPDATE ${quotedTbl}\nSET ${quoteIdent(colName)} = ${formattedVal}\nWHERE ${whereClause};`;
 }
 
@@ -644,7 +660,11 @@ export function formatSelectedCells(params: {
         whereClause = fallbackConds.join(' AND ');
       }
 
-      statements.push(`UPDATE ${quotedTbl}\nSET ${setClauses.join(', ')}\nWHERE ${whereClause};`);
+      if (d === 'clickhouse') {
+        statements.push(`ALTER TABLE ${quotedTbl}\nUPDATE ${setClauses.join(', ')}\nWHERE ${whereClause}\nSETTINGS mutations_sync = 1;`);
+      } else {
+        statements.push(`UPDATE ${quotedTbl}\nSET ${setClauses.join(', ')}\nWHERE ${whereClause};`);
+      }
     }
     return statements.join('\n\n');
   }
@@ -744,6 +764,9 @@ export function formatSelectedCells(params: {
   }
 
   if (targetFormat === 'sql_upsert') {
+    if (d === 'clickhouse') {
+      return '-- SQL UPSERT (ON DUPLICATE KEY UPDATE) is not supported in ClickHouse.\n-- Use INSERT INTO ... or ReplacingMergeTree instead.';
+    }
     const selectedColsWithIdx: Array<{ col: ColumnMeta; cIdx: number }> = [];
     for (const c of selectedColIndices) {
       if (columns[c]) selectedColsWithIdx.push({ col: columns[c], cIdx: c });

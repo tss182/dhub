@@ -22,14 +22,19 @@ const (
 )
 
 type ColumnMeta struct {
-	Name         string `json:"name"`
-	DataType     string `json:"dataType"`     // e.g. "varchar(255)", "int8", "timestamptz"
-	RawType      string `json:"rawType"`      // basic type for cell editor
-	IsNullable   bool   `json:"isNullable"`
-	IsPrimaryKey bool   `json:"isPrimaryKey"`
-	IsAutoIncr   bool   `json:"isAutoIncrement"`
-	DefaultValue string `json:"defaultValue"`
-	Comment      string `json:"comment"`
+	Name           string `json:"name"`
+	DataType       string `json:"dataType"`     // e.g. "varchar(255)", "int8", "timestamptz"
+	RawType        string `json:"rawType"`      // basic type for cell editor
+	IsNullable     bool   `json:"isNullable"`
+	IsPrimaryKey   bool   `json:"isPrimaryKey"`
+	IsAutoIncr     bool   `json:"isAutoIncrement"`
+	DefaultValue   string `json:"defaultValue"`
+	Comment        string `json:"comment"`
+	DefaultKind    string `json:"defaultKind,omitempty"`    // e.g. "DEFAULT", "MATERIALIZED", "ALIAS", "EPHEMERAL"
+	Codec          string `json:"codec,omitempty"`          // e.g. "CODEC(ZSTD(1))"
+	IsSortingKey   bool   `json:"isSortingKey,omitempty"`
+	IsPartitionKey bool   `json:"isPartitionKey,omitempty"`
+	TTL            string `json:"ttl,omitempty"`
 }
 
 type ForeignKeyMeta struct {
@@ -43,24 +48,30 @@ type ForeignKeyMeta struct {
 }
 
 type IndexMeta struct {
-	Name       string   `json:"name"`
-	Columns    []string `json:"columns"`
-	IsUnique   bool     `json:"isUnique"`
-	IsPrimary  bool     `json:"isPrimary"`
-	Type       string   `json:"type,omitempty"`
-	Method     string   `json:"method,omitempty"`
-	Definition string   `json:"definition,omitempty"`
-	Comment    string   `json:"comment,omitempty"`
+	Name        string   `json:"name"`
+	Columns     []string `json:"columns"`
+	IsUnique    bool     `json:"isUnique"`
+	IsPrimary   bool     `json:"isPrimary"`
+	Type        string   `json:"type,omitempty"`
+	Method      string   `json:"method,omitempty"`
+	Definition  string   `json:"definition,omitempty"`
+	Comment     string   `json:"comment,omitempty"`
+	Expression  string   `json:"expression,omitempty"`
+	Granularity int      `json:"granularity,omitempty"`
 }
 
 type ObjectSummary struct {
-	Schema      string `json:"schema"`
-	Name        string `json:"name"`
-	Type        string `json:"type"` // "table" | "view" | "materialized_view" | "routine" | "trigger" | "sequence" | "extension"
-	RowEstimate int64  `json:"rowEstimate"`
-	SizePretty  string `json:"sizePretty"`
-	Comment     string `json:"comment"`
-	ParentTable string `json:"parentTable,omitempty"`
+	Schema      string  `json:"schema"`
+	Name        string  `json:"name"`
+	Type        string  `json:"type"` // "table" | "view" | "materialized_view" | "dictionary" | "function" | "routine" | "trigger" | "sequence" | "extension"
+	RowEstimate int64   `json:"rowEstimate"`
+	SizePretty  string  `json:"sizePretty"`
+	Comment     string  `json:"comment"`
+	ParentTable string  `json:"parentTable,omitempty"`
+	Engine      string  `json:"engine,omitempty"`
+	TargetTable string  `json:"targetTable,omitempty"`
+	TotalBytes  *uint64 `json:"totalBytes,omitempty"`
+	IsInternal  bool    `json:"isInternal,omitempty"`
 }
 
 type CheckConstraintMeta struct {
@@ -75,19 +86,32 @@ type TriggerMeta struct {
 	Statement string `json:"statement"`
 }
 
+type ProjectionMeta struct {
+	Name  string `json:"name"`
+	Query string `json:"query"`
+}
+
 type TableStructure struct {
-	Schema           string                `json:"schema"`
-	Name             string                `json:"name"`
-	Columns          []ColumnMeta          `json:"columns"`
-	PrimaryKeys      []string              `json:"primaryKeys"`
-	ForeignKeys      []ForeignKeyMeta      `json:"foreignKeys"`
-	Indexes          []IndexMeta           `json:"indexes"`
-	CheckConstraints []CheckConstraintMeta `json:"checkConstraints,omitempty"`
-	Triggers         []TriggerMeta         `json:"triggers,omitempty"`
-	DDL              string                `json:"ddl"`
-	Engine           string                `json:"engine,omitempty"`
-	Collation        string                `json:"collation,omitempty"`
-	Comment          string                `json:"comment,omitempty"`
+	Schema            string                `json:"schema"`
+	Name              string                `json:"name"`
+	Columns           []ColumnMeta          `json:"columns"`
+	PrimaryKeys       []string              `json:"primaryKeys"`
+	ForeignKeys       []ForeignKeyMeta      `json:"foreignKeys"`
+	Indexes           []IndexMeta           `json:"indexes"`
+	CheckConstraints  []CheckConstraintMeta `json:"checkConstraints,omitempty"`
+	Triggers          []TriggerMeta         `json:"triggers,omitempty"`
+	Projections       []ProjectionMeta      `json:"projections,omitempty"`
+	DDL               string                `json:"ddl"`
+	Engine            string                `json:"engine,omitempty"`
+	Collation         string                `json:"collation,omitempty"`
+	Comment           string                `json:"comment,omitempty"`
+	SortingKey        string                `json:"sortingKey,omitempty"`
+	PrimaryKeyExpr    string                `json:"primaryKeyExpr,omitempty"`
+	PartitionKey      string                `json:"partitionKey,omitempty"`
+	SamplingKey       string                `json:"samplingKey,omitempty"`
+	TableTTL          string                `json:"tableTtl,omitempty"`
+	Settings          string                `json:"settings,omitempty"`
+	SupportsMutations bool                  `json:"supportsMutations,omitempty"`
 }
 
 type QueryRequest struct {
@@ -111,19 +135,28 @@ type StatementResult struct {
 	Error        string       `json:"error,omitempty"`
 }
 
+type QueryExecutionStats struct {
+	ReadRows        uint64 `json:"readRows,omitempty"`
+	ReadBytes       uint64 `json:"readBytes,omitempty"`
+	WrittenRows     uint64 `json:"writtenRows,omitempty"`
+	MemoryUsage     uint64 `json:"memoryUsage,omitempty"`
+	TotalRowsToRead uint64 `json:"totalRowsToRead,omitempty"`
+}
+
 type QueryResult struct {
-	ExecutionID  string            `json:"executionId"`
-	Columns      []ColumnMeta      `json:"columns"`
-	Rows         [][]any           `json:"rows"`
-	RowsAffected int64             `json:"rowsAffected"`
-	ElapsedMs    int64             `json:"elapsedMs"`
-	HasMore      bool              `json:"hasMore"`
-	IsEditable   bool              `json:"isEditable"`
-	SourceSchema string            `json:"sourceSchema"`
-	SourceTable  string            `json:"sourceTable"`
-	PrimaryKeys  []string          `json:"primaryKeys"`
-	Error        string            `json:"error,omitempty"`
-	Results      []StatementResult `json:"results,omitempty"`
+	ExecutionID  string               `json:"executionId"`
+	Columns      []ColumnMeta         `json:"columns"`
+	Rows         [][]any              `json:"rows"`
+	RowsAffected int64                `json:"rowsAffected"`
+	ElapsedMs    int64                `json:"elapsedMs"`
+	HasMore      bool                 `json:"hasMore"`
+	IsEditable   bool                 `json:"isEditable"`
+	SourceSchema string               `json:"sourceSchema"`
+	SourceTable  string               `json:"sourceTable"`
+	PrimaryKeys  []string             `json:"primaryKeys"`
+	Error        string               `json:"error,omitempty"`
+	Results      []StatementResult    `json:"results,omitempty"`
+	Stats        *QueryExecutionStats `json:"stats,omitempty"`
 }
 
 type RowChange struct {

@@ -4,6 +4,7 @@ import { AlertTriangle, ShieldAlert, X } from 'lucide-react';
 export interface DangerousQueryModalProps {
   isOpen: boolean;
   sql: string;
+  driver?: string;
   isProduction?: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -12,6 +13,7 @@ export interface DangerousQueryModalProps {
 export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
   isOpen,
   sql,
+  driver,
   isProduction = false,
   onClose,
   onConfirm,
@@ -64,7 +66,10 @@ export const DangerousQueryModal: React.FC<DangerousQueryModalProps> = ({
           ) : (
             <p className="text-zinc-300 leading-relaxed">
               The SQL statement you are about to execute is an <strong className="text-rose-400">UPDATE</strong> or <strong className="text-rose-400">DELETE</strong> without a <code className="bg-[#272932] text-amber-300 px-1 py-0.5 rounded">WHERE</code> clause.
-              This operation will affect <strong>ALL rows</strong> in the target table and cannot be undone unless in an active transaction.
+              This operation will affect <strong>ALL rows</strong> in the target table and{' '}
+              {driver?.toLowerCase() === 'clickhouse'
+                ? 'cannot be rolled back in ClickHouse.'
+                : 'cannot be undone unless in an active transaction.'}
             </p>
           )}
 

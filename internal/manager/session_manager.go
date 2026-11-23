@@ -528,10 +528,32 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 	case "clickhouse":
 		connStr := strings.TrimSpace(cfg.Host)
 		if strings.HasPrefix(connStr, "clickhouse://") || strings.HasPrefix(connStr, "http://") || strings.HasPrefix(connStr, "https://") {
-			return clickhouse.NewClickHouseDriver(connStr)
+			if cfg.SSHEnabled && host != "" && port > 0 {
+				if u, err := url.Parse(connStr); err == nil {
+					origHost := u.Hostname()
+					u.Host = fmt.Sprintf("%s:%d", host, port)
+					if u.Path == "" || u.Path == "/" {
+						if dbName := strings.TrimSpace(cfg.DatabaseName); dbName != "" {
+							u.Path = "/" + dbName
+						}
+					}
+					tlsCfg, _ := buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
+					return clickhouse.NewClickHouseDriverWithTLS(u.String(), tlsCfg)
+				}
+			}
+			tlsCfg, _ := buildHTTPDriverTLSConfig(cfg, connStr, "")
+			return clickhouse.NewClickHouseDriverWithTLS(connStr, tlsCfg)
 		}
 		if port <= 0 {
-			port = 9000
+			if strings.EqualFold(strings.TrimSpace(cfg.Protocol), "http") {
+				if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+					port = 8443
+				} else {
+					port = 8123
+				}
+			} else {
+				port = 9000
+			}
 		}
 		if host == "" {
 			host = "127.0.0.1"
@@ -545,10 +567,18 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			username = "default"
 		}
 
+		// Use original cfg.Port (not tunneled local port) and explicit Protocol for scheme detection.
+		origPort := cfg.Port
 		scheme := "clickhouse"
-		if port == 8123 {
+		if strings.EqualFold(strings.TrimSpace(cfg.Protocol), "http") {
+			if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+				scheme = "https"
+			} else {
+				scheme = "http"
+			}
+		} else if origPort == 8123 {
 			scheme = "http"
-		} else if port == 8443 {
+		} else if origPort == 8443 {
 			scheme = "https"
 		}
 
@@ -563,15 +593,18 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		q := u.Query()
 		q.Set("dial_timeout", "10s")
 
+		var tlsCfg *tls.Config
 		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
 			q.Set("secure", "true")
 			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
 				q.Set("skip_verify", "true")
 			}
+			origHost := strings.TrimSpace(cfg.Host)
+			tlsCfg, _ = buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
 		}
 
 		u.RawQuery = q.Encode()
-		return clickhouse.NewClickHouseDriver(u.String())
+		return clickhouse.NewClickHouseDriverWithTLS(u.String(), tlsCfg)
 	case "oracle":
 		connStr := strings.TrimSpace(cfg.Host)
 		dbName := strings.TrimSpace(cfg.DatabaseName)
@@ -609,7 +642,7 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 	rawHost := strings.TrimSpace(cfg.Host)
 	remoteHost := rawHost
 	remotePort := cfg.Port
-	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") {
+	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") || strings.HasPrefix(rawHost, "clickhouse://") {
 		if u, err := url.Parse(rawHost); err == nil && u.Hostname() != "" {
 			remoteHost = u.Hostname()
 			if pStr := u.Port(); pStr != "" {
@@ -621,12 +654,16 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 					remotePort = 443
 				} else if u.Scheme == "http" {
 					remotePort = 80
+				} else if u.Scheme == "clickhouse" {
+					remotePort = 9000
 				}
 			}
 		}
 	}
 	if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "qdrant") {
 		remotePort = 6333
+	} else if remotePort <= 0 && strings.EqualFold(strings.TrimSpace(cfg.Driver), "clickhouse") {
+		remotePort = 9000
 	} else if remotePort <= 0 && (strings.EqualFold(strings.TrimSpace(cfg.Driver), "elasticsearch") || strings.EqualFold(strings.TrimSpace(cfg.Driver), "es")) {
 		remotePort = 9200
 	}

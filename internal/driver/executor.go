@@ -14,11 +14,15 @@ type QueryExecer interface {
 }
 
 // wrapSelectForPaging wraps a plain SELECT in a derived table with LIMIT/OFFSET so the
-// database applies the offset. It fetches limit+1 rows so the caller can detect "has more".
+// database applies the offset (or LIMIT on page 1 for OLAP engines like ClickHouse).
+// It fetches limit+1 rows so the caller can detect "has more".
 // Returns ok=false for anything that is not a simple SELECT (CTEs, SHOW, EXPLAIN, statements
-// that already contain LIMIT/OFFSET/FETCH, or when no offset is needed).
+// that already contain LIMIT/OFFSET/FETCH/FORMAT/INTO OUTFILE, or when no offset is needed for OLTP).
 func wrapSelectForPaging(stmt string, limit, offset int, dialect string) (string, bool) {
-	if offset <= 0 || limit <= 0 {
+	if limit <= 0 {
+		return "", false
+	}
+	if offset <= 0 && dialect != "clickhouse" {
 		return "", false
 	}
 	trimmed := strings.TrimRight(strings.TrimSpace(stmt), "; \t\r\n")
@@ -26,10 +30,22 @@ func wrapSelectForPaging(stmt string, limit, offset int, dialect string) (string
 	if !strings.HasPrefix(upper, "SELECT") {
 		return "", false
 	}
-	for _, kw := range []string{" LIMIT ", " OFFSET ", " FETCH ", " FOR UPDATE", " INTO ", "--", "/*"} {
+	for _, kw := range []string{" LIMIT ", " OFFSET ", " FETCH ", " FOR UPDATE", " INTO ", " FORMAT ", " WITH TOTALS", "--", "/*"} {
 		if strings.Contains(upper, kw) {
 			return "", false
 		}
+	}
+	if dialect == "clickhouse" {
+		// Preserve trailing SETTINGS ... clause outside the wrapper so ClickHouse parses it cleanly.
+		settingsSuffix := ""
+		if idx := strings.LastIndex(upper, " SETTINGS "); idx != -1 {
+			settingsSuffix = " " + strings.TrimSpace(trimmed[idx:])
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+		if offset <= 0 {
+			return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page LIMIT %d%s", trimmed, limit+1, settingsSuffix), true
+		}
+		return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page LIMIT %d OFFSET %d%s", trimmed, limit+1, offset, settingsSuffix), true
 	}
 	if dialect == "mssql" {
 		if strings.Contains(upper, " TOP ") || strings.Contains(upper, " ORDER BY ") {
@@ -46,7 +62,64 @@ func wrapSelectForPaging(stmt string, limit, offset int, dialect string) (string
 	return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page LIMIT %d OFFSET %d", trimmed, limit+1, offset), true
 }
 
-// ExecuteStatements splits a SQL string into individual statements and executes each in sequence.
+// normalizeScannedValue normalizes driver-specific scanned values for JSON serialization.
+// In particular, for ClickHouse it prevents JS 53-bit integer precision loss on large Int64/UInt64
+// and handles Date32 / Nullable(Date) / fmt.Stringer types (UUID, IP, Decimal, BigInt).
+func normalizeScannedValue(v any, dataType string, dialect string) any {
+	if v == nil {
+		return nil
+	}
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	if t, ok := v.(time.Time); ok {
+		lowerType := strings.ToLower(dataType)
+		if t.Nanosecond() != 0 {
+			return t.Format("2006-01-02 15:04:05.000000")
+		}
+		if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 &&
+			(strings.EqualFold(dataType, "date") || strings.Contains(lowerType, "date32") || strings.Contains(lowerType, "(date)")) {
+			return t.Format("2006-01-02")
+		}
+		return t.Format("2006-01-02 15:04:05")
+	}
+	if dialect == "clickhouse" {
+		const maxSafeJSInt = int64(9007199254740991)
+		const maxSafeJSUint = uint64(9007199254740991)
+		switch val := v.(type) {
+		case int64:
+			if val > maxSafeJSInt || val < -maxSafeJSInt {
+				return fmt.Sprintf("%d", val)
+			}
+			return val
+		case *int64:
+			if val == nil {
+				return nil
+			}
+			if *val > maxSafeJSInt || *val < -maxSafeJSInt {
+				return fmt.Sprintf("%d", *val)
+			}
+			return *val
+		case uint64:
+			if val > maxSafeJSUint {
+				return fmt.Sprintf("%d", val)
+			}
+			return val
+		case *uint64:
+			if val == nil {
+				return nil
+			}
+			if *val > maxSafeJSUint {
+				return fmt.Sprintf("%d", *val)
+			}
+			return *val
+		case fmt.Stringer:
+			return val.String()
+		}
+	}
+	return v
+}
+
 // It returns a QueryResult containing all individual statement results in Results, with the main
 // view defaulting to the last SELECT statement (or the last executed statement).
 func ExecuteStatements(ctx context.Context, execer QueryExecer, req QueryRequest) (*QueryResult, error) {
@@ -151,19 +224,7 @@ func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req Q
 
 				rowValues := make([]any, len(columns))
 				for vIdx, v := range values {
-					if b, ok := v.([]byte); ok {
-						rowValues[vIdx] = string(b)
-					} else if t, ok := v.(time.Time); ok {
-						if t.Nanosecond() != 0 {
-							rowValues[vIdx] = t.Format("2006-01-02 15:04:05.000000")
-						} else if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && strings.EqualFold(columns[vIdx].DataType, "date") {
-							rowValues[vIdx] = t.Format("2006-01-02")
-						} else {
-							rowValues[vIdx] = t.Format("2006-01-02 15:04:05")
-						}
-					} else {
-						rowValues[vIdx] = v
-					}
+					rowValues[vIdx] = normalizeScannedValue(v, columns[vIdx].DataType, dialect)
 				}
 				resultRows = append(resultRows, rowValues)
 			}

@@ -23,6 +23,9 @@ function formatCleanTableDdl(tableName: string, struct: any, driver?: string): s
   if (normDriver === 'qdrant' || normDriver === 'elasticsearch' || rawDdl.startsWith('{')) {
     return rawDdl;
   }
+  if (normDriver === 'clickhouse' && rawDdl) {
+    return rawDdl;
+  }
 
   const cols: any[] = struct?.columns || [];
   if (cols.length === 0) {
@@ -128,7 +131,10 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
     setCopied(false);
 
     try {
-      const targetDb = database || connection.databaseName || 'main';
+      const targetDb =
+        database ||
+        connection.databaseName ||
+        (connection.driver === 'clickhouse' ? 'default' : 'main');
       const targetSchema =
         schema ||
         (connection.driver === 'postgres'
@@ -167,7 +173,8 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
           targetDb,
           schemaArg
         );
-        setDdl(resultDdl ? stripTableOptionsFromDdl(resultDdl) : '');
+        const isCh = connection.driver?.toLowerCase() === 'clickhouse';
+        setDdl(resultDdl ? (isCh ? resultDdl : stripTableOptionsFromDdl(resultDdl)) : '');
       }
     } catch (err: any) {
       setError(err?.message || String(err) || 'Failed to load DDL');
