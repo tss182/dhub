@@ -2,6 +2,7 @@
 #   docker compose up -d
 #   PostgreSQL: postgres://dhub:dhub@localhost:55432/dhub   (also database "dhub_extra")
 #   MySQL:      dhub:dhub@tcp(localhost:53306)/dhub
+#   MariaDB:    dhub:dhub@tcp(localhost:53307)/dhub
 services:
   postgres:
     image: postgres:17
@@ -30,6 +31,21 @@ services:
       - "53306:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_USER: dhub
+      MARIADB_PASSWORD: dhub
+      MARIADB_DATABASE: dhub
+    ports:
+      - "53307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       timeout: 3s
       retries: 20

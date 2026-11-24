@@ -121,3 +121,47 @@ func TestFormatBytes(t *testing.T) {
 }
 
 
+
+// D4: literal text must never be rewritten into NULL or shifted dates.
+func TestNormalizeMySQLValue_KeepsUserText(t *testing.T) {
+	for _, in := range []string{"null", "NULL", "<null>", "2026-11-05T12:30:00+07:00", "2026-11-05T12:30:00Z"} {
+		if got := normalizeMySQLValue(in); got != in {
+			t.Errorf("normalizeMySQLValue(%q) = %v, want it unchanged", in, got)
+		}
+	}
+}
+
+// S4: the DML preview must match what MySQL parses (backslash is an escape character).
+func TestFormatSQLVal_EscapesLikeMySQL(t *testing.T) {
+	cases := []struct {
+		in   any
+		want string
+	}{
+		{"C:\\temp\\", `'C:\\temp\\'`},
+		{"it's", `'it\'s'`},
+		{"a\nb", `'a\nb'`},
+		{[]byte{0xde, 0xad}, "X'DEAD'"},
+		{true, "1"},
+		{false, "0"},
+		{nil, "NULL"},
+		{"null", `'null'`},
+	}
+	for _, tc := range cases {
+		if got := formatSQLVal(tc.in); got != tc.want {
+			t.Errorf("formatSQLVal(%#v) = %s, want %s", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestGenerateDMLPreview_NullTextPrimaryKey(t *testing.T) {
+	d := &MySQLDriver{}
+	stmts, err := d.GenerateDMLPreview("db", "", "t", []driver.RowChange{
+		{Type: "delete", PrimaryKey: map[string]any{"code": "null"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "DELETE FROM `db`.`t` WHERE `code` = 'null';"; stmts[0] != want {
+		t.Errorf("got %s, want %s", stmts[0], want)
+	}
+}

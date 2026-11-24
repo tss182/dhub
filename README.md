@@ -144,11 +144,15 @@ npm run build
 # Run Go unit tests (no external database server required)
 go test ./...
 
-# Start local PostgreSQL (:55432) and MySQL (:53306) containers for integration testing
+# Start local PostgreSQL (:55432), MySQL (:53306) and MariaDB (:53307) containers for integration testing
 docker compose up -d
+
+# MySQL / MariaDB integration suite (skipped when the server is unreachable)
+# Override the DSN with DHUB_MYSQL_DSN / DHUB_MARIADB_DSN
+go test -tags integration ./internal/driver/mysql/... ./internal/driver/mariadb/...
 ```
 
-`docker compose` provisions PostgreSQL with two databases (`dhub` and `dhub_extra`) to verify multi-database browsing within a single connection, along with MySQL (`dhub`).
+`docker compose` provisions PostgreSQL with two databases (`dhub` and `dhub_extra`) to verify multi-database browsing within a single connection, along with MySQL (`dhub`) and MariaDB (`dhub`).
 
 ---
 
