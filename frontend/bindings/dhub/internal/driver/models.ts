@@ -55,6 +55,13 @@ export interface ForeignKeyMeta {
     "refColumn": string;
     "onUpdate": string;
     "onDelete": string;
+
+    /**
+     * Columns and RefColumns list every column of a composite key in order. ColumnName and
+     * RefColumn keep the first column so existing callers still work. Filled by MySQL / MariaDB.
+     */
+    "columns"?: string[] | null;
+    "refColumns"?: string[] | null;
 }
 
 export interface IndexMeta {
@@ -66,6 +73,22 @@ export interface IndexMeta {
     "method"?: string;
     "definition"?: string;
     "comment"?: string;
+
+    /**
+     * MySQL / MariaDB index details, parallel to Columns. All optional.
+     * prefix length per column, 0 = whole column
+     */
+    "subParts"?: number[] | null;
+
+    /**
+     * true for a DESC key part
+     */
+    "descending"?: boolean[] | null;
+
+    /**
+     * MySQL invisible index / MariaDB ignored index
+     */
+    "isVisible"?: boolean | null;
 }
 
 export interface ObjectSummary {
@@ -80,6 +103,11 @@ export interface ObjectSummary {
     "sizePretty": string;
     "comment": string;
     "parentTable"?: string;
+
+    /**
+     * RoutineType is "PROCEDURE" or "FUNCTION" for routines, so callers need not parse Comment.
+     */
+    "routineType"?: string;
 }
 
 export interface QueryRequest {

@@ -1,6 +1,8 @@
 import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useConnectionStore } from '../../stores/useConnectionStore';
+import { quoteSqlIdentifier } from '../../utils/sqlIdentifier';
+import { getDriverCapabilities } from '../../utils/driverCapabilities';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
@@ -127,6 +129,19 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
 interface DatabaseExplorerProps {
   onCollapse?: () => void;
 }
+
+const qMy = (name: string) => quoteSqlIdentifier('mysql', name);
+
+// Reads the routine kind from the structured field, falling back to the legacy "[PROCEDURE] text"
+// comment that older drivers send. Returns '' when the kind is unknown.
+const getRoutineKind = (routineType?: string, comment?: string): 'FUNCTION' | 'PROCEDURE' | '' => {
+  const t = (routineType || '').toUpperCase();
+  if (t === 'FUNCTION' || t === 'PROCEDURE') return t;
+  const c = (comment || '').toUpperCase();
+  if (c.startsWith('[FUNCTION]')) return 'FUNCTION';
+  if (c.startsWith('[PROCEDURE]')) return 'PROCEDURE';
+  return '';
+};
 
 export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }) => {
   const {
@@ -1760,13 +1775,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-      sql = `CREATE DATABASE \`${dbName}\` CHARACTER SET ${createDbModal.charset || 'utf8mb4'} COLLATE ${createDbModal.collation || 'utf8mb4_unicode_ci'};`;
+      sql = `CREATE DATABASE ${qMy(dbName)} CHARACTER SET ${createDbModal.charset || 'utf8mb4'} COLLATE ${createDbModal.collation || 'utf8mb4_unicode_ci'};`;
     } else if (conn.driver === 'mssql') {
       sql = `CREATE DATABASE [${dbName}];`;
     } else if (conn.driver === 'mongodb') {
       sql = `db.createCollection("init");`;
     } else if (conn.driver === 'clickhouse') {
-      sql = `CREATE DATABASE \`${dbName}\`;`;
+      sql = `CREATE DATABASE ${qMy(dbName)};`;
     } else if (conn.driver === 'postgres') {
       sql = `CREATE DATABASE "${dbName}" ENCODING '${createDbModal.charset || 'UTF8'}';`;
     }
@@ -2021,7 +2036,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     let sql = '';
     if (isMySQL) {
-      sql = `RENAME TABLE \`${sourceSchema}\`.\`${tableName}\` TO \`${targetSchema}\`.\`${tableName}\`;`;
+      sql = `RENAME TABLE ${qMy(sourceSchema)}.${qMy(tableName)} TO ${qMy(targetSchema)}.${qMy(tableName)};`;
     } else {
       sql = `ALTER ${keyword} "${sourceSchema}"."${tableName}" SET SCHEMA "${targetSchema}";`;
     }
@@ -2139,7 +2154,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         connectionId: conn.id,
         database: dbName,
         schema: dbName,
-        content: `-- Modify Character Set / Collation for Database: ${dbName}\nALTER DATABASE \`${dbName}\` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;\n`,
+        content: `-- Modify Character Set / Collation for Database: ${dbName}\nALTER DATABASE ${qMy(dbName)} CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;\n`,
       });
     } else if (conn.driver === 'mssql') {
       openTab({
@@ -2177,7 +2192,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     const sql =
       (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse')
-        ? `DROP DATABASE \`${dbName}\`;`
+        ? `DROP DATABASE ${qMy(dbName)};`
         : conn.driver === 'mssql'
         ? `DROP DATABASE [${dbName}];`
         : conn.driver === 'mongodb'
@@ -2299,7 +2314,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     } else if (conn.driver === 'elasticsearch') {
       sql = `DELETE /${encodeURIComponent(obj.name)}`;
     } else if (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse') {
-      sql = `DROP ${keyword} \`${obj.name}\`;`;
+      sql = `DROP ${keyword} ${qMy(obj.name)};`;
     } else if (conn.driver === 'mssql') {
       sql = `DROP ${keyword} [${schema}].[${obj.name}];`;
     } else if (conn.driver === 'mongodb') {
@@ -2386,8 +2401,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb' || conn.driver === 'clickhouse') {
-      const dbPrefix = db && db !== 'main' ? `\`${db}\`.` : '';
-      sql = `TRUNCATE TABLE ${dbPrefix}\`${obj.name}\`;`;
+      const dbPrefix = db && db !== 'main' ? `${qMy(db)}.` : '';
+      sql = `TRUNCATE TABLE ${dbPrefix}${qMy(obj.name)};`;
     } else if (conn.driver === 'postgres') {
       const sch = schema || 'public';
       sql = `TRUNCATE TABLE "${sch}"."${obj.name}" RESTART IDENTITY;`;
@@ -2483,8 +2498,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           sql = `ANALYZE ${qPgTable};`;
       }
     } else {
-      const dbPrefix = db && db !== 'main' ? `\`${db}\`.` : '';
-      sql = `${action} TABLE ${dbPrefix}\`${table}\`;`;
+      const dbPrefix = db && db !== 'main' ? `${qMy(db)}.` : '';
+      sql = `${action} TABLE ${dbPrefix}${qMy(table)};`;
     }
 
     try {
@@ -2529,7 +2544,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         content += `${ddl.trim().replace(/;$/, '')};\n`;
       }
     } catch {
-      content += `-- 1. View event definition:\nSHOW CREATE EVENT \`${db}\`.\`${eventName}\`;\n\n-- 2. Alter event status:\n-- ALTER EVENT \`${db}\`.\`${eventName}\` DISABLE;\n-- ALTER EVENT \`${db}\`.\`${eventName}\` ENABLE;\n`;
+      content += `-- 1. View event definition:\nSHOW CREATE EVENT ${qMy(db)}.${qMy(eventName)};\n\n-- 2. Alter event status:\n-- ALTER EVENT ${qMy(db)}.${qMy(eventName)} DISABLE;\n-- ALTER EVENT ${qMy(db)}.${qMy(eventName)} ENABLE;\n`;
     }
 
     openTab({
@@ -2561,7 +2576,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     });
     if (!ok) return;
 
-    const sql = `DROP EVENT \`${db}\`.\`${eventName}\`;`;
+    const sql = `DROP EVENT ${qMy(db)}.${qMy(eventName)};`;
     try {
       const execId = 'drop-event-' + Date.now();
       await QueryService.ExecuteQuery({
@@ -2602,7 +2617,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       }
     } catch {
       if (conn.driver === 'mariadb') {
-        content += `-- 1. View sequence definition:\nSHOW CREATE SEQUENCE \`${db}\`.\`${seqName}\`;\n\n-- 2. Get next value / last value:\n-- SELECT NEXT VALUE FOR \`${db}\`.\`${seqName}\`;\n-- SELECT LASTVAL(\`${db}\`.\`${seqName}\`);\n`;
+        content += `-- 1. View sequence definition:\nSHOW CREATE SEQUENCE ${qMy(db)}.${qMy(seqName)};\n\n-- 2. Get next value / last value:\n-- SELECT NEXT VALUE FOR ${qMy(db)}.${qMy(seqName)};\n-- SELECT LASTVAL(${qMy(db)}.${qMy(seqName)});\n`;
       } else if (conn.driver === 'postgres') {
         content += `-- 1. View sequence state:\nSELECT * FROM "${schema}"."${seqName}";\n\n-- 2. Get next value:\n-- SELECT nextval('"${schema}"."${seqName}"');\n`;
       } else if (conn.driver === 'mssql') {
@@ -2645,7 +2660,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     let sql = '';
     if (conn.driver === 'mariadb' || conn.driver === 'mysql') {
-      sql = `DROP SEQUENCE IF EXISTS \`${db}\`.\`${seqName}\`;`;
+      sql = `DROP SEQUENCE IF EXISTS ${qMy(db)}.${qMy(seqName)};`;
     } else if (conn.driver === 'postgres') {
       sql = `DROP SEQUENCE IF EXISTS "${schema}"."${seqName}";`;
     } else if (conn.driver === 'mssql') {
@@ -2684,10 +2699,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     db: string,
     schema: string,
     routineName: string,
-    routineComment?: string
+    routineComment?: string,
+    routineType?: string
   ) => {
-    const isFunction = (routineComment || '').toUpperCase().startsWith('[FUNCTION]');
-    const isProcedure = (routineComment || '').toUpperCase().startsWith('[PROCEDURE]');
+    const kind = getRoutineKind(routineType, routineComment);
+    const isFunction = kind === 'FUNCTION';
+    const isProcedure = kind === 'PROCEDURE';
     let content = `-- Routine${isFunction ? ' (FUNCTION)' : isProcedure ? ' (PROCEDURE)' : ''}: ${routineName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
 
     try {
@@ -2707,11 +2724,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
       } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
         if (isFunction) {
-          content += `-- 1. View function definition:\nSHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call function:\n-- SELECT \`${db}\`.\`${routineName}\`();\n`;
+          content += `-- 1. View function definition:\nSHOW CREATE FUNCTION ${qMy(db)}.${qMy(routineName)};\n\n-- 2. Call function:\n-- SELECT ${qMy(db)}.${qMy(routineName)}();\n`;
         } else if (isProcedure) {
-          content += `-- 1. View procedure definition:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+          content += `-- 1. View procedure definition:\nSHOW CREATE PROCEDURE ${qMy(db)}.${qMy(routineName)};\n\n-- 2. Call procedure:\n-- CALL ${qMy(db)}.${qMy(routineName)}();\n`;
         } else {
-          content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE \`${db}\`.\`${routineName}\`;\n-- Or function:\n-- SHOW CREATE FUNCTION \`${db}\`.\`${routineName}\`;\n\n-- 2. Call procedure:\n-- CALL \`${db}\`.\`${routineName}\`();\n`;
+          content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE ${qMy(db)}.${qMy(routineName)};\n-- Or function:\n-- SHOW CREATE FUNCTION ${qMy(db)}.${qMy(routineName)};\n\n-- 2. Call procedure:\n-- CALL ${qMy(db)}.${qMy(routineName)}();\n`;
         }
       } else if (conn.driver === 'mssql') {
         content += `-- 1. View definition source:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${routineName}]'));\n\n-- 2. Execute routine:\n-- EXEC [${schema}].[${routineName}];\n`;
@@ -2754,7 +2771,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       if (conn.driver === 'postgres') {
         content += `-- 1. View trigger definition:\nSELECT pg_get_triggerdef(t.oid)\nFROM pg_trigger t\nJOIN pg_class c ON c.oid = t.tgrelid\nJOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE n.nspname = '${schema}' AND t.tgname = '${triggerName}';\n`;
       } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-        content += `-- 1. View trigger definition:\nSHOW CREATE TRIGGER \`${db}\`.\`${triggerName}\`;\n`;
+        content += `-- 1. View trigger definition:\nSHOW CREATE TRIGGER ${qMy(db)}.${qMy(triggerName)};\n`;
       } else if (conn.driver === 'mssql') {
         content += `-- 1. View trigger definition:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${triggerName}]'));\n`;
       } else {
@@ -2778,10 +2795,12 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     db: string,
     schema: string,
     routineName: string,
-    routineComment?: string
+    routineComment?: string,
+    routineType?: string
   ) => {
-    const isFunction = (routineComment || '').toUpperCase().startsWith('[FUNCTION]');
-    const isProcedure = (routineComment || '').toUpperCase().startsWith('[PROCEDURE]');
+    const kind = getRoutineKind(routineType, routineComment);
+    const isFunction = kind === 'FUNCTION';
+    const isProcedure = kind === 'PROCEDURE';
     const ok = await confirmDialog({
       title: isFunction ? 'Drop Function' : isProcedure ? 'Drop Procedure' : 'Drop Routine',
       message: `Are you sure you want to DROP ${isFunction ? 'function' : isProcedure ? 'procedure' : 'routine/function'} "${routineName}"? This action cannot be undone.`,
@@ -2799,11 +2818,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
       if (isFunction) {
-        sql = `DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
+        sql = `DROP FUNCTION IF EXISTS ${qMy(db)}.${qMy(routineName)};`;
       } else if (isProcedure) {
-        sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`;`;
+        sql = `DROP PROCEDURE IF EXISTS ${qMy(db)}.${qMy(routineName)};`;
       } else {
-        sql = `DROP PROCEDURE IF EXISTS \`${db}\`.\`${routineName}\`; DROP FUNCTION IF EXISTS \`${db}\`.\`${routineName}\`;`;
+        sql = `DROP PROCEDURE IF EXISTS ${qMy(db)}.${qMy(routineName)}; DROP FUNCTION IF EXISTS ${qMy(db)}.${qMy(routineName)};`;
       }
     } else if (conn.driver === 'mssql') {
       sql = `DROP PROCEDURE IF EXISTS [${schema}].[${routineName}]; DROP FUNCTION IF EXISTS [${schema}].[${routineName}];`;
@@ -2862,7 +2881,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
     let sql = '';
     if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-      sql = `DROP TRIGGER IF EXISTS \`${db}\`.\`${triggerName}\`;`;
+      sql = `DROP TRIGGER IF EXISTS ${qMy(db)}.${qMy(triggerName)};`;
     } else if (conn.driver === 'mssql') {
       sql = `DROP TRIGGER IF EXISTS [${schema}].[${triggerName}];`;
     } else if (conn.driver === 'postgres') {
@@ -2939,7 +2958,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
     } else if (isES) {
       content = `-- Elasticsearch Query Console\n-- Run REST commands (GET /_cat/indices, POST /index/_search) or SQL (SELECT * FROM "index" LIMIT 50)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\n${tableName ? `POST /${tableName}/_search\n{\n  "query": {\n    "match_all": {}\n  },\n  "size": 50\n}` : `GET /_cat/indices?format=json`}\n`;
     } else if (tableName) {
-      const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb' || conn?.driver === 'clickhouse') ? `\`${tableName}\`` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
+      const quoted = (conn?.driver === 'mysql' || conn?.driver === 'mariadb' || conn?.driver === 'clickhouse') ? `${qMy(tableName)}` : conn?.driver === 'mssql' ? `[${tableName}]` : `"${tableName}"`;
       content += conn?.driver === 'mssql' ? `SELECT TOP 100 * FROM ${quoted};\n` : conn?.driver === 'oracle' ? `SELECT * FROM ${quoted} FETCH FIRST 100 ROWS ONLY;\n` : `SELECT * FROM ${quoted} LIMIT 100;\n`;
     } else {
       content += conn?.driver === 'oracle' ? `SELECT 1 FROM DUAL;\n` : `SELECT 1;\n`;
@@ -3517,7 +3536,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   const routines = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'routine');
                   const triggers = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'trigger');
                   const events = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'event');
-                  const sequences = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'sequence');
+                  const sequences = c.driver === 'redis' || !getDriverCapabilities(c.driver).supportsSequences ? [] : baseList.filter((o) => o.type === 'sequence');
                   const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
 
                   return (
@@ -3651,7 +3670,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                               const sRoutines = sBaseList.filter((o) => o.type === 'routine');
                               const sTriggers = sBaseList.filter((o) => o.type === 'trigger');
                               const sEvents = sBaseList.filter((o) => o.type === 'event');
-                              const sSequences = sBaseList.filter((o) => o.type === 'sequence');
+                              const sSequences = getDriverCapabilities(c.driver).supportsSequences ? sBaseList.filter((o) => o.type === 'sequence') : [];
                               const sTypes = sBaseList.filter((o) => o.type === 'type');
                               const sExtensions = sBaseList.filter((o) => o.type === 'extension');
                               const isSchemaActive = activeConnectionId === c.id && activeDatabase === dbName && activeSchema === sName;
@@ -4062,7 +4081,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                               key={obj.name}
                                               onClick={() => {
                                                 handleItemMouseLeave();
-                                                handleRoutineClick(c, dbName, sName, obj.name, obj.comment);
+                                                handleRoutineClick(c, dbName, sName, obj.name, obj.comment, obj.routineType);
                                               }}
                                               onContextMenu={(e) => {
                                                 handleItemMouseLeave();
@@ -4077,7 +4096,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                                 handleItemMouseEnter(e, {
                                                   kind: 'table',
                                                   title: obj.name,
-                                                  badge: (obj.comment || '').toUpperCase().startsWith('[FUNCTION]') ? 'FUNCTION' : (obj.comment || '').toUpperCase().startsWith('[PROCEDURE]') ? 'PROCEDURE' : 'ROUTINE',
+                                                  badge: getRoutineKind(obj.routineType, obj.comment) || 'ROUTINE',
                                                   subtitle: `${c.name} / ${dbName}.${sName}${obj.comment ? ` • ${obj.comment}` : ''}`,
                                                 })
                                               }
@@ -4854,7 +4873,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                       key={obj.name}
                                       onClick={() => {
                                         handleItemMouseLeave();
-                                        handleRoutineClick(c, dbName, targetSchema, obj.name, obj.comment);
+                                        handleRoutineClick(c, dbName, targetSchema, obj.name, obj.comment, obj.routineType);
                                       }}
                                       onContextMenu={(e) => {
                                         handleItemMouseLeave();
@@ -4869,7 +4888,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                         handleItemMouseEnter(e, {
                                           kind: 'table',
                                           title: obj.name,
-                                          badge: (obj.comment || '').toUpperCase().startsWith('[FUNCTION]') ? 'FUNCTION' : (obj.comment || '').toUpperCase().startsWith('[PROCEDURE]') ? 'PROCEDURE' : 'ROUTINE',
+                                          badge: getRoutineKind(obj.routineType, obj.comment) || 'ROUTINE',
                                           subtitle: `${c.name} / ${dbName}${obj.comment ? ` • ${obj.comment}` : ''}`,
                                         })
                                       }
@@ -6348,7 +6367,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                         contextMenu.database || 'main',
                         contextMenu.schema || 'main',
                         contextMenu.table!.name,
-                        contextMenu.table!.comment
+                        contextMenu.table!.comment,
+                        contextMenu.table!.routineType
                       );
                     }}
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"

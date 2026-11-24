@@ -33,7 +33,6 @@ import (
 	"dhub/internal/store"
 	"dhub/internal/tunnel"
 
-	mysqldriver "github.com/go-sql-driver/mysql"
 	goredis "github.com/redis/go-redis/v9"
 	go_ora "github.com/sijms/go-ora/v2"
 	mongoopts "go.mongodb.org/mongo-driver/mongo/options"
@@ -385,24 +384,10 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		u.RawQuery = q.Encode()
 		return postgres.NewPostgresDriver(u.String())
 	case "mysql", "mariadb":
-		mc := mysqldriver.NewConfig()
-		mc.User = cfg.Username
-		mc.Passwd = cfg.Password
-		mc.Net = "tcp"
-		mc.Addr = fmt.Sprintf("%s:%d", host, port)
-		mc.DBName = cfg.DatabaseName
-		mc.ParseTime = true
-		// Statements are split client-side. Server-side multi-statements would let a payload that the
-		// client parses as one read-only statement run as several on the server.
-		mc.MultiStatements = false
-		mc.Timeout = 10 * time.Second
-
-		// Handle SSL/TLS configuration. Any failure aborts the connection instead of silently
-		// connecting without the requested verification.
-		if err := configureMySQLTLS(mc, cfg); err != nil {
-			return nil, fmt.Errorf("tls configuration: %w", err)
+		mc, err := newMySQLConfig(cfg, host, port)
+		if err != nil {
+			return nil, err
 		}
-
 		if cfg.Driver == "mariadb" {
 			return mariadb.NewMariaDBDriverWithOptions(mc.FormatDSN(), cfg.IsReadOnly)
 		}

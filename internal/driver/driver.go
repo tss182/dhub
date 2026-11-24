@@ -55,6 +55,11 @@ type ForeignKeyMeta struct {
 	RefColumn      string `json:"refColumn"`
 	OnUpdate       string `json:"onUpdate"`
 	OnDelete       string `json:"onDelete"`
+
+	// Columns and RefColumns list every column of a composite key in order. ColumnName and
+	// RefColumn keep the first column so existing callers still work. Filled by MySQL / MariaDB.
+	Columns    []string `json:"columns,omitempty"`
+	RefColumns []string `json:"refColumns,omitempty"`
 }
 
 type IndexMeta struct {
@@ -68,6 +73,11 @@ type IndexMeta struct {
 	Comment     string   `json:"comment,omitempty"`
 	Expression  string   `json:"expression,omitempty"`
 	Granularity int      `json:"granularity,omitempty"`
+
+	// MySQL / MariaDB index details, parallel to Columns. All optional.
+	SubParts   []int `json:"subParts,omitempty"`   // prefix length per column, 0 = whole column
+	Descending []bool `json:"descending,omitempty"` // true for a DESC key part
+	IsVisible  *bool `json:"isVisible,omitempty"`  // MySQL invisible index / MariaDB ignored index
 }
 
 type ObjectSummary struct {
@@ -82,6 +92,8 @@ type ObjectSummary struct {
 	TargetTable string  `json:"targetTable,omitempty"`
 	TotalBytes  *uint64 `json:"totalBytes,omitempty"`
 	IsInternal  bool    `json:"isInternal,omitempty"`
+	// RoutineType is "PROCEDURE" or "FUNCTION" for routines, so callers need not parse Comment.
+	RoutineType string `json:"routineType,omitempty"`
 }
 
 type CheckConstraintMeta struct {

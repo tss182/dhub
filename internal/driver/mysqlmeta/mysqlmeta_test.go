@@ -1,6 +1,9 @@
 package mysqlmeta
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func sp(s string) *string { return &s }
 
@@ -78,5 +81,80 @@ func TestMariaDBDefault(t *testing.T) {
 		if got := MariaDBDefault(tc.dflt, tc.nullable); got != tc.want {
 			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestFormatRead(t *testing.T) {
+	if v, ok := FormatRead("BINARY", []byte{0x01, 0xab}); !ok || v != "0x01ab" {
+		t.Errorf("BINARY = %v, %v", v, ok)
+	}
+	if v, ok := FormatRead("blob", nil); !ok || v != "0x" {
+		t.Errorf("empty blob = %v, %v", v, ok)
+	}
+	if v, ok := FormatRead("BIT", []byte{0x01}); !ok || v != uint64(1) {
+		t.Errorf("BIT(1) = %#v, %v", v, ok)
+	}
+	if v, ok := FormatRead("BIT", []byte{0x01, 0x00}); !ok || v != uint64(256) {
+		t.Errorf("BIT(16) = %#v, %v", v, ok)
+	}
+	if v, ok := FormatRead("BIT", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}); !ok || v != "18446744073709551615" {
+		t.Errorf("BIT(64) = %#v, %v", v, ok)
+	}
+	for _, typ := range []string{"VARCHAR", "TEXT", "JSON", "DECIMAL", "DATETIME", "CHAR"} {
+		if _, ok := FormatRead(typ, []byte("x")); ok {
+			t.Errorf("%s must not be treated as binary", typ)
+		}
+	}
+}
+
+func TestConvertForWrite(t *testing.T) {
+	got, err := ConvertForWrite("binary", "0x00ff")
+	if err != nil || !bytes.Equal(got.([]byte), []byte{0x00, 0xff}) {
+		t.Errorf("binary = %#v, %v", got, err)
+	}
+	if got, _ := ConvertForWrite("blob", "0x"); !bytes.Equal(got.([]byte), []byte{}) {
+		t.Errorf("empty blob = %#v", got)
+	}
+	if _, err := ConvertForWrite("varbinary", "hello"); err == nil {
+		t.Error("plain text for a binary column must be rejected")
+	}
+	if _, err := ConvertForWrite("binary", "0xZZ"); err == nil {
+		t.Error("invalid hex must be rejected")
+	}
+	if got, _ := ConvertForWrite("varchar", "0x1F"); got != "0x1F" {
+		t.Errorf("VARCHAR text was reinterpreted: %#v", got)
+	}
+	if got, _ := ConvertForWrite("bit", "5"); got != uint64(5) {
+		t.Errorf("BIT string = %#v", got)
+	}
+	if got, _ := ConvertForWrite("bit", float64(1)); got != uint64(1) {
+		t.Errorf("BIT number = %#v", got)
+	}
+	if got, _ := ConvertForWrite("bit", true); got != uint64(1) {
+		t.Errorf("BIT bool = %#v", got)
+	}
+	if _, err := ConvertForWrite("bit", "abc"); err == nil {
+		t.Error("non-numeric BIT must be rejected")
+	}
+	if got, _ := ConvertForWrite("int", "7"); got != "7" {
+		t.Errorf("int passthrough = %#v", got)
+	}
+	if got, _ := ConvertForWrite("binary", nil); got != nil {
+		t.Errorf("nil = %#v", got)
+	}
+}
+
+func TestConvertRow(t *testing.T) {
+	types := map[string]string{"id": "binary", "flag": "bit", "name": "varchar"}
+	out, err := ConvertRow(types, map[string]any{"id": "0x0a", "flag": "1", "name": "0x0a", "extra": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out["id"].([]byte), []byte{0x0a}) || out["flag"] != uint64(1) || out["name"] != "0x0a" || out["extra"] != "x" {
+		t.Errorf("unexpected: %#v", out)
+	}
+	same, _ := ConvertRow(nil, map[string]any{"id": "0x0a"})
+	if same["id"] != "0x0a" {
+		t.Errorf("without type info values must pass through: %#v", same)
 	}
 }

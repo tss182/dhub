@@ -2732,6 +2732,14 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const gridCellBorder = 'border-[#272932]';
   const gridRowClass = 'border-b border-[#22242c] bg-[#14151a] hover:bg-[#20222a] transition-colors';
 
+  // Relational tables without a key cannot be edited safely; say so instead of silently disabling cells.
+  const showNoKeyNotice =
+    isTableTab &&
+    !isReadOnly &&
+    (driver === 'mysql' || driver === 'mariadb') &&
+    columns.length > 0 &&
+    primaryKeys.length === 0;
+
   return (
     <div
       data-grid-container="true"
@@ -2813,6 +2821,18 @@ export const DataGrid: React.FC<DataGridProps> = ({
           onFrozenColumnsChange?.([]);
         }}
       />
+      {showNoKeyNotice && (
+        <div
+          className="flex items-center gap-2 px-3 py-1 text-[11px] text-amber-300 bg-amber-950/40 border-b border-amber-900/50"
+          role="status"
+        >
+          <span className="font-semibold">Read-only:</span>
+          <span>
+            this table has no primary key or unique key, so a row cannot be identified for editing. Add a key to
+            make it editable.
+          </span>
+        </div>
+      )}
 
       {errorMessage && (
         <div className="flex items-center justify-between px-3.5 py-2 bg-rose-950/40 border-b border-rose-900/60 text-xs font-mono text-rose-300 select-text">

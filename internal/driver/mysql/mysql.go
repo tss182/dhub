@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"dhub/internal/driver"
+	"dhub/internal/driver/mysqlapply"
 	"dhub/internal/driver/mysqlconn"
 	"dhub/internal/driver/mysqlmeta"
+	"dhub/internal/driver/mysqlschema"
 	"dhub/internal/driver/sqlfmt"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
@@ -83,16 +85,24 @@ func (m *MySQLDriver) ListDatabases(ctx context.Context) ([]string, error) {
 	var dbs []string
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err == nil {
-			dbs = append(dbs, name)
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
 		}
+		dbs = append(dbs, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return dbs, nil
 }
 
 func (m *MySQLDriver) ListSchemas(ctx context.Context, database string) ([]string, error) {
-	targetDB := m.resolveDatabase(database, "")
-	return []string{targetDB}, nil
+	// MySQL has no schema level below the database. Return nothing when no database is selected
+	// instead of a single empty name.
+	if targetDB := m.resolveDatabase(database, ""); targetDB != "" {
+		return []string{targetDB}, nil
+	}
+	return []string{}, nil
 }
 
 // formatBytes converts byte count into a human-readable string (e.g. 1.2 MB).
@@ -127,20 +137,25 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 	for rows.Next() {
 		var name, objType, comment string
 		var rowsEst, sizeBytes int64
-		if err := rows.Scan(&name, &objType, &rowsEst, &sizeBytes, &comment); err == nil {
-			t := "table"
-			if strings.Contains(strings.ToUpper(objType), "VIEW") {
-				t = "view"
-			}
-			objects = append(objects, driver.ObjectSummary{
-				Schema:      targetDB,
-				Name:        name,
-				Type:        t,
-				RowEstimate: rowsEst,
-				SizePretty:  formatBytes(sizeBytes),
-				Comment:     comment,
-			})
+		if err := rows.Scan(&name, &objType, &rowsEst, &sizeBytes, &comment); err != nil {
+			return nil, fmt.Errorf("reading tables of %s: %w", targetDB, err)
 		}
+		t := "table"
+		if strings.Contains(strings.ToUpper(objType), "VIEW") {
+			t = "view"
+		}
+		objects = append(objects, driver.ObjectSummary{
+			Schema:      targetDB,
+			Name:        name,
+			Type:        t,
+			RowEstimate: rowsEst,
+			SizePretty:  formatBytes(sizeBytes),
+			Comment:     comment,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading tables of %s: %w", targetDB, err)
 	}
 
 	// Routines (Procedures & Functions)
@@ -150,13 +165,16 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 		for rRows.Next() {
 			var rName, rType, rComment string
 			if err := rRows.Scan(&rName, &rType, &rComment); err == nil {
-				formattedComment := strings.TrimSpace(fmt.Sprintf("[%s] %s", strings.ToUpper(strings.TrimSpace(rType)), rComment))
+				routineType := strings.ToUpper(strings.TrimSpace(rType))
+				// Comment keeps the "[TYPE] text" form for older UI code. RoutineType is the reliable field.
+				formattedComment := strings.TrimSpace(fmt.Sprintf("[%s] %s", routineType, rComment))
 				objects = append(objects, driver.ObjectSummary{
 					Schema:      targetDB,
 					Name:        rName,
 					Type:        "routine",
 					RowEstimate: -1,
 					Comment:     formattedComment,
+					RoutineType: routineType,
 				})
 			}
 		}
@@ -310,64 +328,34 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		structure.Columns = append(structure.Columns, col)
 	}
 
-	// 3. Fetch Indexes (including composite indexes)
-	idxQuery := `SELECT index_name, non_unique, column_name, seq_in_index, index_type, comment
-		FROM information_schema.statistics
-		WHERE table_schema = ? AND table_name = ?
-		ORDER BY index_name, seq_in_index`
-	idxRows, err := m.db.QueryContext(ctx, idxQuery, targetDB, table)
-	if err == nil {
-		defer idxRows.Close()
-		type rawIdx struct {
-			name     string
-			isUnique bool
-			isPk     bool
-			columns  []string
-			idxType  string
-			comment  string
-		}
-		idxMap := make(map[string]*rawIdx)
-		var idxOrder []string
-
-		for idxRows.Next() {
-			var idxName, colName, idxType string
-			var nonUnique, seq int
-			var idxComment *string
-			if err := idxRows.Scan(&idxName, &nonUnique, &colName, &seq, &idxType, &idxComment); err == nil {
-				if _, exists := idxMap[idxName]; !exists {
-					cmt := ""
-					if idxComment != nil {
-						cmt = *idxComment
-					}
-					idxMap[idxName] = &rawIdx{
-						name:     idxName,
-						isUnique: nonUnique == 0,
-						isPk:     idxName == "PRIMARY",
-						columns:  []string{},
-						idxType:  idxType,
-						comment:  cmt,
-					}
-					idxOrder = append(idxOrder, idxName)
-				}
-				idxMap[idxName].columns = append(idxMap[idxName].columns, colName)
-			}
-		}
-
-		for _, name := range idxOrder {
-			item := idxMap[name]
-			structure.Indexes = append(structure.Indexes, driver.IndexMeta{
-				Name:      item.name,
-				Columns:   item.columns,
-				IsUnique:  item.isUnique,
-				IsPrimary: item.isPk,
-				Type:      item.idxType,
-				Method:    item.idxType,
-				Comment:   item.comment,
-			})
+	// 3. Fetch indexes (prefix length, sort direction, visibility, functional key parts).
+	var idxRows *sql.Rows
+	for _, q := range mysqlschema.IndexQueries {
+		if r, qErr := m.db.QueryContext(ctx, q, targetDB, table); qErr == nil {
+			idxRows = r
+			break
 		}
 	}
+	if idxRows != nil {
+		var raw []mysqlschema.IndexRow
+		for idxRows.Next() {
+			r, scanErr := mysqlschema.ScanIndexRow(idxRows)
+			if scanErr != nil {
+				idxRows.Close()
+				return nil, fmt.Errorf("reading indexes of %s: %w", table, scanErr)
+			}
+			raw = append(raw, r)
+		}
+		iterErr := idxRows.Err()
+		idxRows.Close()
+		if iterErr != nil {
+			return nil, fmt.Errorf("reading indexes of %s: %w", table, iterErr)
+		}
+		structure.Indexes = mysqlschema.BuildIndexes(raw)
+	}
 
-	// 3b. Fetch Foreign Keys (with ON UPDATE / ON DELETE rules)
+	// 3b. Fetch foreign keys with ON UPDATE / ON DELETE rules. One entry per constraint,
+	// so a composite key stays together.
 	fkQuery := `SELECT kcu.constraint_name, kcu.column_name,
 			COALESCE(kcu.referenced_table_schema, ''), kcu.referenced_table_name, kcu.referenced_column_name,
 			rc.update_rule, rc.delete_rule
@@ -380,21 +368,21 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 			AND kcu.referenced_table_name IS NOT NULL
 		ORDER BY kcu.constraint_name, kcu.ordinal_position`
 	if fkRows, fkErr := m.db.QueryContext(ctx, fkQuery, targetDB, table); fkErr == nil {
-		defer fkRows.Close()
+		var raw []mysqlschema.FKRow
 		for fkRows.Next() {
-			var cName, col, refSchema, refTable, refCol, onUpdate, onDelete string
-			if err := fkRows.Scan(&cName, &col, &refSchema, &refTable, &refCol, &onUpdate, &onDelete); err == nil {
-				structure.ForeignKeys = append(structure.ForeignKeys, driver.ForeignKeyMeta{
-					ConstraintName: cName,
-					ColumnName:     col,
-					RefSchema:      refSchema,
-					RefTable:       refTable,
-					RefColumn:      refCol,
-					OnUpdate:       onUpdate,
-					OnDelete:       onDelete,
-				})
+			var r mysqlschema.FKRow
+			if scanErr := fkRows.Scan(&r.Name, &r.Column, &r.RefSchema, &r.RefTable, &r.RefColumn, &r.OnUpdate, &r.OnDelete); scanErr != nil {
+				fkRows.Close()
+				return nil, fmt.Errorf("reading foreign keys of %s: %w", table, scanErr)
 			}
+			raw = append(raw, r)
 		}
+		iterErr := fkRows.Err()
+		fkRows.Close()
+		if iterErr != nil {
+			return nil, fmt.Errorf("reading foreign keys of %s: %w", table, iterErr)
+		}
+		structure.ForeignKeys = mysqlschema.BuildForeignKeys(raw)
 	}
 
 	// 3c. Fetch Check Constraints (MySQL 8.0.16+)
@@ -520,7 +508,7 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 		prefix = quoteIdent(table)
 	}
 
-	for _, c := range changes {
+	for i, c := range changes {
 		switch c.Type {
 		case "insert":
 			cols := []string{}
@@ -539,120 +527,24 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 			for _, k := range sortedKeys(c.Changes) {
 				sets = append(sets, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.Changes[k])))
 			}
-			where := []string{}
-			for _, k := range sortedKeys(c.PrimaryKey) {
-				if c.PrimaryKey[k] == nil {
-					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
-				} else {
-					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
-				}
+			where, err := mysqlapply.PreviewWhere(quoteIdent, formatSQLVal, c.PrimaryKey)
+			if err != nil {
+				return nil, fmt.Errorf("change %d: %w", i+1, err)
 			}
-			statements = append(statements, fmt.Sprintf("UPDATE %s SET %s WHERE %s;", prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
+			statements = append(statements, fmt.Sprintf("UPDATE %s SET %s WHERE %s;", prefix, strings.Join(sets, ", "), where))
 		case "delete":
-			where := []string{}
-			for _, k := range sortedKeys(c.PrimaryKey) {
-				if c.PrimaryKey[k] == nil {
-					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
-				} else {
-					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
-				}
+			where, err := mysqlapply.PreviewWhere(quoteIdent, formatSQLVal, c.PrimaryKey)
+			if err != nil {
+				return nil, fmt.Errorf("change %d: %w", i+1, err)
 			}
-			statements = append(statements, fmt.Sprintf("DELETE FROM %s WHERE %s;", prefix, strings.Join(where, " AND ")))
+			statements = append(statements, fmt.Sprintf("DELETE FROM %s WHERE %s;", prefix, where))
 		}
 	}
 	return statements, nil
 }
 
 func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
-	tx, err := m.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	effectiveSchema := m.resolveDatabase(database, schema)
-	if effectiveSchema != "" {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(effectiveSchema))); err != nil {
-			return 0, fmt.Errorf("error switching to database '%s': %w", effectiveSchema, err)
-		}
-	}
-	prefix := fmt.Sprintf("%s.%s", quoteIdent(effectiveSchema), quoteIdent(table))
-	if effectiveSchema == "" {
-		prefix = quoteIdent(table)
-	}
-
-	var totalAffected int64
-	for _, c := range changes {
-		switch c.Type {
-		case "insert":
-			cols := []string{}
-			placeholders := []string{}
-			vals := []any{}
-			for _, k := range sortedKeys(c.Changes) {
-				cols = append(cols, quoteIdent(k))
-				placeholders = append(placeholders, "?")
-				vals = append(vals, c.Changes[k])
-			}
-			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
-			if len(cols) == 0 {
-				stmt = fmt.Sprintf("INSERT INTO %s () VALUES ()", prefix)
-			}
-			res, err := tx.ExecContext(ctx, stmt, vals...)
-			if err != nil {
-				return 0, err
-			}
-			ra, _ := res.RowsAffected()
-			totalAffected += ra
-		case "update":
-			sets := []string{}
-			vals := []any{}
-			for _, k := range sortedKeys(c.Changes) {
-				sets = append(sets, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, c.Changes[k])
-			}
-			where := []string{}
-			for _, k := range sortedKeys(c.PrimaryKey) {
-				pkVal := c.PrimaryKey[k]
-				if pkVal == nil {
-					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
-				} else {
-					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-					vals = append(vals, pkVal)
-				}
-			}
-			stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
-			res, err := tx.ExecContext(ctx, stmt, vals...)
-			if err != nil {
-				return 0, err
-			}
-			ra, _ := res.RowsAffected()
-			totalAffected += ra
-		case "delete":
-			where := []string{}
-			vals := []any{}
-			for _, k := range sortedKeys(c.PrimaryKey) {
-				pkVal := c.PrimaryKey[k]
-				if pkVal == nil {
-					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
-				} else {
-					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-					vals = append(vals, pkVal)
-				}
-			}
-			stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", prefix, strings.Join(where, " AND "))
-			res, err := tx.ExecContext(ctx, stmt, vals...)
-			if err != nil {
-				return 0, err
-			}
-			ra, _ := res.RowsAffected()
-			totalAffected += ra
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return totalAffected, nil
+	return mysqlapply.Apply(ctx, m.db, quoteIdent, m.resolveDatabase(database, schema), table, changes)
 }
 
 func formatSQLVal(v any) string {

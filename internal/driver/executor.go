@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"dhub/internal/driver/mysqlmeta"
 )
 
 type QueryExecer interface {
@@ -137,6 +139,13 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 	if b, ok := v.([]byte); ok {
 		if dialect == "postgres" && strings.EqualFold(dataType, "BYTEA") {
 			return `\x` + hex.EncodeToString(b)
+		}
+		if dialect == "mysql" || dialect == "mariadb" {
+			// Binary and BIT bytes are not valid UTF-8 text. Send them in a form the UI can show
+			// and ApplyChanges can convert back.
+			if formatted, ok := mysqlmeta.FormatRead(dataType, b); ok {
+				return formatted
+			}
 		}
 		return string(b)
 	}

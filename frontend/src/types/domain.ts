@@ -165,6 +165,9 @@ export interface ForeignKeyMeta {
   refColumn: string;
   onUpdate: string;
   onDelete: string;
+  // Every column of a composite key, in order (optional).
+  columns?: string[] | null;
+  refColumns?: string[] | null;
 }
 
 export interface IndexMeta {
@@ -172,6 +175,12 @@ export interface IndexMeta {
   columns: string[];
   isUnique: boolean;
   isPrimary: boolean;
+  // MySQL / MariaDB index details, parallel to columns (optional).
+  subParts?: number[] | null;
+  descending?: boolean[] | null;
+  isVisible?: boolean | null;
+  expression?: string;
+  type?: string;
 }
 
 export interface ObjectSummary {
@@ -183,6 +192,8 @@ export interface ObjectSummary {
   comment?: string;
   parentTable?: string;
   engine?: string;
+  /** "PROCEDURE" or "FUNCTION" for MySQL / MariaDB routines. */
+  routineType?: string;
 }
 
 export interface CheckConstraintMeta {

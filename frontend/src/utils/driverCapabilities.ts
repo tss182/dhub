@@ -197,6 +197,8 @@ const CAPABILITY_MAP: Record<string, DriverCapabilities> = {
     systemDatabases: ['information_schema', 'mysql', 'performance_schema', 'sys'],
     supportsTableEngines: true,
     supportsUpsertOnDuplicateKey: true,
+    // Sequences exist in MariaDB 10.3+ only; MySQL has none.
+    supportsSequences: true,
     backupToolLabel: 'mariadb-dump',
   },
   sqlite: {

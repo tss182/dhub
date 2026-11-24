@@ -147,6 +147,7 @@ import {
 } from 'lucide-react';
 import { QueryResult, ColumnMeta, WorkbenchTab, ConnectionConfig, resolveConnectionEnv, buildAlertConnectionContext } from './types/domain';
 import { parseSingleTableSelect } from './utils/querySource';
+import { pickRowKey } from './utils/rowKey';
 import { quoteSqlIdentifier, buildQualifiedTablePath } from './utils/sqlIdentifier';
 
 interface ChangeTarget {
@@ -1097,7 +1098,9 @@ export function App() {
         }
         const struct: any = await SchemaService.GetTableStructure(connId, db, schema, parsed.table);
         const structCols: ColumnMeta[] = struct?.columns || [];
-        const pks: string[] = struct?.primaryKeys || [];
+        const pks: string[] = isMy
+          ? pickRowKey(struct?.primaryKeys, struct?.indexes, struct?.columns)
+          : struct?.primaryKeys || [];
         const resCols: ColumnMeta[] = activeResultRes.columns || [];
         const lower = (s: string) => s.toLowerCase();
         const allMapped = resCols.every((c) => structCols.some((sc) => lower(sc.name) === lower(c.name)));
@@ -1534,6 +1537,9 @@ export function App() {
           if (structure) {
             if (structure.primaryKeys && structure.primaryKeys.length > 0) {
               primaryKeys = structure.primaryKeys;
+            } else if (effectiveDriver === 'mysql' || effectiveDriver === 'mariadb') {
+              // No primary key: use a unique index of NOT NULL, reliably comparable columns, if any.
+              primaryKeys = pickRowKey([], structure.indexes as any, structure.columns as any);
             }
             if (structure.columns && structure.columns.length > 0) {
               structureColumns = structure.columns;

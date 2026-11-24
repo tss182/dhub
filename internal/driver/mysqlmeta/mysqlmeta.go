@@ -4,6 +4,10 @@
 package mysqlmeta
 
 import (
+	"context"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -137,4 +141,131 @@ func unquoteMariaDB(s string) string {
 		}
 	}
 	return sb.String()
+}
+
+// maxSafeJSInt is the largest integer a JavaScript number holds exactly.
+const maxSafeJSInt = uint64(9007199254740991)
+
+// IsBinaryType reports whether a type name (from DatabaseTypeName or information_schema.data_type)
+// holds raw bytes that cannot travel to the UI as text.
+func IsBinaryType(typeName string) bool {
+	switch strings.ToUpper(strings.TrimSpace(typeName)) {
+	case "BINARY", "VARBINARY", "TINYBLOB", "BLOB", "MEDIUMBLOB", "LONGBLOB", "GEOMETRY",
+		"POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION":
+		return true
+	}
+	return false
+}
+
+// FormatRead converts raw bytes of a binary or BIT column into a value the UI can show and send
+// back unchanged: binary becomes "0x<hex>", BIT becomes a number (a string above 2^53).
+// ok is false for any other type, so the caller keeps its default handling.
+func FormatRead(typeName string, b []byte) (value any, ok bool) {
+	t := strings.ToUpper(strings.TrimSpace(typeName))
+	if t == "BIT" {
+		var n uint64
+		for _, c := range b {
+			n = n<<8 | uint64(c)
+		}
+		if n > maxSafeJSInt {
+			return fmt.Sprintf("%d", n), true
+		}
+		return n, true
+	}
+	if IsBinaryType(t) {
+		return "0x" + hex.EncodeToString(b), true
+	}
+	return nil, false
+}
+
+// ConvertForWrite turns a value the UI sent for a column of dataType back into what the server
+// expects: "0x.." text becomes bytes for binary columns, and numbers or numeric text become an
+// integer for BIT columns. Values for any other type pass through untouched, so a VARCHAR that
+// happens to contain "0x1F" is never reinterpreted. dataType is information_schema.data_type.
+func ConvertForWrite(dataType string, v any) (any, error) {
+	t := strings.ToUpper(strings.TrimSpace(dataType))
+	switch {
+	case v == nil:
+		return nil, nil
+	case t == "BIT":
+		switch val := v.(type) {
+		case string:
+			s := strings.TrimSpace(val)
+			if s == "" {
+				return nil, nil
+			}
+			var n uint64
+			if _, err := fmt.Sscanf(s, "%d", &n); err != nil || fmt.Sprintf("%d", n) != s {
+				return nil, fmt.Errorf("BIT value %q must be a non-negative integer", val)
+			}
+			return n, nil
+		case float64:
+			if val < 0 || val != float64(uint64(val)) {
+				return nil, fmt.Errorf("BIT value %v must be a non-negative integer", val)
+			}
+			return uint64(val), nil
+		case bool:
+			if val {
+				return uint64(1), nil
+			}
+			return uint64(0), nil
+		}
+		return v, nil
+	case IsBinaryType(t):
+		s, ok := v.(string)
+		if !ok {
+			return v, nil
+		}
+		if len(s) >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+			raw, err := hex.DecodeString(s[2:])
+			if err != nil {
+				return nil, fmt.Errorf("binary value %q is not valid hex: %w", s, err)
+			}
+			return raw, nil
+		}
+		return nil, fmt.Errorf("binary column value must be written as 0x followed by hex digits, got %q", s)
+	}
+	return v, nil
+}
+
+// Querier is satisfied by *sql.DB, *sql.Conn and *sql.Tx.
+type Querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// LoadColumnTypes returns column name -> information_schema.data_type for a table.
+func LoadColumnTypes(ctx context.Context, q Querier, schema, table string) (map[string]string, error) {
+	rows, err := q.QueryContext(ctx,
+		`SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = ? AND table_name = ?`,
+		schema, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	types := map[string]string{}
+	for rows.Next() {
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
+			return nil, err
+		}
+		types[name] = dataType
+	}
+	return types, rows.Err()
+}
+
+// ConvertRow applies ConvertForWrite to every value in m using the table's column types.
+// Columns missing from types (for example when the lookup failed) are left as they are.
+func ConvertRow(types map[string]string, m map[string]any) (map[string]any, error) {
+	if len(types) == 0 || len(m) == 0 {
+		return m, nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		cv, err := ConvertForWrite(types[k], v)
+		if err != nil {
+			return nil, fmt.Errorf("column %s: %w", k, err)
+		}
+		out[k] = cv
+	}
+	return out, nil
 }

@@ -31,6 +31,7 @@ import {
   Link2,
 } from 'lucide-react';
 import { ConnectionConfig, ColumnMeta, CheckConstraintMeta, ForeignKeyMeta, TriggerMeta, resolveConnectionEnv } from '../../types/domain';
+import { quoteSqlIdentifier } from '../../utils/sqlIdentifier';
 import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
@@ -42,6 +43,20 @@ import { ElasticsearchCreateIndexModal } from './ElasticsearchCreateIndexModal';
 import { ElasticsearchIndexModal } from './ElasticsearchIndexModal';
 import { MongoCreateCollectionModal } from './MongoCreateCollectionModal';
 import { MongoCollectionModal } from './MongoCollectionModal';
+
+const qMy = (name: string) => quoteSqlIdentifier('mysql', name);
+
+// Column lists of a foreign key. A composite key read from the server keeps all its columns until the
+// user changes the first column or its reference, at which point it becomes a single-column key.
+function fkColumnLists(fk: ForeignKeyDefinition): { cols: string[]; refs: string[] } {
+  const first = fk.columnName.trim();
+  const firstRef = fk.refColumn.trim();
+  if (fk.columns && fk.columns.length > 1 && fk.columns[0] === first && fk.refColumns?.[0] === firstRef) {
+    return { cols: fk.columns, refs: fk.refColumns };
+  }
+  return { cols: [first], refs: [firstRef] };
+}
+
 
 export interface ColumnDefinition {
   id: string;
@@ -91,6 +106,10 @@ export interface ForeignKeyDefinition {
   refColumn: string;
   onUpdate: string;
   onDelete: string;
+  // Composite key read from the server (MySQL / MariaDB). The editor edits one column, but the
+  // generated DDL keeps every column until the user changes the column or reference column.
+  columns?: string[];
+  refColumns?: string[];
 }
 
 export interface TriggerDefinition {
@@ -520,9 +539,9 @@ function generateTriggerDDL({
   const body = trigger.statement.trim();
 
   if (driver === 'mysql' || driver === 'mariadb') {
-    const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
+    const dbPrefix = database && database !== 'main' ? `${qMy(database)}.` : '';
     const actionBody = body || 'BEGIN\n  -- trigger body\nEND';
-    return `CREATE TRIGGER ${dbPrefix}\`${trgName}\` ${timing} ${event} ON ${dbPrefix}\`${tableName}\`\nFOR EACH ROW\n${actionBody};`;
+    return `CREATE TRIGGER ${dbPrefix}${qMy(trgName)} ${timing} ${event} ON ${dbPrefix}${qMy(tableName)}\nFOR EACH ROW\n${actionBody};`;
   } else if (driver === 'postgres') {
     const schemaPrefix = targetSchema ? `"${targetSchema}".` : '';
     const actionBody = body
@@ -590,10 +609,10 @@ function generateAlterSql({
   const isMySQL = driver === 'mysql' || driver === 'mariadb';
   const isPostgres = driver === 'postgres';
 
-  const dbPrefix = isMySQL && database && database !== 'main' ? `\`${database}\`.` : '';
+  const dbPrefix = isMySQL && database && database !== 'main' ? `${qMy(database)}.` : '';
   const schemaPrefix = isPostgres && targetSchema ? `"${targetSchema}".` : '';
   const tableTarget = isMySQL
-    ? `${dbPrefix}\`${initialTableName}\``
+    ? `${dbPrefix}${qMy(initialTableName)}`
     : isPostgres
     ? `${schemaPrefix}"${initialTableName}"`
     : `"${initialTableName}"`;
@@ -607,7 +626,7 @@ function generateAlterSql({
         (c) => c.originalName === orig.name || c.name.trim().toLowerCase() === orig.name.toLowerCase()
       );
       if (!stillExists) {
-        statements.push(`ALTER TABLE ${tableTarget} DROP COLUMN \`${orig.name}\`;`);
+        statements.push(`ALTER TABLE ${tableTarget} DROP COLUMN ${qMy(orig.name)};`);
       }
     });
 
@@ -625,7 +644,7 @@ function generateAlterSql({
       const colName = col.name.trim();
       const kind = col.columnKind || 'NORMAL';
       const isGenerated = kind === 'VIRTUAL' || kind === 'STORED';
-      let colDef = `\`${colName}\` ${col.dataType.toUpperCase()}`;
+      let colDef = `${qMy(colName)} ${col.dataType.toUpperCase()}`;
       if (col.lengthOrValues.trim()) {
         colDef += `(${col.lengthOrValues.trim()})`;
       }
@@ -661,7 +680,7 @@ function generateAlterSql({
         (o) => o.name === col.originalName || o.name.toLowerCase() === colName.toLowerCase()
       );
 
-      const positionClause = idx === 0 ? ' FIRST' : ` AFTER \`${validNewCols[idx - 1].name.trim()}\``;
+      const positionClause = idx === 0 ? ' FIRST' : ` AFTER ${qMy(validNewCols[idx - 1].name.trim())}`;
 
       if (!origMatch) {
         statements.push(`ALTER TABLE ${tableTarget} ADD COLUMN ${colDef}${positionClause};`);
@@ -691,7 +710,7 @@ function generateAlterSql({
 
         if (nameChanged || typeChanged || nullChanged || autoIncrChanged || defaultChanged || commentChanged || positionChanged || extraChanged) {
           const posToAppend = positionChanged ? positionClause : '';
-          statements.push(`ALTER TABLE ${tableTarget} CHANGE COLUMN \`${origMatch.name}\` ${colDef}${posToAppend};`);
+          statements.push(`ALTER TABLE ${tableTarget} CHANGE COLUMN ${qMy(origMatch.name)} ${colDef}${posToAppend};`);
           if (currentPos !== -1) {
             currentOrder.splice(currentPos, 1);
           }
@@ -717,7 +736,7 @@ function generateAlterSql({
         statements.push(`ALTER TABLE ${tableTarget} DROP PRIMARY KEY;`);
       }
       if (newPKs.length > 0) {
-        statements.push(`ALTER TABLE ${tableTarget} ADD PRIMARY KEY (${newPKs.map((k) => `\`${k}\``).join(', ')});`);
+        statements.push(`ALTER TABLE ${tableTarget} ADD PRIMARY KEY (${newPKs.map((k) => `${qMy(k)}`).join(', ')});`);
       }
     }
 
@@ -728,7 +747,7 @@ function generateAlterSql({
         (idx) => idx.originalName === origIdx.name || idx.name.trim() === origIdx.name
       );
       if (!stillExists) {
-        statements.push(`ALTER TABLE ${tableTarget} DROP INDEX \`${origIdx.name}\`;`);
+        statements.push(`ALTER TABLE ${tableTarget} DROP INDEX ${qMy(origIdx.name)};`);
       }
     });
 
@@ -741,7 +760,7 @@ function generateAlterSql({
 
       const colParts = validCols
         .map((c) => {
-          let part = `\`${c.name.trim()}\``;
+          let part = `${qMy(c.name.trim())}`;
           if (c.length && c.length.trim()) part += `(${c.length.trim()})`;
           if (c.order === 'DESC') part += ' DESC';
           return part;
@@ -753,7 +772,7 @@ function generateAlterSql({
       else if (idx.type === 'FULLTEXT') idxKeyword = 'FULLTEXT KEY';
       else if (idx.type === 'SPATIAL') idxKeyword = 'SPATIAL KEY';
 
-      let idxDef = `ADD ${idxKeyword} \`${idxName}\` (${colParts})`;
+      let idxDef = `ADD ${idxKeyword} ${qMy(idxName)} (${colParts})`;
       if (idx.method && (idx.method === 'BTREE' || idx.method === 'HASH')) {
         idxDef += ` USING ${idx.method}`;
       }
@@ -776,7 +795,7 @@ function generateAlterSql({
         const typeMatch = (origIdxMatch.isUnique ? 'UNIQUE' : 'INDEX') === idx.type;
 
         if (!colsMatch || !nameMatch || !typeMatch) {
-          statements.push(`ALTER TABLE ${tableTarget} DROP INDEX \`${origIdxMatch.name}\`;`);
+          statements.push(`ALTER TABLE ${tableTarget} DROP INDEX ${qMy(origIdxMatch.name)};`);
           statements.push(`ALTER TABLE ${tableTarget} ${idxDef};`);
         }
       }
@@ -787,19 +806,19 @@ function generateAlterSql({
     originalCheckConstraints.forEach((origChk) => {
       const stillExists = checkConstraints.some((c) => c.originalName === origChk.name || c.name.trim() === origChk.name);
       if (!stillExists && origChk.name) {
-        statements.push(`ALTER TABLE ${tableTarget} ${dropChkKeyword} \`${origChk.name}\`;`);
+        statements.push(`ALTER TABLE ${tableTarget} ${dropChkKeyword} ${qMy(origChk.name)};`);
       }
     });
 
     checkConstraints.forEach((chk) => {
       if (!chk.clause.trim()) return;
       const origMatch = originalCheckConstraints.find((o) => o.name === chk.originalName || o.name === chk.name.trim());
-      const namePart = chk.name.trim() ? `CONSTRAINT \`${chk.name.trim()}\` ` : '';
+      const namePart = chk.name.trim() ? `CONSTRAINT ${qMy(chk.name.trim())} ` : '';
       if (!origMatch) {
         statements.push(`ALTER TABLE ${tableTarget} ADD ${namePart}CHECK (${chk.clause.trim()});`);
       } else if (origMatch.clause.trim() !== chk.clause.trim() || origMatch.name !== chk.name.trim()) {
         if (origMatch.name) {
-          statements.push(`ALTER TABLE ${tableTarget} ${dropChkKeyword} \`${origMatch.name}\`;`);
+          statements.push(`ALTER TABLE ${tableTarget} ${dropChkKeyword} ${qMy(origMatch.name)};`);
         }
         statements.push(`ALTER TABLE ${tableTarget} ADD ${namePart}CHECK (${chk.clause.trim()});`);
       }
@@ -811,7 +830,7 @@ function generateAlterSql({
         (fk) => fk.originalName === origFk.constraintName || fk.name.trim() === origFk.constraintName
       );
       if (!stillExists && origFk.constraintName) {
-        statements.push(`ALTER TABLE ${tableTarget} DROP FOREIGN KEY \`${origFk.constraintName}\`;`);
+        statements.push(`ALTER TABLE ${tableTarget} DROP FOREIGN KEY ${qMy(origFk.constraintName)};`);
       }
     });
 
@@ -820,9 +839,9 @@ function generateAlterSql({
       const fkName = fk.name.trim() || `fk_${cleanTable}_${fk.columnName.trim()}`;
       const refTbl =
         fk.refSchema.trim() && fk.refSchema.trim() !== database
-          ? `\`${fk.refSchema.trim()}\`.\`${fk.refTable.trim()}\``
-          : `\`${fk.refTable.trim()}\``;
-      const fkClause = `ADD CONSTRAINT \`${fkName}\` FOREIGN KEY (\`${fk.columnName.trim()}\`) REFERENCES ${refTbl} (\`${fk.refColumn.trim()}\`)${
+          ? `${qMy(fk.refSchema.trim())}.${qMy(fk.refTable.trim())}`
+          : `${qMy(fk.refTable.trim())}`;
+      const fkClause = `ADD CONSTRAINT ${qMy(fkName)} FOREIGN KEY (${fkColumnLists(fk).cols.map(qMy).join(', ')}) REFERENCES ${refTbl} (${fkColumnLists(fk).refs.map(qMy).join(', ')})${
         fk.onDelete ? ` ON DELETE ${fk.onDelete}` : ''
       }${fk.onUpdate ? ` ON UPDATE ${fk.onUpdate}` : ''}`;
 
@@ -834,13 +853,13 @@ function generateAlterSql({
       } else {
         const changed =
           origMatch.constraintName !== fkName ||
-          origMatch.columnName !== fk.columnName.trim() ||
+          (origMatch.columns?.length ? origMatch.columns.join(',') : origMatch.columnName) !== fkColumnLists(fk).cols.join(',') ||
           origMatch.refTable !== fk.refTable.trim() ||
-          origMatch.refColumn !== fk.refColumn.trim() ||
+          (origMatch.refColumns?.length ? origMatch.refColumns.join(',') : origMatch.refColumn) !== fkColumnLists(fk).refs.join(',') ||
           (origMatch.onUpdate || 'NO ACTION').toUpperCase() !== (fk.onUpdate || 'NO ACTION').toUpperCase() ||
           (origMatch.onDelete || 'NO ACTION').toUpperCase() !== (fk.onDelete || 'NO ACTION').toUpperCase();
         if (changed) {
-          statements.push(`ALTER TABLE ${tableTarget} DROP FOREIGN KEY \`${origMatch.constraintName}\`;`);
+          statements.push(`ALTER TABLE ${tableTarget} DROP FOREIGN KEY ${qMy(origMatch.constraintName)};`);
           statements.push(`ALTER TABLE ${tableTarget} ${fkClause};`);
         }
       }
@@ -852,7 +871,7 @@ function generateAlterSql({
         (t) => t.originalName === origTrg.name || t.name.trim() === origTrg.name
       );
       if (!stillExists && origTrg.name) {
-        statements.push(`DROP TRIGGER IF EXISTS ${dbPrefix}\`${origTrg.name}\`;`);
+        statements.push(`DROP TRIGGER IF EXISTS ${dbPrefix}${qMy(origTrg.name)};`);
       }
     });
 
@@ -871,7 +890,7 @@ function generateAlterSql({
           origMatch.event.toUpperCase() !== trg.event.toUpperCase() ||
           origMatch.statement.trim() !== trg.statement.trim();
         if (changed) {
-          statements.push(`DROP TRIGGER IF EXISTS ${dbPrefix}\`${origMatch.name}\`;`);
+          statements.push(`DROP TRIGGER IF EXISTS ${dbPrefix}${qMy(origMatch.name)};`);
           statements.push(generateTriggerDDL({ driver, database, targetSchema, tableName: cleanTable, trigger: trg }));
         }
       }
@@ -882,7 +901,7 @@ function generateAlterSql({
     }
 
     if (cleanTable !== initialTableName) {
-      statements.push(`ALTER TABLE ${tableTarget} RENAME TO \`${cleanTable}\`;`);
+      statements.push(`ALTER TABLE ${tableTarget} RENAME TO ${qMy(cleanTable)};`);
     }
   } else if (isPostgres) {
     originalColumns.forEach((orig) => {
@@ -1217,15 +1236,15 @@ function generateAlterSql({
       statements.push(`ALTER TABLE ${oracleTarget} RENAME TO "${cleanTable}";`);
     }
   } else if (driver === 'clickhouse') {
-    const chPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
-    const chTarget = `${chPrefix}\`${initialTableName}\``;
+    const chPrefix = database && database !== 'main' ? `${qMy(database)}.` : '';
+    const chTarget = `${chPrefix}${qMy(initialTableName)}`;
 
     originalColumns.forEach((orig) => {
       const stillExists = validNewCols.some(
         (c) => c.originalName === orig.name || c.name.trim().toLowerCase() === orig.name.toLowerCase()
       );
       if (!stillExists) {
-        statements.push(`ALTER TABLE ${chTarget} DROP COLUMN \`${orig.name}\`;`);
+        statements.push(`ALTER TABLE ${chTarget} DROP COLUMN ${qMy(orig.name)};`);
       }
     });
 
@@ -1238,25 +1257,25 @@ function generateAlterSql({
       if (col.lengthOrValues.trim()) colType += `(${col.lengthOrValues.trim()})`;
 
       if (!origMatch) {
-        let def = `\`${colName}\` ${colType}`;
+        let def = `${qMy(colName)} ${colType}`;
         if (col.defaultValue.trim()) def += ` DEFAULT ${col.defaultValue.trim()}`;
         statements.push(`ALTER TABLE ${chTarget} ADD COLUMN ${def};`);
       } else {
         if (origMatch.name !== colName) {
-          statements.push(`ALTER TABLE ${chTarget} RENAME COLUMN \`${origMatch.name}\` TO \`${colName}\`;`);
+          statements.push(`ALTER TABLE ${chTarget} RENAME COLUMN ${qMy(origMatch.name)} TO ${qMy(colName)};`);
         }
         const origParsed = parseColumnType(origMatch.dataType);
         if (
           origParsed.baseType !== col.dataType.toUpperCase() ||
           origParsed.lengthOrValues !== col.lengthOrValues.trim()
         ) {
-          statements.push(`ALTER TABLE ${chTarget} MODIFY COLUMN \`${colName}\` ${colType};`);
+          statements.push(`ALTER TABLE ${chTarget} MODIFY COLUMN ${qMy(colName)} ${colType};`);
         }
       }
     });
 
     if (cleanTable !== initialTableName) {
-      statements.push(`RENAME TABLE ${chTarget} TO ${chPrefix}\`${cleanTable}\`;`);
+      statements.push(`RENAME TABLE ${chTarget} TO ${chPrefix}${qMy(cleanTable)};`);
     }
   } else {
     validNewCols.forEach((col) => {
@@ -1378,14 +1397,14 @@ function generateCreateTableSql({
   const validColNames = columns.map((c) => c.name.trim()).filter(Boolean);
 
   if (driver === 'mysql' || driver === 'mariadb') {
-    const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
+    const dbPrefix = database && database !== 'main' ? `${qMy(database)}.` : '';
     columns.forEach((col) => {
       const cName = col.name.trim();
       if (!cName) return;
 
       const kind = col.columnKind || 'NORMAL';
       const isGenerated = kind === 'VIRTUAL' || kind === 'STORED';
-      let colDef = `  \`${cName}\` ${col.dataType.toUpperCase()}`;
+      let colDef = `  ${qMy(cName)} ${col.dataType.toUpperCase()}`;
       if (col.lengthOrValues.trim()) {
         colDef += `(${col.lengthOrValues.trim()})`;
       }
@@ -1420,7 +1439,7 @@ function generateCreateTableSql({
     });
 
     if (pkCols.length > 0) {
-      lines.push(`  PRIMARY KEY (${pkCols.map((c) => `\`${c.name.trim()}\``).join(', ')})`);
+      lines.push(`  PRIMARY KEY (${pkCols.map((c) => `${qMy(c.name.trim())}`).join(', ')})`);
     }
 
     indexes.forEach((idx) => {
@@ -1429,7 +1448,7 @@ function generateCreateTableSql({
 
       const colParts = validCols
         .map((c) => {
-          let part = `\`${c.name.trim()}\``;
+          let part = `${qMy(c.name.trim())}`;
           if (c.length && c.length.trim()) part += `(${c.length.trim()})`;
           if (c.order === 'DESC') part += ' DESC';
           return part;
@@ -1444,7 +1463,7 @@ function generateCreateTableSql({
       else if (idx.type === 'FULLTEXT') idxKeyword = 'FULLTEXT KEY';
       else if (idx.type === 'SPATIAL') idxKeyword = 'SPATIAL KEY';
 
-      let idxDef = `  ${idxKeyword} \`${idxName}\` (${colParts})`;
+      let idxDef = `  ${idxKeyword} ${qMy(idxName)} (${colParts})`;
       if (idx.method && (idx.method === 'BTREE' || idx.method === 'HASH')) {
         idxDef += ` USING ${idx.method}`;
       }
@@ -1456,7 +1475,7 @@ function generateCreateTableSql({
 
     checkConstraints.forEach((chk) => {
       if (!chk.clause.trim()) return;
-      const namePart = chk.name.trim() ? `CONSTRAINT \`${chk.name.trim()}\` ` : '';
+      const namePart = chk.name.trim() ? `CONSTRAINT ${qMy(chk.name.trim())} ` : '';
       lines.push(`  ${namePart}CHECK (${chk.clause.trim()})`);
     });
 
@@ -1465,15 +1484,15 @@ function generateCreateTableSql({
       const fkName = fk.name.trim() || `fk_${cleanTable}_${fk.columnName.trim()}`;
       const refTbl =
         fk.refSchema.trim() && fk.refSchema.trim() !== database
-          ? `\`${fk.refSchema.trim()}\`.\`${fk.refTable.trim()}\``
-          : `\`${fk.refTable.trim()}\``;
-      let fkDef = `  CONSTRAINT \`${fkName}\` FOREIGN KEY (\`${fk.columnName.trim()}\`) REFERENCES ${refTbl} (\`${fk.refColumn.trim()}\`)`;
+          ? `${qMy(fk.refSchema.trim())}.${qMy(fk.refTable.trim())}`
+          : `${qMy(fk.refTable.trim())}`;
+      let fkDef = `  CONSTRAINT ${qMy(fkName)} FOREIGN KEY (${fkColumnLists(fk).cols.map(qMy).join(', ')}) REFERENCES ${refTbl} (${fkColumnLists(fk).refs.map(qMy).join(', ')})`;
       if (fk.onDelete) fkDef += ` ON DELETE ${fk.onDelete}`;
       if (fk.onUpdate) fkDef += ` ON UPDATE ${fk.onUpdate}`;
       lines.push(fkDef);
     });
 
-    let ddl = `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE=${engine} DEFAULT CHARSET=${charset} COLLATE=${collation}`;
+    let ddl = `CREATE TABLE ${dbPrefix}${qMy(cleanTable)} (\n${lines.join(',\n')}\n) ENGINE=${engine} DEFAULT CHARSET=${charset} COLLATE=${collation}`;
     if (tableComment.trim()) {
       ddl += ` COMMENT='${tableComment.trim().replace(/'/g, "\\'")}'`;
     }
@@ -1709,7 +1728,7 @@ function generateCreateTableSql({
   } else if (driver === 'mongodb') {
     return `db.createCollection("${cleanTable}");`;
   } else if (driver === 'clickhouse') {
-    const dbPrefix = database && database !== 'main' ? `\`${database}\`.` : '';
+    const dbPrefix = database && database !== 'main' ? `${qMy(database)}.` : '';
     columns.forEach((col) => {
       const cName = col.name.trim();
       if (!cName) return;
@@ -1725,7 +1744,7 @@ function generateCreateTableSql({
           colType = `Nullable(${colType})`;
         }
       }
-      let colDef = `  \`${cName}\` ${colType}`;
+      let colDef = `  ${qMy(cName)} ${colType}`;
       if (col.defaultValue.trim()) {
         const val = col.defaultValue.trim();
         colDef += ` DEFAULT ${val}`;
@@ -1737,11 +1756,11 @@ function generateCreateTableSql({
     });
     const orderCols =
       pkCols.length > 1
-        ? `(${pkCols.map((c) => `\`${c.name.trim()}\``).join(', ')})`
+        ? `(${pkCols.map((c) => `${qMy(c.name.trim())}`).join(', ')})`
         : pkCols.length === 1
-        ? `\`${pkCols[0].name.trim()}\``
+        ? `${qMy(pkCols[0].name.trim())}`
         : 'tuple()';
-    return `CREATE TABLE ${dbPrefix}\`${cleanTable}\` (\n${lines.join(',\n')}\n) ENGINE = MergeTree() ORDER BY ${orderCols};`;
+    return `CREATE TABLE ${dbPrefix}${qMy(cleanTable)} (\n${lines.join(',\n')}\n) ENGINE = MergeTree() ORDER BY ${orderCols};`;
   } else {
     // SQLite
     columns.forEach((col) => {
@@ -2056,6 +2075,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               refSchema: fk.refSchema || '',
               refTable: fk.refTable,
               refColumn: fk.refColumn,
+              columns: fk.columns && fk.columns.length > 1 ? fk.columns : undefined,
+              refColumns: fk.refColumns && fk.refColumns.length > 1 ? fk.refColumns : undefined,
               onUpdate: (fk.onUpdate || 'NO ACTION').toUpperCase(),
               onDelete: (fk.onDelete || 'NO ACTION').toUpperCase(),
             }))

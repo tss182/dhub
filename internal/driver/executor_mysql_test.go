@@ -70,3 +70,30 @@ func TestNormalizeScannedValue_MySQLBigInt(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeScannedValue_MySQLBinaryAndBit(t *testing.T) {
+	cases := []struct {
+		name     string
+		typeName string
+		in       []byte
+		want     any
+	}{
+		{"binary uuid", "BINARY", []byte{0xde, 0xad, 0xbe, 0xef}, "0xdeadbeef"},
+		{"varbinary", "VARBINARY", []byte{0x00, 0x01}, "0x0001"},
+		{"blob", "BLOB", []byte{0xff}, "0xff"},
+		{"bit(1)", "BIT", []byte{0x01}, uint64(1)},
+		{"varchar stays text", "VARCHAR", []byte("héllo"), "héllo"},
+		{"json stays text", "JSON", []byte(`{"a":1}`), `{"a":1}`},
+	}
+	for _, tc := range cases {
+		for _, dialect := range []string{"mysql", "mariadb"} {
+			if got := normalizeScannedValue(tc.in, tc.typeName, dialect); got != tc.want {
+				t.Errorf("%s/%s: got %#v, want %#v", tc.name, dialect, got, tc.want)
+			}
+		}
+	}
+	// Other dialects keep returning the raw string.
+	if got := normalizeScannedValue([]byte{0x41}, "BINARY", "sqlite"); got != "A" {
+		t.Errorf("sqlite changed: %#v", got)
+	}
+}
