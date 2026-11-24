@@ -69,29 +69,151 @@ func (s *SchemaService) GetDatabaseDDL(connectionID, database, schema string) (s
 			continue
 		}
 
-		var ordered []driver.ObjectSummary
+		var tables []driver.ObjectSummary
+		var views []driver.ObjectSummary
+		var sequences []driver.ObjectSummary
+		var routines []driver.ObjectSummary
+		var triggers []driver.ObjectSummary
+		var extensions []driver.ObjectSummary
 		for _, o := range objs {
-			if o.Type == "table" {
-				ordered = append(ordered, o)
-			}
-		}
-		for _, o := range objs {
-			if o.Type == "view" || o.Type == "materialized_view" {
-				ordered = append(ordered, o)
+			switch o.Type {
+			case "table":
+				tables = append(tables, o)
+			case "view", "materialized_view":
+				views = append(views, o)
+			case "sequence":
+				sequences = append(sequences, o)
+			case "routine":
+				routines = append(routines, o)
+			case "trigger":
+				triggers = append(triggers, o)
+			case "extension":
+				extensions = append(extensions, o)
 			}
 		}
 
-		if len(schemas) > 1 && len(ordered) > 0 {
+		// Cache table structures and topologically sort tables by FK dependencies for PostgreSQL.
+		tableStructs := make(map[string]*driver.TableStructure, len(tables))
+		if driverName == "postgres" && len(tables) > 1 {
+			for _, t := range tables {
+				if st, sErr := drv.GetTableStructure(ctx, database, sch, t.Name); sErr == nil && st != nil {
+					tableStructs[t.Name] = st
+				}
+			}
+			tableByName := make(map[string]driver.ObjectSummary, len(tables))
+			inDegree := make(map[string]int, len(tables))
+			dependents := make(map[string][]string, len(tables))
+			for _, t := range tables {
+				tableByName[t.Name] = t
+				inDegree[t.Name] = 0
+			}
+			for _, t := range tables {
+				st := tableStructs[t.Name]
+				if st == nil {
+					continue
+				}
+				seenParent := make(map[string]bool)
+				for _, fk := range st.ForeignKeys {
+					parent := fk.RefTable
+					if parent == "" || parent == t.Name || seenParent[parent] {
+						continue
+					}
+					if fk.RefSchema != "" && fk.RefSchema != sch {
+						continue
+					}
+					if _, exists := tableByName[parent]; exists {
+						seenParent[parent] = true
+						inDegree[t.Name]++
+						dependents[parent] = append(dependents[parent], t.Name)
+					}
+				}
+			}
+			var queue []string
+			for _, t := range tables {
+				if inDegree[t.Name] == 0 {
+					queue = append(queue, t.Name)
+				}
+			}
+			var sortedTables []driver.ObjectSummary
+			visited := make(map[string]bool, len(tables))
+			for len(queue) > 0 {
+				curr := queue[0]
+				queue = queue[1:]
+				visited[curr] = true
+				sortedTables = append(sortedTables, tableByName[curr])
+				for _, dep := range dependents[curr] {
+					inDegree[dep]--
+					if inDegree[dep] == 0 {
+						queue = append(queue, dep)
+					}
+				}
+			}
+			for _, t := range tables {
+				if !visited[t.Name] {
+					sortedTables = append(sortedTables, t)
+				}
+			}
+			tables = sortedTables
+		}
+
+		var ordered []driver.ObjectSummary
+		if driverName == "postgres" {
+			ordered = append(ordered, extensions...)
+			ordered = append(ordered, sequences...)
+			ordered = append(ordered, tables...)
+			ordered = append(ordered, views...)
+			ordered = append(ordered, routines...)
+			ordered = append(ordered, triggers...)
+		} else {
+			ordered = append(ordered, tables...)
+			ordered = append(ordered, views...)
+		}
+
+		if len(schemas) > 1 && (len(ordered) > 0 || driverName == "postgres") {
 			sb.WriteString(fmt.Sprintf("-- Schema: %s\n\n", sch))
+		}
+
+		// For PostgreSQL, emit custom ENUM types in this schema before sequences and tables.
+		if driverName == "postgres" {
+			escSch := strings.ReplaceAll(sch, "'", "''")
+			enumSQL := fmt.Sprintf(`SELECT t.typname, string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
+FROM pg_type t
+JOIN pg_enum e ON e.enumtypid = t.oid
+JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE n.nspname = '%s'
+GROUP BY t.typname
+ORDER BY t.typname`, escSch)
+			if enumRes, eErr := drv.Execute(ctx, driver.QueryRequest{
+				ExecutionID:  "ddl-enum-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+				ConnectionID: connectionID,
+				Database:     database,
+				Schema:       sch,
+				SQL:          enumSQL,
+				Limit:        500,
+			}); eErr == nil && enumRes != nil {
+				for _, r := range enumRes.Rows {
+					if len(r) >= 2 && r[0] != nil && r[1] != nil {
+						tName := fmt.Sprint(r[0])
+						labels := fmt.Sprint(r[1])
+						sb.WriteString(fmt.Sprintf("-- TYPE: %s.%s\nCREATE TYPE %s.%s AS ENUM (%s);\n\n",
+							sch, tName, quoteIdentifier(driverName, sch), quoteIdentifier(driverName, tName), labels))
+						objectCount++
+					}
+				}
+			}
 		}
 
 		for _, obj := range ordered {
 			var ddl string
-			if driverName == "postgres" && (obj.Type == "view" || obj.Type == "materialized_view") {
+			if driverName == "postgres" && obj.Type == "extension" {
+				ddl = fmt.Sprintf("CREATE EXTENSION IF NOT EXISTS %s;", quoteIdentifier(driverName, obj.Name))
+			} else if driverName == "postgres" && (obj.Type == "view" || obj.Type == "materialized_view" || obj.Type == "sequence" || obj.Type == "routine" || obj.Type == "trigger") {
 				objDDL, dErr := s.GetObjectDDL(connectionID, database, sch, obj.Type, obj.Name)
 				if dErr == nil {
 					ddl = strings.TrimSpace(objDDL)
 				}
+			} else if st, ok := tableStructs[obj.Name]; ok && st != nil {
+				ddl = strings.TrimSpace(st.DDL)
 			} else {
 				tStruct, structErr := drv.GetTableStructure(ctx, database, sch, obj.Name)
 				if structErr != nil || tStruct == nil {

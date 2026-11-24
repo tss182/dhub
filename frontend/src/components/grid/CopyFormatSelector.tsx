@@ -40,6 +40,16 @@ export const COPY_FORMAT_OPTIONS: CopyFormatOption[] = [
     description: 'Generates INSERT statements with ON CONFLICT / ON DUPLICATE KEY UPDATE for insert-or-update.',
   },
   {
+    id: 'sql_in',
+    label: 'SQL IN (...)',
+    description: 'Generates an IN (val1, val2, ...) list from the selected cells for WHERE filtering.',
+  },
+  {
+    id: 'pg_copy',
+    label: 'PG COPY FROM STDIN',
+    description: 'Generates PostgreSQL COPY ... FROM stdin; tab-delimited bulk load script.',
+  },
+  {
     id: 'qdrant_upsert',
     label: 'Qdrant Upsert REST',
     description: 'Generates PUT /collections/<name>/points?wait=true REST payload for Qdrant.',

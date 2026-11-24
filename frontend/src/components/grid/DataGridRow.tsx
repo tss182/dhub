@@ -208,6 +208,7 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
               {isEditing ? (
                 <GridCellEditor
                   colInputType={colInputType}
+                  column={col}
                   editVal={editVal}
                   variant="update"
                   isFirstEditRenderRef={isFirstEditRenderRef}
@@ -394,6 +395,7 @@ const DataGridRowInner: React.FC<DataGridRowProps> = ({
             {isEditing ? (
               <GridCellEditor
                 colInputType={colInputType}
+                column={col}
                 editVal={editVal}
                 variant="insert"
                 isFirstEditRenderRef={isFirstEditRenderRef}

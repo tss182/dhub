@@ -144,6 +144,8 @@ export interface ColumnMeta {
   isPrimaryKey: boolean;
   isAutoIncrement: boolean;
   defaultValue: string;
+  defaultKind?: string;
+  enumValues?: string[] | null;
   comment?: string;
 }
 

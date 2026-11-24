@@ -13,9 +13,14 @@ interface PlanNode {
   detail?: string;
   cost?: string;
   numericCost?: number;
+  exclusiveCost?: number;
+  exclusiveTimeMs?: number;
   rows?: string;
   actualRows?: string;
   actualTime?: string;
+  buffers?: string;
+  loops?: number;
+  sortInfo?: string;
   isWarning?: boolean;
   isHotspot?: boolean;
   isRowEstimateSkew?: boolean;
@@ -44,25 +49,45 @@ function parseJsonPlan(raw: string): PlanNode | null {
         const actualRowsNum = typeof node['Actual Rows'] === 'number' ? node['Actual Rows'] : undefined;
         const rows = planRows !== undefined ? String(planRows) : undefined;
         const actualRows = actualRowsNum !== undefined ? String(actualRowsNum) : undefined;
+        const actualTimeNum = typeof node['Actual Total Time'] === 'number' ? node['Actual Total Time'] : undefined;
         const actualTime =
-          node['Actual Total Time'] !== undefined ? `${node['Actual Total Time']} ms` : undefined;
+          actualTimeNum !== undefined ? `${actualTimeNum} ms` : undefined;
+        const hit = node['Shared Hit Blocks'];
+        const read = node['Shared Read Blocks'];
+        const buffers =
+          hit !== undefined || read !== undefined
+            ? `hit=${hit ?? 0}, read=${read ?? 0}`
+            : undefined;
+        const loops = typeof node['Actual Loops'] === 'number' && node['Actual Loops'] > 1 ? node['Actual Loops'] : undefined;
+        const sortInfo = node['Sort Method']
+          ? `${node['Sort Method']}${node['Sort Space Used'] ? ` (${node['Sort Space Used']}kB ${node['Sort Space Type'] || ''})` : ''}`
+          : undefined;
         const isWarning = nodeType.includes('Seq Scan') || nodeType.includes('Table Scan');
         const isRowEstimateSkew =
           planRows !== undefined &&
           actualRowsNum !== undefined &&
           Math.max(planRows, actualRowsNum) > 10 &&
           (actualRowsNum > planRows * 5 || planRows > actualRowsNum * 5);
-        const children = Array.isArray(node['Plans']) ? node['Plans'].map(convertPg) : [];
+        const children: PlanNode[] = Array.isArray(node['Plans']) ? node['Plans'].map(convertPg) : [];
+        const childCostSum = children.reduce((sum, ch) => sum + (ch.numericCost || 0), 0);
+        const childTimeSum = children.reduce((sum, ch) => sum + (ch.actualTime ? parseFloat(ch.actualTime) || 0 : 0), 0);
+        const exclusiveCost = totalCost !== undefined ? Math.max(0, totalCost - childCostSum) : undefined;
+        const exclusiveTimeMs = actualTimeNum !== undefined ? Math.max(0, actualTimeNum - childTimeSum) : undefined;
 
         return {
           id: `pg-${counter++}`,
           title: `${nodeType}${rel}${alias}`,
-          detail: node['Filter'] || node['Index Cond'] || node['Hash Cond'] || undefined,
+          detail: node['Filter'] || node['Index Cond'] || node['Hash Cond'] || node['Sort Key']?.join(', ') || undefined,
           cost,
           numericCost: totalCost,
+          exclusiveCost,
+          exclusiveTimeMs,
           rows,
           actualRows,
           actualTime,
+          buffers,
+          loops,
+          sortInfo,
           isWarning,
           isRowEstimateSkew,
           children,
@@ -224,17 +249,25 @@ function parseJsonPlan(raw: string): PlanNode | null {
 }
 
 function markHotspot(root: PlanNode) {
-  let maxCost = -1;
+  let maxScore = -1;
   let maxNode: PlanNode | null = null;
   const walk = (n: PlanNode) => {
-    if (typeof n.numericCost === 'number' && n.numericCost > maxCost) {
-      maxCost = n.numericCost;
+    const score =
+      typeof n.exclusiveTimeMs === 'number' && n.exclusiveTimeMs > 0
+        ? n.exclusiveTimeMs
+        : typeof n.exclusiveCost === 'number'
+        ? n.exclusiveCost
+        : typeof n.numericCost === 'number'
+        ? n.numericCost
+        : -1;
+    if (score > maxScore) {
+      maxScore = score;
       maxNode = n;
     }
     n.children.forEach(walk);
   };
   walk(root);
-  if (maxNode && maxCost > 0 && root.children.length > 0) {
+  if (maxNode && maxScore > 0 && root.children.length > 0) {
     (maxNode as PlanNode).isHotspot = true;
   }
 }
@@ -330,6 +363,21 @@ const PlanTreeNode: React.FC<{ node: PlanNode; depth?: number }> = ({ node, dept
             {node.actualTime && (
               <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 font-mono text-[10px]">
                 time: {node.actualTime}
+              </span>
+            )}
+            {node.loops && (
+              <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/25 font-mono text-[10px]">
+                loops: {node.loops}
+              </span>
+            )}
+            {node.buffers && (
+              <span className="px-1.5 py-0.5 rounded bg-zinc-700/40 text-zinc-300 border border-zinc-600/40 font-mono text-[10px]">
+                buffers: {node.buffers}
+              </span>
+            )}
+            {node.sortInfo && (
+              <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/25 font-mono text-[10px]">
+                sort: {node.sortInfo}
               </span>
             )}
             {node.isHotspot && (

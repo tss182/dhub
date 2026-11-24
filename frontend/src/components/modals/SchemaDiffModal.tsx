@@ -32,6 +32,7 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
   const [isComparing, setIsComparing] = useState(false);
   const [diffResult, setDiffResult] = useState<any>(null);
   const [copied, setCopied] = useState(false);
+  const [wrapInTx, setWrapInTx] = useState(true);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -49,42 +50,54 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
 
   useEffect(() => {
     if (!srcConnId) return;
+    let cancelled = false;
     SchemaService.GetDatabases(srcConnId)
       .then((dbs) => {
+        if (cancelled) return;
         setSrcDBs(dbs || []);
         if (dbs && dbs.length > 0 && !dbs.includes(srcDB)) setSrcDB(dbs[0]);
       })
-      .catch(() => setSrcDBs([]));
+      .catch(() => { if (!cancelled) setSrcDBs([]); });
+    return () => { cancelled = true; };
   }, [srcConnId]);
 
   useEffect(() => {
     if (!srcConnId || !srcDB) return;
+    let cancelled = false;
     SchemaService.GetSchemas(srcConnId, srcDB)
       .then((schemas) => {
+        if (cancelled) return;
         setSrcSchemas(schemas || []);
         if (schemas && schemas.length > 0 && !schemas.includes(srcSchema)) setSrcSchema(schemas[0]);
       })
-      .catch(() => setSrcSchemas([]));
+      .catch(() => { if (!cancelled) setSrcSchemas([]); });
+    return () => { cancelled = true; };
   }, [srcConnId, srcDB]);
 
   useEffect(() => {
     if (!dstConnId) return;
+    let cancelled = false;
     SchemaService.GetDatabases(dstConnId)
       .then((dbs) => {
+        if (cancelled) return;
         setDstDBs(dbs || []);
         if (dbs && dbs.length > 0 && !dbs.includes(dstDB)) setDstDB(dbs[0]);
       })
-      .catch(() => setDstDBs([]));
+      .catch(() => { if (!cancelled) setDstDBs([]); });
+    return () => { cancelled = true; };
   }, [dstConnId]);
 
   useEffect(() => {
     if (!dstConnId || !dstDB) return;
+    let cancelled = false;
     SchemaService.GetSchemas(dstConnId, dstDB)
       .then((schemas) => {
+        if (cancelled) return;
         setDstSchemas(schemas || []);
         if (schemas && schemas.length > 0 && !schemas.includes(dstSchema)) setDstSchema(schemas[0]);
       })
-      .catch(() => setDstSchemas([]));
+      .catch(() => { if (!cancelled) setDstSchemas([]); });
+    return () => { cancelled = true; };
   }, [dstConnId, dstDB]);
 
   if (!isOpen) return null;
@@ -113,10 +126,20 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
     }
   };
 
+  const effectiveMigrationSql = React.useMemo(() => {
+    const raw = diffResult?.migrationSql || '';
+    if (!raw) return '';
+    const dDrv = connections.find((c) => c.id === dstConnId)?.driver;
+    if (wrapInTx && (dDrv === 'postgres' || dDrv === 'sqlite')) {
+      return `BEGIN;\n\n${raw}\n\nCOMMIT;`;
+    }
+    return raw;
+  }, [diffResult?.migrationSql, wrapInTx, connections, dstConnId]);
+
   const handleCopySql = async () => {
-    if (!diffResult?.migrationSql) return;
+    if (!effectiveMigrationSql) return;
     try {
-      await navigator.clipboard.writeText(diffResult.migrationSql);
+      await navigator.clipboard.writeText(effectiveMigrationSql);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       alertSuccess('Migration SQL copied to clipboard.');
@@ -323,7 +346,21 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
           {diffResult?.migrationSql && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-zinc-300">Generated Migration Script</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold text-zinc-300">Generated Migration Script</span>
+                  {(connections.find((c) => c.id === dstConnId)?.driver === 'postgres' ||
+                    connections.find((c) => c.id === dstConnId)?.driver === 'sqlite') && (
+                    <label className="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={wrapInTx}
+                        onChange={(e) => setWrapInTx(e.target.checked)}
+                        className="accent-blue-500 cursor-pointer"
+                      />
+                      <span>Wrap in BEGIN; ... COMMIT;</span>
+                    </label>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -337,7 +374,7 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        onOpenInConsole(diffResult.migrationSql, dstConnId, dstDB, dstSchema);
+                        onOpenInConsole(effectiveMigrationSql, dstConnId, dstDB, dstSchema);
                         onClose();
                       }}
                       className="flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium cursor-pointer"
@@ -349,7 +386,7 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
                 </div>
               </div>
               <pre className="p-3 rounded-lg bg-[#101115] border border-[#272932] font-mono text-[11px] text-emerald-300 max-h-56 overflow-auto select-text">
-                {diffResult.migrationSql}
+                {effectiveMigrationSql}
               </pre>
             </div>
           )}

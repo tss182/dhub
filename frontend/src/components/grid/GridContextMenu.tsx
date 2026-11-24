@@ -798,8 +798,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                   </button>
                 )}
 
-              {isMongo &&
-                onFilterByValue &&
+              {onFilterByValue &&
                 vr &&
                 vr.globalRowIndex !== undefined &&
                 contextMenu.cIdx !== null &&

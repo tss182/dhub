@@ -20,6 +20,45 @@ interface SnippetsModalProps {
   initialSql?: string;
 }
 
+const PG_DBA_SNIPPETS: Snippet[] = [
+  {
+    id: 'pg-dba-locks',
+    title: 'PG: Blocking Locks & Waiting Queries',
+    description: 'Find queries blocked by locks and their blocking PIDs',
+    sqlText: `SELECT pid, usename, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by, now() - query_start AS duration, query\nFROM pg_stat_activity\nWHERE cardinality(pg_blocking_pids(pid)) > 0\nORDER BY duration DESC;`,
+    driver: 'postgres',
+    tags: 'locks,dba,blocking',
+    updatedAt: '',
+  },
+  {
+    id: 'pg-dba-bloat',
+    title: 'PG: Table Dead Tuples & Vacuum Status',
+    description: 'Inspect dead tuples, live tuples, and last autovacuum per table',
+    sqlText: `SELECT schemaname, relname, n_live_tup, n_dead_tup, round(100.0 * n_dead_tup / NULLIF(n_live_tup + n_dead_tup, 0), 2) AS dead_pct, last_autovacuum, last_autoanalyze\nFROM pg_stat_user_tables\nORDER BY n_dead_tup DESC\nLIMIT 50;`,
+    driver: 'postgres',
+    tags: 'vacuum,bloat,dba',
+    updatedAt: '',
+  },
+  {
+    id: 'pg-dba-unused-idx',
+    title: 'PG: Unused Indexes (idx_scan = 0)',
+    description: 'Identify non-primary, non-unique indexes that have never been scanned',
+    sqlText: `SELECT s.schemaname, s.relname AS table_name, s.indexrelname AS index_name, pg_size_pretty(pg_relation_size(s.indexrelid)) AS index_size, s.idx_scan\nFROM pg_stat_user_indexes s\nJOIN pg_index i ON i.indexrelid = s.indexrelid\nWHERE s.idx_scan = 0 AND NOT i.indisunique AND NOT i.indisprimary\nORDER BY pg_relation_size(s.indexrelid) DESC;`,
+    driver: 'postgres',
+    tags: 'indexes,dba,performance',
+    updatedAt: '',
+  },
+  {
+    id: 'pg-dba-listen-notify',
+    title: 'PG: LISTEN / NOTIFY Channel Test',
+    description: 'Send a JSON notification payload on a PostgreSQL channel',
+    sqlText: `SELECT pg_notify('events', json_build_object('event', 'ping', 'ts', now())::text);`,
+    driver: 'postgres',
+    tags: 'listen,notify,pubsub',
+    updatedAt: '',
+  },
+];
+
 export const SnippetsModal: React.FC<SnippetsModalProps> = ({
   isOpen,
   onClose,
@@ -35,7 +74,9 @@ export const SnippetsModal: React.FC<SnippetsModalProps> = ({
   const loadSnippets = async () => {
     try {
       const list = await (WorkspaceService as any).ListSnippets();
-      setSnippets(list || []);
+      const custom = list || [];
+      const existingTitles = new Set(custom.map((s: Snippet) => s.title));
+      setSnippets([...custom, ...PG_DBA_SNIPPETS.filter((s) => !existingTitles.has(s.title))]);
     } catch (err: any) {
       alertError(err?.message || 'Failed to load snippets');
     }

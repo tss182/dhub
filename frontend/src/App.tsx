@@ -7,6 +7,7 @@ import { QueryService, SchemaService, ConnectionService, WorkspaceService } from
 import { LeftSidebar, LeftSidebarTab } from './components/layout/LeftSidebar';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
 import { RightSidebar } from './components/layout/RightSidebar';
+import { WorkbenchStatusBar } from './components/layout/WorkbenchStatusBar';
 import { ConsoleList } from './components/layout/ConsoleList';
 import { AlertModal } from './components/modals/AlertModal';
 import { ToastContainer } from './components/common/ToastContainer';
@@ -1928,11 +1929,12 @@ export function App() {
   const handleExecuteQuery = async (
     sql: string,
     explicitDb?: string,
-    targetBottomTab: 'result' | 'explain' = 'result'
+    targetBottomTab: 'result' | 'explain' = 'result',
+    explicitTabId?: string
   ) => {
-    const currentTab = useWorkbenchStore
-      .getState()
-      .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
+    const allTabs = useWorkbenchStore.getState().tabs;
+    const activeId = explicitTabId || useWorkbenchStore.getState().activeTabId;
+    const currentTab = allTabs.find((t) => t.id === activeId);
     const targetConnId = currentTab?.connectionId || useConnectionStore.getState().activeConnectionId;
     if (!targetConnId) {
       alertWarning('Please select or add a connection in Database Explorer first.', 'No Active Connection');
@@ -3021,12 +3023,24 @@ export function App() {
                     database={effectiveDb}
                     schema={effectiveSchema}
                     availableDatabases={availableDbs}
+                    availableSchemas={effectiveSchema ? [effectiveSchema] : []}
                     isRunning={isRunning}
                     onChange={(val) => updateTabContent(activeTab.id, val)}
                     onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || effectiveDb)}
                     onCancel={() => handleCancelQuery(activeTab.id)}
                     onExplain={(explainSql) => {
                       handleExecuteQuery(explainSql, effectiveDb, 'explain');
+                    }}
+                    onSchemaChange={(newSchema) => {
+                      const currentTab = useWorkbenchStore
+                        .getState()
+                        .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
+                      if (currentTab) {
+                        updateTabDatabase(currentTab.id, effectiveDb, newSchema);
+                        if (currentTab.connectionId) {
+                          setActiveConnection(currentTab.connectionId, effectiveDb, newSchema);
+                        }
+                      }
                     }}
                     txStatus={txStatusByTab[activeTab.id]}
                     onTxStatusChange={(st) => {
@@ -4319,7 +4333,7 @@ export function App() {
                     onOpenTable={(tblName) => {
                       const conn = connections.find((c) => c.id === splitTab.connectionId);
                       openTab({
-                        id: `table-${splitTab.connectionId}-${splitTab.database}-${tblName}`,
+                        id: `table-${splitTab.connectionId}-${splitTab.database}-${splitTab.schema || 'public'}-${tblName}`,
                         type: 'table_data',
                         title: tblName,
                         connectionId: splitTab.connectionId,
@@ -4350,7 +4364,7 @@ export function App() {
                     availableDatabases={treeDatabases[splitTab.connectionId] || []}
                     isRunning={isRunningByTab[splitTab.id] || false}
                     onChange={(val) => updateTabContent(splitTab.id, val)}
-                    onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || splitTab.database)}
+                    onExecute={(sqlText, selectedDb) => handleExecuteQuery(sqlText, selectedDb || splitTab.database, 'result', splitTab.id)}
                     onCancel={() => handleCancelQuery(splitTab.id)}
                   />
                 )}
@@ -4438,6 +4452,15 @@ export function App() {
           </div>
         )}
       </div>
+      <WorkbenchStatusBar
+        isMac={isMac}
+        statusMessage={statusMessage}
+        currentTx={activeTab ? txStatusByTab[activeTab.id] : undefined}
+        hideTx={!activeTab || activeTab.type !== 'worksheet'}
+        updateInfo={updateInfo}
+        onOpenUpdateModal={openUpdateModal}
+        onOpenHelp={openHelpModal}
+      />
 
       {/* Hovered Workbench Tab Popover */}
       {hoveredTab && !tabContextMenu.isOpen && !isTabDropdownOpen && (

@@ -672,6 +672,8 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			args = append(args, "-F", "c", "-f", filePath)
 		} else if opts.Format == "tar" || strings.HasSuffix(lowerPath, ".tar") {
 			args = append(args, "-F", "t", "-f", filePath)
+		} else if opts.Format == "directory" {
+			args = append(args, "-F", "d", "-f", filePath)
 		} else if strings.HasSuffix(lowerPath, ".gz") {
 			args = append(args, "-F", "p")
 			isPlainGzip = true

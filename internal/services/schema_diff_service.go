@@ -39,6 +39,34 @@ type SchemaDiffResult struct {
 	MigrationSQL  string      `json:"migrationSql"`
 }
 
+func qualifyDiffTable(driverType, schema, table string) string {
+	qTable := quoteIdentifier(driverType, table)
+	d := strings.ToLower(strings.TrimSpace(driverType))
+	if (d == "postgres" || d == "mssql" || d == "sqlserver" || d == "oracle") && schema != "" && schema != "main" {
+		return quoteIdentifier(driverType, schema) + "." + qTable
+	}
+	return qTable
+}
+
+func rewritePostgresSchemaPrefix(sqlText, srcSchema, dstSchema, tableName string) string {
+	if srcSchema == "" || dstSchema == "" || srcSchema == dstSchema {
+		return sqlText
+	}
+	qSrc := quoteIdentifier("postgres", srcSchema)
+	qDst := quoteIdentifier("postgres", dstSchema)
+	qTbl := quoteIdentifier("postgres", tableName)
+	sqlText = strings.ReplaceAll(sqlText, qSrc+"."+qTbl, qDst+"."+qTbl)
+	sqlText = strings.ReplaceAll(sqlText, srcSchema+"."+tableName, qDst+"."+qTbl)
+	return sqlText
+}
+
+func normalizePGDefault(col driver.ColumnMeta) string {
+	if col.DefaultKind == "IDENTITY_ALWAYS" || col.DefaultKind == "IDENTITY_BY_DEFAULT" || col.DefaultKind == "GENERATED_STORED" {
+		return ""
+	}
+	return strings.TrimSpace(col.DefaultValue)
+}
+
 func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, dstDB, dstSchema string) (*SchemaDiffResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -120,7 +148,7 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 		_, inDst := dstTables[name]
 
 		if !inSrc && inDst {
-			qTable := quoteIdentifier(dstDriverType, name)
+			qTable := qualifyDiffTable(dstDriverType, dstSchema, name)
 			mig := fmt.Sprintf("-- Table %s exists only in target (review before dropping):\n-- DROP TABLE %s;", name, qTable)
 			if dstDriverType == "qdrant" {
 				mig = fmt.Sprintf("-- Collection %s exists only in target (review before deleting):\n-- DELETE /collections/%s", name, url.PathEscape(name))
@@ -162,6 +190,9 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						mig = strings.TrimSpace(st.DDL)
 					} else {
 						mig = strings.TrimSpace(st.DDL)
+						if dstDriverType == "postgres" {
+							mig = rewritePostgresSchemaPrefix(mig, srcSchema, dstSchema, tblName)
+						}
 						if !strings.HasSuffix(mig, ";") {
 							mig += ";"
 						}
@@ -209,7 +240,7 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 
 			var colDiffs []ColumnDiff
 			var alterStmts []string
-			qTable := quoteIdentifier(dstDriverType, tblName)
+			qTable := qualifyDiffTable(dstDriverType, dstSchema, tblName)
 
 			if dstDriverType == "qdrant" {
 				// Qdrant payloads are schemaless; compare vector columns and payload indexes symmetrically.
@@ -343,15 +374,25 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 							if !sc.IsNullable {
 								nullStr = "NOT NULL"
 							}
-							alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr))
+							defClause := ""
+							if dstDriverType == "postgres" {
+								if defVal := normalizePGDefault(sc); defVal != "" {
+									defClause = " DEFAULT " + defVal
+								}
+							}
+							alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s%s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr, defClause))
 						}
-					} else if !strings.EqualFold(sc.DataType, dc.DataType) || sc.IsNullable != dc.IsNullable {
+					} else if !strings.EqualFold(sc.DataType, dc.DataType) || sc.IsNullable != dc.IsNullable || (dstDriverType == "postgres" && normalizePGDefault(sc) != normalizePGDefault(dc)) {
+						detail := fmt.Sprintf("Type: %s -> %s, Nullable: %v -> %v", dc.DataType, sc.DataType, dc.IsNullable, sc.IsNullable)
+						if dstDriverType == "postgres" && normalizePGDefault(sc) != normalizePGDefault(dc) {
+							detail += fmt.Sprintf(", Default: %q -> %q", normalizePGDefault(dc), normalizePGDefault(sc))
+						}
 						colDiffs = append(colDiffs, ColumnDiff{
 							ColumnName: sc.Name,
 							Status:     "modified",
 							SourceType: sc.DataType,
 							TargetType: dc.DataType,
-							Detail:     fmt.Sprintf("Type: %s -> %s, Nullable: %v -> %v", dc.DataType, sc.DataType, dc.IsNullable, sc.IsNullable),
+							Detail:     detail,
 						})
 						alterStmts = append(alterStmts, buildModifyColumnSQL(dstDriverType, qTable, sc, dc))
 					}
@@ -425,6 +466,12 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 							idxType = "minmax"
 						}
 						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD INDEX %s %s TYPE %s GRANULARITY %d;", qTable, quoteIdentifier(dstDriverType, sIdx.Name), expr, idxType, gran))
+					} else if dstDriverType == "postgres" && sIdx.Definition != "" {
+						def := strings.TrimSpace(rewritePostgresSchemaPrefix(sIdx.Definition, srcSchema, dstSchema, tblName))
+						if !strings.HasSuffix(def, ";") {
+							def += ";"
+						}
+						alterStmts = append(alterStmts, def)
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("CREATE %sINDEX %s ON %s (%s);", uniqueKw, quoteIdentifier(dstDriverType, sIdx.Name), qTable, strings.Join(qIdxCols, ", ")))
 					}
@@ -444,6 +491,12 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						}
 						idxBody, _ := json.Marshal(map[string]any{"field_name": fieldName, "field_schema": fieldType})
 						alterStmts = append(alterStmts, fmt.Sprintf("DELETE /collections/%s/index/%s?wait=true\nPUT /collections/%s/index?wait=true\n%s", url.PathEscape(tblName), url.PathEscape(fieldName), url.PathEscape(tblName), string(idxBody)))
+					} else if dstDriverType == "postgres" && sIdx.Definition != "" {
+						def := strings.TrimSpace(rewritePostgresSchemaPrefix(sIdx.Definition, srcSchema, dstSchema, tblName))
+						if !strings.HasSuffix(def, ";") {
+							def += ";"
+						}
+						alterStmts = append(alterStmts, fmt.Sprintf("DROP INDEX IF EXISTS %s;\n%s", qualifyDiffTable(dstDriverType, dstSchema, dIdx.Name), def))
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Index %s.%s differs: target=(%s), source=(%s)", tblName, sIdx.Name, strings.Join(dIdx.Columns, ", "), sColsStr))
 					}
@@ -462,8 +515,49 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 					} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
 						alterStmts = append(alterStmts, fmt.Sprintf("// Extra index in target:\n// db.getCollection(%q).dropIndex(%q);", tblName, dIdx.Name))
 					} else {
-						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: DROP INDEX %s;", quoteIdentifier(dstDriverType, dIdx.Name)))
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: DROP INDEX %s;", qualifyDiffTable(dstDriverType, dstSchema, dIdx.Name)))
 					}
+				}
+			}
+
+			// Compare Check Constraints
+			srcChecks := make(map[string]driver.CheckConstraintMeta)
+			for _, cc := range srcStruct.CheckConstraints {
+				srcChecks[strings.ToLower(cc.Name)] = cc
+			}
+			dstChecks := make(map[string]driver.CheckConstraintMeta)
+			for _, cc := range dstStruct.CheckConstraints {
+				dstChecks[strings.ToLower(cc.Name)] = cc
+			}
+			for key, sCC := range srcChecks {
+				if dCC, exists := dstChecks[key]; !exists {
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "CHECK " + sCC.Name,
+						Status:     "added",
+						SourceType: sCC.Clause,
+						Detail:     fmt.Sprintf("Missing check constraint (%s)", sCC.Clause),
+					})
+					alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+				} else if strings.TrimSpace(sCC.Clause) != strings.TrimSpace(dCC.Clause) {
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "CHECK " + sCC.Name,
+						Status:     "modified",
+						SourceType: sCC.Clause,
+						TargetType: dCC.Clause,
+						Detail:     fmt.Sprintf("Check clause differs: %s -> %s", dCC.Clause, sCC.Clause),
+					})
+					alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+				}
+			}
+			for key, dCC := range dstChecks {
+				if _, exists := srcChecks[key]; !exists {
+					colDiffs = append(colDiffs, ColumnDiff{
+						ColumnName: "CHECK " + dCC.Name,
+						Status:     "removed",
+						TargetType: dCC.Clause,
+						Detail:     fmt.Sprintf("Extra check constraint in target (%s)", dCC.Clause),
+					})
+					alterStmts = append(alterStmts, fmt.Sprintf("-- Extra check constraint in target: ALTER TABLE %s DROP CONSTRAINT %s;", qTable, quoteIdentifier(dstDriverType, dCC.Name)))
 				}
 			}
 
@@ -588,6 +682,15 @@ func buildModifyColumnSQL(driverType, qTable string, sc, dc driver.ColumnMeta) s
 				action = "SET NOT NULL"
 			}
 			parts = append(parts, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s %s;", qTable, qCol, action))
+		}
+		sDef := normalizePGDefault(sc)
+		dDef := normalizePGDefault(dc)
+		if sDef != dDef {
+			if sDef == "" {
+				parts = append(parts, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;", qTable, qCol))
+			} else {
+				parts = append(parts, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;", qTable, qCol, sDef))
+			}
 		}
 		return strings.Join(parts, "\n")
 	case "mssql", "sqlserver":

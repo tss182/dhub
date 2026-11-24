@@ -13,16 +13,17 @@ import (
 )
 
 type DataDiffRequest struct {
-	SrcConnID string   `json:"srcConnId"`
-	SrcDB     string   `json:"srcDb"`
-	SrcSchema string   `json:"srcSchema"`
-	SrcTable  string   `json:"srcTable"`
-	DstConnID string   `json:"dstConnId"`
-	DstDB     string   `json:"dstDb"`
-	DstSchema string   `json:"dstSchema"`
-	DstTable  string   `json:"dstTable"`
-	KeyCols   []string `json:"keyCols,omitempty"`
-	Limit     int      `json:"limit,omitempty"`
+	SrcConnID             string   `json:"srcConnId"`
+	SrcDB                 string   `json:"srcDb"`
+	SrcSchema             string   `json:"srcSchema"`
+	SrcTable              string   `json:"srcTable"`
+	DstConnID             string   `json:"dstConnId"`
+	DstDB                 string   `json:"dstDb"`
+	DstSchema             string   `json:"dstSchema"`
+	DstTable              string   `json:"dstTable"`
+	KeyCols               []string `json:"keyCols,omitempty"`
+	Limit                 int      `json:"limit,omitempty"`
+	OverridingSystemValue bool     `json:"overridingSystemValue,omitempty"`
 }
 
 type DataRowDiff struct {
@@ -252,8 +253,9 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 
 	// Determine common columns (for Qdrant / Elasticsearch / MongoDB schemaless collections/indices, include union of source & target fields)
 	isSchemalessDst := strings.EqualFold(dstDriverType, "qdrant") || strings.EqualFold(dstDriverType, "elasticsearch") || strings.EqualFold(dstDriverType, "es") || strings.EqualFold(dstDriverType, "mongodb") || strings.EqualFold(dstDriverType, "mongo")
+	isCaseSensitive := isSchemalessDst || strings.EqualFold(dstDriverType, "postgres")
 	normColKey := func(c string) string {
-		if isSchemalessDst {
+		if isCaseSensitive {
 			return c
 		}
 		return strings.ToLower(c)
@@ -399,6 +401,13 @@ func (s *SchemaService) CompareTableData(req DataDiffRequest) (*DataDiffResult, 
 
 	if len(result.SyncChanges) > 0 {
 		if stmts, pErr := dstDrv.GenerateDMLPreview(req.DstDB, req.DstSchema, req.DstTable, result.SyncChanges); pErr == nil {
+			if req.OverridingSystemValue && strings.EqualFold(dstDriverType, "postgres") {
+				for i, st := range stmts {
+					if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(st)), "INSERT INTO ") {
+						stmts[i] = strings.Replace(st, ") VALUES (", ") OVERRIDING SYSTEM VALUE VALUES (", 1)
+					}
+				}
+			}
 			result.SyncSQL = strings.Join(stmts, "\n")
 		}
 	}

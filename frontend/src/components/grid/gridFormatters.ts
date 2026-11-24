@@ -683,6 +683,50 @@ export function formatSelectedCells(params: {
     return JSON.stringify(list, null, 2);
   }
 
+  if (targetFormat === 'sql_in') {
+    const literals: string[] = [];
+    const seen = new Set<string>();
+    for (const r of selectedRowIndices) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      for (const c of selectedColIndices) {
+        if (isMultiRange && !isCellSelected(r, c)) continue;
+        const col = columns[c];
+        if (!col) continue;
+        const val = getVal(vr, c, col.name);
+        if (val === null || val === undefined) continue;
+        const lit = formatSqlLiteral(val, col.rawType || col.dataType, driver);
+        if (!seen.has(lit)) {
+          seen.add(lit);
+          literals.push(lit);
+        }
+      }
+    }
+    return `IN (${literals.join(', ')})`;
+  }
+
+  if (targetFormat === 'pg_copy') {
+    const selectedCols: Array<{ col: ColumnMeta; cIdx: number }> = [];
+    for (const c of selectedColIndices) {
+      if (columns[c]) selectedCols.push({ col: columns[c], cIdx: c });
+    }
+    if (selectedCols.length === 0) return '';
+    const colList = selectedCols.map(({ col }) => quoteIdent(col.name)).join(', ');
+    const dataLines: string[] = [];
+    for (const r of selectedRowIndices) {
+      const vr = visualRows[r];
+      if (!vr) continue;
+      const fields = selectedCols.map(({ col, cIdx }) => {
+        const val = getVal(vr, cIdx, col.name);
+        if (val === null || val === undefined) return '\\N';
+        const s = typeof val === 'object' ? JSON.stringify(val) : String(val);
+        return s.replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      });
+      dataLines.push(fields.join('\t'));
+    }
+    return `COPY ${quotedTbl} (${colList}) FROM stdin;\n${dataLines.join('\n')}\n\\.`;
+  }
+
   if (targetFormat === 'sql_insert') {
     const selectedCols: Array<{ col: ColumnMeta; cIdx: number }> = [];
     for (const c of selectedColIndices) {

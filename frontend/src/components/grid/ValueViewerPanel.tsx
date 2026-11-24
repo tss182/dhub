@@ -325,6 +325,28 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   const { formattedText, isValid, validationError } = useMemo(() => {
     if (stringValue === null) return { formattedText: '', isValid: true, validationError: undefined };
 
+    // Pretty-decode PostgreSQL bytea hex (\x...) when viewing as auto/text
+    if (
+      activeFormat === 'text' &&
+      ((columnType || '').toLowerCase().includes('bytea') || /^\\x[0-9a-fA-F]{2,}$/.test(stringValue.trim()))
+    ) {
+      const hex = stringValue.trim().replace(/^\\x/i, '');
+      if (hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex)) {
+        const bytes: number[] = [];
+        let printable = '';
+        for (let i = 0; i < hex.length; i += 2) {
+          const b = parseInt(hex.slice(i, i + 2), 16);
+          bytes.push(b);
+          printable += b >= 32 && b <= 126 ? String.fromCharCode(b) : '.';
+        }
+        return {
+          formattedText: `BYTEA (${bytes.length} bytes)\nHex:   \\x${hex}\nASCII: ${printable}`,
+          isValid: true,
+          validationError: undefined,
+        };
+      }
+    }
+
     if (activeFormat === 'json') {
       if (!isPretty) {
         return { formattedText: minifyJson(stringValue), isValid: true, validationError: undefined };

@@ -331,6 +331,53 @@ func (q *QueryService) RollbackTransaction(tabID string) error {
 	return nil
 }
 
+func (q *QueryService) Savepoint(tabID, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "dhub_sp"
+	}
+	q.mu.Lock()
+	session, ok := q.activeTx[tabID]
+	if !ok || session == nil {
+		q.mu.Unlock()
+		return fmt.Errorf("no active transaction found for tab %s", tabID)
+	}
+	if session.IsAborted {
+		q.mu.Unlock()
+		return fmt.Errorf("cannot create savepoint in an aborted PostgreSQL transaction; rollback first")
+	}
+	q.mu.Unlock()
+
+	if _, err := session.Tx.Exec(fmt.Sprintf(`SAVEPOINT "%s"`, strings.ReplaceAll(name, `"`, `""`))); err != nil {
+		return fmt.Errorf("savepoint failed: %w", err)
+	}
+	return nil
+}
+
+func (q *QueryService) RollbackToSavepoint(tabID, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "dhub_sp"
+	}
+	q.mu.Lock()
+	session, ok := q.activeTx[tabID]
+	if !ok || session == nil {
+		q.mu.Unlock()
+		return fmt.Errorf("no active transaction found for tab %s", tabID)
+	}
+	q.mu.Unlock()
+
+	if _, err := session.Tx.Exec(fmt.Sprintf(`ROLLBACK TO SAVEPOINT "%s"`, strings.ReplaceAll(name, `"`, `""`))); err != nil {
+		return fmt.Errorf("rollback to savepoint failed: %w", err)
+	}
+	q.mu.Lock()
+	if cur, exists := q.activeTx[tabID]; exists && cur == session {
+		cur.IsAborted = false
+	}
+	q.mu.Unlock()
+	return nil
+}
+
 // CleanupConnectionTransactions rolls back and removes all open manual transactions for a connection.
 func (q *QueryService) CleanupConnectionTransactions(connectionID string) {
 	if connectionID == "" {

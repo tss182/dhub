@@ -33,6 +33,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
   const [isLoading, setIsLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pgTab, setPgTab] = useState<'sessions' | 'locks' | 'stats' | 'bloat' | 'replication'>('sessions');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadProcesses = useCallback(async () => {
@@ -66,7 +67,17 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     if (drv === 'mysql' || drv === 'mariadb') {
       sql = 'SHOW FULL PROCESSLIST;';
     } else if (drv === 'postgres') {
-      sql = `SELECT pid, COALESCE(usename, ''), COALESCE(client_addr::text, 'local'), COALESCE(datname, ''), COALESCE(wait_event_type, ''), COALESCE(EXTRACT(EPOCH FROM (now() - query_start))::int, 0), COALESCE(state, ''), COALESCE(query, '') FROM pg_stat_activity WHERE pid <> pg_backend_pid() ORDER BY query_start DESC NULLS LAST;`;
+      if (pgTab === 'locks') {
+        sql = `SELECT l.pid, COALESCE(a.usename, ''), COALESCE(a.datname, ''), l.locktype || ' (' || l.mode || ')', 0, CASE WHEN l.granted THEN 'granted' ELSE 'WAITING' END, COALESCE(c.relname::text, l.relation::text, '') || ' | ' || COALESCE(a.query, '') FROM pg_locks l LEFT JOIN pg_stat_activity a ON a.pid = l.pid LEFT JOIN pg_class c ON c.oid = l.relation WHERE l.pid <> pg_backend_pid() ORDER BY l.granted ASC, l.pid LIMIT 300;`;
+      } else if (pgTab === 'stats') {
+        sql = `SELECT datid, datname, 'backends:' || numbackends, 'commits:' || xact_commit, 0, 'rollbacks:' || xact_rollback || ' deadlocks:' || deadlocks, 'hit:' || blks_hit || ' read:' || blks_read FROM pg_stat_database WHERE datname IS NOT NULL ORDER BY numbackends DESC, datname;`;
+      } else if (pgTab === 'bloat') {
+        sql = `SELECT s.relid, s.schemaname, s.relname, 'dead:' || s.n_dead_tup, s.n_live_tup, 'seq:' || s.seq_scan || ' idx:' || s.idx_scan, pg_size_pretty(pg_total_relation_size(s.relid)) || COALESCE(' | unused_idx: ' || (SELECT string_agg(indexrelname, ', ') FROM pg_stat_user_indexes i WHERE i.relid = s.relid AND i.idx_scan = 0), '') FROM pg_stat_user_tables s ORDER BY s.n_dead_tup DESC, pg_total_relation_size(s.relid) DESC LIMIT 200;`;
+      } else if (pgTab === 'replication') {
+        sql = `SELECT COALESCE(slot_name, 'slot'), COALESCE(plugin, 'physical'), COALESCE(database, '-'), slot_type, 0, CASE WHEN active THEN 'active' ELSE 'inactive' END, 'restart_lsn:' || COALESCE(restart_lsn::text, '-') || ' retained:' || pg_size_pretty(COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn), 0)) FROM pg_replication_slots ORDER BY slot_name;`;
+      } else {
+        sql = `SELECT pid, COALESCE(usename, '') || CASE WHEN COALESCE(application_name, '') <> '' THEN ' [' || application_name || ']' ELSE '' END, COALESCE(client_addr::text, 'local'), COALESCE(datname, ''), COALESCE(NULLIF(COALESCE(wait_event_type, '') || CASE WHEN wait_event IS NOT NULL THEN ':' || wait_event ELSE '' END, ''), COALESCE(backend_type, '')), COALESCE(EXTRACT(EPOCH FROM (now() - query_start))::int, 0), COALESCE(state, '') || CASE WHEN cardinality(pg_blocking_pids(pid)) > 0 THEN ' [BLOCKED BY ' || array_to_string(pg_blocking_pids(pid), ',') || ']' ELSE '' END, COALESCE(query, '') FROM pg_stat_activity WHERE pid <> pg_backend_pid() ORDER BY query_start DESC NULLS LAST;`;
+      }
     } else if (drv === 'mssql') {
       sql = `SELECT r.session_id, COALESCE(s.login_name, ''), COALESCE(s.host_name, ''), COALESCE(DB_NAME(r.database_id), ''), COALESCE(r.command, ''), r.total_elapsed_time / 1000, COALESCE(r.status, ''), COALESCE(t.text, '') FROM sys.dm_exec_requests r JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t WHERE r.session_id <> @@SPID ORDER BY r.total_elapsed_time DESC;`;
     } else if (drv === 'clickhouse') {
@@ -180,7 +191,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     } finally {
       setIsLoading(false);
     }
-  }, [connection]);
+  }, [connection, pgTab]);
 
   useEffect(() => {
     loadProcesses();
@@ -226,7 +237,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     }
 
     try {
-      await QueryService.ExecuteQuery({
+      const res: any = await QueryService.ExecuteQuery({
         executionId: `kill-${Date.now()}`,
         connectionId: connection.id,
         database: connection.databaseName || (drv === 'postgres' ? 'postgres' : drv === 'clickhouse' ? 'default' : 'mysql'),
@@ -235,10 +246,37 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
         limit: 10,
         offset: 0,
       } as any);
-      alertSuccess(`Terminated process ${proc.id}.`);
+      if (drv === 'postgres' && res?.rows?.[0]?.[0] === false) {
+        alertError(`pg_terminate_backend(${proc.id}) returned false (insufficient privileges or process already exited).`, 'Terminate Unsuccessful');
+      } else {
+        alertSuccess(`Terminated process ${proc.id}.`);
+      }
       await loadProcesses();
     } catch (err: any) {
       alertError(err?.message || String(err), 'Failed to Terminate Process');
+    }
+  };
+
+  const handleCancelPgQuery = async (proc: ProcessRow) => {
+    if (!connection || connection.isReadOnly || connection.driver !== 'postgres') return;
+    try {
+      const res: any = await QueryService.ExecuteQuery({
+        executionId: `cancel-${Date.now()}`,
+        connectionId: connection.id,
+        database: connection.databaseName || 'postgres',
+        schema: 'public',
+        sql: `SELECT pg_cancel_backend(${proc.id});`,
+        limit: 10,
+        offset: 0,
+      } as any);
+      if (res?.rows?.[0]?.[0] === false) {
+        alertError(`pg_cancel_backend(${proc.id}) returned false (insufficient privileges or query already finished).`, 'Cancel Unsuccessful');
+      } else {
+        alertSuccess(`Sent cancel signal to query PID ${proc.id}.`);
+      }
+      await loadProcesses();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to Cancel Query');
     }
   };
 
@@ -308,6 +346,32 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
         </div>
 
         <div className="flex items-center gap-2">
+          {connection.driver === 'postgres' && (
+            <div className="flex items-center rounded bg-[#191a20] border border-[#272932] p-0.5 text-[11px]">
+              {(
+                [
+                  { id: 'sessions', label: 'Sessions' },
+                  { id: 'locks', label: 'Locks' },
+                  { id: 'stats', label: 'DB Stats' },
+                  { id: 'bloat', label: 'Bloat & Indexes' },
+                  { id: 'replication', label: 'Replication' },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setPgTab(t.id)}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    pgTab === t.id
+                      ? 'bg-blue-600 text-white font-medium'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="relative flex items-center">
             <Search className="absolute left-2.5 h-3.5 w-3.5 text-zinc-500 pointer-events-none" />
             <input
@@ -386,16 +450,28 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
                       {p.info || '-'}
                     </td>
                     <td className="py-2 px-3 text-right whitespace-nowrap">
-                      {!connection.isReadOnly && (
-                        <button
-                          type="button"
-                          onClick={() => handleKillProcess(p)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-[11px] font-sans transition-colors cursor-pointer"
-                          title="Terminate this session/query"
-                        >
-                          <Square className="h-2.5 w-2.5" />
-                          <span>Kill</span>
-                        </button>
+                      {!connection.isReadOnly && (connection.driver !== 'postgres' || pgTab === 'sessions' || pgTab === 'locks') && (
+                        <div className="inline-flex items-center gap-1">
+                          {connection.driver === 'postgres' && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelPgQuery(p)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 text-[11px] font-sans transition-colors cursor-pointer"
+                              title="Cancel active query (pg_cancel_backend)"
+                            >
+                              <span>Cancel</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleKillProcess(p)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-[11px] font-sans transition-colors cursor-pointer"
+                            title={connection.driver === 'postgres' ? 'Terminate backend (pg_terminate_backend)' : 'Terminate this session/query'}
+                          >
+                            <Square className="h-2.5 w-2.5" />
+                            <span>Kill</span>
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>

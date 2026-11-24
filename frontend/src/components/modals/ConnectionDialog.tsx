@@ -81,6 +81,7 @@ export const ConnectionDialog: React.FC = () => {
   const [mongoReplicaSet, setMongoReplicaSet] = useState('');
   const [mongoDirectConnection, setMongoDirectConnection] = useState(false);
   const [mongoReadPreference, setMongoReadPreference] = useState('primaryPreferred');
+  const [pgExecMode, setPgExecMode] = useState<'cache_statement' | 'simple_protocol'>('cache_statement');
 
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -366,6 +367,11 @@ export const ConnectionDialog: React.FC = () => {
               replicaSet: mongoReplicaSet.trim(),
               directConnection: mongoDirectConnection,
               readPreference: mongoReadPreference,
+            })
+          : driver === 'postgres'
+          ? JSON.stringify({
+              ...(existing?.optionsJson ? (() => { try { return JSON.parse(existing.optionsJson); } catch { return {}; } })() : {}),
+              defaultQueryExecMode: pgExecMode,
             })
           : existing?.optionsJson || '{}',
       sortOrder,
@@ -1003,6 +1009,46 @@ export const ConnectionDialog: React.FC = () => {
                           className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono"
                         />
                       </div>
+
+                      {driver === 'postgres' && (
+                        <div className="space-y-2 pt-2 border-t border-[#232530]">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium text-zinc-400">Cloud / PgBouncer Presets</span>
+                            <label className="flex items-center gap-1.5 text-[11px] text-zinc-300 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={pgExecMode === 'simple_protocol'}
+                                onChange={(e) => setPgExecMode(e.target.checked ? 'simple_protocol' : 'cache_statement')}
+                                className="h-3.5 w-3.5 rounded border-[#3b3e4f] bg-[#22242c] text-blue-600 focus:ring-0 cursor-pointer"
+                              />
+                              <span>Simple Protocol (PgBouncer Transaction Pool)</span>
+                            </label>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              { label: 'Supabase Pooler', port: '6543', ssl: 'require', mode: 'simple_protocol' as const, db: 'postgres' },
+                              { label: 'Neon', port: '5432', ssl: 'require', mode: 'cache_statement' as const, db: 'neondb' },
+                              { label: 'AWS RDS', port: '5432', ssl: 'require', mode: 'cache_statement' as const, db: 'postgres' },
+                              { label: 'Cloud SQL', port: '5432', ssl: 'require', mode: 'cache_statement' as const, db: 'postgres' },
+                              { label: 'DigitalOcean', port: '25060', ssl: 'require', mode: 'simple_protocol' as const, db: 'defaultdb' },
+                            ].map((p) => (
+                              <button
+                                key={p.label}
+                                type="button"
+                                onClick={() => {
+                                  setPort(Number(p.port));
+                                  setSslMode(p.ssl);
+                                  setPgExecMode(p.mode);
+                                  if (!databaseName.trim() || databaseName === 'postgres') setDatabaseName(p.db);
+                                }}
+                                className="px-2 py-1 rounded bg-[#1a1c24] hover:bg-[#252834] border border-[#2d303d] text-[10px] text-cyan-300 font-medium cursor-pointer transition-colors"
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {driver === 'mongodb' && (
                         <div className="space-y-2.5 pt-1 border-t border-[#232530]">

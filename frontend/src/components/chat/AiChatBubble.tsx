@@ -479,6 +479,10 @@ Always include the \`\`\`dhub-action block when the user asks to open, show, fil
         parts.push(
           'MONGODB DIALECT RULES: MongoDB is a NoSQL BSON document database, NOT a relational SQL engine. Do NOT generate SQL JOINs, CREATE TABLE, ALTER TABLE, or BEGIN/COMMIT transactions. Always generate MongoDB Shell (MQL) syntax inside the code block: `db.<collection>.find({ ... }).sort({ ... }).limit(50)`, `db.<collection>.aggregate([ ... ])`, `db.<collection>.insertOne(...)`, `db.<collection>.updateOne({ ... }, { $set: { ... } })`, `db.<collection>.deleteOne({ ... })`, `db.<collection>.createIndex({ ... })`, `db.<collection>.find(...).explain("executionStats")`, `show collections`, `use <db>`. Support BSON helpers like `ObjectId("...")`, `ISODate("...")`, `NumberDecimal("...")`.'
         );
+      } else if (activeConn.driver === 'postgres') {
+        parts.push(
+          'POSTGRESQL DIALECT RULES: Always use double-quoted identifiers ("schema"."table") for mixed-case or reserved names, single quotes for string literals, and schema-qualified table names when not in public. Use PostgreSQL native syntax: `ILIKE`, `::type` casts, `JSONB` operators (`->`, `->>`, `@>`, `?`), `STRING_AGG`, `DATE_TRUNC`, `GENERATE_SERIES`, `RETURNING *`, `ON CONFLICT (...) DO UPDATE`, `GENERATED ALWAYS AS IDENTITY`, and pgvector operators (`<=>`, `<->`, `<#>`, `<+>`). Do NOT use MySQL syntax like backticks (`), `AUTO_INCREMENT`, `IFNULL`, or `LIMIT offset, count` (use `LIMIT count OFFSET offset`).'
+        );
       }
     }
 

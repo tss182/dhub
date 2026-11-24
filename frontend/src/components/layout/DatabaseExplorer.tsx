@@ -64,6 +64,9 @@ import {
   Eraser,
   Wrench,
   ArrowDownUp,
+  Code,
+  AlertTriangle,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   ConnectionConfig,
@@ -904,6 +907,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     filePath: string;
     isProcessing: boolean;
     dumpMode: 'full' | 'schema_only' | 'data_only';
+    format?: 'plain' | 'custom' | 'tar' | 'directory';
+    schema?: string;
+    availableSchemas?: string[];
     includeRoutines: boolean;
     includeTriggers: boolean;
     includeEvents: boolean;
@@ -1100,6 +1106,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       filePath: defaultPath,
       isProcessing: false,
       dumpMode: 'full',
+      format: 'plain',
+      schema: 'all',
+      availableSchemas: treeSchemas[`${conn.id}:${database}`] || (conn.driver === 'postgres' ? ['public'] : []),
       includeRoutines: true,
       includeTriggers: true,
       includeEvents: false,
@@ -1336,6 +1345,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         useSettingsStore.getState().setBackupToolPath(cliTool, cleanToolPath);
         const backupOpts = {
           mode: backupRestoreModal.dumpMode,
+          format: backupRestoreModal.format || 'plain',
+          schema: backupRestoreModal.schema && backupRestoreModal.schema !== 'all' ? backupRestoreModal.schema : undefined,
           tableSelection: backupRestoreModal.tableSelection,
           tables: backupRestoreModal.selectedTables,
           includeRoutines: backupRestoreModal.includeRoutines,
@@ -2435,10 +2446,46 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     conn: ConnectionConfig,
     db: string,
     table: string,
-    action: 'OPTIMIZE' | 'ANALYZE' | 'CHECK' | 'REPAIR'
+    action: 'OPTIMIZE' | 'ANALYZE' | 'CHECK' | 'REPAIR' | 'VACUUM' | 'VACUUM_ANALYZE' | 'VACUUM_FULL' | 'REINDEX' | 'REINDEX_CONCURRENTLY' | 'REFRESH_MATVIEW' | 'REFRESH_MATVIEW_CONCURRENTLY',
+    schema?: string
   ) => {
-    const dbPrefix = db && db !== 'main' ? `\`${db}\`.` : '';
-    const sql = `${action} TABLE ${dbPrefix}\`${table}\`;`;
+    const isPg = conn.driver === 'postgres';
+    const qSchema = schema && schema !== 'main' ? `"${schema.replace(/"/g, '""')}".` : '';
+    const qPgTable = `${qSchema}"${table.replace(/"/g, '""')}"`;
+    let sql = '';
+    if (isPg) {
+      switch (action) {
+        case 'VACUUM':
+          sql = `VACUUM ${qPgTable};`;
+          break;
+        case 'VACUUM_ANALYZE':
+          sql = `VACUUM ANALYZE ${qPgTable};`;
+          break;
+        case 'VACUUM_FULL':
+          sql = `VACUUM FULL ${qPgTable};`;
+          break;
+        case 'ANALYZE':
+          sql = `ANALYZE ${qPgTable};`;
+          break;
+        case 'REINDEX':
+          sql = `REINDEX TABLE ${qPgTable};`;
+          break;
+        case 'REINDEX_CONCURRENTLY':
+          sql = `REINDEX TABLE CONCURRENTLY ${qPgTable};`;
+          break;
+        case 'REFRESH_MATVIEW':
+          sql = `REFRESH MATERIALIZED VIEW ${qPgTable};`;
+          break;
+        case 'REFRESH_MATVIEW_CONCURRENTLY':
+          sql = `REFRESH MATERIALIZED VIEW CONCURRENTLY ${qPgTable};`;
+          break;
+        default:
+          sql = `ANALYZE ${qPgTable};`;
+      }
+    } else {
+      const dbPrefix = db && db !== 'main' ? `\`${db}\`.` : '';
+      sql = `${action} TABLE ${dbPrefix}\`${table}\`;`;
+    }
 
     try {
       const execId = `maint-${action.toLowerCase()}-${Date.now()}`;
@@ -2446,20 +2493,20 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         executionId: execId,
         connectionId: conn.id,
         database: db,
-        schema: db,
+        schema: schema || db,
         sql,
         limit: 100,
         offset: 0,
       } as any);
 
       if (res?.error) {
-        alertError(`Failed to ${action.toLowerCase()} table: ${res.error}`, `${action} Table Failed`);
+        alertError(`Failed to run ${action.replace(/_/g, ' ')}: ${res.error}`, `${action.replace(/_/g, ' ')} Failed`);
         return;
       }
 
-      alertSuccess(`Table "${table}": ${action} TABLE completed successfully.`, `${action} Table Completed`);
+      alertSuccess(`"${table}": ${action.replace(/_/g, ' ')} completed successfully.`, 'Maintenance Completed');
     } catch (err: any) {
-      alertError(err?.message || String(err), `Failed to ${action} Table`);
+      alertError(err?.message || String(err), 'Maintenance Failed');
     }
   };
 
@@ -3597,13 +3644,16 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                 ? sAllObjects.filter((o) => o.name.toLowerCase().includes(filterLower))
                                 : sAllObjects;
                               const sBaseList = filterLower && !dbMatches ? sMatchingObjects : sAllObjects;
-                              const sTables = sBaseList.filter((o) => o.type === 'table' || (!o.type && !['view', 'materialized_view', 'routine', 'trigger', 'event', 'sequence', 'extension'].includes(o.type)));
+                              const sTables = sBaseList.filter((o) => o.type === 'table' || (!o.type && !['view', 'materialized_view', 'foreign_table', 'routine', 'trigger', 'event', 'sequence', 'extension', 'type'].includes(o.type)));
+                              const sForeignTables = sBaseList.filter((o) => o.type === 'foreign_table');
                               const sViews = sBaseList.filter((o) => o.type === 'view');
                               const sMatViews = sBaseList.filter((o) => o.type === 'materialized_view');
                               const sRoutines = sBaseList.filter((o) => o.type === 'routine');
                               const sTriggers = sBaseList.filter((o) => o.type === 'trigger');
                               const sEvents = sBaseList.filter((o) => o.type === 'event');
                               const sSequences = sBaseList.filter((o) => o.type === 'sequence');
+                              const sTypes = sBaseList.filter((o) => o.type === 'type');
+                              const sExtensions = sBaseList.filter((o) => o.type === 'extension');
                               const isSchemaActive = activeConnectionId === c.id && activeDatabase === dbName && activeSchema === sName;
 
                               return (
@@ -4152,6 +4202,97 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                               {obj.parentTable && (
                                                 <span className="ml-auto text-[9px] text-zinc-500 font-mono truncate max-w-[90px]">
                                                   {obj.parentTable}
+                                                </span>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+
+                                      {c.driver === 'postgres' && sForeignTables.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>foreign tables ({sForeignTables.length})</span>
+                                          </div>
+                                          {sForeignTables.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              onClick={() => handleTableClick(c.id, dbName, sName, obj.name)}
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <Table className="h-3 w-3 shrink-0 text-teal-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+
+                                      {c.driver === 'postgres' && sTypes.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>types ({sTypes.length})</span>
+                                          </div>
+                                          {sTypes.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              title={obj.comment || obj.name}
+                                              onClick={() =>
+                                                openTab({
+                                                  id: `type-${c.id}-${dbName}-${sName}-${obj.name}`,
+                                                  type: 'worksheet',
+                                                  title: `${obj.name}.sql`,
+                                                  connectionId: c.id,
+                                                  driver: c.driver,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  content: `-- PostgreSQL Type: "${sName}"."${obj.name}" ${obj.comment || ''}\nSELECT typname, typtype FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = '${sName}' AND t.typname = '${obj.name}';\n`,
+                                                })
+                                              }
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <Code className="h-3 w-3 shrink-0 text-pink-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                              {obj.comment && (
+                                                <span className="ml-auto text-[9px] text-zinc-500 font-mono truncate max-w-[70px]">
+                                                  {obj.comment.split(' ')[0]}
+                                                </span>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </>
+                                      )}
+
+                                      {c.driver === 'postgres' && sExtensions.length > 0 && (
+                                        <>
+                                          <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
+                                            <Folder className="h-2.5 w-2.5" />
+                                            <span>extensions ({sExtensions.length})</span>
+                                          </div>
+                                          {sExtensions.map((obj) => (
+                                            <div
+                                              key={obj.name}
+                                              title={obj.comment || obj.name}
+                                              onClick={() =>
+                                                openTab({
+                                                  id: `ext-${c.id}-${dbName}-${obj.name}`,
+                                                  type: 'worksheet',
+                                                  title: `ext_${obj.name}.sql`,
+                                                  connectionId: c.id,
+                                                  driver: c.driver,
+                                                  database: dbName,
+                                                  schema: sName,
+                                                  content: `-- PostgreSQL Extension: ${obj.name} (${obj.comment || ''})\nSELECT * FROM pg_extension WHERE extname = '${obj.name}';\n-- ALTER EXTENSION "${obj.name}" UPDATE;\n`,
+                                                })
+                                              }
+                                              className="flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer hover:bg-[#22242c] text-zinc-400 hover:text-white"
+                                            >
+                                              <Layers className="h-3 w-3 shrink-0 text-emerald-400" />
+                                              <span className="truncate">{obj.name}</span>
+                                              {obj.comment && (
+                                                <span className="ml-auto text-[9px] text-zinc-500 font-mono truncate max-w-[60px]">
+                                                  {obj.comment.split(' ')[0]}
                                                 </span>
                                               )}
                                             </div>
@@ -6311,6 +6452,63 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>Open Trigger Definition</span>
                   </button>
 
+                  {contextMenu.connection!.driver === 'postgres' && contextMenu.table!.parentTable && !contextMenu.connection!.isReadOnly && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || 'postgres';
+                          const sch = contextMenu.schema || 'public';
+                          const trg = contextMenu.table!.name;
+                          const tbl = contextMenu.table!.parentTable!;
+                          closeContextMenu();
+                          QueryService.ExecuteQuery({
+                            executionId: `enable-trg-${Date.now()}`,
+                            connectionId: conn.id,
+                            database: db,
+                            schema: sch,
+                            sql: `ALTER TABLE "${sch}"."${tbl}" ENABLE TRIGGER "${trg}";`,
+                            limit: 10,
+                            offset: 0,
+                          } as any)
+                            .then(() => alertSuccess(`Trigger "${trg}" enabled.`, 'Trigger Enabled'))
+                            .catch((err: any) => alertError(err?.message || String(err), 'Enable Trigger Failed'));
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-emerald-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Check className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                        <span>Enable Trigger</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || 'postgres';
+                          const sch = contextMenu.schema || 'public';
+                          const trg = contextMenu.table!.name;
+                          const tbl = contextMenu.table!.parentTable!;
+                          closeContextMenu();
+                          QueryService.ExecuteQuery({
+                            executionId: `disable-trg-${Date.now()}`,
+                            connectionId: conn.id,
+                            database: db,
+                            schema: sch,
+                            sql: `ALTER TABLE "${sch}"."${tbl}" DISABLE TRIGGER "${trg}";`,
+                            limit: 10,
+                            offset: 0,
+                          } as any)
+                            .then(() => alertSuccess(`Trigger "${trg}" disabled.`, 'Trigger Disabled'))
+                            .catch((err: any) => alertError(err?.message || String(err), 'Disable Trigger Failed'));
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                        <span>Disable Trigger</span>
+                      </button>
+                    </>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => handleCopyText(contextMenu.table!.name)}
@@ -6777,6 +6975,121 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       </>
                     );
                   })()}
+
+                  {contextMenu.connection!.driver === 'postgres' && (contextMenu.table!.type === 'table' || contextMenu.table!.type === 'materialized_view' || !contextMenu.table!.type) && !contextMenu.connection!.isReadOnly && (
+                    <>
+                      <div className="my-1 border-t border-[#272932]" />
+                      <div className="px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        PostgreSQL Maintenance &amp; Security
+                      </div>
+                      {contextMenu.table!.type === 'materialized_view' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = contextMenu.connection!;
+                              const db = contextMenu.database || 'postgres';
+                              const sch = contextMenu.schema || 'public';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              handleTableMaintenance(conn, db, tbl, 'REFRESH_MATVIEW', sch);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                          >
+                            <RefreshCw className="h-3 w-3 text-emerald-400 group-hover:text-white" />
+                            <span>Refresh Materialized View</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = contextMenu.connection!;
+                              const db = contextMenu.database || 'postgres';
+                              const sch = contextMenu.schema || 'public';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              handleTableMaintenance(conn, db, tbl, 'REFRESH_MATVIEW_CONCURRENTLY', sch);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                          >
+                            <RefreshCw className="h-3 w-3 text-cyan-400 group-hover:text-white" />
+                            <span>Refresh Concurrently</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = contextMenu.connection!;
+                              const db = contextMenu.database || 'postgres';
+                              const sch = contextMenu.schema || 'public';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              handleTableMaintenance(conn, db, tbl, 'VACUUM_ANALYZE', sch);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                          >
+                            <Wrench className="h-3 w-3 text-cyan-400 group-hover:text-white" />
+                            <span>VACUUM ANALYZE</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = contextMenu.connection!;
+                              const db = contextMenu.database || 'postgres';
+                              const sch = contextMenu.schema || 'public';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              handleTableMaintenance(conn, db, tbl, 'VACUUM_FULL', sch);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-amber-300 transition-colors text-left cursor-pointer group text-xs"
+                          >
+                            <Wrench className="h-3 w-3 text-amber-400 group-hover:text-white" />
+                            <span>VACUUM FULL</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = contextMenu.connection!;
+                              const db = contextMenu.database || 'postgres';
+                              const sch = contextMenu.schema || 'public';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              handleTableMaintenance(conn, db, tbl, 'REINDEX_CONCURRENTLY', sch);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                          >
+                            <Activity className="h-3 w-3 text-indigo-400 group-hover:text-white" />
+                            <span>REINDEX TABLE CONCURRENTLY</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const conn = contextMenu.connection!;
+                              const db = contextMenu.database || 'postgres';
+                              const sch = contextMenu.schema || 'public';
+                              const tbl = contextMenu.table!.name;
+                              closeContextMenu();
+                              openTab({
+                                id: `rls-${conn.id}-${db}-${sch}-${tbl}`,
+                                type: 'worksheet',
+                                title: `rls_${tbl}.sql`,
+                                connectionId: conn.id,
+                                driver: conn.driver,
+                                database: db,
+                                schema: sch,
+                                content: `-- Row-Level Security (RLS) Policies for "${sch}"."${tbl}"\nSELECT policyname, permissive, roles, cmd, qual, with_check\nFROM pg_policies\nWHERE schemaname = '${sch}' AND tablename = '${tbl}';\n\n-- ALTER TABLE "${sch}"."${tbl}" ENABLE ROW LEVEL SECURITY;\n-- CREATE POLICY "policy_name" ON "${sch}"."${tbl}" FOR SELECT TO authenticated USING (true);\n`,
+                              });
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group text-xs"
+                          >
+                            <ShieldAlert className="h-3 w-3 text-rose-400 group-hover:text-white" />
+                            <span>Manage RLS Policies...</span>
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
 
                   {(contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
                     <>

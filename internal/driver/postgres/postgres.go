@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"sort"
 	"strings"
@@ -13,7 +14,8 @@ import (
 	"time"
 
 	"dhub/internal/driver"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	pgx "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // PostgresDriver keeps one connection pool per database. PostgreSQL cannot
@@ -117,6 +119,65 @@ func (p *PostgresDriver) dbFor(database string) (*sql.DB, error) {
 
 func (p *PostgresDriver) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
+}
+
+// CopyToWriter streams a PostgreSQL COPY (...) TO STDOUT query directly into w.
+func (p *PostgresDriver) CopyToWriter(ctx context.Context, database, copySQL string, w io.Writer) (int64, error) {
+	db, err := p.dbFor(database)
+	if err != nil {
+		return 0, err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	var rowsCopied int64
+	err = conn.Raw(func(driverConn any) error {
+		stdConn, ok := driverConn.(*stdlib.Conn)
+		if !ok {
+			return fmt.Errorf("unexpected driver connection type %T", driverConn)
+		}
+		tag, cErr := stdConn.Conn().PgConn().CopyTo(ctx, w, copySQL)
+		if cErr == nil {
+			rowsCopied = tag.RowsAffected()
+		}
+		return cErr
+	})
+	return rowsCopied, err
+}
+
+// CopyFromRows streams rows into a PostgreSQL table using the native COPY FROM STDIN protocol.
+func (p *PostgresDriver) CopyFromRows(ctx context.Context, database, schema, table string, columns []string, rows [][]any) (int64, error) {
+	db, err := p.dbFor(database)
+	if err != nil {
+		return 0, err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	var ident pgx.Identifier
+	if schema != "" && schema != "main" {
+		ident = pgx.Identifier{schema, table}
+	} else {
+		ident = pgx.Identifier{table}
+	}
+
+	var copied int64
+	err = conn.Raw(func(driverConn any) error {
+		stdConn, ok := driverConn.(*stdlib.Conn)
+		if !ok {
+			return fmt.Errorf("unexpected driver connection type %T", driverConn)
+		}
+		n, cErr := stdConn.Conn().CopyFrom(ctx, ident, columns, pgx.CopyFromRows(rows))
+		copied = n
+		return cErr
+	})
+	return copied, err
 }
 
 // ServerVersion returns the PostgreSQL server version string.
@@ -235,6 +296,7 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 				WHEN 'v' THEN 'view'
 				WHEN 'm' THEN 'materialized_view'
 				WHEN 'p' THEN 'table'
+				WHEN 'f' THEN 'foreign_table'
 				ELSE 'other'
 			END as obj_type,
 			GREATEST(COALESCE(c.reltuples::bigint, -1), -1) as row_estimate,
@@ -243,7 +305,7 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		LEFT JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = 0
-		WHERE n.nspname = $1 AND c.relkind IN ('r', 'v', 'm', 'p')
+		WHERE n.nspname = $1 AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
 		ORDER BY c.relname;`
 
 	rows, err := db.QueryContext(ctx, classQuery, schema)
@@ -395,6 +457,36 @@ func (p *PostgresDriver) ListObjects(ctx context.Context, database, schema strin
 					Schema:      schema,
 					Name:        xName,
 					Type:        "extension",
+					RowEstimate: -1,
+					Comment:     desc,
+				})
+			}
+		}
+	}
+
+	// 6. Custom Types (Enums, Domains, Ranges)
+	typeQuery := `
+		SELECT t.typname,
+			CASE t.typtype WHEN 'e' THEN 'ENUM' WHEN 'd' THEN 'DOMAIN' WHEN 'r' THEN 'RANGE' ELSE 'TYPE' END AS kind,
+			COALESCE(d.description, '')
+		FROM pg_type t
+		JOIN pg_namespace n ON n.oid = t.typnamespace
+		LEFT JOIN pg_description d ON d.objoid = t.oid
+		WHERE n.nspname = $1 AND t.typtype IN ('e', 'd', 'r')
+		ORDER BY t.typname;`
+	if typeRows, tErr := db.QueryContext(ctx, typeQuery, schema); tErr == nil {
+		defer typeRows.Close()
+		for typeRows.Next() {
+			var tName, tKind, tComment string
+			if err := typeRows.Scan(&tName, &tKind, &tComment); err == nil {
+				desc := "[" + tKind + "]"
+				if tComment != "" {
+					desc += " " + tComment
+				}
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      schema,
+					Name:        tName,
+					Type:        "type",
 					RowEstimate: -1,
 					Comment:     desc,
 				})

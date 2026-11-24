@@ -610,12 +610,14 @@ interface SqlWorksheetProps {
   database: string;
   schema: string;
   availableDatabases?: string[];
+  availableSchemas?: string[];
   isRunning: boolean;
   schemaMetadata?: Array<{ table: string; columns: Array<{ name: string; dataType: string }> }>;
   onChange: (value: string) => void;
   onExecute: (statementSql: string, explicitDatabase?: string) => void;
   onCancel: () => void;
   onDatabaseChange?: (newDatabase: string) => void;
+  onSchemaChange?: (newSchema: string) => void;
   onExplain?: (statementSql: string, isAnalyze: boolean) => void;
   txStatus?: { mode: 'auto' | 'manual'; isOpen: boolean; count: number };
   onTxStatusChange?: (status: { mode: 'auto' | 'manual'; isOpen: boolean; count: number }) => void;
@@ -628,12 +630,14 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
   database,
   schema,
   availableDatabases = [],
+  availableSchemas = [],
   isRunning,
   schemaMetadata = [],
   onChange,
   onExecute,
   onCancel,
   onDatabaseChange,
+  onSchemaChange,
   onExplain,
   txStatus,
   onTxStatusChange,
@@ -2205,9 +2209,58 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                 </button>
+
+                {connection?.driver === 'postgres' && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!isTxOpen || isRunning}
+                      onClick={() => onExecute('SAVEPOINT dhub_sp;', database)}
+                      className={`px-1.5 py-1 rounded border text-[10px] font-mono transition-colors ${
+                        isTxOpen && !isRunning
+                          ? 'bg-blue-600/15 hover:bg-blue-600/25 border-blue-500/40 text-blue-300 cursor-pointer'
+                          : 'bg-[#22242c]/60 border-[#272932] text-zinc-500 cursor-not-allowed opacity-60'
+                      }`}
+                      title="Create SAVEPOINT dhub_sp"
+                    >
+                      SP+
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!isTxOpen || isRunning}
+                      onClick={() => onExecute('ROLLBACK TO SAVEPOINT dhub_sp;', database)}
+                      className={`px-1.5 py-1 rounded border text-[10px] font-mono transition-colors ${
+                        isTxOpen && !isRunning
+                          ? 'bg-amber-600/15 hover:bg-amber-600/25 border-amber-500/40 text-amber-300 cursor-pointer'
+                          : 'bg-[#22242c]/60 border-[#272932] text-zinc-500 cursor-not-allowed opacity-60'
+                      }`}
+                      title="Rollback to SAVEPOINT dhub_sp"
+                    >
+                      ↩SP
+                    </button>
+                  </>
+                )}
               </div>
             )}
               </div>
+
+              {connection?.driver === 'postgres' && onSchemaChange && (
+                <>
+                  <span className="text-zinc-600 font-mono">.</span>
+                  <select
+                    value={schema || 'public'}
+                    onChange={(e) => onSchemaChange(e.target.value)}
+                    title="Active PostgreSQL search_path schema"
+                    className="px-2 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-cyan-300 font-mono text-xs font-semibold outline-none cursor-pointer max-w-[140px]"
+                  >
+                    {(availableSchemas.length > 0 ? availableSchemas : [schema || 'public']).map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
             </>
           )}
 
@@ -2296,6 +2349,24 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                   </div>
                 )}
               </div>
+
+              {connection?.driver === 'postgres' && onSchemaChange && (
+                <>
+                  <span className="text-zinc-600 font-mono">.</span>
+                  <select
+                    value={schema || 'public'}
+                    onChange={(e) => onSchemaChange(e.target.value)}
+                    title="Active PostgreSQL search_path schema"
+                    className="px-2 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-cyan-300 font-mono text-xs font-semibold outline-none cursor-pointer max-w-[140px]"
+                  >
+                    {(availableSchemas.length > 0 ? availableSchemas : [schema || 'public']).map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
             </>
           )}
         </div>

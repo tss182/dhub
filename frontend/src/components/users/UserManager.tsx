@@ -812,9 +812,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         let sql = `ALTER ROLE "${safePgUser}" WITH${superClause}${dbClause}${roleClause}${loginClause};`;
 
         if (!permissionModal.pgSuperuser) {
-          if (selectedPrivileges.length === 0) {
-            sql += ` REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "${targetSchema}" FROM "${safePgUser}";`;
-          } else {
+          sql += ` REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "${targetSchema}" FROM "${safePgUser}"; REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "${targetSchema}" FROM "${safePgUser}";`;
+          if (selectedPrivileges.length > 0) {
             const privsStr = selectedPrivileges.includes('ALL PRIVILEGES')
               ? 'ALL PRIVILEGES'
               : selectedPrivileges.join(', ');
@@ -948,6 +947,10 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
   // Delete User
   const handleDeleteUser = async (u: DatabaseUser) => {
     if (!connection) return;
+    if (connection.driver === 'postgres' && u.username.startsWith('pg_')) {
+      alertError(`Cannot drop predefined PostgreSQL system role "${u.username}".`, 'System Role Protected');
+      return;
+    }
 
     const identifier =
       isMySQLLike(connection.driver)

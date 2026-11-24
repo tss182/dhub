@@ -28,6 +28,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [filePath, setFilePath] = useState<string>('');
   const [delimiter, setDelimiter] = useState<string>(',');
   const [hasHeader, setHasHeader] = useState<boolean>(true);
+  const [useNativeCopy, setUseNativeCopy] = useState<boolean>(true);
+  const [onConflictDoNothing, setOnConflictDoNothing] = useState<boolean>(false);
+  const [overridingSystemValue, setOverridingSystemValue] = useState<boolean>(false);
 
   const [step, setStep] = useState<'select' | 'mapping' | 'done'>('select');
   const [previewColumns, setPreviewColumns] = useState<string[]>([]);
@@ -165,7 +168,14 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         delimiter,
         hasHeader,
         mappings: mappingList,
-      };
+        ...(activeDriver === 'postgres'
+          ? {
+              useNativeCopy: useNativeCopy && !onConflictDoNothing,
+              onConflict: onConflictDoNothing ? 'do_nothing' : '',
+              overridingSystemValue,
+            }
+          : {}),
+      } as ImportRequest;
 
       const res = await ExportService.ImportFileToTable(req);
       if (res) {
@@ -279,6 +289,42 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                   </div>
                 </div>
               )}
+
+              {activeDriver === 'postgres' && (
+                <div className="rounded-lg border border-[#272932] bg-[#22242c]/50 p-3 space-y-2">
+                  <div className="text-[11px] font-semibold text-cyan-300 uppercase tracking-wider">
+                    PostgreSQL Import Options
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={useNativeCopy && !onConflictDoNothing}
+                      disabled={onConflictDoNothing}
+                      onChange={(e) => setUseNativeCopy(e.target.checked)}
+                      className="rounded border-[#272932] bg-[#191a20] text-cyan-500 focus:ring-0"
+                    />
+                    <span>Use native COPY FROM STDIN (fastest, disabled if ON CONFLICT is active)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={onConflictDoNothing}
+                      onChange={(e) => setOnConflictDoNothing(e.target.checked)}
+                      className="rounded border-[#272932] bg-[#191a20] text-cyan-500 focus:ring-0"
+                    />
+                    <span>ON CONFLICT DO NOTHING (skip duplicate rows)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={overridingSystemValue}
+                      onChange={(e) => setOverridingSystemValue(e.target.checked)}
+                      className="rounded border-[#272932] bg-[#191a20] text-cyan-500 focus:ring-0"
+                    />
+                    <span>OVERRIDING SYSTEM VALUE (for GENERATED ALWAYS AS IDENTITY)</span>
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
@@ -367,6 +413,42 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {activeDriver === 'postgres' && (
+                <div className="rounded-lg border border-[#272932] bg-[#22242c]/50 p-3 space-y-2">
+                  <div className="text-[11px] font-semibold text-cyan-300 uppercase tracking-wider">
+                    PostgreSQL Import Options
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={useNativeCopy && !onConflictDoNothing}
+                      disabled={onConflictDoNothing}
+                      onChange={(e) => setUseNativeCopy(e.target.checked)}
+                      className="rounded border-[#272932] bg-[#191a20] text-cyan-500 focus:ring-0"
+                    />
+                    <span>Use native COPY FROM STDIN (fastest, disabled if ON CONFLICT is active)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={onConflictDoNothing}
+                      onChange={(e) => setOnConflictDoNothing(e.target.checked)}
+                      className="rounded border-[#272932] bg-[#191a20] text-cyan-500 focus:ring-0"
+                    />
+                    <span>ON CONFLICT DO NOTHING (skip duplicate rows)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={overridingSystemValue}
+                      onChange={(e) => setOverridingSystemValue(e.target.checked)}
+                      className="rounded border-[#272932] bg-[#191a20] text-cyan-500 focus:ring-0"
+                    />
+                    <span>OVERRIDING SYSTEM VALUE (for GENERATED ALWAYS AS IDENTITY)</span>
+                  </label>
                 </div>
               )}
             </div>

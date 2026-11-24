@@ -14,6 +14,9 @@ export interface BackupRestoreModalState {
   filePath: string;
   isProcessing: boolean;
   dumpMode: 'full' | 'schema_only' | 'data_only';
+  format?: 'plain' | 'custom' | 'tar' | 'directory';
+  schema?: string;
+  availableSchemas?: string[];
   includeRoutines: boolean;
   includeTriggers: boolean;
   includeEvents: boolean;
@@ -545,6 +548,64 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                   ))}
                 </div>
               </div>
+
+              {/* PostgreSQL Format & Schema */}
+              {drv === 'postgres' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                      pg_dump Format
+                    </label>
+                    <select
+                      value={backupRestoreModal.format || 'plain'}
+                      disabled={backupRestoreModal.isProcessing}
+                      onChange={(e) => {
+                        const fmt = e.target.value as 'plain' | 'custom' | 'tar' | 'directory';
+                        setBackupRestoreModal((prev) => {
+                          let nextPath = prev.filePath;
+                          if (nextPath) {
+                            const base = nextPath.replace(/\.(sql\.gz|sql|dump|backup|tar)$/i, '');
+                            if (fmt === 'custom') nextPath = `${base}.dump`;
+                            else if (fmt === 'tar') nextPath = `${base}.tar`;
+                            else if (fmt === 'plain') nextPath = `${base}.sql`;
+                            else nextPath = base;
+                          }
+                          return { ...prev, format: fmt, filePath: nextPath };
+                        });
+                      }}
+                      className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="plain">Plain SQL (.sql / .sql.gz)</option>
+                      <option value="custom">Custom Archive (.dump)</option>
+                      <option value="tar">Tar Archive (.tar)</option>
+                      <option value="directory">Directory Format (-F d)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+                      Schema Filter (-n)
+                    </label>
+                    <select
+                      value={backupRestoreModal.schema || 'all'}
+                      disabled={backupRestoreModal.isProcessing}
+                      onChange={(e) =>
+                        setBackupRestoreModal((prev) => ({
+                          ...prev,
+                          schema: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-lg bg-[#101115] border border-[#2b2e3a] px-3 py-2 text-xs text-zinc-100 font-mono focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="all">All Schemas</option>
+                      {(backupRestoreModal.availableSchemas || ['public']).map((sch) => (
+                        <option key={sch} value={sch}>
+                          {sch}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
 
               {/* Stored Programs & Options (MySQL / MariaDB) */}
               {(drv === 'mysql' || drv === 'mariadb') && (

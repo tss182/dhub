@@ -46,6 +46,7 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
   const [dstTables, setDstTables] = useState<string[]>([]);
 
   const [keyColsInput, setKeyColsInput] = useState('');
+  const [overridingSystemValue, setOverridingSystemValue] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'added' | 'modified' | 'removed'>('all');
   const [isComparing, setIsComparing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -68,66 +69,84 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
 
   useEffect(() => {
     if (!srcConnId) return;
+    let cancelled = false;
     SchemaService.GetDatabases(srcConnId)
       .then((dbs) => {
+        if (cancelled) return;
         setSrcDBs(dbs || []);
         if (dbs && dbs.length > 0 && !dbs.includes(srcDB)) setSrcDB(dbs[0]);
       })
-      .catch(() => setSrcDBs([]));
+      .catch(() => { if (!cancelled) setSrcDBs([]); });
+    return () => { cancelled = true; };
   }, [srcConnId]);
 
   useEffect(() => {
     if (!srcConnId || !srcDB) return;
+    let cancelled = false;
     SchemaService.GetSchemas(srcConnId, srcDB)
       .then((schemas) => {
+        if (cancelled) return;
         setSrcSchemas(schemas || []);
         if (schemas && schemas.length > 0 && !schemas.includes(srcSchema)) setSrcSchema(schemas[0]);
       })
-      .catch(() => setSrcSchemas([]));
+      .catch(() => { if (!cancelled) setSrcSchemas([]); });
+    return () => { cancelled = true; };
   }, [srcConnId, srcDB]);
 
   useEffect(() => {
     if (!srcConnId || !srcDB) return;
+    let cancelled = false;
     SchemaService.GetObjects(srcConnId, srcDB, srcSchema)
       .then((objs) => {
+        if (cancelled) return;
         const tbls = (objs || []).filter((o: any) => o.type === 'table').map((o: any) => o.name);
         setSrcTables(tbls);
         if (tbls.length > 0 && !tbls.includes(srcTable)) setSrcTable(tbls[0]);
       })
-      .catch(() => setSrcTables([]));
+      .catch(() => { if (!cancelled) setSrcTables([]); });
+    return () => { cancelled = true; };
   }, [srcConnId, srcDB, srcSchema]);
 
   useEffect(() => {
     if (!dstConnId) return;
+    let cancelled = false;
     SchemaService.GetDatabases(dstConnId)
       .then((dbs) => {
+        if (cancelled) return;
         setDstDBs(dbs || []);
         if (dbs && dbs.length > 0 && !dbs.includes(dstDB)) setDstDB(dbs[0]);
       })
-      .catch(() => setDstDBs([]));
+      .catch(() => { if (!cancelled) setDstDBs([]); });
+    return () => { cancelled = true; };
   }, [dstConnId]);
 
   useEffect(() => {
     if (!dstConnId || !dstDB) return;
+    let cancelled = false;
     SchemaService.GetSchemas(dstConnId, dstDB)
       .then((schemas) => {
+        if (cancelled) return;
         setDstSchemas(schemas || []);
         if (schemas && schemas.length > 0 && !schemas.includes(dstSchema)) setDstSchema(schemas[0]);
       })
-      .catch(() => setDstSchemas([]));
+      .catch(() => { if (!cancelled) setDstSchemas([]); });
+    return () => { cancelled = true; };
   }, [dstConnId, dstDB]);
 
   useEffect(() => {
     if (!dstConnId || !dstDB) return;
+    let cancelled = false;
     SchemaService.GetObjects(dstConnId, dstDB, dstSchema)
       .then((objs) => {
+        if (cancelled) return;
         const tbls = (objs || []).filter((o: any) => o.type === 'table').map((o: any) => o.name);
         setDstTables(tbls);
         if (tbls.length > 0 && !tbls.includes(dstTable)) {
           setDstTable(srcTable && tbls.includes(srcTable) ? srcTable : tbls[0]);
         }
       })
-      .catch(() => setDstTables([]));
+      .catch(() => { if (!cancelled) setDstTables([]); });
+    return () => { cancelled = true; };
   }, [dstConnId, dstDB, dstSchema]);
 
   if (!isOpen) return null;
@@ -155,6 +174,7 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
         dstTable,
         keyCols,
         limit: 2000,
+        overridingSystemValue,
       });
       setDiffResult(res);
     } catch (err: any) {
@@ -378,6 +398,17 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
               placeholder="Key columns (optional, comma-separated; defaults to Primary Key)"
               className="flex-1 min-w-[240px] rounded-lg border border-[#272932] bg-[#1e2029] px-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-cyan-500"
             />
+            {connections.find((c) => c.id === dstConnId)?.driver === 'postgres' && (
+              <label className="flex items-center gap-1.5 text-[11px] text-zinc-300 cursor-pointer select-none px-1">
+                <input
+                  type="checkbox"
+                  checked={overridingSystemValue}
+                  onChange={(e) => setOverridingSystemValue(e.target.checked)}
+                  className="accent-cyan-500 cursor-pointer"
+                />
+                <span>OVERRIDING SYSTEM VALUE</span>
+              </label>
+            )}
             <button
               type="button"
               onClick={handleCompare}
@@ -474,6 +505,32 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
                         </span>
                       </div>
 
+                      {d.status === 'added' && d.srcRow && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pl-5 text-[11px] font-mono">
+                          {Object.entries(d.srcRow).slice(0, 6).map(([col, val]) => (
+                            <div key={col} className="px-2 py-1 rounded bg-[#121317] border border-emerald-900/40 flex flex-col">
+                              <span className="text-zinc-400">{col}</span>
+                              <span className="text-emerald-400 truncate">
+                                {val == null ? 'NULL' : typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {d.status === 'removed' && d.dstRow && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pl-5 text-[11px] font-mono">
+                          {Object.entries(d.dstRow).slice(0, 6).map(([col, val]) => (
+                            <div key={col} className="px-2 py-1 rounded bg-[#121317] border border-rose-900/40 flex flex-col">
+                              <span className="text-zinc-400">{col}</span>
+                              <span className="text-rose-400 line-through truncate">
+                                {val == null ? 'NULL' : typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {d.status === 'modified' && d.diffFields?.length > 0 && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pl-5 text-[11px] font-mono">
                           {d.diffFields.map((f: string) => (
@@ -502,6 +559,11 @@ export const DataDiffModal: React.FC<DataDiffModalProps> = ({
                       )}
                     </div>
                   ))}
+                  {filteredDiffs.length > 200 && (
+                    <div className="p-2.5 text-center text-[11px] text-amber-400 bg-amber-950/20">
+                      Showing first 200 of {filteredDiffs.length} diff rows. Use Sync SQL or filter by status to inspect more.
+                    </div>
+                  )}
                 </div>
               )}
             </>

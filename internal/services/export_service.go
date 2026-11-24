@@ -16,6 +16,7 @@ import (
 
 	"dhub/internal/app"
 	"dhub/internal/driver"
+	"dhub/internal/driver/postgres"
 	"dhub/internal/manager"
 	"dhub/internal/store"
 
@@ -23,15 +24,16 @@ import (
 )
 
 type ExportRequest struct {
-	ConnectionID string `json:"connectionId"`
-	Database     string `json:"database"`
-	Schema       string `json:"schema"`
-	Table        string `json:"table"`
-	SQL          string `json:"sql"`
-	Format       string `json:"format"` // "csv" | "json" | "sql_insert"
-	FilePath     string `json:"filePath"`
-	Delimiter    string `json:"delimiter"`      // e.g. ",", ";", "\t"
+	ConnectionID  string `json:"connectionId"`
+	Database      string `json:"database"`
+	Schema        string `json:"schema"`
+	Table         string `json:"table"`
+	SQL           string `json:"sql"`
+	Format        string `json:"format"` // "csv" | "json" | "sql_insert"
+	FilePath      string `json:"filePath"`
+	Delimiter     string `json:"delimiter"`      // e.g. ",", ";", "\t"
 	IncludeHeader bool   `json:"includeHeader"`
+	UseNativeCopy bool   `json:"useNativeCopy,omitempty"`
 }
 
 type ExportResult struct {
@@ -47,15 +49,18 @@ type ColumnMapping struct {
 }
 
 type ImportRequest struct {
-	ConnectionID string          `json:"connectionId"`
-	Database     string          `json:"database"`
-	Schema       string          `json:"schema"`
-	Table        string          `json:"table"`
-	FilePath     string          `json:"filePath"`
-	Format       string          `json:"format"` // "csv" | "json"
-	Delimiter    string          `json:"delimiter"`
-	HasHeader    bool            `json:"hasHeader"`
-	Mappings     []ColumnMapping `json:"mappings"`
+	ConnectionID          string          `json:"connectionId"`
+	Database              string          `json:"database"`
+	Schema                string          `json:"schema"`
+	Table                 string          `json:"table"`
+	FilePath              string          `json:"filePath"`
+	Format                string          `json:"format"` // "csv" | "json"
+	Delimiter             string          `json:"delimiter"`
+	HasHeader             bool            `json:"hasHeader"`
+	Mappings              []ColumnMapping `json:"mappings"`
+	UseNativeCopy         bool            `json:"useNativeCopy,omitempty"`
+	OnConflict            string          `json:"onConflict,omitempty"` // "" | "do_nothing"
+	OverridingSystemValue bool            `json:"overridingSystemValue,omitempty"`
 }
 
 type ImportResult struct {
@@ -347,6 +352,45 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 
 	bw := bufio.NewWriterSize(f, 32*1024)
 	format := strings.ToLower(req.Format)
+
+	// Fast native PostgreSQL COPY TO STDOUT path for CSV exports
+	if driverLower == "postgres" && format == "csv" && req.UseNativeCopy {
+		if pgDrv, ok := drv.(*postgres.PostgresDriver); ok {
+			delimChar := ","
+			if req.Delimiter == ";" {
+				delimChar = ";"
+			} else if req.Delimiter == "\t" {
+				delimChar = "\t"
+			}
+			headerOpt := "HEADER false"
+			if req.IncludeHeader {
+				headerOpt = "HEADER true"
+			}
+			cleanQ := strings.TrimSuffix(strings.TrimSpace(querySQL), ";")
+			copySQL := fmt.Sprintf("COPY (%s) TO STDOUT WITH (FORMAT csv, %s, DELIMITER '%s')", cleanQ, headerOpt, strings.ReplaceAll(delimChar, "'", "''"))
+			e.emitProgress(opID, "export", "running", 0, "Streaming via PostgreSQL COPY TO STDOUT...")
+			copied, cErr := pgDrv.CopyToWriter(ctx, req.Database, copySQL, bw)
+			if cErr != nil {
+				e.emitProgress(opID, "export", "error", copied, cErr.Error())
+				return nil, fmt.Errorf("PostgreSQL COPY export failed: %w", cErr)
+			}
+			if fErr := bw.Flush(); fErr != nil {
+				return nil, fErr
+			}
+			fi, _ := f.Stat()
+			var fSize int64
+			if fi != nil {
+				fSize = fi.Size()
+			}
+			e.emitProgress(opID, "export", "done", copied, fmt.Sprintf("Exported %d rows via COPY", copied))
+			return &ExportResult{
+				RowsExported: copied,
+				FileSize:     fSize,
+				ElapsedMs:    time.Since(start).Milliseconds(),
+				FilePath:     req.FilePath,
+			}, nil
+		}
+	}
 
 	var csvWriter *csv.Writer
 	var xlsxWriter *xlsxStreamWriter
@@ -820,6 +864,8 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 	var batch []driver.RowChange
 	var totalImported int64
 	const batchSize = 250
+	pgDrv, isPgDrv := drv.(*postgres.PostgresDriver)
+	useNativeCopy := isPgDrv && req.UseNativeCopy && req.OnConflict != "do_nothing"
 
 	flushBatch := func() error {
 		if len(batch) == 0 {
@@ -827,6 +873,62 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if useNativeCopy {
+			colSet := make([]string, 0, len(req.Mappings))
+			seenCol := make(map[string]bool)
+			for _, m := range req.Mappings {
+				if m.TableColumn != "" && !seenCol[m.TableColumn] {
+					seenCol[m.TableColumn] = true
+					colSet = append(colSet, m.TableColumn)
+				}
+			}
+			if len(colSet) > 0 {
+				copyRows := make([][]any, 0, len(batch))
+				for _, ch := range batch {
+					rowVals := make([]any, len(colSet))
+					for i, col := range colSet {
+						rowVals[i] = ch.Changes[col]
+					}
+					copyRows = append(copyRows, rowVals)
+				}
+				affected, cErr := pgDrv.CopyFromRows(ctx, req.Database, req.Schema, req.Table, colSet, copyRows)
+				if cErr != nil {
+					e.emitProgress(opID, "import", "error", totalImported, cErr.Error())
+					return fmt.Errorf("PostgreSQL COPY FROM failed: %w", cErr)
+				}
+				totalImported += affected
+				batch = batch[:0]
+				e.emitProgress(opID, "import", "running", totalImported, fmt.Sprintf("Copied %d rows...", totalImported))
+				return nil
+			}
+		}
+		if isPgDrv && req.OnConflict == "do_nothing" {
+			if stmts, pErr := drv.GenerateDMLPreview(req.Database, req.Schema, req.Table, batch); pErr == nil && len(stmts) > 0 {
+				var sb strings.Builder
+				for _, st := range stmts {
+					clean := strings.TrimSuffix(strings.TrimSpace(st), ";")
+					if req.OverridingSystemValue {
+						clean = strings.Replace(clean, ") VALUES (", ") OVERRIDING SYSTEM VALUE VALUES (", 1)
+					}
+					sb.WriteString(clean)
+					sb.WriteString(" ON CONFLICT DO NOTHING;\n")
+				}
+				if _, eErr := drv.Execute(ctx, driver.QueryRequest{
+					ExecutionID:  fmt.Sprintf("import-onconflict-%d", time.Now().UnixNano()),
+					ConnectionID: req.ConnectionID,
+					Database:     req.Database,
+					Schema:       req.Schema,
+					SQL:          sb.String(),
+				}); eErr != nil {
+					e.emitProgress(opID, "import", "error", totalImported, eErr.Error())
+					return fmt.Errorf("failed to apply ON CONFLICT DO NOTHING batch: %w", eErr)
+				}
+				totalImported += int64(len(batch))
+				batch = batch[:0]
+				e.emitProgress(opID, "import", "running", totalImported, fmt.Sprintf("Imported %d rows...", totalImported))
+				return nil
+			}
 		}
 		affected, err := drv.ApplyChanges(ctx, req.Database, req.Schema, req.Table, batch)
 		if err != nil {

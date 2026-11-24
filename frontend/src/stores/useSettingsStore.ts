@@ -10,6 +10,8 @@ export type CopyFormat =
   | 'sql_insert'
   | 'sql_update'
   | 'sql_upsert'
+  | 'sql_in'
+  | 'pg_copy'
   | 'qdrant_upsert'
   | 'es_bulk'
   | 'mongo_insert'

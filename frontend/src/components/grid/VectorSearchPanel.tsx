@@ -17,7 +17,7 @@ import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 
-export type VectorDistanceMetric = 'cosine' | 'l2' | 'ip';
+export type VectorDistanceMetric = 'cosine' | 'l2' | 'ip' | 'l1' | 'hamming' | 'jaccard';
 
 export interface VectorSearchStats {
   elapsedMs: number;
@@ -926,16 +926,27 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       return `FT.SEARCH ${tableName} "${prefix}=>[KNN $K @${activeVectorCol} $vec AS score]" PARAMS 4 K ${k} vec '${vecJson}' SORTBY score ASC LIMIT 0 ${k} DIALECT 2`;
     }
 
-    // PostgreSQL (pgvector)
+    // PostgreSQL (pgvector 0.7+: vector, halfvec, sparsevec, bit)
     const qualifiedTbl =
       schema && schema !== 'main'
         ? `${quotePgIdent(schema)}.${quotePgIdent(tableName)}`
         : quotePgIdent(tableName);
     const colQ = quotePgIdent(activeVectorCol);
-    const op = metric === 'l2' ? '<->' : metric === 'ip' ? '<#>' : '<=>';
-    const scoreExpr =
+    const op =
       metric === 'l2'
-        ? `(${colQ} <-> '${vecJson}') AS distance`
+        ? '<->'
+        : metric === 'ip'
+        ? '<#>'
+        : metric === 'l1'
+        ? '<+>'
+        : metric === 'hamming'
+        ? '<~>'
+        : metric === 'jaccard'
+        ? '<%>'
+        : '<=>';
+    const scoreExpr =
+      metric === 'l2' || metric === 'l1' || metric === 'hamming' || metric === 'jaccard'
+        ? `(${colQ} ${op} '${vecJson}') AS distance`
         : metric === 'ip'
         ? `-(${colQ} <#> '${vecJson}') AS score`
         : `1 - (${colQ} <=> '${vecJson}') AS score`;
@@ -945,8 +956,8 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       whereParts.push(`(${filter.replace(/^where\s+/i, '')})`);
     }
     if (threshold !== null) {
-      if (metric === 'l2') {
-        whereParts.push(`(${colQ} <-> '${vecJson}') <= ${threshold}`);
+      if (metric === 'l2' || metric === 'l1' || metric === 'hamming' || metric === 'jaccard') {
+        whereParts.push(`(${colQ} ${op} '${vecJson}') <= ${threshold}`);
       } else if (metric === 'ip') {
         whereParts.push(`-(${colQ} <#> '${vecJson}') >= ${threshold}`);
       } else {
@@ -1305,6 +1316,9 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                   <option value="cosine">Cosine (&lt;=&gt;)</option>
                   <option value="l2">L2 (&lt;-&gt;)</option>
                   <option value="ip">Inner Product (&lt;#&gt;)</option>
+                  <option value="l1">L1 / Manhattan (&lt;+&gt;)</option>
+                  <option value="hamming">Hamming (&lt;~&gt; bit)</option>
+                  <option value="jaccard">Jaccard (&lt;%&gt; bit)</option>
                 </select>
               </div>
             )}

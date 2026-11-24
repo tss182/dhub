@@ -60,12 +60,12 @@ export const ERDiagramView: React.FC<ERDiagramViewProps> = ({
   }, []);
 
   // Load tables and structure (cache-first + bounded concurrency)
-  const loadSchema = async () => {
+  const loadSchema = async (forceRefresh = false) => {
     setLoading(true);
     try {
       const [objects, cachedObjects] = await Promise.all([
         SchemaService.GetObjects(connectionId, database, schema).then((r) => r || []),
-        SchemaService.GetCachedSchema(connectionId, database, schema).catch(() => []),
+        forceRefresh ? Promise.resolve([]) : SchemaService.GetCachedSchema(connectionId, database, schema).catch(() => []),
       ]);
       if (!isMountedRef.current) return;
 
@@ -410,9 +410,9 @@ export const ERDiagramView: React.FC<ERDiagramViewProps> = ({
         </button>
 
         <button
-          onClick={loadSchema}
+          onClick={() => loadSchema(true)}
           className="rounded p-1 hover:bg-[#272932] text-zinc-400 hover:text-zinc-200 transition-colors"
-          title="Refresh Schema"
+          title="Force Refresh Schema"
         >
           <RefreshCw className="h-3.5 w-3.5" />
         </button>

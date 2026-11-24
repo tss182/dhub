@@ -46,6 +46,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   }, [isOpen, isJsonFirst]);
   const [delimiter, setDelimiter] = useState<string>(',');
   const [includeHeader, setIncludeHeader] = useState<boolean>(true);
+  const [useNativeCopy, setUseNativeCopy] = useState<boolean>(true);
   const [filePath, setFilePath] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<{ rows: number; size: number; ms: number } | null>(null);
@@ -115,7 +116,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         filePath: filePath.trim(),
         delimiter,
         includeHeader,
-      };
+        ...(activeDriver === 'postgres' && format === 'csv' ? { useNativeCopy } : {}),
+      } as ExportRequest;
 
       const res = await ExportService.ExportToFile(req);
       if (res) {
@@ -237,6 +239,19 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   <span>Include Header Row</span>
                 </label>
               </div>
+              {activeDriver === 'postgres' && (
+                <div className="col-span-2 pt-1 border-t border-[#272932]">
+                  <label className="flex items-center gap-2 cursor-pointer text-cyan-300">
+                    <input
+                      type="checkbox"
+                      checked={useNativeCopy}
+                      onChange={(e) => setUseNativeCopy(e.target.checked)}
+                      className="rounded border-[#272932] bg-[#191a20] text-cyan-500 focus:ring-0"
+                    />
+                    <span>Use PostgreSQL native COPY TO STDOUT (fast streaming)</span>
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
