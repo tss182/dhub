@@ -60,7 +60,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
         ? 'db0'
         : drv === 'mongodb'
         ? 'admin'
-        : 'mysql');
+        : '');
     const targetSchema = drv === 'postgres' ? 'public' : drv === 'mssql' ? 'dbo' : '';
 
     let sql = '';
@@ -93,6 +93,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     try {
       const res: any = await QueryService.ExecuteQuery({
         executionId: execId,
+        skipHistory: true,
         connectionId: connection.id,
         database: targetDb,
         schema: targetSchema,
@@ -239,8 +240,9 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     try {
       const res: any = await QueryService.ExecuteQuery({
         executionId: `kill-${Date.now()}`,
+        skipHistory: true,
         connectionId: connection.id,
-        database: connection.databaseName || (drv === 'postgres' ? 'postgres' : drv === 'clickhouse' ? 'default' : 'mysql'),
+        database: connection.databaseName || (drv === 'postgres' ? 'postgres' : drv === 'clickhouse' ? 'default' : ''),
         schema: drv === 'postgres' ? 'public' : '',
         sql: killSql,
         limit: 10,
@@ -262,6 +264,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     try {
       const res: any = await QueryService.ExecuteQuery({
         executionId: `cancel-${Date.now()}`,
+        skipHistory: true,
         connectionId: connection.id,
         database: connection.databaseName || 'postgres',
         schema: 'public',

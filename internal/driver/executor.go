@@ -23,6 +23,9 @@ func wrapSelectForPaging(stmt string, limit, offset int, dialect string) (string
 	if limit <= 0 {
 		return "", false
 	}
+	if isMySQLFamily, _ := dialectFlags(dialect); isMySQLFamily {
+		return appendLimitMySQL(stmt, limit, offset, dialect)
+	}
 	if offset <= 0 && dialect != "clickhouse" {
 		return "", false
 	}
@@ -61,6 +64,67 @@ func wrapSelectForPaging(stmt string, limit, offset int, dialect string) (string
 		return fmt.Sprintf("SELECT * FROM (%s) dhub_page OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", trimmed, offset, limit+1), true
 	}
 	return fmt.Sprintf("SELECT * FROM (%s) AS dhub_page LIMIT %d OFFSET %d", trimmed, limit+1, offset), true
+}
+
+// appendLimitMySQL appends LIMIT/OFFSET to the end of a plain SELECT so MySQL and MariaDB stop
+// sending rows after the requested page. Appending avoids derived tables, which break on duplicate
+// column names and may drop ORDER BY. It returns ok=false whenever the statement is not a read query
+// whose top level can safely take a trailing LIMIT, so the caller keeps the original behaviour.
+func appendLimitMySQL(stmt string, limit, offset int, dialect string) (string, bool) {
+	trimmed := strings.TrimRight(strings.TrimSpace(stmt), "; \t\r\n")
+	if trimmed == "" {
+		return "", false
+	}
+	sanitized, hasExec, hasComment := sanitizeSQLFlags(trimmed, dialect)
+	// Executable comments run as SQL and a trailing line comment would swallow the appended LIMIT.
+	if hasExec || hasComment {
+		return "", false
+	}
+
+	// Collect the keywords that sit outside any parentheses.
+	var words []string
+	depth := 0
+	runes := []rune(strings.ToUpper(sanitized))
+	for i := 0; i < len(runes); i++ {
+		switch r := runes[i]; {
+		case r == '(':
+			depth++
+		case r == ')':
+			if depth > 0 {
+				depth--
+			}
+		case isIdentChar(r) && (i == 0 || !isIdentChar(runes[i-1])):
+			j := i
+			for j < len(runes) && isIdentChar(runes[j]) {
+				j++
+			}
+			if depth == 0 {
+				words = append(words, string(runes[i:j]))
+			}
+			i = j - 1
+		}
+	}
+	if len(words) == 0 || (words[0] != "SELECT" && words[0] != "WITH") {
+		return "", false
+	}
+	for idx, w := range words {
+		switch w {
+		case "LIMIT", "OFFSET", "FETCH", "INTO", "PROCEDURE", "RETURNING",
+			"INSERT", "UPDATE", "DELETE", "REPLACE", "OUTFILE", "DUMPFILE":
+			return "", false
+		case "FOR":
+			// FOR UPDATE / FOR SHARE take a lock clause; MariaDB's FOR SYSTEM_TIME does not.
+			if idx+1 < len(words) && words[idx+1] != "SYSTEM_TIME" {
+				return "", false
+			}
+		case "LOCK":
+			return "", false
+		}
+	}
+	if offset > 0 {
+		return fmt.Sprintf("%s LIMIT %d OFFSET %d", trimmed, limit+1, offset), true
+	}
+	return fmt.Sprintf("%s LIMIT %d", trimmed, limit+1), true
 }
 
 // normalizeScannedValue normalizes driver-specific scanned values for JSON serialization.
@@ -110,7 +174,7 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 		}
 		return t.Format("2006-01-02 15:04:05")
 	}
-	if dialect == "clickhouse" || dialect == "postgres" {
+	if dialect == "clickhouse" || dialect == "postgres" || dialect == "mysql" || dialect == "mariadb" {
 		const maxSafeJSInt = int64(9007199254740991)
 		const maxSafeJSUint = uint64(9007199254740991)
 		switch val := v.(type) {
@@ -324,4 +388,3 @@ func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req Q
 		Results:      allResults,
 	}, nil
 }
-

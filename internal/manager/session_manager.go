@@ -392,50 +392,21 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		mc.Addr = fmt.Sprintf("%s:%d", host, port)
 		mc.DBName = cfg.DatabaseName
 		mc.ParseTime = true
-		mc.MultiStatements = true
+		// Statements are split client-side. Server-side multi-statements would let a payload that the
+		// client parses as one read-only statement run as several on the server.
+		mc.MultiStatements = false
 		mc.Timeout = 10 * time.Second
 
-		// Handle SSL/TLS configuration
-		if cfg.SSLCAPath != "" || (cfg.SSLCertPath != "" && cfg.SSLKeyPath != "") {
-			tlsCfg := &tls.Config{}
-			if cfg.SSLCAPath != "" {
-				rootCertPool := x509.NewCertPool()
-				pem, err := os.ReadFile(cfg.SSLCAPath)
-				if err == nil {
-					rootCertPool.AppendCertsFromPEM(pem)
-					tlsCfg.RootCAs = rootCertPool
-				}
-			}
-			if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
-				cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath)
-				if err == nil {
-					tlsCfg.Certificates = []tls.Certificate{cert}
-				}
-			}
-			if cfg.SSLMode == "required" || cfg.SSLMode == "require" {
-				tlsCfg.InsecureSkipVerify = true
-			}
-			tlsConfigName := fmt.Sprintf("custom_tls_%s", cfg.ID)
-			if err := mysqldriver.RegisterTLSConfig(tlsConfigName, tlsCfg); err == nil {
-				mc.TLSConfig = tlsConfigName
-			}
-		} else {
-			switch cfg.SSLMode {
-			case "preferred":
-				mc.TLSConfig = "preferred"
-			case "required", "require":
-				mc.TLSConfig = "skip-verify"
-			case "verify-ca", "verify-identity", "verify-full":
-				mc.TLSConfig = "true"
-			default:
-				mc.TLSConfig = "false"
-			}
+		// Handle SSL/TLS configuration. Any failure aborts the connection instead of silently
+		// connecting without the requested verification.
+		if err := configureMySQLTLS(mc, cfg); err != nil {
+			return nil, fmt.Errorf("tls configuration: %w", err)
 		}
 
 		if cfg.Driver == "mariadb" {
-			return mariadb.NewMariaDBDriver(mc.FormatDSN())
+			return mariadb.NewMariaDBDriverWithOptions(mc.FormatDSN(), cfg.IsReadOnly)
 		}
-		return mysql.NewMySQLDriver(mc.FormatDSN())
+		return mysql.NewMySQLDriverWithOptions(mc.FormatDSN(), cfg.IsReadOnly)
 	case "redis":
 		if port <= 0 {
 			port = 6379

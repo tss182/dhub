@@ -6,14 +6,6 @@ import (
 	"dhub/internal/driver"
 )
 
-func TestNormalizeMariaDBValue_KeepsUserText(t *testing.T) {
-	for _, in := range []string{"null", "NULL", "<null>", "2026-11-05T12:30:00+07:00"} {
-		if got := normalizeMariaDBValue(in); got != in {
-			t.Errorf("normalizeMariaDBValue(%q) = %v, want it unchanged", in, got)
-		}
-	}
-}
-
 func TestFormatSQLVal_EscapesLikeMariaDB(t *testing.T) {
 	cases := []struct {
 		in   any

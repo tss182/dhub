@@ -35,3 +35,25 @@ export function buildQualifiedTablePath(
 
   return quotedTable;
 }
+
+/**
+ * Quotes a value as a MySQL/MariaDB/ClickHouse string literal under the default sql_mode, where the
+ * backslash is an escape character. Escaping only the quote lets a value that ends in a backslash,
+ * or contains \', break out of the literal.
+ */
+export function quoteMySqlString(value: string): string {
+  const escapes: Record<string, string> = {
+    '\\': '\\\\',
+    "'": "\\'",
+    '\0': '\\0',
+    '\n': '\\n',
+    '\r': '\\r',
+    '\x1a': '\\Z',
+  };
+  return `'${value.replace(/[\\'\0\n\r\x1a]/g, (ch) => escapes[ch])}'`;
+}
+
+/** Builds the `user`@`host` account reference used by MySQL/MariaDB account statements. */
+export function quoteMySqlAccount(user: string, host: string): string {
+  return `${quoteSqlIdentifier('mysql', user)}@${quoteSqlIdentifier('mysql', host)}`;
+}

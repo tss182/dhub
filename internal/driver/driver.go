@@ -8,34 +8,43 @@ import (
 type DriverType string
 
 const (
-	DriverPostgres DriverType = "postgres"
-	DriverMySQL    DriverType = "mysql"
-	DriverSQLite   DriverType = "sqlite"
-	DriverMariaDB  DriverType = "mariadb"
-	DriverRedis    DriverType = "redis"
-	DriverMSSQL      DriverType = "mssql"
-	DriverMongoDB    DriverType = "mongodb"
-	DriverClickHouse DriverType = "clickhouse"
-	DriverOracle     DriverType = "oracle"
+	DriverPostgres      DriverType = "postgres"
+	DriverMySQL         DriverType = "mysql"
+	DriverSQLite        DriverType = "sqlite"
+	DriverMariaDB       DriverType = "mariadb"
+	DriverRedis         DriverType = "redis"
+	DriverMSSQL         DriverType = "mssql"
+	DriverMongoDB       DriverType = "mongodb"
+	DriverClickHouse    DriverType = "clickhouse"
+	DriverOracle        DriverType = "oracle"
 	DriverQdrant        DriverType = "qdrant"
 	DriverElasticsearch DriverType = "elasticsearch"
 )
 
 type ColumnMeta struct {
-	Name           string `json:"name"`
-	DataType       string `json:"dataType"`     // e.g. "varchar(255)", "int8", "timestamptz"
-	RawType        string `json:"rawType"`      // basic type for cell editor
-	IsNullable     bool   `json:"isNullable"`
-	IsPrimaryKey   bool   `json:"isPrimaryKey"`
-	IsAutoIncr     bool   `json:"isAutoIncrement"`
-	DefaultValue   string `json:"defaultValue"`
-	Comment        string `json:"comment"`
-	DefaultKind    string   `json:"defaultKind,omitempty"`    // e.g. "DEFAULT", "IDENTITY_ALWAYS", "IDENTITY_BY_DEFAULT", "GENERATED_STORED", "MATERIALIZED", "ALIAS", "EPHEMERAL"
-	EnumValues     []string `json:"enumValues,omitempty"`     // PostgreSQL enum labels
-	Codec          string   `json:"codec,omitempty"`          // e.g. "CODEC(ZSTD(1))"
-	IsSortingKey   bool   `json:"isSortingKey,omitempty"`
-	IsPartitionKey bool   `json:"isPartitionKey,omitempty"`
-	TTL            string `json:"ttl,omitempty"`
+	Name           string   `json:"name"`
+	DataType       string   `json:"dataType"` // e.g. "varchar(255)", "int8", "timestamptz"
+	RawType        string   `json:"rawType"`  // basic type for cell editor
+	IsNullable     bool     `json:"isNullable"`
+	IsPrimaryKey   bool     `json:"isPrimaryKey"`
+	IsAutoIncr     bool     `json:"isAutoIncrement"`
+	DefaultValue   string   `json:"defaultValue"`
+	Comment        string   `json:"comment"`
+	DefaultKind    string   `json:"defaultKind,omitempty"` // e.g. "DEFAULT", "IDENTITY_ALWAYS", "IDENTITY_BY_DEFAULT", "GENERATED_STORED", "MATERIALIZED", "ALIAS", "EPHEMERAL"
+	EnumValues     []string `json:"enumValues,omitempty"`  // PostgreSQL enum labels
+	Codec          string   `json:"codec,omitempty"`       // e.g. "CODEC(ZSTD(1))"
+	IsSortingKey   bool     `json:"isSortingKey,omitempty"`
+	IsPartitionKey bool     `json:"isPartitionKey,omitempty"`
+	TTL            string   `json:"ttl,omitempty"`
+
+	// MySQL / MariaDB column details. All are optional so other drivers are unaffected.
+	ColumnKind           string `json:"columnKind,omitempty"`           // "NORMAL" | "VIRTUAL" | "STORED"
+	GenerationExpression string `json:"generationExpression,omitempty"` // expression of a generated column
+	OnUpdate             string `json:"onUpdate,omitempty"`             // e.g. "CURRENT_TIMESTAMP(3)"
+	CharacterSet         string `json:"characterSet,omitempty"`
+	Collation            string `json:"collation,omitempty"`
+	IsInvisible          bool   `json:"isInvisible,omitempty"`
+	IsGenerated          bool   `json:"isGenerated,omitempty"`
 }
 
 type ForeignKeyMeta struct {
@@ -124,6 +133,9 @@ type QueryRequest struct {
 	SQL          string `json:"sql"`
 	Limit        int    `json:"limit"`
 	Offset       int    `json:"offset"`
+	// SkipHistory keeps the statement out of the query history. UI-internal queries such as the
+	// activity monitor refresh and account management set it.
+	SkipHistory bool `json:"skipHistory,omitempty"`
 }
 
 type StatementResult struct {
@@ -182,4 +194,3 @@ type DatabaseDriver interface {
 	ApplyChanges(ctx context.Context, database, schema, table string, changes []RowChange) (int64, error)
 	GenerateDMLPreview(database, schema, table string, changes []RowChange) ([]string, error)
 }
-

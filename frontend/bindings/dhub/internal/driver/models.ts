@@ -25,6 +25,26 @@ export interface ColumnMeta {
     "comment": string;
     "defaultKind"?: string;
     "enumValues"?: string[] | null;
+
+    /**
+     * MySQL / MariaDB column details. All are optional so other drivers are unaffected.
+     * "NORMAL" | "VIRTUAL" | "STORED"
+     */
+    "columnKind"?: string;
+
+    /**
+     * expression of a generated column
+     */
+    "generationExpression"?: string;
+
+    /**
+     * e.g. "CURRENT_TIMESTAMP(3)"
+     */
+    "onUpdate"?: string;
+    "characterSet"?: string;
+    "collation"?: string;
+    "isInvisible"?: boolean;
+    "isGenerated"?: boolean;
 }
 
 export interface ForeignKeyMeta {
@@ -71,6 +91,12 @@ export interface QueryRequest {
     "sql": string;
     "limit": number;
     "offset": number;
+
+    /**
+     * SkipHistory keeps the statement out of the query history. UI-internal queries such as the
+     * activity monitor refresh and account management set it.
+     */
+    "skipHistory"?: boolean;
 }
 
 export interface QueryResult {

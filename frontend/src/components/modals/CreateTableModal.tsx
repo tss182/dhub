@@ -674,9 +674,15 @@ function generateAlterSql({
           origParsed.lengthOrValues !== col.lengthOrValues.trim();
         const nullChanged = origMatch.isNullable === col.isNotNull;
         const autoIncrChanged = Boolean(origMatch.isAutoIncrement) !== Boolean(col.isAutoIncrement);
-        const defaultChanged = (origMatch.defaultValue || '') !== col.defaultValue.trim();
+        // A generated column keeps its expression in defaultValue; compare it through the kind/expression check.
+        const defaultChanged = !isGenerated && (origMatch.defaultValue || '') !== col.defaultValue.trim();
         const commentChanged = (origMatch.comment || '') !== col.comment.trim();
-        const extraChanged = isGenerated || Boolean(col.onUpdate && col.onUpdate.trim());
+        const origKind = origMatch.columnKind === 'VIRTUAL' || origMatch.columnKind === 'STORED' ? origMatch.columnKind : 'NORMAL';
+        const origExpr = origKind === 'NORMAL' ? '' : origMatch.generationExpression || '';
+        const extraChanged =
+          origKind !== kind ||
+          (isGenerated && origExpr !== col.defaultValue.trim()) ||
+          (origMatch.onUpdate || '').trim() !== (col.onUpdate || '').trim();
 
         const currentPos = currentOrder.findIndex(
           (name) => name === origMatch.name || name.toLowerCase() === origMatch.name.toLowerCase()
@@ -1964,6 +1970,8 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
 
           const mappedCols: ColumnDefinition[] = cols.map((col, idx) => {
             const parsed = parseColumnType(col.dataType);
+            const isMySqlFamily = driver === 'mysql' || driver === 'mariadb';
+            const kind = isMySqlFamily && (col.columnKind === 'VIRTUAL' || col.columnKind === 'STORED') ? col.columnKind : undefined;
             return {
               id: 'col-' + idx + '-' + col.name,
               name: col.name,
@@ -1973,8 +1981,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
               isPrimaryKey: Boolean(col.isPrimaryKey || pks.includes(col.name)),
               isAutoIncrement: Boolean(col.isAutoIncrement),
               isNotNull: !col.isNullable,
-              defaultValue: col.defaultValue || '',
+              // The designer keeps a generated column's expression in defaultValue.
+              defaultValue: kind ? col.generationExpression || '' : col.defaultValue || '',
               comment: col.comment || '',
+              ...(isMySqlFamily ? { columnKind: kind ?? ('NORMAL' as const), onUpdate: col.onUpdate || '' } : {}),
             };
           });
 

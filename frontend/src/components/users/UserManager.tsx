@@ -22,6 +22,7 @@ import { ConnectionConfig, WorkbenchTab, resolveConnectionEnv } from '../../type
 import { MongoUserManagerPanel } from './MongoUserManagerPanel';
 import { QueryService } from '../../../bindings/dhub/internal/services';
 import { useConnectionStore } from '../../stores/useConnectionStore';
+import { quoteMySqlAccount, quoteMySqlString, quoteSqlIdentifier } from '../../utils/sqlIdentifier';
 import { alertSuccess, alertError, alertWarning, confirmDialog } from '../../stores/useAlertStore';
 
 interface UserManagerProps {
@@ -209,7 +210,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         ? 'ORCL'
         : connection.driver === 'redis'
         ? 'db0'
-        : 'mysql');
+        : '');
     const targetSchema =
       connection.driver === 'postgres' ? 'public' : connection.driver === 'mssql' ? 'dbo' : connection.driver === 'oracle' ? '' : 'main';
 
@@ -220,6 +221,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
           try {
             res = await QueryService.ExecuteQuery({
               executionId: execId,
+              skipHistory: true,
               connectionId: connection.id,
               database: targetDb,
               schema: targetSchema,
@@ -231,6 +233,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
             try {
               res = await QueryService.ExecuteQuery({
                 executionId: `${execId}-user`,
+                skipHistory: true,
                 connectionId: connection.id,
                 database: targetDb,
                 schema: targetSchema,
@@ -241,6 +244,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
             } catch {
               res = await QueryService.ExecuteQuery({
                 executionId: `${execId}-fallback`,
+                skipHistory: true,
                 connectionId: connection.id,
                 database: targetDb,
                 schema: targetSchema,
@@ -254,6 +258,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
           try {
             res = await QueryService.ExecuteQuery({
               executionId: execId,
+              skipHistory: true,
               connectionId: connection.id,
               database: targetDb,
               schema: targetSchema,
@@ -265,6 +270,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
             // Fallback if older MySQL without account_locked or plugin
             res = await QueryService.ExecuteQuery({
               executionId: `${execId}-fallback`,
+              skipHistory: true,
               connectionId: connection.id,
               database: targetDb,
               schema: targetSchema,
@@ -287,6 +293,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       } else if (connection.driver === 'postgres') {
         const res = await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -309,6 +316,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       } else if (connection.driver === 'mssql') {
         const res = await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -329,6 +337,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       } else if (connection.driver === 'clickhouse') {
         const res = await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -350,6 +359,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         try {
           res = await QueryService.ExecuteQuery({
             executionId: execId,
+            skipHistory: true,
             connectionId: connection.id,
             database: targetDb,
             schema: targetSchema,
@@ -360,6 +370,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         } catch {
           res = await QueryService.ExecuteQuery({
             executionId: `${execId}-all`,
+            skipHistory: true,
             connectionId: connection.id,
             database: targetDb,
             schema: targetSchema,
@@ -385,6 +396,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       } else if (connection.driver === 'redis') {
         const res = await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -479,29 +491,31 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     setCreateModal((prev) => ({ ...prev, isExecuting: true }));
     const execId = `create-user-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : 'mysql');
+    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
     const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
 
     try {
       if (isMySQLLike(connection.driver)) {
         const host = createModal.host.trim() || '%';
         const pass = createModal.password;
-        const passClause = pass ? ` IDENTIFIED BY '${pass.replace(/'/g, "\\'")}'` : '';
-        const createSql = `CREATE USER \`${uname}\`@\`${host}\`${passClause};`;
+        const account = quoteMySqlAccount(uname, host);
+        const passClause = pass ? ` IDENTIFIED BY ${quoteMySqlString(pass)}` : '';
+        const createSql = `CREATE USER ${account}${passClause};`;
 
         let grantSql = '';
         if (createModal.selectedPrivileges.length > 0) {
           const privsStr = createModal.selectedPrivileges.includes('ALL PRIVILEGES')
             ? 'ALL PRIVILEGES'
             : createModal.selectedPrivileges.join(', ');
-          const scope = createModal.dbScope === '*.*' ? '*.*' : `\`${createModal.dbScope}\`.*`;
-          grantSql = `GRANT ${privsStr} ON ${scope} TO \`${uname}\`@\`${host}\`;`;
+          const scope = createModal.dbScope === '*.*' ? '*.*' : `${quoteSqlIdentifier('mysql', createModal.dbScope)}.*`;
+          grantSql = `GRANT ${privsStr} ON ${scope} TO ${account};`;
         }
 
-        const fullSql = `${createSql} ${grantSql} FLUSH PRIVILEGES;`;
+        const fullSql = `${createSql} ${grantSql}`;
 
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -535,6 +549,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -557,6 +572,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: '',
@@ -567,6 +583,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
         await QueryService.ExecuteQuery({
           executionId: `${execId}-grant`,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: '',
@@ -589,6 +606,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         }
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: 'dbo',
@@ -599,8 +617,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         alertSuccess(`SQL Server login/user [${uname}] created successfully.`, 'User Created');
       } else if (connection.driver === 'clickhouse') {
         const safeUser = uname.replace(/`/g, '``');
-        const safePass = createModal.password.replace(/'/g, "\\'");
-        const passClause = safePass ? ` IDENTIFIED BY '${safePass}'` : '';
+        const passClause = createModal.password ? ` IDENTIFIED BY ${quoteMySqlString(createModal.password)}` : '';
         let fullSql = `CREATE USER IF NOT EXISTS \`${safeUser}\`${passClause};`;
         if (createModal.preset === 'admin') {
           fullSql += ` GRANT ALL ON *.* TO \`${safeUser}\` WITH GRANT OPTION;`;
@@ -611,6 +628,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         }
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: 'default',
@@ -630,6 +648,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         const fullSql = `ACL SETUSER ${uname} on ${safePass} ~* ${perm}`;
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: 'db0',
           schema: 'db0',
@@ -670,13 +689,14 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     if (isMySQLLike(connection.driver)) {
       try {
         const host = u.host || '%';
-        const targetDb = connection.databaseName || 'mysql';
+        const targetDb = connection.databaseName || '';
         const res = await QueryService.ExecuteQuery({
           executionId: `grants-${Date.now()}`,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: 'main',
-          sql: `SHOW GRANTS FOR \`${u.username}\`@\`${host}\`;`,
+          sql: `SHOW GRANTS FOR ${quoteMySqlAccount(u.username, host)};`,
           limit: 100,
           offset: 0,
         } as any);
@@ -713,6 +733,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         const targetDb = connection.databaseName || 'postgres';
         const res = await QueryService.ExecuteQuery({
           executionId: `grants-${Date.now()}`,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: 'public',
@@ -771,28 +792,30 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     setPermissionModal((prev) => ({ ...prev, isExecuting: true }));
     const execId = `update-perm-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : 'mysql');
+    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
     const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
 
     try {
       if (isMySQLLike(connection.driver)) {
         const host = user.host || '%';
-        const scope = dbScope === '*.*' ? '*.*' : `\`${dbScope}\`.*`;
+        const scope = dbScope === '*.*' ? '*.*' : `${quoteSqlIdentifier('mysql', dbScope)}.*`;
+        const account = quoteMySqlAccount(user.username, host);
         const grantOpt = withGrantOption ? ' WITH GRANT OPTION' : '';
 
         // Revoke existing on this scope and re-grant chosen privileges
         let sql = '';
         if (selectedPrivileges.length === 0) {
-          sql = `REVOKE ALL PRIVILEGES, GRANT OPTION FROM \`${user.username}\`@\`${host}\`; FLUSH PRIVILEGES;`;
+          sql = `REVOKE ALL PRIVILEGES, GRANT OPTION FROM ${account};`;
         } else {
           const privsStr = selectedPrivileges.includes('ALL PRIVILEGES')
             ? 'ALL PRIVILEGES'
             : selectedPrivileges.join(', ');
-          sql = `GRANT ${privsStr} ON ${scope} TO \`${user.username}\`@\`${host}\`${grantOpt}; FLUSH PRIVILEGES;`;
+          sql = `GRANT ${privsStr} ON ${scope} TO ${account}${grantOpt};`;
         }
 
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -826,6 +849,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
         await QueryService.ExecuteQuery({
           executionId: execId,
+          skipHistory: true,
           connectionId: connection.id,
           database: targetDb,
           schema: targetSchema,
@@ -860,11 +884,12 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     if (!ok) return;
 
     try {
-      const sql = `ALTER USER \`${u.username}\`@\`${host}\` ${action}; FLUSH PRIVILEGES;`;
+      const sql = `ALTER USER ${quoteMySqlAccount(u.username, host)} ${action};`;
       await QueryService.ExecuteQuery({
         executionId: `lock-${Date.now()}`,
+        skipHistory: true,
         connectionId: connection.id,
-        database: connection.databaseName || 'mysql',
+        database: connection.databaseName || '',
         schema: 'main',
         sql,
         limit: 10,
@@ -902,14 +927,14 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     setPasswordModal((prev) => ({ ...prev, isExecuting: true }));
     const execId = `chpass-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : 'mysql');
+    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
     const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
 
     try {
       let sql = '';
       if (isMySQLLike(connection.driver)) {
         const host = user.host || '%';
-        sql = `ALTER USER \`${user.username}\`@\`${host}\` IDENTIFIED BY '${password.replace(/'/g, "\\'")}'; FLUSH PRIVILEGES;`;
+        sql = `ALTER USER ${quoteMySqlAccount(user.username, host)} IDENTIFIED BY ${quoteMySqlString(password)};`;
       } else if (connection.driver === 'postgres') {
         const safePgUser = user.username.replace(/"/g, '""');
         sql = `ALTER ROLE "${safePgUser}" WITH PASSWORD '${password.replace(/'/g, "''")}';`;
@@ -918,7 +943,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         sql = `ALTER LOGIN [${safeUser}] WITH PASSWORD = '${password.replace(/'/g, "''")}';`;
       } else if (connection.driver === 'clickhouse') {
         const safeUser = user.username.replace(/`/g, '``');
-        sql = `ALTER USER \`${safeUser}\` IDENTIFIED BY '${password.replace(/'/g, "\\'")}';`;
+        sql = `ALTER USER \`${safeUser}\` IDENTIFIED BY ${quoteMySqlString(password)};`;
       } else if (connection.driver === 'oracle') {
         const safeUser = user.username.replace(/"/g, '""');
         sql = `ALTER USER "${safeUser}" IDENTIFIED BY "${password.replace(/"/g, '""')}"`;
@@ -928,6 +953,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
       await QueryService.ExecuteQuery({
         executionId: execId,
+        skipHistory: true,
         connectionId: connection.id,
         database: targetDb,
         schema: targetSchema,
@@ -966,13 +992,13 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     if (!ok) return;
 
     const execId = `del-user-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : 'mysql');
+    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
     const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
 
     try {
       const sql =
         isMySQLLike(connection.driver)
-          ? `DROP USER \`${u.username}\`@\`${u.host || '%'}\`;`
+          ? `DROP USER ${quoteMySqlAccount(u.username, u.host || '%')};`
           : connection.driver === 'mssql'
           ? `DROP USER IF EXISTS [${u.username.replace(/\]/g, ']]')}]; DROP LOGIN [${u.username.replace(/\]/g, ']]')}];`
           : connection.driver === 'clickhouse'
@@ -985,6 +1011,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
       await QueryService.ExecuteQuery({
         executionId: execId,
+        skipHistory: true,
         connectionId: connection.id,
         database: targetDb,
         schema: targetSchema,

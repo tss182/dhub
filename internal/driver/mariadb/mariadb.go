@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"dhub/internal/driver"
+	"dhub/internal/driver/mysqlconn"
+	"dhub/internal/driver/mysqlmeta"
+	"dhub/internal/driver/sqlfmt"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
@@ -20,7 +22,13 @@ type MariaDBDriver struct {
 }
 
 func NewMariaDBDriver(dsn string) (*MariaDBDriver, error) {
-	db, err := sql.Open("mysql", dsn)
+	return NewMariaDBDriverWithOptions(dsn, false)
+}
+
+// NewMariaDBDriverWithOptions opens the driver. With readOnly set, the server itself rejects writes on every
+// pooled connection, as a second line of defence behind the client-side read-only check.
+func NewMariaDBDriverWithOptions(dsn string, readOnly bool) (*MariaDBDriver, error) {
+	db, err := mysqlconn.Open(dsn, readOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -228,62 +236,82 @@ func (m *MariaDBDriver) GetTableStructure(ctx context.Context, database, schema,
 		}
 	}
 
-	// 2. Fetch columns with accurate types, defaults, comments, and generation_expression
-	colQuery := `SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment, COALESCE(generation_expression, '')
-		FROM information_schema.columns
-		WHERE table_schema = ? AND table_name = ?
-		ORDER BY ordinal_position`
-	rows, err := m.db.QueryContext(ctx, colQuery, targetDB, table)
-	hasGenExpr := true
-	if err != nil {
-		hasGenExpr = false
-		colQueryFallback := `SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment
-			FROM information_schema.columns
-			WHERE table_schema = ? AND table_name = ?
-			ORDER BY ordinal_position`
-		rows, err = m.db.QueryContext(ctx, colQueryFallback, targetDB, table)
-		if err != nil {
-			return nil, err
+	// 2. Fetch columns. Older servers lack some information_schema columns, so try the richest
+	// query first and fall back one step at a time.
+	colQueries := []struct {
+		sql  string
+		cols int // number of optional columns appended after the base eight
+	}{
+		{`SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment,
+			COALESCE(generation_expression, ''), character_set_name, collation_name
+			FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position`, 3},
+		{`SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment
+			FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position`, 0},
+	}
+	var rows *sql.Rows
+	var err error
+	optional := 0
+	for _, q := range colQueries {
+		rows, err = m.db.QueryContext(ctx, q.sql, targetDB, table)
+		if err == nil {
+			optional = q.cols
+			break
 		}
+	}
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var name, colType, dataType, isNullable, colKey, extra, genExpr string
-		var dflt, colComment *string
-		var scanErr error
-		if hasGenExpr {
-			scanErr = rows.Scan(&name, &colType, &dataType, &isNullable, &colKey, &dflt, &extra, &colComment, &genExpr)
-		} else {
-			scanErr = rows.Scan(&name, &colType, &dataType, &isNullable, &colKey, &dflt, &extra, &colComment)
+		var name, colType, dataType, isNullable, colKey, extra string
+		var dflt, colComment, charset, collation *string
+		var genExpr string
+		dest := []any{&name, &colType, &dataType, &isNullable, &colKey, &dflt, &extra, &colComment}
+		if optional > 0 {
+			dest = append(dest, &genExpr, &charset, &collation)
 		}
-		if scanErr == nil {
-			isPk := colKey == "PRI"
-			if isPk {
-				structure.PrimaryKeys = append(structure.PrimaryKeys, name)
-			}
-			defVal := ""
-			if dflt != nil {
-				defVal = *dflt
-			}
-			if genExpr != "" && defVal == "" {
-				defVal = genExpr
-			}
-			cmt := ""
-			if colComment != nil {
-				cmt = *colComment
-			}
-			structure.Columns = append(structure.Columns, driver.ColumnMeta{
-				Name:         name,
-				DataType:     colType,
-				RawType:      dataType,
-				IsNullable:   isNullable == "YES",
-				IsPrimaryKey: isPk,
-				IsAutoIncr:   strings.Contains(strings.ToLower(extra), "auto_increment"),
-				DefaultValue: defVal,
-				Comment:      cmt,
-			})
+		if err := rows.Scan(dest...); err != nil {
+			continue
 		}
+		isPk := colKey == "PRI"
+		if isPk {
+			structure.PrimaryKeys = append(structure.PrimaryKeys, name)
+		}
+		nullable := isNullable == "YES"
+		ex := mysqlmeta.ParseExtra(extra)
+		def := mysqlmeta.MariaDBDefault(dflt, nullable)
+		cmt := ""
+		if colComment != nil {
+			cmt = *colComment
+		}
+		col := driver.ColumnMeta{
+			Name:         name,
+			DataType:     colType,
+			RawType:      dataType,
+			IsNullable:   nullable,
+			IsPrimaryKey: isPk,
+			IsAutoIncr:   ex.AutoIncrement,
+			DefaultValue: def.Value,
+			DefaultKind:  def.Kind,
+			Comment:      cmt,
+			ColumnKind:   ex.Kind,
+			OnUpdate:     ex.OnUpdate,
+			IsInvisible:  ex.Invisible,
+		}
+		if ex.Kind != mysqlmeta.KindNormal {
+			col.IsGenerated = true
+			col.GenerationExpression = genExpr
+			// A generated column has no DEFAULT of its own.
+			col.DefaultValue, col.DefaultKind = "", mysqlmeta.DefaultNone
+		}
+		if charset != nil {
+			col.CharacterSet = *charset
+		}
+		if collation != nil {
+			col.Collation = *collation
+		}
+		structure.Columns = append(structure.Columns, col)
 	}
 
 	// 3. Fetch Indexes (including composite indexes)
@@ -470,7 +498,7 @@ func (m *MariaDBDriver) Execute(ctx context.Context, req driver.QueryRequest) (*
 		}
 	}
 
-	return driver.ExecuteStatements(ctx, conn, req)
+	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "mariadb")
 }
 
 func (m *MariaDBDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
@@ -526,38 +554,26 @@ func (m *MariaDBDriver) GenerateDMLPreview(database, schema, table string, chang
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				}
 			}
 			statements = append(statements, fmt.Sprintf("UPDATE %s SET %s WHERE %s;", prefix, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
+				}
 			}
 			statements = append(statements, fmt.Sprintf("DELETE FROM %s WHERE %s;", prefix, strings.Join(where, " AND ")))
 		}
 	}
 	return statements, nil
-}
-
-var isoDateTimeRegex = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:Z|[+-]\d{2}:?\d{2})?$`)
-
-func normalizeMariaDBValue(v any) any {
-	if v == nil {
-		return nil
-	}
-	s, ok := v.(string)
-	if !ok {
-		return v
-	}
-	trimmed := strings.TrimSpace(s)
-	if strings.EqualFold(trimmed, "null") || strings.EqualFold(trimmed, "<null>") {
-		return nil
-	}
-	if match := isoDateTimeRegex.FindStringSubmatch(trimmed); len(match) == 3 {
-		return match[1] + " " + match[2]
-	}
-	return v
 }
 
 func (m *MariaDBDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
@@ -588,7 +604,7 @@ func (m *MariaDBDriver) ApplyChanges(ctx context.Context, database, schema, tabl
 			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, quoteIdent(k))
 				placeholders = append(placeholders, "?")
-				vals = append(vals, normalizeMariaDBValue(c.Changes[k]))
+				vals = append(vals, c.Changes[k])
 			}
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 			if len(cols) == 0 {
@@ -605,12 +621,16 @@ func (m *MariaDBDriver) ApplyChanges(ctx context.Context, database, schema, tabl
 			vals := []any{}
 			for _, k := range sortedKeys(c.Changes) {
 				sets = append(sets, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, normalizeMariaDBValue(c.Changes[k]))
+				vals = append(vals, c.Changes[k])
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, normalizeMariaDBValue(c.PrimaryKey[k]))
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
+					vals = append(vals, c.PrimaryKey[k])
+				}
 			}
 			stmt := fmt.Sprintf("UPDATE %s SET %s WHERE %s", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -623,8 +643,12 @@ func (m *MariaDBDriver) ApplyChanges(ctx context.Context, database, schema, tabl
 			where := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, normalizeMariaDBValue(c.PrimaryKey[k]))
+				if c.PrimaryKey[k] == nil {
+					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
+				} else {
+					where = append(where, fmt.Sprintf("%s = ?", quoteIdent(k)))
+					vals = append(vals, c.PrimaryKey[k])
+				}
 			}
 			stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", prefix, strings.Join(where, " AND "))
 			res, err := tx.ExecContext(ctx, stmt, vals...)
@@ -643,15 +667,5 @@ func (m *MariaDBDriver) ApplyChanges(ctx context.Context, database, schema, tabl
 }
 
 func formatSQLVal(v any) string {
-	v = normalizeMariaDBValue(v)
-	if v == nil {
-		return "NULL"
-	}
-	switch val := v.(type) {
-	case string:
-		return "'" + strings.ReplaceAll(val, "'", "''") + "'"
-	default:
-		return fmt.Sprintf("%v", val)
-	}
+	return sqlfmt.MySQLValue(v)
 }
-

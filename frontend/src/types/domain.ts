@@ -147,6 +147,14 @@ export interface ColumnMeta {
   defaultKind?: string;
   enumValues?: string[] | null;
   comment?: string;
+  // MySQL / MariaDB column details (optional).
+  columnKind?: 'NORMAL' | 'VIRTUAL' | 'STORED' | string;
+  generationExpression?: string;
+  onUpdate?: string;
+  characterSet?: string;
+  collation?: string;
+  isInvisible?: boolean;
+  isGenerated?: boolean;
 }
 
 export interface ForeignKeyMeta {

@@ -24,27 +24,6 @@ func TestQuoteIdent(t *testing.T) {
 	}
 }
 
-func TestNormalizeMySQLValue(t *testing.T) {
-	cases := []struct {
-		input    any
-		expected any
-	}{
-		{nil, nil},
-		{"null", nil},
-		{"<NULL>", nil},
-		{"2026-11-05T12:30:00Z", "2026-11-05 12:30:00"},
-		{"hello", "hello"},
-		{123, 123},
-	}
-
-	for _, c := range cases {
-		got := normalizeMySQLValue(c.input)
-		if got != c.expected {
-			t.Errorf("normalizeMySQLValue(%v) = %v, expected %v", c.input, got, c.expected)
-		}
-	}
-}
-
 func TestGenerateDMLPreview(t *testing.T) {
 	d := &MySQLDriver{}
 	changes := []driver.RowChange{
@@ -116,17 +95,6 @@ func TestFormatBytes(t *testing.T) {
 		got := formatBytes(c.input)
 		if got != c.expected {
 			t.Errorf("formatBytes(%d) = %q, expected %q", c.input, got, c.expected)
-		}
-	}
-}
-
-
-
-// D4: literal text must never be rewritten into NULL or shifted dates.
-func TestNormalizeMySQLValue_KeepsUserText(t *testing.T) {
-	for _, in := range []string{"null", "NULL", "<null>", "2026-11-05T12:30:00+07:00", "2026-11-05T12:30:00Z"} {
-		if got := normalizeMySQLValue(in); got != in {
-			t.Errorf("normalizeMySQLValue(%q) = %v, want it unchanged", in, got)
 		}
 	}
 }

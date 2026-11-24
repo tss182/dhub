@@ -71,14 +71,14 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 		} else if isMongo {
 			statements = driver.SplitMongoStatements(req.SQL)
 		} else {
-			statements = driver.SplitStatements(req.SQL)
+			statements = driver.SplitStatementsForDialect(req.SQL, drvLower)
 		}
 		for _, stmt := range statements {
 			isSafe := false
 			if isMongo {
 				isSafe = driver.IsReadOnlySafeMongoQuery(stmt)
 			} else {
-				isSafe = driver.IsReadOnlySafeQuery(stmt)
+				isSafe = driver.IsReadOnlySafeQueryForDialect(stmt, drvLower)
 			}
 			if !isSafe {
 				errMsg := fmt.Sprintf("execution blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(stmt, 60))
@@ -207,16 +207,18 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 		}
 	}
 
-	_ = q.store.RecordQueryHistory(store.QueryHistoryEntry{
-		ConnectionID: req.ConnectionID,
-		DatabaseName: req.Database,
-		SchemaName:   req.Schema,
-		SQLText:      req.SQL,
-		DurationMs:   elapsed,
-		RowsAffected: rowsAffected,
-		Status:       status,
-		ErrorMessage: errMsg,
-	})
+	if !req.SkipHistory {
+		_ = q.store.RecordQueryHistory(store.QueryHistoryEntry{
+			ConnectionID: req.ConnectionID,
+			DatabaseName: req.Database,
+			SchemaName:   req.Schema,
+			SQLText:      req.SQL,
+			DurationMs:   elapsed,
+			RowsAffected: rowsAffected,
+			Status:       status,
+			ErrorMessage: errMsg,
+		})
+	}
 
 	return res, execErr
 }
@@ -453,4 +455,3 @@ func (q *QueryService) emitStatus(execID, state, message string) {
 		})
 	}
 }
-

@@ -9,7 +9,7 @@ import (
 // every statement produced by the dialect-aware splitter must be read-only safe.
 func readOnlyAllows(sql, dialect string) bool {
 	for _, stmt := range SplitStatementsForDialect(sql, dialect) {
-		if !IsReadOnlySafeQuery(stmt) {
+		if !IsReadOnlySafeQueryForDialect(stmt, dialect) {
 			return false
 		}
 	}

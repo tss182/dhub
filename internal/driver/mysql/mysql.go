@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"dhub/internal/driver"
+	"dhub/internal/driver/mysqlconn"
+	"dhub/internal/driver/mysqlmeta"
+	"dhub/internal/driver/sqlfmt"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
@@ -20,7 +22,13 @@ type MySQLDriver struct {
 }
 
 func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
-	db, err := sql.Open("mysql", dsn)
+	return NewMySQLDriverWithOptions(dsn, false)
+}
+
+// NewMySQLDriverWithOptions opens the driver. With readOnly set, the server itself rejects writes on every
+// pooled connection, as a second line of defence behind the client-side read-only check.
+func NewMySQLDriverWithOptions(dsn string, readOnly bool) (*MySQLDriver, error) {
+	db, err := mysqlconn.Open(dsn, readOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -224,12 +232,28 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
-	// 2. Fetch columns with accurate types, defaults, and comments
-	colQuery := `SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment
-		FROM information_schema.columns
-		WHERE table_schema = ? AND table_name = ?
-		ORDER BY ordinal_position`
-	rows, err := m.db.QueryContext(ctx, colQuery, targetDB, table)
+	// 2. Fetch columns. Older servers lack some information_schema columns, so try the richest
+	// query first and fall back one step at a time.
+	colQueries := []struct {
+		sql  string
+		cols int // number of optional columns appended after the base eight
+	}{
+		{`SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment,
+			COALESCE(generation_expression, ''), character_set_name, collation_name
+			FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position`, 3},
+		{`SELECT column_name, column_type, data_type, is_nullable, column_key, column_default, extra, column_comment
+			FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position`, 0},
+	}
+	var rows *sql.Rows
+	var err error
+	optional := 0
+	for _, q := range colQueries {
+		rows, err = m.db.QueryContext(ctx, q.sql, targetDB, table)
+		if err == nil {
+			optional = q.cols
+			break
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -237,31 +261,53 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 
 	for rows.Next() {
 		var name, colType, dataType, isNullable, colKey, extra string
-		var dflt, colComment *string
-		if err := rows.Scan(&name, &colType, &dataType, &isNullable, &colKey, &dflt, &extra, &colComment); err == nil {
-			isPk := colKey == "PRI"
-			if isPk {
-				structure.PrimaryKeys = append(structure.PrimaryKeys, name)
-			}
-			defVal := ""
-			if dflt != nil {
-				defVal = *dflt
-			}
-			cmt := ""
-			if colComment != nil {
-				cmt = *colComment
-			}
-			structure.Columns = append(structure.Columns, driver.ColumnMeta{
-				Name:         name,
-				DataType:     colType,
-				RawType:      dataType,
-				IsNullable:   isNullable == "YES",
-				IsPrimaryKey: isPk,
-				IsAutoIncr:   strings.Contains(strings.ToLower(extra), "auto_increment"),
-				DefaultValue: defVal,
-				Comment:      cmt,
-			})
+		var dflt, colComment, charset, collation *string
+		var genExpr string
+		dest := []any{&name, &colType, &dataType, &isNullable, &colKey, &dflt, &extra, &colComment}
+		if optional > 0 {
+			dest = append(dest, &genExpr, &charset, &collation)
 		}
+		if err := rows.Scan(dest...); err != nil {
+			continue
+		}
+		isPk := colKey == "PRI"
+		if isPk {
+			structure.PrimaryKeys = append(structure.PrimaryKeys, name)
+		}
+		nullable := isNullable == "YES"
+		ex := mysqlmeta.ParseExtra(extra)
+		def := mysqlmeta.MySQLDefault(dflt, nullable, ex)
+		cmt := ""
+		if colComment != nil {
+			cmt = *colComment
+		}
+		col := driver.ColumnMeta{
+			Name:         name,
+			DataType:     colType,
+			RawType:      dataType,
+			IsNullable:   nullable,
+			IsPrimaryKey: isPk,
+			IsAutoIncr:   ex.AutoIncrement,
+			DefaultValue: def.Value,
+			DefaultKind:  def.Kind,
+			Comment:      cmt,
+			ColumnKind:   ex.Kind,
+			OnUpdate:     ex.OnUpdate,
+			IsInvisible:  ex.Invisible,
+		}
+		if ex.Kind != mysqlmeta.KindNormal {
+			col.IsGenerated = true
+			col.GenerationExpression = genExpr
+			// A generated column has no DEFAULT of its own.
+			col.DefaultValue, col.DefaultKind = "", mysqlmeta.DefaultNone
+		}
+		if charset != nil {
+			col.CharacterSet = *charset
+		}
+		if collation != nil {
+			col.Collation = *collation
+		}
+		structure.Columns = append(structure.Columns, col)
 	}
 
 	// 3. Fetch Indexes (including composite indexes)
@@ -439,7 +485,7 @@ func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 		}
 	}
 
-	return driver.ExecuteStatements(ctx, conn, req)
+	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "mysql")
 }
 
 func (m *MySQLDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
@@ -495,7 +541,7 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				if normalizeMySQLValue(c.PrimaryKey[k]) == nil {
+				if c.PrimaryKey[k] == nil {
 					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
 				} else {
 					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
@@ -505,7 +551,7 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 		case "delete":
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				if normalizeMySQLValue(c.PrimaryKey[k]) == nil {
+				if c.PrimaryKey[k] == nil {
 					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
 				} else {
 					where = append(where, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(c.PrimaryKey[k])))
@@ -515,26 +561,6 @@ func (m *MySQLDriver) GenerateDMLPreview(database, schema, table string, changes
 		}
 	}
 	return statements, nil
-}
-
-var isoDateTimeRegex = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)(?:Z|[+-]\d{2}:?\d{2})?$`)
-
-func normalizeMySQLValue(v any) any {
-	if v == nil {
-		return nil
-	}
-	s, ok := v.(string)
-	if !ok {
-		return v
-	}
-	trimmed := strings.TrimSpace(s)
-	if strings.EqualFold(trimmed, "null") || strings.EqualFold(trimmed, "<null>") {
-		return nil
-	}
-	if match := isoDateTimeRegex.FindStringSubmatch(trimmed); len(match) == 3 {
-		return match[1] + " " + match[2]
-	}
-	return v
 }
 
 func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
@@ -565,7 +591,7 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			for _, k := range sortedKeys(c.Changes) {
 				cols = append(cols, quoteIdent(k))
 				placeholders = append(placeholders, "?")
-				vals = append(vals, normalizeMySQLValue(c.Changes[k]))
+				vals = append(vals, c.Changes[k])
 			}
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", prefix, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 			if len(cols) == 0 {
@@ -582,11 +608,11 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			vals := []any{}
 			for _, k := range sortedKeys(c.Changes) {
 				sets = append(sets, fmt.Sprintf("%s = ?", quoteIdent(k)))
-				vals = append(vals, normalizeMySQLValue(c.Changes[k]))
+				vals = append(vals, c.Changes[k])
 			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				pkVal := normalizeMySQLValue(c.PrimaryKey[k])
+				pkVal := c.PrimaryKey[k]
 				if pkVal == nil {
 					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
 				} else {
@@ -605,7 +631,7 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			where := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
-				pkVal := normalizeMySQLValue(c.PrimaryKey[k])
+				pkVal := c.PrimaryKey[k]
 				if pkVal == nil {
 					where = append(where, fmt.Sprintf("%s IS NULL", quoteIdent(k)))
 				} else {
@@ -630,15 +656,5 @@ func (m *MySQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 }
 
 func formatSQLVal(v any) string {
-	v = normalizeMySQLValue(v)
-	if v == nil {
-		return "NULL"
-	}
-	switch val := v.(type) {
-	case string:
-		return "'" + strings.ReplaceAll(val, "'", "''") + "'"
-	default:
-		return fmt.Sprintf("%v", val)
-	}
+	return sqlfmt.MySQLValue(v)
 }
-

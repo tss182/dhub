@@ -270,11 +270,14 @@ type QueryHistoryEntry struct {
 func (s *LocalStore) RecordQueryHistory(entry QueryHistoryEntry) error {
 	query := `INSERT INTO query_history (connection_id, database_name, schema_name, sql_text, duration_ms, rows_affected, status, error_message, executed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-	sqlText := entry.SQLText
+	// Redact before truncating so a cut-off literal cannot leave part of a password behind.
+	sqlText := RedactSQLSecrets(entry.SQLText)
 	if len(sqlText) > maxHistorySQLBytes {
 		sqlText = sqlText[:maxHistorySQLBytes]
 	}
-	if _, err := s.db.Exec(query, entry.ConnectionID, entry.DatabaseName, entry.SchemaName, sqlText, entry.DurationMs, entry.RowsAffected, entry.Status, entry.ErrorMessage); err != nil {
+	// Driver errors quote the failing statement, so they can contain the same secrets.
+	errorMessage := RedactSQLSecrets(entry.ErrorMessage)
+	if _, err := s.db.Exec(query, entry.ConnectionID, entry.DatabaseName, entry.SchemaName, sqlText, entry.DurationMs, entry.RowsAffected, entry.Status, errorMessage); err != nil {
 		return err
 	}
 

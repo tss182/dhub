@@ -5,6 +5,42 @@ import (
 	"unicode"
 )
 
+// dialectFlags classifies a dialect name. MySQL and MariaDB share quoting and comment rules
+// that differ from the generic splitter: "--" is a comment only when followed by whitespace
+// or a control character, and "/*! ... */" (plus "/*M! ... */" on MariaDB) is executed as SQL.
+func dialectFlags(dialect string) (isMySQLFamily, isMariaDB bool) {
+	switch strings.ToLower(strings.TrimSpace(dialect)) {
+	case "mysql":
+		return true, false
+	case "mariadb":
+		return true, true
+	}
+	return false, false
+}
+
+// isMySQLDashComment reports whether "--" at runes[i:i+2] starts a comment in MySQL,
+// which requires whitespace, a control character, or end of input right after it.
+func isMySQLDashComment(runes []rune, afterDashes int) bool {
+	if afterDashes >= len(runes) {
+		return true
+	}
+	return unicode.IsSpace(runes[afterDashes]) || unicode.IsControl(runes[afterDashes])
+}
+
+// executableCommentLen returns the length of the "/*!" or "/*M!" opener at runes[i:], or 0.
+// MySQL runs the body of "/*! ... */" as SQL, and MariaDB also runs "/*M! ... */".
+func executableCommentLen(runes []rune, i int, isMariaDB bool) int {
+	if i+2 < len(runes) && runes[i] == '/' && runes[i+1] == '*' {
+		if runes[i+2] == '!' {
+			return 3
+		}
+		if isMariaDB && i+3 < len(runes) && runes[i+2] == 'M' && runes[i+3] == '!' {
+			return 4
+		}
+	}
+	return 0
+}
+
 func isIdentChar(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$'
 }
@@ -134,6 +170,7 @@ func SplitStatements(sql string) []string {
 // SplitStatementsForDialect splits a multi-statement SQL script using dialect-aware quoting and comment rules.
 func SplitStatementsForDialect(sql, dialect string) []string {
 	isPostgres := strings.EqualFold(strings.TrimSpace(dialect), "postgres")
+	isMySQLFamily, isMariaDB := dialectFlags(dialect)
 	var statements []string
 	var current strings.Builder
 	runes := []rune(sql)
@@ -287,7 +324,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 		}
 
 		// Start of comments or quotes
-		if r == '-' && i+1 < n && runes[i+1] == '-' {
+		if r == '-' && i+1 < n && runes[i+1] == '-' && (!isMySQLFamily || isMySQLDashComment(runes, i+2)) {
 			current.WriteRune(r)
 			current.WriteRune('-')
 			i++
@@ -300,6 +337,18 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 			inLineComment = true
 			atLineStart = false
 			continue
+		}
+		if isMySQLFamily {
+			if l := executableCommentLen(runes, i, isMariaDB); l > 0 {
+				// The body runs as SQL on the server, so keep scanning it as code.
+				for k := 0; k < l; k++ {
+					current.WriteRune(runes[i+k])
+				}
+				i += l - 1
+				stmtStarted = true
+				atLineStart = false
+				continue
+			}
 		}
 		if r == '/' && i+1 < n && runes[i+1] == '*' {
 			current.WriteRune(r)
@@ -482,6 +531,23 @@ func hasLeadingKeyword(upper, kw string) bool {
 // stripStringsAndComments replaces quoted literals, dollar-quoted strings, bracketed identifiers,
 // and comments with spaces so keyword scanning does not match inside literal text.
 func stripStringsAndComments(sql string) string {
+	out, _ := sanitizeSQL(sql, "")
+	return out
+}
+
+// sanitizeSQL is stripStringsAndComments with dialect-aware comment rules. The second result
+// reports whether an executable comment ("/*!" or, on MariaDB, "/*M!") was found. Its body is
+// kept in the output because the server executes it.
+func sanitizeSQL(sql, dialect string) (string, bool) {
+	out, hasExec, _ := sanitizeSQLFlags(sql, dialect)
+	return out, hasExec
+}
+
+// sanitizeSQLFlags also reports whether any comment (executable or not) was present.
+func sanitizeSQLFlags(sql, dialect string) (string, bool, bool) {
+	isMySQLFamily, isMariaDB := dialectFlags(dialect)
+	hasExecComment := false
+	hasComment := false
 	var out strings.Builder
 	runes := []rune(sql)
 	n := len(runes)
@@ -560,19 +626,31 @@ func stripStringsAndComments(sql string) string {
 			continue
 		}
 
-		if r == '-' && i+1 < n && runes[i+1] == '-' {
+		if r == '-' && i+1 < n && runes[i+1] == '-' && (!isMySQLFamily || isMySQLDashComment(runes, i+2)) {
 			inLineComment = true
+			hasComment = true
 			i++
 			out.WriteRune(' ')
 			continue
 		}
 		if r == '#' {
 			inLineComment = true
+			hasComment = true
 			out.WriteRune(' ')
 			continue
 		}
+		if isMySQLFamily {
+			if l := executableCommentLen(runes, i, isMariaDB); l > 0 {
+				hasExecComment = true
+				hasComment = true
+				i += l - 1
+				out.WriteString(strings.Repeat(" ", l))
+				continue
+			}
+		}
 		if r == '/' && i+1 < n && runes[i+1] == '*' {
 			inBlockComment = true
+			hasComment = true
 			i++
 			out.WriteRune(' ')
 			continue
@@ -608,7 +686,7 @@ func stripStringsAndComments(sql string) string {
 		}
 		out.WriteRune(r)
 	}
-	return out.String()
+	return out.String(), hasExecComment, hasComment
 }
 
 func containsStandaloneWord(upperSanitized string, targets ...string) bool {
@@ -745,6 +823,18 @@ func isReadOnlyHTTPCommand(clean string) bool {
 // IsReadOnlySafeQuery verifies that a SQL statement only performs read operations
 // and does not contain data-modifying CTEs (e.g., WITH ... DELETE) or DML/DDL statements.
 func IsReadOnlySafeQuery(sql string) bool {
+	return IsReadOnlySafeQueryForDialect(sql, "")
+}
+
+// IsReadOnlySafeQueryForDialect is IsReadOnlySafeQuery using the comment rules of the target
+// server. For MySQL and MariaDB it rejects any statement containing an executable comment,
+// because the server runs its body even though a generic parser sees only a comment.
+func IsReadOnlySafeQueryForDialect(sql, dialect string) bool {
+	if isMySQLFamily, _ := dialectFlags(dialect); isMySQLFamily {
+		if _, hasExec := sanitizeSQL(sql, dialect); hasExec {
+			return false
+		}
+	}
 	clean := StripLeadingComments(sql)
 	if isReadOnlyHTTPCommand(clean) {
 		return true
@@ -772,7 +862,8 @@ func IsReadOnlySafeQuery(sql string) bool {
 	if !isReadLeading {
 		return false
 	}
-	sanitizedUpper := strings.ToUpper(stripStringsAndComments(clean))
+	sanitized, _ := sanitizeSQL(clean, dialect)
+	sanitizedUpper := strings.ToUpper(sanitized)
 	if containsStandaloneWord(sanitizedUpper,
 		"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
 		"TRUNCATE", "MERGE", "GRANT", "REVOKE",
@@ -1140,4 +1231,3 @@ func IsReadOnlySafeMongoQuery(stmt string) bool {
 
 	return false
 }
-
