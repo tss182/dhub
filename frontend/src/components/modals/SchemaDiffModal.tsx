@@ -100,6 +100,16 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
     return () => { cancelled = true; };
   }, [dstConnId, dstDB]);
 
+  const effectiveMigrationSql = React.useMemo(() => {
+    const raw = diffResult?.migrationSql || '';
+    if (!raw) return '';
+    const dDrv = connections.find((c) => c.id === dstConnId)?.driver;
+    if (wrapInTx && (dDrv === 'postgres' || dDrv === 'sqlite')) {
+      return `BEGIN;\n\n${raw}\n\nCOMMIT;`;
+    }
+    return raw;
+  }, [diffResult?.migrationSql, wrapInTx, connections, dstConnId]);
+
   if (!isOpen) return null;
 
   const handleCompare = async () => {
@@ -125,16 +135,6 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
       setIsComparing(false);
     }
   };
-
-  const effectiveMigrationSql = React.useMemo(() => {
-    const raw = diffResult?.migrationSql || '';
-    if (!raw) return '';
-    const dDrv = connections.find((c) => c.id === dstConnId)?.driver;
-    if (wrapInTx && (dDrv === 'postgres' || dDrv === 'sqlite')) {
-      return `BEGIN;\n\n${raw}\n\nCOMMIT;`;
-    }
-    return raw;
-  }, [diffResult?.migrationSql, wrapInTx, connections, dstConnId]);
 
   const handleCopySql = async () => {
     if (!effectiveMigrationSql) return;
