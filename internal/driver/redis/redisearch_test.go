@@ -13,9 +13,9 @@ func TestEncodeAndDecodeFloat32VectorParams(t *testing.T) {
 		"PARAMS", "4", "K", "5", "vec", "[0.25, -0.5, 0.75, 1.0]", "DIALECT", "2",
 	}
 	encoded := encodeVectorParamsIfPresent(args)
-	blob, ok := encoded[9].([]byte)
+	blob, ok := encoded[8].([]byte)
 	if !ok || len(blob) != 16 {
-		t.Fatalf("expected 16-byte float32 blob, got %T (len=%d)", encoded[9], len(blob))
+		t.Fatalf("expected 16-byte float32 blob, got %T (len=%d)", encoded[8], len(blob))
 	}
 
 	// Verify little-endian float32 round-trip

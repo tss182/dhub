@@ -106,13 +106,13 @@ func TestGenerateDMLPreview(t *testing.T) {
 		t.Fatalf("expected 3 statements, got %d", len(stmts))
 	}
 
-	if !strings.HasPrefix(stmts[0], "INSERT INTO `users`") {
+	if !strings.HasPrefix(stmts[0], "INSERT INTO `default`.`users`") {
 		t.Errorf("statement 0 mismatch: %s", stmts[0])
 	}
-	if !strings.HasPrefix(stmts[1], "ALTER TABLE `users` UPDATE `name` = 'Clicky Updated' WHERE `id` = 1") {
+	if !strings.HasPrefix(stmts[1], "ALTER TABLE `default`.`users` UPDATE `name` = 'Clicky Updated' WHERE `id` = 1") {
 		t.Errorf("statement 1 mismatch: %s", stmts[1])
 	}
-	if !strings.HasPrefix(stmts[2], "ALTER TABLE `users` DELETE WHERE `id` = 2") {
+	if !strings.HasPrefix(stmts[2], "ALTER TABLE `default`.`users` DELETE WHERE `id` = 2") {
 		t.Errorf("statement 2 mismatch: %s", stmts[2])
 	}
 }

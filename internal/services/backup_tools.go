@@ -1430,6 +1430,11 @@ func streamSQLStatements(r io.Reader, driverType string, onStmt func(stmt string
 		}
 
 		if delimiter != "" && ch == delimiter[0] {
+			if strings.EqualFold(driverType, "oracle") && delimiter == ";" && isOraclePLSQLBlock(buf.String()) {
+				buf.WriteByte(ch)
+				atLineStart = false
+				continue
+			}
 			matched := true
 			if len(delimiter) > 1 {
 				p := peekBytes(len(delimiter) - 1)
@@ -1454,4 +1459,27 @@ func streamSQLStatements(r io.Reader, driverType string, onStmt func(stmt string
 	}
 
 	return flushStmt()
+}
+
+func isOraclePLSQLBlock(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return false
+	}
+	upper := strings.ToUpper(trimmed)
+	for _, prefix := range []string{"BEGIN", "DECLARE"} {
+		if strings.HasPrefix(upper, prefix) && (len(upper) == len(prefix) || upper[len(prefix)] == ' ' || upper[len(prefix)] == '\t' || upper[len(prefix)] == '\r' || upper[len(prefix)] == '\n') {
+			return true
+		}
+	}
+	if strings.HasPrefix(upper, "CREATE") {
+		fields := strings.Fields(upper)
+		for i := 1; i < len(fields) && i <= 4; i++ {
+			switch fields[i] {
+			case "PROCEDURE", "FUNCTION", "TRIGGER", "PACKAGE", "TYPE":
+				return true
+			}
+		}
+	}
+	return false
 }
