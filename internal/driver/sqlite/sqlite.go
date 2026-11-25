@@ -254,7 +254,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 }
 
 func (s *SQLiteDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	return driver.ExecuteStatements(ctx, s.db, req)
+	return driver.ExecuteStatementsWithDialect(ctx, s.db, req, "sqlite")
 }
 
 func (s *SQLiteDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
@@ -292,6 +292,12 @@ func (s *SQLiteDriver) GenerateDMLPreview(database, schema, table string, change
 			}
 			statements = append(statements, stmt)
 		case "update":
+			if len(c.PrimaryKey) == 0 {
+				return nil, fmt.Errorf("cannot update row without primary key")
+			}
+			if len(c.Changes) == 0 {
+				return nil, fmt.Errorf("update has no column changes")
+			}
 			sets := []string{}
 			for _, k := range sortedKeys(c.Changes) {
 				sets = append(sets, fmt.Sprintf(`%s = %s`, quoteIdent(k), formatSQLVal(c.Changes[k])))
@@ -306,6 +312,9 @@ func (s *SQLiteDriver) GenerateDMLPreview(database, schema, table string, change
 			}
 			statements = append(statements, fmt.Sprintf(`UPDATE %s SET %s WHERE %s;`, qTable, strings.Join(sets, ", "), strings.Join(where, " AND ")))
 		case "delete":
+			if len(c.PrimaryKey) == 0 {
+				return nil, fmt.Errorf("cannot delete row without primary key")
+			}
 			where := []string{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
 				if c.PrimaryKey[k] == nil {
@@ -349,8 +358,17 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("delete affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		case "update":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot update row without primary key")
+			}
+			if len(c.Changes) == 0 {
+				return 0, fmt.Errorf("update has no column changes")
+			}
 			sets := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.Changes) {
@@ -372,8 +390,14 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("update affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		case "delete":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot delete row without primary key")
+			}
 			where := []string{}
 			vals := []any{}
 			for _, k := range sortedKeys(c.PrimaryKey) {
@@ -390,6 +414,9 @@ func (s *SQLiteDriver) ApplyChanges(ctx context.Context, database, schema, table
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("delete affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		}
 	}

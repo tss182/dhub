@@ -664,6 +664,12 @@ func (m *MSSQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 			ra, _ := res.RowsAffected()
 			totalAffected += ra
 		case "update":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot update row without primary key")
+			}
+			if len(c.Changes) == 0 {
+				return 0, fmt.Errorf("update has no column changes")
+			}
 			sets := []string{}
 			vals := []any{}
 			idx := 1
@@ -688,8 +694,14 @@ func (m *MSSQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("update affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		case "delete":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot delete row without primary key")
+			}
 			where := []string{}
 			vals := []any{}
 			idx := 1
@@ -708,6 +720,9 @@ func (m *MSSQLDriver) ApplyChanges(ctx context.Context, database, schema, table 
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("delete affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		}
 	}

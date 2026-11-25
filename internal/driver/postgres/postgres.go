@@ -1083,6 +1083,9 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, tab
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("update affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		case "delete":
 			if len(c.PrimaryKey) == 0 {
@@ -1106,6 +1109,9 @@ func (p *PostgresDriver) ApplyChanges(ctx context.Context, database, schema, tab
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("delete affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		}
 	}

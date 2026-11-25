@@ -106,7 +106,9 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 	var activeTxSession *TxSession
 	if req.TabID != "" {
 		q.mu.Lock()
-		activeTxSession = q.activeTx[req.TabID]
+		if sess := q.activeTx[req.TabID]; sess != nil && sess.ConnectionID == req.ConnectionID {
+			activeTxSession = sess
+		}
 		q.mu.Unlock()
 	}
 
@@ -412,7 +414,16 @@ func (q *QueryService) Savepoint(tabID, name string) error {
 	}
 	q.mu.Unlock()
 
-	if _, err := session.Tx.Exec(fmt.Sprintf(`SAVEPOINT "%s"`, strings.ReplaceAll(name, `"`, `""`))); err != nil {
+	var savepointSQL string
+	switch strings.ToLower(strings.TrimSpace(session.Driver)) {
+	case "mysql", "mariadb":
+		savepointSQL = fmt.Sprintf("SAVEPOINT `%s`", strings.ReplaceAll(name, "`", "``"))
+	case "mssql", "sqlserver":
+		savepointSQL = fmt.Sprintf("SAVE TRANSACTION [%s]", strings.ReplaceAll(name, "]", "]]"))
+	default:
+		savepointSQL = fmt.Sprintf(`SAVEPOINT "%s"`, strings.ReplaceAll(name, `"`, `""`))
+	}
+	if _, err := session.Tx.Exec(savepointSQL); err != nil {
 		return fmt.Errorf("savepoint failed: %w", err)
 	}
 	return nil
@@ -431,7 +442,16 @@ func (q *QueryService) RollbackToSavepoint(tabID, name string) error {
 	}
 	q.mu.Unlock()
 
-	if _, err := session.Tx.Exec(fmt.Sprintf(`ROLLBACK TO SAVEPOINT "%s"`, strings.ReplaceAll(name, `"`, `""`))); err != nil {
+	var rollbackSQL string
+	switch strings.ToLower(strings.TrimSpace(session.Driver)) {
+	case "mysql", "mariadb":
+		rollbackSQL = fmt.Sprintf("ROLLBACK TO SAVEPOINT `%s`", strings.ReplaceAll(name, "`", "``"))
+	case "mssql", "sqlserver":
+		rollbackSQL = fmt.Sprintf("ROLLBACK TRANSACTION [%s]", strings.ReplaceAll(name, "]", "]]"))
+	default:
+		rollbackSQL = fmt.Sprintf(`ROLLBACK TO SAVEPOINT "%s"`, strings.ReplaceAll(name, `"`, `""`))
+	}
+	if _, err := session.Tx.Exec(rollbackSQL); err != nil {
 		return fmt.Errorf("rollback to savepoint failed: %w", err)
 	}
 	q.mu.Lock()

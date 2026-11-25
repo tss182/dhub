@@ -125,7 +125,7 @@ func (o *OracleDriver) ListObjects(ctx context.Context, database, schema string)
 	tblQuery := `
 		SELECT OWNER, TABLE_NAME, NVL(NUM_ROWS, 0)
 		FROM ALL_TABLES
-		WHERE (:1 = '' OR OWNER = :2)
+		WHERE (:1 IS NULL OR OWNER = :2)
 		ORDER BY OWNER, TABLE_NAME`
 	if rows, err := o.db.QueryContext(ctx, tblQuery, targetSchema, targetSchema); err == nil {
 		defer rows.Close()
@@ -144,7 +144,7 @@ func (o *OracleDriver) ListObjects(ctx context.Context, database, schema string)
 	viewQuery := `
 		SELECT OWNER, VIEW_NAME
 		FROM ALL_VIEWS
-		WHERE (:1 = '' OR OWNER = :2)
+		WHERE (:1 IS NULL OR OWNER = :2)
 		ORDER BY OWNER, VIEW_NAME`
 	if vRows, vErr := o.db.QueryContext(ctx, viewQuery, targetSchema, targetSchema); vErr == nil {
 		defer vRows.Close()
@@ -164,7 +164,7 @@ func (o *OracleDriver) ListObjects(ctx context.Context, database, schema string)
 	mvQuery := `
 		SELECT OWNER, MVIEW_NAME
 		FROM ALL_MVIEWS
-		WHERE (:1 = '' OR OWNER = :2)
+		WHERE (:1 IS NULL OR OWNER = :2)
 		ORDER BY OWNER, MVIEW_NAME`
 	if mvRows, mvErr := o.db.QueryContext(ctx, mvQuery, targetSchema, targetSchema); mvErr == nil {
 		defer mvRows.Close()
@@ -184,7 +184,7 @@ func (o *OracleDriver) ListObjects(ctx context.Context, database, schema string)
 	routineQuery := `
 		SELECT OWNER, OBJECT_NAME
 		FROM ALL_OBJECTS
-		WHERE (:1 = '' OR OWNER = :2)
+		WHERE (:1 IS NULL OR OWNER = :2)
 		  AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE')
 		ORDER BY OWNER, OBJECT_NAME`
 	if rRows, rErr := o.db.QueryContext(ctx, routineQuery, targetSchema, targetSchema); rErr == nil {
@@ -205,7 +205,7 @@ func (o *OracleDriver) ListObjects(ctx context.Context, database, schema string)
 	seqQuery := `
 		SELECT SEQUENCE_OWNER, SEQUENCE_NAME
 		FROM ALL_SEQUENCES
-		WHERE (:1 = '' OR SEQUENCE_OWNER = :2)
+		WHERE (:1 IS NULL OR SEQUENCE_OWNER = :2)
 		ORDER BY SEQUENCE_OWNER, SEQUENCE_NAME`
 	if sRows, sErr := o.db.QueryContext(ctx, seqQuery, targetSchema, targetSchema); sErr == nil {
 		defer sRows.Close()
@@ -225,7 +225,7 @@ func (o *OracleDriver) ListObjects(ctx context.Context, database, schema string)
 	trigQuery := `
 		SELECT OWNER, TRIGGER_NAME, TABLE_NAME
 		FROM ALL_TRIGGERS
-		WHERE (:1 = '' OR OWNER = :2)
+		WHERE (:1 IS NULL OR OWNER = :2)
 		ORDER BY OWNER, TRIGGER_NAME`
 	if tRows, tErr := o.db.QueryContext(ctx, trigQuery, targetSchema, targetSchema); tErr == nil {
 		defer tRows.Close()
@@ -619,6 +619,9 @@ func (o *OracleDriver) GenerateDMLPreview(database, schema, table string, change
 	for _, c := range changes {
 		switch c.Type {
 		case "insert":
+			if len(c.Changes) == 0 {
+				return nil, fmt.Errorf("insert has no column values")
+			}
 			cols := []string{}
 			vals := []string{}
 			for _, k := range sortedKeys(c.Changes) {
@@ -669,6 +672,9 @@ func (o *OracleDriver) ApplyChanges(ctx context.Context, database, schema, table
 	for _, c := range changes {
 		switch c.Type {
 		case "insert":
+			if len(c.Changes) == 0 {
+				return 0, fmt.Errorf("insert has no column values")
+			}
 			cols := []string{}
 			placeholders := []string{}
 			vals := []any{}
@@ -687,6 +693,12 @@ func (o *OracleDriver) ApplyChanges(ctx context.Context, database, schema, table
 			ra, _ := res.RowsAffected()
 			totalAffected += ra
 		case "update":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot update row without primary key")
+			}
+			if len(c.Changes) == 0 {
+				return 0, fmt.Errorf("update has no column changes")
+			}
 			sets := []string{}
 			vals := []any{}
 			idx := 1
@@ -711,8 +723,14 @@ func (o *OracleDriver) ApplyChanges(ctx context.Context, database, schema, table
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("update affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		case "delete":
+			if len(c.PrimaryKey) == 0 {
+				return 0, fmt.Errorf("cannot delete row without primary key")
+			}
 			where := []string{}
 			vals := []any{}
 			idx := 1
@@ -731,6 +749,9 @@ func (o *OracleDriver) ApplyChanges(ctx context.Context, database, schema, table
 				return 0, err
 			}
 			ra, _ := res.RowsAffected()
+			if ra != 1 {
+				return 0, fmt.Errorf("delete affected %d rows (expected 1); row may have changed or been deleted", ra)
+			}
 			totalAffected += ra
 		}
 	}

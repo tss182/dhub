@@ -616,6 +616,12 @@ func (c *ClickHouseDriver) GenerateDMLPreview(database, schema, table string, ch
 			stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);", prefix, strings.Join(cols, ", "), strings.Join(vals, ", "))
 			statements = append(statements, stmt)
 		case "update":
+			if len(ch.PrimaryKey) == 0 {
+				return nil, fmt.Errorf("cannot update row without primary key")
+			}
+			if len(ch.Changes) == 0 {
+				return nil, fmt.Errorf("update has no column changes")
+			}
 			var sets, where []string
 			for _, k := range sortedKeys(ch.Changes) {
 				sets = append(sets, fmt.Sprintf("%s = %s", quoteIdent(k), formatSQLVal(ch.Changes[k])))
@@ -630,6 +636,9 @@ func (c *ClickHouseDriver) GenerateDMLPreview(database, schema, table string, ch
 			stmt := fmt.Sprintf("ALTER TABLE %s UPDATE %s WHERE %s SETTINGS mutations_sync = 1;", prefix, strings.Join(sets, ", "), strings.Join(where, " AND "))
 			statements = append(statements, stmt)
 		case "delete":
+			if len(ch.PrimaryKey) == 0 {
+				return nil, fmt.Errorf("cannot delete row without primary key")
+			}
 			var where []string
 			for _, k := range sortedKeys(ch.PrimaryKey) {
 				if ch.PrimaryKey[k] == nil {
@@ -699,6 +708,12 @@ func (c *ClickHouseDriver) ApplyChanges(ctx context.Context, database, schema, t
 
 		switch ch.Type {
 		case "update":
+			if len(ch.PrimaryKey) == 0 {
+				return totalAffected, fmt.Errorf("cannot update row without primary key")
+			}
+			if len(ch.Changes) == 0 {
+				return totalAffected, fmt.Errorf("update has no column changes")
+			}
 			var sets, where []string
 			var vals []any
 			for _, k := range sortedKeys(ch.Changes) {
@@ -724,6 +739,9 @@ func (c *ClickHouseDriver) ApplyChanges(ctx context.Context, database, schema, t
 			}
 			totalAffected += ra
 		case "delete":
+			if len(ch.PrimaryKey) == 0 {
+				return totalAffected, fmt.Errorf("cannot delete row without primary key")
+			}
 			var where []string
 			var vals []any
 			for _, k := range sortedKeys(ch.PrimaryKey) {

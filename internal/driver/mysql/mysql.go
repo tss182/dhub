@@ -400,6 +400,12 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 			return nil, fmt.Errorf("reading indexes of %s: %w", table, iterErr)
 		}
 		structure.Indexes = mysqlschema.BuildIndexes(raw)
+		for _, idx := range structure.Indexes {
+			if idx.IsPrimary && len(idx.Columns) > 0 {
+				structure.PrimaryKeys = append([]string(nil), idx.Columns...)
+				break
+			}
+		}
 	}
 
 	// 3b. Fetch foreign keys with ON UPDATE / ON DELETE rules. One entry per constraint,

@@ -83,6 +83,9 @@ func (s *ConnectionService) SaveConnection(cfg store.ConnectionConfig) (string, 
 }
 
 func (s *ConnectionService) DeleteConnection(id string) error {
+	if s.onDisconnect != nil {
+		s.onDisconnect(id)
+	}
 	s.sessions.Disconnect(id)
 	return s.store.DeleteConnection(context.Background(), id)
 }

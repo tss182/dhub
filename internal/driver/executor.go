@@ -137,7 +137,8 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 		return nil
 	}
 	if b, ok := v.([]byte); ok {
-		if dialect == "postgres" && strings.EqualFold(dataType, "BYTEA") {
+		lowerType := strings.ToLower(dataType)
+		if dialect == "postgres" && lowerType == "bytea" {
 			return `\x` + hex.EncodeToString(b)
 		}
 		if dialect == "mysql" || dialect == "mariadb" {
@@ -146,6 +147,21 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 			if formatted, ok := mysqlmeta.FormatRead(dataType, b); ok {
 				return formatted
 			}
+		}
+		if dialect == "sqlite" && lowerType == "blob" {
+			return "0x" + hex.EncodeToString(b)
+		}
+		if dialect == "mssql" || dialect == "sqlserver" {
+			if lowerType == "uniqueidentifier" && len(b) == 16 {
+				return fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+					b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
+			}
+			if strings.Contains(lowerType, "binary") || lowerType == "image" || lowerType == "rowversion" || lowerType == "timestamp" {
+				return "0x" + hex.EncodeToString(b)
+			}
+		}
+		if dialect == "oracle" && (lowerType == "raw" || lowerType == "blob" || lowerType == "long raw" || lowerType == "bfile") {
+			return "0x" + hex.EncodeToString(b)
 		}
 		return string(b)
 	}
@@ -174,6 +190,26 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 				return t.Format("15:04:05")
 			}
 		}
+		if dialect == "mssql" || dialect == "sqlserver" {
+			if lowerType == "datetimeoffset" {
+				if t.Nanosecond() != 0 {
+					return t.Format("2006-01-02 15:04:05.9999999Z07:00")
+				}
+				return t.Format("2006-01-02 15:04:05Z07:00")
+			}
+			if lowerType == "time" {
+				if t.Nanosecond() != 0 {
+					return t.Format("15:04:05.9999999")
+				}
+				return t.Format("15:04:05")
+			}
+		}
+		if dialect == "oracle" && strings.Contains(lowerType, "time zone") {
+			if t.Nanosecond() != 0 {
+				return t.Format("2006-01-02 15:04:05.999999Z07:00")
+			}
+			return t.Format("2006-01-02 15:04:05Z07:00")
+		}
 		if t.Nanosecond() != 0 {
 			return t.Format("2006-01-02 15:04:05.000000")
 		}
@@ -183,7 +219,8 @@ func normalizeScannedValue(v any, dataType string, dialect string) any {
 		}
 		return t.Format("2006-01-02 15:04:05")
 	}
-	if dialect == "clickhouse" || dialect == "postgres" || dialect == "mysql" || dialect == "mariadb" {
+	if dialect == "clickhouse" || dialect == "postgres" || dialect == "mysql" || dialect == "mariadb" ||
+		dialect == "sqlite" || dialect == "mssql" || dialect == "sqlserver" || dialect == "oracle" {
 		const maxSafeJSInt = int64(9007199254740991)
 		const maxSafeJSUint = uint64(9007199254740991)
 		switch val := v.(type) {
@@ -309,10 +346,15 @@ func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req Q
 			}
 
 			rows, err := execer.QueryContext(ctx, queryText)
-			if err != nil && stmtOffset == 0 && queryText != stmt {
-				// Wrapping can fail (e.g. duplicate column names in a derived table).
-				stmtOffset = offset
-				rows, err = execer.QueryContext(ctx, stmt)
+			if err != nil && ctx.Err() == nil && !isMySQLFamily && stmtOffset == 0 && queryText != stmt {
+				errLower := strings.ToLower(err.Error())
+				if strings.Contains(errLower, "duplicate column") ||
+					strings.Contains(errLower, "specified more than once") ||
+					strings.Contains(errLower, "ambiguous") {
+					// Derived-table wrapping can fail on duplicate column names in joins.
+					stmtOffset = offset
+					rows, err = execer.QueryContext(ctx, stmt)
+				}
 			}
 			if err != nil {
 				return failMidScript(i, stmt, time.Since(stmtStart).Milliseconds(), err)
