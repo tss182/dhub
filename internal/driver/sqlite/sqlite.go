@@ -79,16 +79,48 @@ func (s *SQLiteDriver) Close() error {
 	return nil
 }
 
+func resolveSQLiteDB(database, schema string) string {
+	if db := strings.TrimSpace(database); db != "" {
+		return db
+	}
+	if sc := strings.TrimSpace(schema); sc != "" {
+		return sc
+	}
+	return "main"
+}
+
+func quoteSQLiteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
 func (s *SQLiteDriver) ListDatabases(ctx context.Context) ([]string, error) {
-	return []string{"main"}, nil
+	rows, err := s.db.QueryContext(ctx, `PRAGMA database_list`)
+	if err != nil {
+		return []string{"main"}, nil
+	}
+	defer rows.Close()
+
+	var dbs []string
+	for rows.Next() {
+		var seq int
+		var name, file string
+		if err := rows.Scan(&seq, &name, &file); err == nil && name != "" {
+			dbs = append(dbs, name)
+		}
+	}
+	if len(dbs) == 0 {
+		return []string{"main"}, nil
+	}
+	return dbs, nil
 }
 
 func (s *SQLiteDriver) ListSchemas(ctx context.Context, database string) ([]string, error) {
-	return []string{"main"}, nil
+	return []string{resolveSQLiteDB(database, "")}, nil
 }
 
 func (s *SQLiteDriver) ListObjects(ctx context.Context, database, schema string) ([]driver.ObjectSummary, error) {
-	query := `SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%' ORDER BY name`
+	targetDB := resolveSQLiteDB(database, schema)
+	query := fmt.Sprintf(`SELECT name, type FROM %s.sqlite_master WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%%' ORDER BY name`, quoteSQLiteIdent(targetDB))
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -102,7 +134,7 @@ func (s *SQLiteDriver) ListObjects(ctx context.Context, database, schema string)
 			continue
 		}
 		objects = append(objects, driver.ObjectSummary{
-			Schema:      "main",
+			Schema:      targetDB,
 			Name:        name,
 			Type:        objType,
 			RowEstimate: -1,
@@ -112,8 +144,10 @@ func (s *SQLiteDriver) ListObjects(ctx context.Context, database, schema string)
 }
 
 func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, table string) (*driver.TableStructure, error) {
+	targetDB := resolveSQLiteDB(database, schema)
+	quotedDB := quoteSQLiteIdent(targetDB)
 	structure := &driver.TableStructure{
-		Schema:      "main",
+		Schema:      targetDB,
 		Name:        table,
 		Columns:     []driver.ColumnMeta{},
 		PrimaryKeys: []string{},
@@ -124,7 +158,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 	quotedTable := quoteLiteral(table)
 
 	// 1. Get Columns via PRAGMA table_xinfo (supports generated columns; hidden=2 virtual, hidden=3 stored)
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_xinfo(%s)", quotedTable))
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA %s.table_xinfo(%s)", quotedDB, quotedTable))
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +199,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 	}
 
 	// 2. Get Foreign Keys via PRAGMA foreign_key_list
-	fkRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA foreign_key_list(%s)", quotedTable))
+	fkRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA %s.foreign_key_list(%s)", quotedDB, quotedTable))
 	if err == nil {
 		defer fkRows.Close()
 		for fkRows.Next() {
@@ -175,7 +209,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 				structure.ForeignKeys = append(structure.ForeignKeys, driver.ForeignKeyMeta{
 					ConstraintName: fmt.Sprintf("fk_%s_%s", table, fromCol),
 					ColumnName:     fromCol,
-					RefSchema:      "main",
+					RefSchema:      targetDB,
 					RefTable:       refTable,
 					RefColumn:      toCol,
 					OnUpdate:       onUpdate,
@@ -197,7 +231,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 	}
 
 	// 2c. Get Indexes via PRAGMA index_list + index_info
-	idxRows, idxErr := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list(%s)", quotedTable))
+	idxRows, idxErr := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA %s.index_list(%s)", quotedDB, quotedTable))
 	if idxErr == nil {
 		type rawIdx struct {
 			name   string
@@ -216,7 +250,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 
 		for _, ri := range rawIdxs {
 			cols := []string{}
-			if infoRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info(%s)", quoteLiteral(ri.name))); err == nil {
+			if infoRows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA %s.index_info(%s)", quotedDB, quoteLiteral(ri.name))); err == nil {
 				for infoRows.Next() {
 					var seqno, cid int
 					var colName *string
@@ -238,7 +272,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 	}
 
 	// 2d. Get Triggers from sqlite_master
-	if trgRows, trgErr := s.db.QueryContext(ctx, "SELECT name, COALESCE(sql, '') FROM sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name", table); trgErr == nil {
+	if trgRows, trgErr := s.db.QueryContext(ctx, fmt.Sprintf("SELECT name, COALESCE(sql, '') FROM %s.sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name", quotedDB), table); trgErr == nil {
 		defer trgRows.Close()
 		for trgRows.Next() {
 			var tName, tSQL string
@@ -256,7 +290,7 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 
 	// 3. Get DDL (tables and views)
 	var ddl string
-	_ = s.db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?", table).Scan(&ddl)
+	_ = s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT sql FROM %s.sqlite_master WHERE type IN ('table', 'view') AND name=?", quotedDB), table).Scan(&ddl)
 	structure.DDL = ddl
 	structure.CheckConstraints = extractSQLiteCheckConstraints(ddl)
 

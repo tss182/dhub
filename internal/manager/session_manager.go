@@ -694,6 +694,9 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			} else {
 				urlOptions["SSL Verify"] = "true"
 			}
+			if strings.TrimSpace(cfg.SSLCAPath) != "" {
+				urlOptions["WALLET"] = strings.TrimSpace(cfg.SSLCAPath)
+			}
 		}
 		dsn := go_ora.BuildUrl(host, port, dbName, cfg.Username, cfg.Password, urlOptions)
 		return oracle.NewOracleDriver(dsn, dbName)

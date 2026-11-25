@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dhub/internal/driver"
@@ -445,6 +446,7 @@ func (c *ClickHouseDriver) GetTableStructure(ctx context.Context, database, sche
 
 	if ddl.Valid && ddl.String != "" {
 		structure.DDL = ddl.String
+		structure.TableTTL, structure.Settings = extractClickHouseTableClauses(ddl.String)
 	} else {
 		structure.DDL = generateClickHouseDDL(database, table, structure)
 	}
@@ -490,7 +492,52 @@ func (c *ClickHouseDriver) GetTableStructure(ctx context.Context, database, sche
 		}
 	}
 
+	// 5. Fetch active parts from system.parts
+	partRows, partErr := db.QueryContext(ctx,
+		`SELECT partition, name, rows, bytes_on_disk
+		 FROM system.parts WHERE database = ? AND table = ? AND active = 1
+		 ORDER BY partition, name LIMIT 200`,
+		database, table,
+	)
+	if partErr == nil {
+		defer partRows.Close()
+		for partRows.Next() {
+			var partID, partName sql.NullString
+			var pRows, pBytes sql.NullInt64
+			if err := partRows.Scan(&partID, &partName, &pRows, &pBytes); err == nil && partName.String != "" {
+				structure.Partitions = append(structure.Partitions, driver.PartitionMeta{
+					Name:        partName.String,
+					Method:      "MergeTree Part",
+					Expression:  partID.String,
+					Description: formatBytesPretty(uint64(max(0, pBytes.Int64))),
+					RowEstimate: pRows.Int64,
+				})
+			}
+		}
+	}
+
 	return structure, nil
+}
+
+func extractClickHouseTableClauses(ddl string) (ttl string, settings string) {
+	upper := strings.ToUpper(ddl)
+	if sIdx := strings.LastIndex(upper, "\nSETTINGS "); sIdx >= 0 {
+		settings = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(ddl[sIdx+len("\nSETTINGS "):]), ";"))
+	} else if sIdx := strings.LastIndex(upper, " SETTINGS "); sIdx >= 0 {
+		settings = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(ddl[sIdx+len(" SETTINGS "):]), ";"))
+	}
+	if tIdx := strings.Index(upper, " TTL "); tIdx >= 0 {
+		rest := ddl[tIdx+len(" TTL "):]
+		restUpper := upper[tIdx+len(" TTL "):]
+		end := len(rest)
+		for _, kw := range []string{"\nSETTINGS ", " SETTINGS ", "\nCOMMENT ", " COMMENT "} {
+			if kIdx := strings.Index(restUpper, kw); kIdx >= 0 && kIdx < end {
+				end = kIdx
+			}
+		}
+		ttl = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(rest[:end]), ";"))
+	}
+	return ttl, settings
 }
 
 func generateClickHouseDDL(database, table string, s *driver.TableStructure) string {
@@ -573,13 +620,41 @@ func (c *ClickHouseDriver) Execute(ctx context.Context, req driver.QueryRequest)
 		}()
 	}
 
+	var readRows, readBytes, wroteRows, totalRows atomic.Uint64
+	ctx = chdriver.Context(ctx, chdriver.WithProgress(func(p *chdriver.Progress) {
+		if p == nil {
+			return
+		}
+		readRows.Add(p.Rows)
+		readBytes.Add(p.Bytes)
+		wroteRows.Add(p.WroteRows)
+		if p.TotalRows > 0 {
+			totalRows.Store(p.TotalRows)
+		}
+	}))
+
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "clickhouse")
+	res, execErr := driver.ExecuteStatementsWithDialect(ctx, conn, req, "clickhouse")
+	if res != nil {
+		rr := readRows.Load()
+		rb := readBytes.Load()
+		wr := wroteRows.Load()
+		tr := totalRows.Load()
+		if rr > 0 || rb > 0 || wr > 0 || tr > 0 {
+			res.Stats = &driver.QueryExecutionStats{
+				ReadRows:        rr,
+				ReadBytes:       rb,
+				WrittenRows:     wr,
+				TotalRowsToRead: tr,
+			}
+		}
+	}
+	return res, execErr
 }
 
 func (c *ClickHouseDriver) TrackExecution(executionID, tabID string) func() {

@@ -261,6 +261,27 @@ func (m *MSSQLDriver) ListObjects(ctx context.Context, database, schema string) 
 		}
 	}
 
+	// Add sequences (SQL Server 2012+)
+	seqQuery := `
+		SELECT s.name AS [schema], seq.name AS [name]
+		FROM sys.sequences seq
+		JOIN sys.schemas s ON seq.schema_id = s.schema_id
+		WHERE (@p1 = '' OR s.name = @p1)
+		ORDER BY s.name, seq.name;`
+	if seqRows, seqErr := db.QueryContext(ctx, seqQuery, schema); seqErr == nil {
+		defer seqRows.Close()
+		for seqRows.Next() {
+			var sName, seqName string
+			if err := seqRows.Scan(&sName, &seqName); err == nil {
+				objects = append(objects, driver.ObjectSummary{
+					Schema: sName,
+					Name:   seqName,
+					Type:   "sequence",
+				})
+			}
+		}
+	}
+
 	return objects, nil
 }
 
@@ -520,6 +541,18 @@ func (m *MSSQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
+	// 4d. Table Comment (MS_Description)
+	var tblComment sql.NullString
+	_ = db.QueryRowContext(ctx, `
+		SELECT CAST(ep.value AS NVARCHAR(MAX))
+		FROM sys.extended_properties ep
+		JOIN sys.tables t ON ep.major_id = t.object_id AND ep.minor_id = 0
+		JOIN sys.schemas s ON t.schema_id = s.schema_id
+		WHERE ep.class = 1 AND ep.name = 'MS_Description' AND s.name = @p1 AND t.name = @p2`, schema, table).Scan(&tblComment)
+	if tblComment.Valid {
+		structure.Comment = strings.TrimSpace(tblComment.String)
+	}
+
 	// 5. Generate DDL (use view definition for views)
 	var viewDef sql.NullString
 	_ = db.QueryRowContext(ctx, `
@@ -667,6 +700,24 @@ func (m *MSSQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 			return nil, err
 		}
 		defer conn.Close()
+	}
+
+	trimmedUpper := strings.ToUpper(strings.TrimSpace(req.SQL))
+	if strings.HasPrefix(trimmedUpper, "EXPLAIN ") {
+		innerSQL := strings.TrimSpace(req.SQL)[len("EXPLAIN "):]
+		if _, sErr := conn.ExecContext(ctx, "SET SHOWPLAN_XML ON"); sErr != nil {
+			return nil, fmt.Errorf("failed to enable SHOWPLAN_XML: %w", sErr)
+		}
+		defer func() {
+			_, _ = conn.ExecContext(context.Background(), "SET SHOWPLAN_XML OFF")
+		}()
+		explainReq := req
+		explainReq.SQL = innerSQL
+		res, err := driver.ExecuteStatementsWithDialect(ctx, conn, explainReq, "mssql")
+		if res != nil && sessionReset {
+			res.SessionReset = true
+		}
+		return res, err
 	}
 
 	res, err := driver.ExecuteStatementsWithDialect(ctx, conn, req, "mssql")

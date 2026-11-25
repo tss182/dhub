@@ -13,10 +13,18 @@ import (
 	_ "github.com/sijms/go-ora/v2"
 )
 
+type oracleExecEntry struct {
+	sid    int
+	serial int
+}
+
 type OracleDriver struct {
 	db        *sql.DB
 	connStr   string
 	defaultDB string
+
+	execMu      sync.Mutex
+	activeExecs map[string]oracleExecEntry
 
 	tabSessOnce sync.Once
 	tabSess     *driver.TabSessionManager
@@ -662,11 +670,62 @@ func (o *OracleDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 		}
 	}
 
+	if req.ExecutionID != "" {
+		var sid, serial int
+		if sErr := conn.QueryRowContext(ctx, `SELECT SID, SERIAL# FROM V$SESSION WHERE AUDSID = USERENV('SESSIONID') AND ROWNUM = 1`).Scan(&sid, &serial); sErr == nil && sid > 0 {
+			o.execMu.Lock()
+			if o.activeExecs == nil {
+				o.activeExecs = make(map[string]oracleExecEntry)
+			}
+			o.activeExecs[req.ExecutionID] = oracleExecEntry{sid: sid, serial: serial}
+			o.execMu.Unlock()
+			defer func() {
+				o.execMu.Lock()
+				delete(o.activeExecs, req.ExecutionID)
+				o.execMu.Unlock()
+			}()
+		}
+	}
+
+	trimmedUpper := strings.ToUpper(strings.TrimSpace(req.SQL))
+	if strings.HasPrefix(trimmedUpper, "EXPLAIN ") && !strings.HasPrefix(trimmedUpper, "EXPLAIN PLAN") {
+		innerSQL := strings.TrimRight(strings.TrimSpace(req.SQL)[len("EXPLAIN "):], ";")
+		if _, eErr := conn.ExecContext(ctx, "EXPLAIN PLAN FOR "+innerSQL); eErr != nil {
+			return nil, fmt.Errorf("EXPLAIN PLAN failed: %w", eErr)
+		}
+		explainReq := req
+		explainReq.SQL = "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())"
+		res, err := driver.ExecuteStatementsWithDialect(ctx, conn, explainReq, "oracle")
+		if res != nil && sessionReset {
+			res.SessionReset = true
+		}
+		return res, err
+	}
+
 	res, err := driver.ExecuteStatementsWithDialect(ctx, conn, req, "oracle")
 	if res != nil && sessionReset {
 		res.SessionReset = true
 	}
 	return res, err
+}
+
+func (o *OracleDriver) TrackExecution(executionID, tabID string) func() {
+	return func() {}
+}
+
+func (o *OracleDriver) CancelExecution(executionID string) (bool, error) {
+	o.execMu.Lock()
+	entry, ok := o.activeExecs[executionID]
+	o.execMu.Unlock()
+	if !ok || entry.sid <= 0 {
+		return false, nil
+	}
+	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := o.db.ExecContext(cctx, fmt.Sprintf(`ALTER SYSTEM CANCEL SQL '%d, %d'`, entry.sid, entry.serial)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (o *OracleDriver) BeginTxForTab(ctx context.Context, tabID, database string) (*sql.Tx, error) {
@@ -685,6 +744,7 @@ var (
 	_ driver.RowStreamer        = (*OracleDriver)(nil)
 	_ driver.ServerInfoProvider = (*OracleDriver)(nil)
 	_ driver.TabSessionDriver   = (*OracleDriver)(nil)
+	_ driver.QueryCanceller     = (*OracleDriver)(nil)
 )
 
 func (o *OracleDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {

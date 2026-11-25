@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -219,6 +220,18 @@ func (r *RedisDriver) GetTableStructure(ctx context.Context, database, schema, t
 			{Name: "score", DataType: "float", RawType: "float"},
 		}
 		structure.PrimaryKeys = []string{"member"}
+	case "stream":
+		structure.Columns = []driver.ColumnMeta{
+			{Name: "id", DataType: "string", RawType: "string", IsPrimaryKey: true},
+			{Name: "fields", DataType: "json", RawType: "json"},
+		}
+		structure.PrimaryKeys = []string{"id"}
+	case "ReJSON-RL", "json":
+		structure.Columns = []driver.ColumnMeta{
+			{Name: "path", DataType: "string", RawType: "string", IsPrimaryKey: true},
+			{Name: "value", DataType: "json", RawType: "json"},
+		}
+		structure.PrimaryKeys = []string{"path"}
 	default:
 		structure.Columns = []driver.ColumnMeta{
 			{Name: "key", DataType: "string", RawType: "string", IsPrimaryKey: true},
@@ -285,7 +298,9 @@ func (r *RedisDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 				count, _ = conn.SCard(ctx, key).Result()
 			case "zset":
 				count, _ = conn.ZCard(ctx, key).Result()
-			case "string":
+			case "stream":
+				count, _ = conn.XLen(ctx, key).Result()
+			case "string", "ReJSON-RL", "json":
 				count = 1
 			default:
 				if ftCount, ok := r.countRediSearchIndex(ctx, conn, key); ok {
