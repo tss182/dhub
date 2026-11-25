@@ -71,7 +71,11 @@ func (s *SchemaService) MongoGridFSUpload(ctx context.Context, connectionID, dat
 	defer uploadStream.Close()
 
 	if _, err := io.Copy(uploadStream, f); err != nil {
+		_ = uploadStream.Close()
 		return "", fmt.Errorf("failed to stream file to GridFS: %w", err)
+	}
+	if err := uploadStream.Close(); err != nil {
+		return "", fmt.Errorf("failed to finalize GridFS upload: %w", err)
 	}
 
 	if oid, ok := uploadStream.FileID.(primitive.ObjectID); ok {

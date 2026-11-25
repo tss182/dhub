@@ -25,7 +25,8 @@ func TestBuildMongoToolsCommonArgs(t *testing.T) {
 		SSLMode:     "require",
 		SSLCAPath:   "/tmp/ca.pem",
 	}
-	args := buildMongoToolsCommonArgs(conn, "shop")
+	args, cleanup := buildMongoToolsCommonArgs(conn, "shop")
+	defer cleanup()
 	joined := ""
 	for _, a := range args {
 		joined += a + " "

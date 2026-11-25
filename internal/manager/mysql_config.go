@@ -3,6 +3,7 @@ package manager
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,13 @@ func newMySQLConfig(cfg store.ConnectionConfig, host string, port int) (*mysqldr
 	mc.User = cfg.Username
 	mc.Passwd = cfg.Password
 	mc.Net = "tcp"
-	mc.Addr = fmt.Sprintf("%s:%d", host, port)
+	if strings.TrimSpace(host) == "" {
+		host = "127.0.0.1"
+	}
+	if port <= 0 {
+		port = 3306
+	}
+	mc.Addr = net.JoinHostPort(host, strconv.Itoa(port))
 	mc.DBName = cfg.DatabaseName
 	// Dates stay as the text the server sends. Parsing them turns 0000-00-00 into 0001-01-01,
 	// drops the original fractional precision, and applies a time zone to TIMESTAMP columns.

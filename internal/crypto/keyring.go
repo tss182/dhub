@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"dhub/internal/config"
 	"github.com/zalando/go-keyring"
@@ -83,7 +84,12 @@ func saveFallbackSecret(key, secret string) error {
 	}
 	vaultDir := filepath.Join(dir, "vault")
 	_ = os.MkdirAll(vaultDir, 0700)
-	return os.WriteFile(filepath.Join(vaultDir, key+".enc"), []byte(encoded), 0600)
+	return os.WriteFile(filepath.Join(vaultDir, safeVaultFilename(key)), []byte(encoded), 0600)
+}
+
+func safeVaultFilename(key string) string {
+	r := strings.NewReplacer(":", "_", "/", "_", "\\", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_")
+	return r.Replace(key) + ".enc"
 }
 
 func getFallbackSecret(key string) (string, error) {
@@ -91,10 +97,14 @@ func getFallbackSecret(key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "vault", key+".enc")
+	path := filepath.Join(dir, "vault", safeVaultFilename(key))
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		// Backward compatibility with legacy unescaped vault filenames on POSIX systems.
+		data, err = os.ReadFile(filepath.Join(dir, "vault", key+".enc"))
+		if err != nil {
+			return "", err
+		}
 	}
 	cipherText, err := base64.StdEncoding.DecodeString(string(data))
 	if err != nil {
@@ -129,7 +139,14 @@ func deleteFallbackSecret(key string) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "vault", key+".enc")
-	return os.Remove(path)
+	err1 := os.Remove(filepath.Join(dir, "vault", safeVaultFilename(key)))
+	err2 := os.Remove(filepath.Join(dir, "vault", key+".enc"))
+	if err1 != nil && !os.IsNotExist(err1) {
+		return err1
+	}
+	if err2 != nil && !os.IsNotExist(err2) {
+		return err2
+	}
+	return nil
 }
 

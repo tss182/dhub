@@ -23,8 +23,7 @@ import (
 func configureMySQLTLS(mc *mysqldriver.Config, cfg store.ConnectionConfig) error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.SSLMode))
 	hasFiles := strings.TrimSpace(cfg.SSLCAPath) != "" ||
-		strings.TrimSpace(cfg.SSLCertPath) != "" ||
-		strings.TrimSpace(cfg.SSLKeyPath) != ""
+		(strings.TrimSpace(cfg.SSLCertPath) != "" && strings.TrimSpace(cfg.SSLKeyPath) != "")
 
 	switch mode {
 	case "disable", "disabled":

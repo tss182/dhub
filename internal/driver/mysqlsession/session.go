@@ -258,17 +258,20 @@ func (m *Manager) getOrCreateSession(ctx context.Context, tabID string) (*tabSes
 	}
 
 	if existing != nil {
-		if err := existing.conn.PingContext(ctx); err == nil {
+		existing.mu.Lock()
+		pingErr := existing.conn.PingContext(ctx)
+		if pingErr == nil {
+			existing.mu.Unlock()
 			return existing, false, nil
 		}
 		// Pinned connection died (e.g. wait_timeout or killed). Replace it and signal reset.
 		_ = existing.conn.Close()
 		conn, err := m.sessionPool.Conn(ctx)
 		if err != nil {
+			existing.mu.Unlock()
 			m.CloseSession(tabID)
 			return nil, true, err
 		}
-		existing.mu.Lock()
 		existing.conn = conn
 		existing.connID = queryConnID(ctx, conn)
 		existing.currentDB = m.defaultDB
@@ -451,10 +454,16 @@ func (m *Manager) TrackExecution(executionID, tabID string) func() {
 	m.mu.Lock()
 	sess := m.sessions[tabID]
 	m.mu.Unlock()
-	if sess == nil || sess.connID <= 0 {
+	if sess == nil {
 		return func() {}
 	}
-	m.trackConnID(executionID, sess.connID)
+	sess.mu.Lock()
+	connID := sess.connID
+	sess.mu.Unlock()
+	if connID <= 0 {
+		return func() {}
+	}
+	m.trackConnID(executionID, connID)
 	return func() { m.untrackExec(executionID) }
 }
 
@@ -487,7 +496,6 @@ func (m *Manager) CancelExecution(executionID string) (bool, error) {
 
 func extractUseDatabase(stmt string) string {
 	clean := strings.TrimSpace(driver.StripLeadingComments(stmt))
-	clean = strings.TrimRight(clean, "; \t\r\n")
 	if len(clean) < 4 || !strings.EqualFold(clean[:3], "USE") {
 		return ""
 	}
@@ -495,15 +503,25 @@ func extractUseDatabase(stmt string) string {
 	if rest == "" {
 		return ""
 	}
-	if strings.HasPrefix(rest, "`") && strings.HasSuffix(rest, "`") && len(rest) >= 2 {
-		return strings.ReplaceAll(rest[1:len(rest)-1], "``", "`")
+	if strings.HasPrefix(rest, "`") || strings.HasPrefix(rest, `"`) {
+		quote := rest[0]
+		var out strings.Builder
+		for i := 1; i < len(rest); i++ {
+			if rest[i] == quote {
+				if i+1 < len(rest) && rest[i+1] == quote {
+					out.WriteByte(quote)
+					i++
+					continue
+				}
+				return out.String()
+			}
+			out.WriteByte(rest[i])
+		}
 	}
-	if strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`) && len(rest) >= 2 {
-		return strings.ReplaceAll(rest[1:len(rest)-1], `""`, `"`)
-	}
+	rest = strings.TrimRight(rest, "; \t\r\n")
 	fields := strings.Fields(rest)
 	if len(fields) > 0 {
-		return fields[0]
+		return strings.TrimRight(fields[0], ";")
 	}
 	return ""
 }

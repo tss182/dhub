@@ -38,7 +38,7 @@ var secretPatterns = []*regexp.Regexp{
 	// Redis: AUTH [user] secret, CONFIG SET requirepass secret, ACL SETUSER u >secret
 	regexp.MustCompile(`(?i)(^\s*AUTH\s+(?:\S+\s+)?)(\S+)`),
 	regexp.MustCompile(`(?i)(\bCONFIG\s+SET\s+requirepass\s+)(\S+)`),
-	regexp.MustCompile(`(?i)(\bACL\s+SETUSER\s+\S+[^;\n]*?\s>?)(\S+)`),
+	regexp.MustCompile(`(?i)(\bACL\s+SETUSER\s+\S+[^;\n]*?\s>)(\S+)`),
 }
 
 // RedactSQLSecrets masks passwords and password hashes in account-management SQL so they are not

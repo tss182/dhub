@@ -323,7 +323,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			u = *parsed
 			u.Scheme = "postgres"
 			if cfg.SSHEnabled && host != "" && port > 0 {
-				u.Host = fmt.Sprintf("%s:%d", host, port)
+				u.Host = net.JoinHostPort(host, strconv.Itoa(port))
 			}
 			if u.User == nil && (cfg.Username != "" || cfg.Password != "") {
 				u.User = url.UserPassword(cfg.Username, cfg.Password)
@@ -351,7 +351,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			u = url.URL{
 				Scheme: "postgres",
 				User:   url.UserPassword(cfg.Username, cfg.Password),
-				Host:   fmt.Sprintf("%s:%d", host, port),
+				Host:   net.JoinHostPort(host, strconv.Itoa(port)),
 				Path:   dbName,
 			}
 		}
@@ -419,7 +419,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			host = "127.0.0.1"
 		}
 		redisOpts := &goredis.Options{
-			Addr:            fmt.Sprintf("%s:%d", host, port),
+			Addr:            net.JoinHostPort(host, strconv.Itoa(port)),
 			Username:        cfg.Username,
 			Password:        cfg.Password,
 			DB:              redisdriver.ParseDB(cfg.DatabaseName),
@@ -569,7 +569,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			if u, err := url.Parse(connStr); err == nil {
 				origHost := u.Hostname()
 				if cfg.SSHEnabled && host != "" && port > 0 {
-					u.Host = fmt.Sprintf("%s:%d", host, port)
+					u.Host = net.JoinHostPort(host, strconv.Itoa(port))
 				}
 				if u.Path == "" || u.Path == "/" {
 					if dbName := strings.TrimSpace(cfg.DatabaseName); dbName != "" {
@@ -790,7 +790,7 @@ func buildMongoDriver(cfg store.ConnectionConfig, host string, port int) (driver
 			if strings.HasPrefix(rawConn, "mongodb+srv://") {
 				return nil, fmt.Errorf("SSH tunnel cannot be used with mongodb+srv:// SRV URIs; use a direct mongodb:// host:port")
 			}
-			u.Host = fmt.Sprintf("%s:%d", host, port)
+			u.Host = net.JoinHostPort(host, strconv.Itoa(port))
 			q := u.Query()
 			q.Set("directConnection", "true")
 			u.RawQuery = q.Encode()

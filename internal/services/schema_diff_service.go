@@ -384,7 +384,13 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 										defClause = " DEFAULT " + defVal
 									}
 								}
-								alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s%s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr, defClause))
+								if dstDriverType == "mssql" || dstDriverType == "sqlserver" {
+									alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD %s %s %s%s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr, defClause))
+								} else if dstDriverType == "oracle" {
+									alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD (%s %s %s%s);", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr, defClause))
+								} else {
+									alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s%s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr, defClause))
+								}
 							}
 						}
 					} else if columnsDiffer(dstDriverType, sc, dc) {
@@ -528,8 +534,10 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra payload index in target: DELETE /collections/%s/index/%s?wait=true", url.PathEscape(tblName), url.PathEscape(dIdx.Columns[0])))
 					} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
 						alterStmts = append(alterStmts, fmt.Sprintf("// Extra index in target:\n// db.getCollection(%q).dropIndex(%q);", tblName, dIdx.Name))
-					} else if dstDriverType == "mysql" || dstDriverType == "mariadb" {
+					} else if dstDriverType == "mysql" || dstDriverType == "mariadb" || dstDriverType == "clickhouse" {
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: ALTER TABLE %s DROP INDEX %s;", qTable, quoteIdentifier(dstDriverType, dIdx.Name)))
+					} else if dstDriverType == "mssql" || dstDriverType == "sqlserver" {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: DROP INDEX %s ON %s;", quoteIdentifier(dstDriverType, dIdx.Name), qTable))
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: DROP INDEX %s;", qualifyDiffTable(dstDriverType, dstSchema, dIdx.Name)))
 					}
@@ -553,7 +561,11 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						SourceType: sCC.Clause,
 						Detail:     fmt.Sprintf("Missing check constraint (%s)", sCC.Clause),
 					})
-					alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+					if dstDriverType == "sqlite" {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- SQLite does not support ALTER TABLE ADD CONSTRAINT for check %s (%s)", sCC.Name, sCC.Clause))
+					} else {
+						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+					}
 				} else if strings.TrimSpace(sCC.Clause) != strings.TrimSpace(dCC.Clause) {
 					colDiffs = append(colDiffs, ColumnDiff{
 						ColumnName: "CHECK " + sCC.Name,
@@ -564,6 +576,10 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 					})
 					if dstDriverType == "mysql" {
 						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s DROP CHECK %s;\nALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+					} else if dstDriverType == "oracle" {
+						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s;\nALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+					} else if dstDriverType == "sqlite" {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- SQLite requires table rebuild to modify check constraint %s (%s)", sCC.Name, sCC.Clause))
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
 					}

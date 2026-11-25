@@ -251,8 +251,8 @@ func TestGenerateDMLPreview(t *testing.T) {
 	if !strings.HasPrefix(stmts[0], "db.users.insertOne(") {
 		t.Errorf("statement 0 mismatch: %s", stmts[0])
 	}
-	if !strings.HasPrefix(stmts[1], "db.users.updateOne(") || !strings.Contains(stmts[1], "$unset") {
-		t.Errorf("statement 1 mismatch (expected $unset): %s", stmts[1])
+	if !strings.HasPrefix(stmts[1], "db.users.updateOne(") || !strings.Contains(stmts[1], "deprecated: null") {
+		t.Errorf("statement 1 mismatch (expected deprecated: null): %s", stmts[1])
 	}
 	if !strings.HasPrefix(stmts[2], "db.users.deleteOne(") {
 		t.Errorf("statement 2 mismatch: %s", stmts[2])

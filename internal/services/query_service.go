@@ -276,14 +276,19 @@ func (q *QueryService) CancelQuery(executionID string) bool {
 	op, exists := q.runningOps[executionID]
 	q.mu.Unlock()
 	if exists {
+		handledOnServer := false
 		if op.connectionID != "" {
 			if drv := q.sessions.GetExisting(op.connectionID); drv != nil {
 				if canceller, ok := drv.(driver.QueryCanceller); ok {
-					_, _ = canceller.CancelExecution(executionID)
+					if handled, err := canceller.CancelExecution(executionID); err == nil && handled {
+						handledOnServer = true
+					}
 				}
 			}
 		}
-		op.cancel()
+		if !handledOnServer {
+			op.cancel()
+		}
 		q.emitStatus(executionID, "cancelled", "Query cancelled by user")
 		return true
 	}

@@ -423,7 +423,7 @@ func (s *SchemaService) GetObjectDDL(connectionID, database, schema, objectType,
 		} else if oraType == "MATERIALIZED_VIEW" {
 			oraType = "MATERIALIZED_VIEW"
 		}
-		if schema != "" {
+		if schema != "" && schema != "main" {
 			q := fmt.Sprintf(`SELECT DBMS_METADATA.GET_DDL('%s', '%s', '%s') FROM DUAL`, escLit(oraType), escLit(objName), escLit(schema))
 			return execSingleCell(q, 0)
 		}

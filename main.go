@@ -30,6 +30,7 @@ func init() {
 	application.RegisterEvent[app.BackupProgressEvent]("restore:progress")
 	application.RegisterEvent[app.ToolDownloadProgressEvent]("backup:tool-download")
 	application.RegisterEvent[app.ExportProgressEvent]("export:progress")
+	application.RegisterEvent[any]("mongo:changestream")
 }
 
 func main() {

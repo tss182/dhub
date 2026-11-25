@@ -119,6 +119,7 @@ func (s *LocalStore) migrate() error {
 			ssh_auth_type   TEXT NOT NULL DEFAULT 'key',
 			ssh_key_path    TEXT NOT NULL DEFAULT '',
 			options_json    TEXT NOT NULL DEFAULT '{}',
+			protocol        TEXT NOT NULL DEFAULT '',
 			sort_order      INTEGER NOT NULL DEFAULT 0,
 			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -205,6 +206,8 @@ func (s *LocalStore) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN env_type TEXT NOT NULL DEFAULT 'local';`)
 	// Ensure connection_ids_json column exists on older workspaces tables
 	_, _ = s.db.Exec(`ALTER TABLE workspaces ADD COLUMN connection_ids_json TEXT NOT NULL DEFAULT '';`)
+	// Ensure protocol column exists on older connections tables
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN protocol TEXT NOT NULL DEFAULT '';`)
 
 	// Clean up duplicate schema_cache rows where empty or artificial schemas were stored
 	_, _ = s.db.Exec(`DELETE FROM schema_cache

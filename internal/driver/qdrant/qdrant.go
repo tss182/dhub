@@ -554,6 +554,11 @@ func inferJSONType(v any) string {
 	switch val := v.(type) {
 	case string:
 		return "keyword/text"
+	case json.Number:
+		if _, err := val.Int64(); err == nil {
+			return "integer"
+		}
+		return "float"
 	case float64:
 		if val == float64(int64(val)) {
 			return "integer"
@@ -1721,7 +1726,13 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 							return res, nil
 						}
 						curOff += step
-						startFrom = pts[step].Payload[sortCol]
+						nextStart, _ := lookupPayloadPath(pts[step].Payload, sortCol)
+						if nextStart != nil && fmt.Sprintf("%v", nextStart) == fmt.Sprintf("%v", startFrom) {
+							// Duplicate sort key across >step points; fall back to offset scan.
+							startFrom = nil
+							break
+						}
+						startFrom = nextStart
 						q.setCursor(cacheKey, curOff, startFrom)
 					}
 				}
@@ -1751,10 +1762,14 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 				hasMore := len(pts) > limit
 				if hasMore {
 					if limit > 0 && pts[limit-1].Payload != nil {
-						q.setCursor(cacheKey, offset+limit-1, pts[limit-1].Payload[sortCol])
+						if v, ok := lookupPayloadPath(pts[limit-1].Payload, sortCol); ok && v != nil && fmt.Sprintf("%v", v) != fmt.Sprintf("%v", startFrom) {
+							q.setCursor(cacheKey, offset+limit-1, v)
+						}
 					}
 					if pts[limit].Payload != nil {
-						q.setCursor(cacheKey, offset+limit, pts[limit].Payload[sortCol])
+						if v, ok := lookupPayloadPath(pts[limit].Payload, sortCol); ok && v != nil && fmt.Sprintf("%v", v) != fmt.Sprintf("%v", startFrom) {
+							q.setCursor(cacheKey, offset+limit, v)
+						}
 					}
 					pts = pts[:limit]
 				}

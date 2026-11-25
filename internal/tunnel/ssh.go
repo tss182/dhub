@@ -227,7 +227,11 @@ func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 		Timeout:         10 * time.Second,
 	}
 
-	sshServer := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	sshPort := cfg.Port
+	if sshPort <= 0 {
+		sshPort = 22
+	}
+	sshServer := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", sshPort))
 	client, err := ssh.Dial("tcp", sshServer, clientConfig)
 	if err != nil {
 		closeAgent()
@@ -251,7 +255,7 @@ func OpenSSHTunnel(cfg SSHTunnelConfig) (*Tunnel, error) {
 	}
 
 	go t.keepAlive(30 * time.Second)
-	go t.forward(fmt.Sprintf("%s:%d", cfg.RemoteHost, cfg.RemotePort))
+	go t.forward(net.JoinHostPort(cfg.RemoteHost, fmt.Sprintf("%d", cfg.RemotePort)))
 
 	return t, nil
 }
@@ -293,6 +297,13 @@ func (t *Tunnel) forward(remoteAddr string) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
+			// ssh.Channel ignores SetReadDeadline; closing both sides when ctx cancels prevents goroutine leaks.
+			go func() {
+				<-ctx.Done()
+				_ = lConn.Close()
+				_ = remoteConn.Close()
+			}()
+
 			go func() {
 				_, _ = copyWithContext(ctx, remoteConn, lConn)
 				cancel()
@@ -332,21 +343,21 @@ func copyWithContext(ctx context.Context, dst net.Conn, src net.Conn) (int64, er
 }
 
 func (t *Tunnel) Close() error {
+	var err1, err2, err3 error
 	t.closeOnce.Do(func() {
 		if t.done != nil {
 			close(t.done)
 		}
+		if t.listener != nil {
+			err1 = t.listener.Close()
+		}
+		if t.client != nil {
+			err2 = t.client.Close()
+		}
+		if t.agentConn != nil {
+			err3 = t.agentConn.Close()
+		}
 	})
-	var err1, err2, err3 error
-	if t.listener != nil {
-		err1 = t.listener.Close()
-	}
-	if t.client != nil {
-		err2 = t.client.Close()
-	}
-	if t.agentConn != nil {
-		err3 = t.agentConn.Close()
-	}
 	if err1 != nil {
 		return err1
 	}

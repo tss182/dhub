@@ -856,7 +856,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			}
 		}
 
-		hasMore := !explicitLimit && res.HasMore && rowCount >= limit
+		hasMore := (chunkCh != nil || !explicitLimit) && res.HasMore && rowCount >= limit
 		res = nil
 		e.emitProgress(opID, "export", "running", exportedRows, fmt.Sprintf("Exported %d rows...", exportedRows))
 		if !hasMore {
@@ -867,7 +867,11 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 
 	switch format {
 	case "json", "ejson":
-		if _, err := bw.WriteString("\n]\n"); err != nil {
+		closing := "\n]\n"
+		if !headerWritten {
+			closing = "[\n]\n"
+		}
+		if _, err := bw.WriteString(closing); err != nil {
 			return nil, err
 		}
 		if err := bw.Flush(); err != nil {
@@ -985,28 +989,43 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 				return nil
 			}
 		}
-		if isPgDrv && req.OnConflict == "do_nothing" {
-			if stmts, pErr := drv.GenerateDMLPreview(req.Database, req.Schema, req.Table, batch); pErr == nil && len(stmts) > 0 {
+		if isPgDrv && (req.OnConflict == "do_nothing" || req.OverridingSystemValue) {
+			stmts, pErr := drv.GenerateDMLPreview(req.Database, req.Schema, req.Table, batch)
+			if pErr != nil {
+				e.emitProgress(opID, "import", "error", totalImported, pErr.Error())
+				return fmt.Errorf("failed to build PostgreSQL import statements: %w", pErr)
+			}
+			if len(stmts) > 0 {
 				var sb strings.Builder
 				for _, st := range stmts {
 					clean := strings.TrimSuffix(strings.TrimSpace(st), ";")
 					if req.OverridingSystemValue {
 						clean = strings.Replace(clean, ") VALUES (", ") OVERRIDING SYSTEM VALUE VALUES (", 1)
 					}
+					if req.OnConflict == "do_nothing" {
+						clean += " ON CONFLICT DO NOTHING"
+					}
 					sb.WriteString(clean)
-					sb.WriteString(" ON CONFLICT DO NOTHING;\n")
+					sb.WriteString(";\n")
 				}
-				if _, eErr := drv.Execute(ctx, driver.QueryRequest{
-					ExecutionID:  fmt.Sprintf("import-onconflict-%d", time.Now().UnixNano()),
+				execRes, eErr := drv.Execute(ctx, driver.QueryRequest{
+					ExecutionID:  fmt.Sprintf("import-pg-%d", time.Now().UnixNano()),
 					ConnectionID: req.ConnectionID,
 					Database:     req.Database,
 					Schema:       req.Schema,
 					SQL:          sb.String(),
-				}); eErr != nil {
+				})
+				if eErr != nil {
 					e.emitProgress(opID, "import", "error", totalImported, eErr.Error())
-					return fmt.Errorf("failed to apply ON CONFLICT DO NOTHING batch: %w", eErr)
+					return fmt.Errorf("failed to apply PostgreSQL import batch: %w", eErr)
 				}
-				totalImported += int64(len(batch))
+				if execRes != nil && execRes.Error != "" {
+					e.emitProgress(opID, "import", "error", totalImported, execRes.Error)
+					return fmt.Errorf("failed to apply PostgreSQL import batch: %s", execRes.Error)
+				}
+				if execRes != nil {
+					totalImported += execRes.RowsAffected
+				}
 				batch = batch[:0]
 				e.emitProgress(opID, "import", "running", totalImported, fmt.Sprintf("Imported %d rows...", totalImported))
 				return nil
@@ -1219,13 +1238,13 @@ func (e *ExportService) ImportFileToTable(req ImportRequest) (*ImportResult, err
 			} else {
 				// Mappings contain Column_1, Column_2 etc.
 				var colIdx int
-				if _, sErr := fmt.Sscanf(m.FileColumn, "Column_%d", &colIdx); sErr == nil && colIdx-1 < len(record) {
+				if _, sErr := fmt.Sscanf(m.FileColumn, "Column_%d", &colIdx); sErr == nil && colIdx >= 1 && colIdx-1 < len(record) {
 					val = record[colIdx-1]
 				}
 			}
 
 			trimmedVal := strings.TrimSpace(val)
-			if strings.EqualFold(trimmedVal, "null") || trimmedVal == "" {
+			if trimmedVal == "" {
 				if isQdrantImport && (m.TableColumn == "id" || m.TableColumn == "vector" || strings.HasPrefix(m.TableColumn, "vector.")) {
 					continue
 				}

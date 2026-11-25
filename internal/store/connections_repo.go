@@ -185,7 +185,7 @@ func (s *LocalStore) UpdateFoldersOrder(ctx context.Context, folderIDs []string)
 func (s *LocalStore) ListConnections(ctx context.Context) ([]ConnectionConfig, error) {
 	query := `SELECT id, folder_id, name, driver, COALESCE(env_type, 'local'), color_tag, is_read_only, tx_mode, host, port, username, database_name,
 		file_path, ssl_mode, ssl_ca_path, ssl_cert_path, ssl_key_path, ssh_enabled, ssh_host, ssh_port, ssh_user,
-		ssh_auth_type, ssh_key_path, options_json, sort_order, created_at, updated_at
+		ssh_auth_type, ssh_key_path, options_json, COALESCE(protocol, ''), sort_order, created_at, updated_at
 		FROM connections ORDER BY sort_order, name`
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -202,7 +202,7 @@ func (s *LocalStore) ListConnections(ctx context.Context) ([]ConnectionConfig, e
 			&c.ID, &c.FolderID, &c.Name, &c.Driver, &c.EnvType, &c.ColorTag, &isReadOnly, &c.TxMode,
 			&c.Host, &c.Port, &c.Username, &c.DatabaseName, &c.FilePath, &c.SSLMode,
 			&c.SSLCAPath, &c.SSLCertPath, &c.SSLKeyPath, &sshEnabled, &c.SSHHost,
-			&c.SSHPort, &c.SSHUser, &c.SSHAuthType, &c.SSHKeyPath, &c.OptionsJSON,
+			&c.SSHPort, &c.SSHUser, &c.SSHAuthType, &c.SSHKeyPath, &c.OptionsJSON, &c.Protocol,
 			&c.SortOrder, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			continue
@@ -220,7 +220,7 @@ func (s *LocalStore) ListConnections(ctx context.Context) ([]ConnectionConfig, e
 func (s *LocalStore) GetConnection(ctx context.Context, id string) (*ConnectionConfig, error) {
 	query := `SELECT id, folder_id, name, driver, COALESCE(env_type, 'local'), color_tag, is_read_only, tx_mode, host, port, username, database_name,
 		file_path, ssl_mode, ssl_ca_path, ssl_cert_path, ssl_key_path, ssh_enabled, ssh_host, ssh_port, ssh_user,
-		ssh_auth_type, ssh_key_path, options_json, sort_order, created_at, updated_at
+		ssh_auth_type, ssh_key_path, options_json, COALESCE(protocol, ''), sort_order, created_at, updated_at
 		FROM connections WHERE id = ?`
 
 	var c ConnectionConfig
@@ -229,7 +229,7 @@ func (s *LocalStore) GetConnection(ctx context.Context, id string) (*ConnectionC
 		&c.ID, &c.FolderID, &c.Name, &c.Driver, &c.EnvType, &c.ColorTag, &isReadOnly, &c.TxMode,
 		&c.Host, &c.Port, &c.Username, &c.DatabaseName, &c.FilePath, &c.SSLMode,
 		&c.SSLCAPath, &c.SSLCertPath, &c.SSLKeyPath, &sshEnabled, &c.SSHHost,
-		&c.SSHPort, &c.SSHUser, &c.SSHAuthType, &c.SSHKeyPath, &c.OptionsJSON,
+		&c.SSHPort, &c.SSHUser, &c.SSHAuthType, &c.SSHKeyPath, &c.OptionsJSON, &c.Protocol,
 		&c.SortOrder, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
@@ -275,8 +275,8 @@ func (s *LocalStore) SaveConnection(ctx context.Context, c ConnectionConfig) (st
 	query := `INSERT INTO connections (
 		id, folder_id, name, driver, env_type, color_tag, is_read_only, tx_mode, host, port, username, database_name,
 		file_path, ssl_mode, ssl_ca_path, ssl_cert_path, ssl_key_path, ssh_enabled, ssh_host, ssh_port, ssh_user,
-		ssh_auth_type, ssh_key_path, options_json, sort_order, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ssh_auth_type, ssh_key_path, options_json, protocol, sort_order, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	ON CONFLICT(id) DO UPDATE SET
 		folder_id = excluded.folder_id,
 		name = excluded.name,
@@ -301,6 +301,7 @@ func (s *LocalStore) SaveConnection(ctx context.Context, c ConnectionConfig) (st
 		ssh_auth_type = excluded.ssh_auth_type,
 		ssh_key_path = excluded.ssh_key_path,
 		options_json = excluded.options_json,
+		protocol = excluded.protocol,
 		sort_order = excluded.sort_order,
 		updated_at = CURRENT_TIMESTAMP`
 
@@ -316,7 +317,7 @@ func (s *LocalStore) SaveConnection(ctx context.Context, c ConnectionConfig) (st
 	_, err := s.db.ExecContext(ctx, query,
 		c.ID, c.FolderID, c.Name, c.Driver, c.EnvType, c.ColorTag, isReadOnly, c.TxMode, c.Host, c.Port, c.Username, c.DatabaseName,
 		c.FilePath, c.SSLMode, c.SSLCAPath, c.SSLCertPath, c.SSLKeyPath, sshEnabled, c.SSHHost, c.SSHPort, c.SSHUser,
-		c.SSHAuthType, c.SSHKeyPath, c.OptionsJSON, c.SortOrder,
+		c.SSHAuthType, c.SSHKeyPath, c.OptionsJSON, c.Protocol, c.SortOrder,
 	)
 	if err != nil {
 		return "", err
