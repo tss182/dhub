@@ -421,24 +421,54 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			ConnMaxIdleTime: 2 * time.Minute,
 		}
 
-		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
-			tlsCfg := &tls.Config{}
-			if cfg.SSLCAPath != "" {
+		sslModeLower := strings.ToLower(strings.TrimSpace(cfg.SSLMode))
+		if sslModeLower != "" && sslModeLower != "disable" && sslModeLower != "disabled" {
+			tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+			if cfg.SSHEnabled && strings.TrimSpace(cfg.Host) != "" {
+				tlsCfg.ServerName = strings.TrimSpace(cfg.Host)
+			}
+			if strings.TrimSpace(cfg.SSLCAPath) != "" {
 				rootCertPool := x509.NewCertPool()
 				pem, err := os.ReadFile(cfg.SSLCAPath)
-				if err == nil {
-					rootCertPool.AppendCertsFromPEM(pem)
-					tlsCfg.RootCAs = rootCertPool
+				if err != nil {
+					return nil, fmt.Errorf("failed to read Redis SSL CA file %q: %w", cfg.SSLCAPath, err)
 				}
-			}
-			if cfg.SSLCertPath != "" && cfg.SSLKeyPath != "" {
-				cert, err := tls.LoadX509KeyPair(cfg.SSLCertPath, cfg.SSLKeyPath)
-				if err == nil {
-					tlsCfg.Certificates = []tls.Certificate{cert}
+				if !rootCertPool.AppendCertsFromPEM(pem) {
+					return nil, fmt.Errorf("failed to parse Redis SSL CA certificates from %q", cfg.SSLCAPath)
 				}
+				tlsCfg.RootCAs = rootCertPool
 			}
-			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+			certPath, keyPath := strings.TrimSpace(cfg.SSLCertPath), strings.TrimSpace(cfg.SSLKeyPath)
+			if (certPath == "") != (keyPath == "") {
+				return nil, fmt.Errorf("Redis SSL client certificate and key must both be set")
+			}
+			if certPath != "" {
+				cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to load Redis SSL client certificate/key: %w", err)
+				}
+				tlsCfg.Certificates = []tls.Certificate{cert}
+			}
+			switch sslModeLower {
+			case "require", "required":
 				tlsCfg.InsecureSkipVerify = true
+			case "verify-ca":
+				tlsCfg.InsecureSkipVerify = true
+				roots := tlsCfg.RootCAs
+				tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+					if len(cs.PeerCertificates) == 0 {
+						return fmt.Errorf("server presented no TLS certificates")
+					}
+					opts := x509.VerifyOptions{
+						Roots:         roots,
+						Intermediates: x509.NewCertPool(),
+					}
+					for _, cert := range cs.PeerCertificates[1:] {
+						opts.Intermediates.AddCert(cert)
+					}
+					_, err := cs.PeerCertificates[0].Verify(opts)
+					return err
+				}
 			}
 			redisOpts.TLSConfig = tlsCfg
 		}
@@ -469,15 +499,24 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			q.Set("ApplicationIntent", "ReadOnly")
 		}
 
-		switch cfg.SSLMode {
-		case "require", "required":
+		switch strings.ToLower(strings.TrimSpace(cfg.SSLMode)) {
+		case "require", "required", "prefer", "preferred":
 			q.Set("encrypt", "true")
 			q.Set("trustservercertificate", "true")
-		case "verify-ca", "verify-full", "verify-identity":
+		case "verify-ca":
 			q.Set("encrypt", "true")
 			q.Set("trustservercertificate", "false")
 			if cfg.SSLCAPath != "" {
 				q.Set("certificate", cfg.SSLCAPath)
+			}
+		case "verify-full", "verify-identity":
+			q.Set("encrypt", "true")
+			q.Set("trustservercertificate", "false")
+			if cfg.SSLCAPath != "" {
+				q.Set("certificate", cfg.SSLCAPath)
+			}
+			if cfg.SSHEnabled && strings.TrimSpace(cfg.Host) != "" {
+				q.Set("hostNameInCertificate", strings.TrimSpace(cfg.Host))
 			}
 		default:
 			q.Set("encrypt", "disable")
@@ -534,10 +573,16 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 					q.Set("readonly", "1")
 					u.RawQuery = q.Encode()
 				}
-				tlsCfg, _ := buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
+				tlsCfg, tlsErr := buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
+				if tlsErr != nil {
+					return nil, tlsErr
+				}
 				return clickhouse.NewClickHouseDriverWithTLS(u.String(), tlsCfg)
 			}
-			tlsCfg, _ := buildHTTPDriverTLSConfig(cfg, connStr, "")
+			tlsCfg, tlsErr := buildHTTPDriverTLSConfig(cfg, connStr, "")
+			if tlsErr != nil {
+				return nil, tlsErr
+			}
 			return clickhouse.NewClickHouseDriverWithTLS(connStr, tlsCfg)
 		}
 		if port <= 0 {
@@ -593,13 +638,18 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 
 		var tlsCfg *tls.Config
-		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+		chSSL := strings.ToLower(strings.TrimSpace(cfg.SSLMode))
+		if chSSL != "" && chSSL != "disable" && chSSL != "disabled" {
 			q.Set("secure", "true")
-			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+			if chSSL == "require" || chSSL == "required" {
 				q.Set("skip_verify", "true")
 			}
 			origHost := strings.TrimSpace(cfg.Host)
-			tlsCfg, _ = buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
+			var tlsErr error
+			tlsCfg, tlsErr = buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
+			if tlsErr != nil {
+				return nil, tlsErr
+			}
 		}
 
 		u.RawQuery = q.Encode()
@@ -611,6 +661,12 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 			dbName = "ORCL"
 		}
 		if strings.HasPrefix(connStr, "oracle://") {
+			if cfg.SSHEnabled && host != "" && port > 0 {
+				if u, perr := url.Parse(connStr); perr == nil {
+					u.Host = net.JoinHostPort(host, strconv.Itoa(port))
+					connStr = u.String()
+				}
+			}
 			return oracle.NewOracleDriver(connStr, dbName)
 		}
 		if port <= 0 {
@@ -622,9 +678,10 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		urlOptions := map[string]string{
 			"CONNECTION TIMEOUT": "10",
 		}
-		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+		oraSSL := strings.ToLower(strings.TrimSpace(cfg.SSLMode))
+		if oraSSL != "" && oraSSL != "disable" && oraSSL != "disabled" {
 			urlOptions["SSL"] = "true"
-			if cfg.SSLMode == "require" || cfg.SSLMode == "required" {
+			if oraSSL == "require" || oraSSL == "required" {
 				urlOptions["SSL Verify"] = "false"
 			} else {
 				urlOptions["SSL Verify"] = "true"
@@ -641,7 +698,7 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 	rawHost := strings.TrimSpace(cfg.Host)
 	remoteHost := rawHost
 	remotePort := cfg.Port
-	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") || strings.HasPrefix(rawHost, "clickhouse://") || strings.HasPrefix(rawHost, "mongodb://") || strings.HasPrefix(rawHost, "postgres://") || strings.HasPrefix(rawHost, "postgresql://") {
+	if strings.HasPrefix(rawHost, "http://") || strings.HasPrefix(rawHost, "https://") || strings.HasPrefix(rawHost, "clickhouse://") || strings.HasPrefix(rawHost, "mongodb://") || strings.HasPrefix(rawHost, "postgres://") || strings.HasPrefix(rawHost, "postgresql://") || strings.HasPrefix(rawHost, "oracle://") {
 		if u, err := url.Parse(rawHost); err == nil && u.Hostname() != "" {
 			remoteHost = u.Hostname()
 			if pStr := u.Port(); pStr != "" {
@@ -933,23 +990,46 @@ func buildHTTPDriverTLSConfig(cfg store.ConnectionConfig, baseURL, origHostname 
 	if pinnedCAHex != "" {
 		tlsCfg.InsecureSkipVerify = true
 		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return fmt.Errorf("server presented no TLS certificates")
+			}
+			var matchedCA *x509.Certificate
 			for _, cert := range cs.PeerCertificates {
 				sum := sha256.Sum256(cert.Raw)
 				if strings.EqualFold(hex.EncodeToString(sum[:]), pinnedCAHex) {
-					return nil
+					matchedCA = cert
+					break
 				}
 			}
-			return fmt.Errorf("TLS certificate SHA-256 fingerprint mismatch (expected %s)", pinnedCAHex)
+			if matchedCA == nil {
+				return fmt.Errorf("TLS certificate SHA-256 fingerprint mismatch (expected %s)", pinnedCAHex)
+			}
+			// Verify the leaf certificate chains to the pinned certificate (or is the pinned leaf itself).
+			roots := x509.NewCertPool()
+			roots.AddCert(matchedCA)
+			inters := x509.NewCertPool()
+			for _, cert := range cs.PeerCertificates[1:] {
+				inters.AddCert(cert)
+			}
+			_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{
+				Roots:         roots,
+				Intermediates: inters,
+				CurrentTime:   time.Now(),
+			})
+			return err
 		}
 		return tlsCfg, nil
 	}
-	switch cfg.SSLMode {
+	switch strings.ToLower(strings.TrimSpace(cfg.SSLMode)) {
 	case "require", "required":
 		tlsCfg.InsecureSkipVerify = true
 	case "verify-ca":
 		tlsCfg.InsecureSkipVerify = true
 		roots := tlsCfg.RootCAs
 		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return fmt.Errorf("server presented no TLS certificates")
+			}
 			opts := x509.VerifyOptions{
 				Roots:         roots,
 				Intermediates: x509.NewCertPool(),

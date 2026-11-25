@@ -82,7 +82,8 @@ func newMySQLConfig(cfg store.ConnectionConfig, host string, port int) (*mysqldr
 					mc.Params["max_execution_time"] = strconv.Itoa(opts.MaxExecutionTimeMs)
 				}
 			}
-			if opts.AllowCleartextPasswords && cfg.SSLMode != "" && cfg.SSLMode != "disable" {
+			sslModeLower := strings.ToLower(strings.TrimSpace(cfg.SSLMode))
+			if opts.AllowCleartextPasswords && sslModeLower != "" && sslModeLower != "disable" && sslModeLower != "disabled" {
 				mc.AllowCleartextPasswords = true
 			}
 			if opts.Compress {

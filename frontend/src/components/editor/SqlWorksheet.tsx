@@ -26,6 +26,7 @@ import * as QueryService from '../../../bindings/dhub/internal/services/queryser
 import { ParameterPromptModal } from '../modals/ParameterPromptModal';
 import { DangerousQueryModal } from '../modals/DangerousQueryModal';
 import { DbDriverIcon } from '../common/DbDriverIcon';
+import { getDriverCapabilities } from '../../utils/driverCapabilities';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -2187,11 +2188,8 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             </button>
           )}
 
-          {/* Transaction Controls (hidden for Qdrant, Elasticsearch, MongoDB & Redis) */}
-          {connection?.driver !== 'qdrant' &&
-            connection?.driver !== 'elasticsearch' &&
-            connection?.driver !== 'mongodb' &&
-            connection?.driver !== 'redis' && (
+          {/* Transaction Controls (shown only for drivers supporting transactions) */}
+          {getDriverCapabilities(connection?.driver).supportsTransactions && (
             <>
               <div className="h-4 w-[1px] bg-[#272932] mx-1" />
               <div className="flex items-center gap-1.5">

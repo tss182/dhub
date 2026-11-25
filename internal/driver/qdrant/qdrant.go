@@ -64,6 +64,10 @@ func NewQdrantDriver(baseURL, apiKey string, tlsCfg *tls.Config) (*QdrantDriver,
 			// Rely on request context deadlines instead of a hardcoded 30s timeout
 			// so long exports, snapshots, and heavy scrolls can complete.
 			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Prevent leaking api-key across origins or downgrading HTTPS -> HTTP.
+				return http.ErrUseLastResponse
+			},
 		},
 		cursorCache: make(map[string]map[int]any),
 	}, nil

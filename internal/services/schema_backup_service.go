@@ -605,6 +605,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			defaultsFile = tmpFile.Name()
 			defer os.Remove(defaultsFile)
 			escapedPass := strings.ReplaceAll(strings.ReplaceAll(conn.Password, `\`, `\\`), `"`, `\"`)
+			escapedPass = strings.ReplaceAll(strings.ReplaceAll(escapedPass, "\r", `\r`), "\n", `\n`)
 			_, writeErr := tmpFile.WriteString(fmt.Sprintf("[client]\npassword=\"%s\"\n", escapedPass))
 			_ = tmpFile.Chmod(0600)
 			_ = tmpFile.Close()
@@ -879,15 +880,29 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			if err != nil {
 				return "", emitErr(fmt.Errorf("failed to create backup file: %w", err))
 			}
-			cmdArgs := []string{conn.FilePath}
+			dotCmd := ".dump"
 			if opts.Mode == "schema_only" {
-				cmdArgs = append(cmdArgs, ".schema")
-			} else {
-				cmdArgs = append(cmdArgs, ".dump")
+				dotCmd = ".schema"
 			}
-			if opts.TableSelection == "include" {
-				cmdArgs = append(cmdArgs, opts.Tables...)
+			if opts.TableSelection == "include" && len(opts.Tables) > 0 {
+				var safeTables []string
+				for _, tbl := range opts.Tables {
+					t := strings.TrimSpace(tbl)
+					if t == "" {
+						continue
+					}
+					if strings.HasPrefix(t, ".") || strings.ContainsAny(t, " \t\r\n\x00;") {
+						_ = outFile.Close()
+						_ = os.Remove(filePath)
+						return "", emitErr(fmt.Errorf("invalid SQLite table name %q", tbl))
+					}
+					safeTables = append(safeTables, t)
+				}
+				if len(safeTables) > 0 {
+					dotCmd = dotCmd + " " + strings.Join(safeTables, " ")
+				}
 			}
+			cmdArgs := []string{conn.FilePath, dotCmd}
 			cmd := execCommandContext(ctx, binPath, cmdArgs...)
 			var stderr bytes.Buffer
 			cmd.Stdout = outFile
@@ -919,7 +934,8 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			Percent:      10,
 			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
 		})
-		args := buildMongoToolsCommonArgs(conn, database)
+		args, mongoCleanup := buildMongoToolsCommonArgs(conn, database)
+		defer mongoCleanup()
 		args = append(args, "--archive="+filePath)
 		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
 			args = append(args, "--gzip")
@@ -1000,13 +1016,13 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		args := []string{"-S", server, "-Q", tsql, "-C"}
 		if strings.TrimSpace(conn.Username) != "" {
 			args = append(args, "-U", conn.Username)
-			if conn.Password != "" {
-				args = append(args, "-P", conn.Password)
-			}
 		} else {
 			args = append(args, "-E")
 		}
 		cmd := execCommandContext(ctx, binPath, args...)
+		if strings.TrimSpace(conn.Username) != "" && conn.Password != "" {
+			cmd.Env = append(os.Environ(), "SQLCMDPASSWORD="+conn.Password)
+		}
 		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
@@ -1399,7 +1415,8 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			TotalBytes:   totalBytes,
 			Message:      fmt.Sprintf("Running %s...", filepath.Base(binPath)),
 		})
-		args := buildMongoToolsCommonArgs(conn, "")
+		args, mongoCleanup := buildMongoToolsCommonArgs(conn, "")
+		defer mongoCleanup()
 		args = append(args, "--archive="+filePath, "--nsInclude="+database+".*")
 		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
 			args = append(args, "--gzip")
@@ -1455,13 +1472,13 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		}
 		if strings.TrimSpace(conn.Username) != "" {
 			args = append(args, "-U", conn.Username)
-			if conn.Password != "" {
-				args = append(args, "-P", conn.Password)
-			}
 		} else {
 			args = append(args, "-E")
 		}
 		cmd := execCommandContext(ctx, binPath, args...)
+		if strings.TrimSpace(conn.Username) != "" && conn.Password != "" {
+			cmd.Env = append(os.Environ(), "SQLCMDPASSWORD="+conn.Password)
+		}
 		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
@@ -1499,11 +1516,27 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 	return fmt.Sprintf("Database '%s' restored successfully from %s", database, filepath.Base(filePath)), nil
 }
 
-func buildMongoToolsCommonArgs(conn *store.ConnectionConfig, database string) []string {
+func buildMongoToolsCommonArgs(conn *store.ConnectionConfig, database string) ([]string, func()) {
 	rawHost := strings.TrimSpace(conn.Host)
 	var args []string
+	var cleanupFiles []string
+	cleanup := func() {
+		for _, f := range cleanupFiles {
+			_ = os.Remove(f)
+		}
+	}
+	writeMongoConfig := func(key, val string) {
+		if tmpFile, err := os.CreateTemp("", "dhub-mongo-*.yaml"); err == nil {
+			_ = tmpFile.Chmod(0600)
+			encoded, _ := json.Marshal(val)
+			_, _ = tmpFile.WriteString(fmt.Sprintf("%s: %s\n", key, string(encoded)))
+			_ = tmpFile.Close()
+			cleanupFiles = append(cleanupFiles, tmpFile.Name())
+			args = append(args, "--config="+tmpFile.Name())
+		}
+	}
 	if strings.HasPrefix(rawHost, "mongodb://") || strings.HasPrefix(rawHost, "mongodb+srv://") {
-		args = append(args, "--uri="+rawHost)
+		writeMongoConfig("uri", rawHost)
 	} else {
 		host := rawHost
 		if host == "" {
@@ -1528,7 +1561,7 @@ func buildMongoToolsCommonArgs(conn *store.ConnectionConfig, database string) []
 			}
 			args = append(args, "--username", conn.Username)
 			if conn.Password != "" {
-				args = append(args, "--password", conn.Password)
+				writeMongoConfig("password", conn.Password)
 			}
 			args = append(args, "--authenticationDatabase", authDB)
 		}
@@ -1548,7 +1581,7 @@ func buildMongoToolsCommonArgs(conn *store.ConnectionConfig, database string) []
 			args = append(args, "--sslPEMKeyFile", conn.SSLCertPath)
 		}
 	}
-	return args
+	return args, cleanup
 }
 
 func mysqlBackupSSLArgs(conn *store.ConnectionConfig, isMariaDBDump bool) []string {

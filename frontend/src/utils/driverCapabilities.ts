@@ -346,14 +346,11 @@ export function isClickHouseDriver(driver?: string | null): boolean {
 
 export function getDefaultDatabase(driver?: string | null): string {
   const d = (driver || '').toLowerCase().trim();
-  if (d === 'postgres') return 'postgres';
-  if (d === 'sqlite') return 'main';
-  if (d === 'mssql' || d === 'sqlserver') return 'master';
-  if (d === 'oracle') return 'ORCL';
-  if (d === 'mongodb' || d === 'mongo') return 'admin';
-  if (d === 'redis') return 'db0';
-  if (d === 'clickhouse' || d === 'qdrant' || d === 'elasticsearch' || d === 'es') return 'default';
-  return 'main';
+  if (!d) return '';
+  if (d === 'sqlserver') return 'master';
+  if (d === 'es') return 'default';
+  if (d === 'mongo') return 'admin';
+  return CAPABILITY_MAP[d]?.defaultDatabase ?? '';
 }
 
 export function getDefaultSchema(driver?: string | null, database?: string): string {

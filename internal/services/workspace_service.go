@@ -181,7 +181,7 @@ func (w *WorkspaceService) SaveConfigFile(filePath string, content string) error
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	return os.WriteFile(filePath, []byte(content), 0644)
+	return os.WriteFile(filePath, []byte(content), 0600)
 }
 
 func (w *WorkspaceService) ReadConfigFile(filePath string) (string, error) {

@@ -174,6 +174,7 @@ import { QueryResult, ColumnMeta, WorkbenchTab, ConnectionConfig, resolveConnect
 import { parseSingleTableSelect } from './utils/querySource';
 import { pickRowKey } from './utils/rowKey';
 import { quoteSqlIdentifier, buildQualifiedTablePath } from './utils/sqlIdentifier';
+import { getDefaultDatabase, getDefaultSchema } from './utils/driverCapabilities';
 
 interface ChangeTarget {
   stagedKey: string;
@@ -715,16 +716,8 @@ export function App() {
   const resolveTableTabMeta = (tab: WorkbenchTab) => {
     const conn = connections.find((c) => c.id === tab.connectionId);
     const driver = conn?.driver || tab.driver || '';
-    const targetDb = tab.database || conn?.databaseName || 'main';
-    const targetSchema =
-      tab.schema ||
-      (driver === 'postgres'
-        ? 'public'
-        : driver === 'mssql'
-        ? 'dbo'
-        : driver === 'oracle'
-        ? ''
-        : targetDb);
+    const targetDb = tab.database || conn?.databaseName || getDefaultDatabase(driver);
+    const targetSchema = tab.schema || getDefaultSchema(driver, targetDb);
     const schemaKey = `${tab.connectionId}:${targetDb}:${targetSchema}`;
     const treeObj = (treeObjects[schemaKey] || []).find((o) => o.name === tab.table);
     const objectType = treeObj?.type || 'table';
@@ -867,7 +860,10 @@ export function App() {
       const escapedLiteral = tableName.replace(/'/g, "''");
       sql = `DELETE FROM ${quoteSqlIdentifier(driver, tableName)}; DELETE FROM sqlite_sequence WHERE name = '${escapedLiteral}';`;
     } else if (driver === 'mongodb') {
-      sql = `db.${tableName}.deleteMany({});`;
+      const collRef = /^[A-Za-z_][A-Za-z0-9_]*$/.test(tableName)
+        ? `db.${tableName}`
+        : `db.getCollection(${JSON.stringify(tableName)})`;
+      sql = `${collRef}.deleteMany({});`;
     } else if (isQdrant) {
       sql = `POST /collections/${encodeURIComponent(tableName)}/points/delete?wait=true\n{"filter":{}}`;
     } else if (isElasticsearch) {
@@ -959,7 +955,10 @@ export function App() {
 
     let sql = '';
     if (driver === 'mongodb') {
-      sql = `db.${tableName}.drop();`;
+      const collRef = /^[A-Za-z_][A-Za-z0-9_]*$/.test(tableName)
+        ? `db.${tableName}`
+        : `db.getCollection(${JSON.stringify(tableName)})`;
+      sql = `${collRef}.drop();`;
     } else if (isQdrant) {
       sql = `DELETE /collections/${encodeURIComponent(tableName)}`;
     } else if (isElasticsearch) {
@@ -1159,12 +1158,12 @@ export function App() {
         const conn = useConnectionStore.getState().connections.find((c) => c.id === connId);
         const driver = conn?.driver;
         const isMy = driver === 'mysql' || driver === 'mariadb';
-        const baseDb = queryPagination.database || activeTab.database || conn?.databaseName || 'main';
+        const baseDb = queryPagination.database || activeTab.database || conn?.databaseName || getDefaultDatabase(driver);
         let db = baseDb;
         let schema =
           queryPagination.schema ||
           activeTab.schema ||
-          (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : driver === 'oracle' ? '' : baseDb);
+          getDefaultSchema(driver, baseDb);
         if (parsed.qualifier) {
           if (isMy) {
             db = parsed.qualifier;
@@ -1594,9 +1593,8 @@ export function App() {
       }
       const conn = connList.find((c) => c.id === connId);
       const effectiveDriver = conn?.driver || tab.driver;
-      const isMSSQL = effectiveDriver === 'mssql';
-      const targetDb = tab.database || conn?.databaseName || 'main';
-      const targetSchema = tab.schema || (effectiveDriver === 'postgres' ? 'public' : isMSSQL ? 'dbo' : effectiveDriver === 'oracle' ? '' : targetDb);
+      const targetDb = tab.database || conn?.databaseName || getDefaultDatabase(effectiveDriver);
+      const targetSchema = tab.schema || getDefaultSchema(effectiveDriver, targetDb);
 
       // Clear active vector search banner when reloading normal table browse (sort/page/filter/refresh)
       setVectorSearchByTab((prev) => {
@@ -2144,10 +2142,9 @@ export function App() {
     const driver = conn?.driver || tab.driver;
     if (driver === 'redis') return undefined;
 
-    const isMSSQL = driver === 'mssql';
-    const targetDb = tab.database || conn?.databaseName || 'main';
+    const targetDb = tab.database || conn?.databaseName || getDefaultDatabase(driver);
     const targetSchema =
-      tab.schema || (driver === 'postgres' ? 'public' : isMSSQL ? 'dbo' : driver === 'oracle' ? '' : targetDb);
+      tab.schema || getDefaultSchema(driver, targetDb);
     const fullTablePath = buildQualifiedTablePath(driver, targetDb, targetSchema, tab.table);
 
     const whereClause = tableDataByTab[tab.id]?.whereClause ?? tab.tableViewState?.whereClause ?? '';
@@ -3293,8 +3290,8 @@ export function App() {
                             type="button"
                             onClick={() => {
                               const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                              const fallbackDb = conn?.driver === 'postgres' ? 'postgres' : 'main';
-                              const fallbackSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : 'main';
+                              const fallbackDb = conn?.databaseName || getDefaultDatabase(conn?.driver);
+                              const fallbackSchema = getDefaultSchema(conn?.driver, fallbackDb);
                               openEditTableModal(
                                 conn,
                                 activeTab.database || fallbackDb,
@@ -3317,8 +3314,8 @@ export function App() {
                             type="button"
                             onClick={() => {
                               const conn = connections.find((c) => c.id === activeTab.connectionId) || null;
-                              const fallbackDb = conn?.driver === 'postgres' ? 'postgres' : 'main';
-                              const fallbackSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : 'main';
+                              const fallbackDb = conn?.databaseName || getDefaultDatabase(conn?.driver);
+                              const fallbackSchema = getDefaultSchema(conn?.driver, fallbackDb);
                               openDdlModal({
                                 scope: 'table',
                                 conn,
@@ -3430,14 +3427,14 @@ export function App() {
                         </>
                         );
                       })()}
-                    {tableConn?.driver !== 'qdrant' && tableConn?.driver !== 'elasticsearch' && (
+                    {tableConn?.driver !== 'qdrant' && tableConn?.driver !== 'elasticsearch' && (activeTab.database || getDefaultDatabase(tableConn?.driver)) && (
                       <>
                         <span className="text-zinc-600 shrink-0">/</span>
                         <span
                           className="font-mono text-[11px] text-zinc-400 truncate max-w-[200px]"
-                          title={activeTab.database || 'main'}
+                          title={activeTab.database || getDefaultDatabase(tableConn?.driver)}
                         >
-                          {activeTab.database || 'main'}
+                          {activeTab.database || getDefaultDatabase(tableConn?.driver)}
                         </span>
                       </>
                     )}

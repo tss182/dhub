@@ -2,7 +2,7 @@ import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { quoteSqlIdentifier } from '../../utils/sqlIdentifier';
-import { getDriverCapabilities } from '../../utils/driverCapabilities';
+import { getDriverCapabilities, getDefaultDatabase, getDefaultSchema } from '../../utils/driverCapabilities';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useWorkspaceSessionStore } from '../../stores/useWorkspaceSessionStore';
@@ -514,26 +514,28 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
   };
 
   const handleOpenUsersTab = (conn: ConnectionConfig) => {
+    const db = conn.databaseName || getDefaultDatabase(conn.driver);
     openTab({
       id: `users-${conn.id}`,
       type: 'users',
       title: `${conn.name} - Users`,
       connectionId: conn.id,
       driver: conn.driver,
-      database: conn.databaseName || (conn.driver === 'postgres' ? 'postgres' : conn.driver === 'mssql' ? 'master' : conn.driver === 'oracle' ? 'ORCL' : 'mysql'),
-      schema: conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : conn.driver === 'oracle' ? (conn.username || 'SYSTEM').toUpperCase() : 'main',
+      database: db || (conn.driver === 'postgres' ? 'postgres' : conn.driver === 'mssql' ? 'master' : conn.driver === 'oracle' ? 'ORCL' : 'mysql'),
+      schema: getDefaultSchema(conn.driver, db) || (conn.driver === 'oracle' ? (conn.username || 'SYSTEM').toUpperCase() : ''),
     });
   };
 
   const handleOpenActivityMonitor = (conn: ConnectionConfig) => {
+    const db = conn.databaseName || getDefaultDatabase(conn.driver);
     openTab({
       id: `activity-${conn.id}`,
       type: 'activity',
       title: `${conn.name} - Activity`,
       connectionId: conn.id,
       driver: conn.driver,
-      database: conn.databaseName || 'main',
-      schema: conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : 'main',
+      database: db,
+      schema: getDefaultSchema(conn.driver, db),
     });
   };
 
@@ -620,7 +622,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       setNodeExpanded(connectionId, true);
 
       const isES = conn.driver === 'elasticsearch';
-      const targetDb = isES ? 'default' : database || conn.databaseName || 'main';
+      const targetDb = isES ? 'default' : database || conn.databaseName || getDefaultDatabase(conn.driver);
       const isSchemaDriver =
         conn.driver === 'postgres' || conn.driver === 'mssql' || conn.driver === 'oracle';
       const defaultSchema = isES
@@ -642,8 +644,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             'Connection timed out after 12s'
           );
           const dbs = (await SchemaService.GetDatabases(connectionId)) ?? [];
+          const fallbackDb = conn.databaseName || getDefaultDatabase(conn.driver);
           const safeDbs =
-            dbs.length > 0 ? dbs : conn.databaseName ? [conn.databaseName] : ['main'];
+            dbs.length > 0 ? dbs : fallbackDb ? [fallbackDb] : [];
           if (!cancelled) setTreeDatabases(connectionId, safeDbs);
         }
 
@@ -1527,7 +1530,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       const safeList = await loadConnectionsAndFolders();
       if (safeList.length > 0 && !activeConnectionId) {
         const first = safeList[0];
-        setActiveConnection(first.id, first.databaseName || 'main', first.driver === 'postgres' ? 'public' : 'main');
+        const db = first.databaseName || getDefaultDatabase(first.driver);
+        setActiveConnection(first.id, db, getDefaultSchema(first.driver, db));
       }
     } catch (e) {
       console.error('Failed to list connections:', e);
@@ -1773,7 +1777,8 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       if (activeConnectionId === connId) {
         if (list && list.length > 0) {
           const first = list[0];
-          setActiveConnection(first.id, first.databaseName || 'main', first.driver === 'postgres' ? 'public' : first.driver === 'mssql' ? 'dbo' : 'main');
+          const db = first.databaseName || getDefaultDatabase(first.driver);
+          setActiveConnection(first.id, db, getDefaultSchema(first.driver, db));
         } else {
           setActiveConnection('', '', '');
         }
@@ -5900,18 +5905,15 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>New Query Console</span>
               </button>
 
-              {contextMenu.connection.driver !== 'qdrant' &&
-                contextMenu.connection.driver !== 'redis' &&
-                contextMenu.connection.driver !== 'elasticsearch' &&
-                contextMenu.connection.driver !== 'mongodb' && (
+              {getDriverCapabilities(contextMenu.connection.driver).supportsErDiagram && (
                 <button
                   type="button"
                   onClick={() => {
                     closeContextMenu();
                     handleOpenERDiagram(
                       contextMenu.connection!.id,
-                      contextMenu.database || (contextMenu.connection!.driver === 'postgres' ? 'postgres' : ''),
-                      contextMenu.schema || (contextMenu.connection!.driver === 'postgres' ? 'public' : contextMenu.database || '')
+                      contextMenu.database || getDefaultDatabase(contextMenu.connection!.driver),
+                      contextMenu.schema || getDefaultSchema(contextMenu.connection!.driver, contextMenu.database)
                     );
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -6382,17 +6384,15 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>New Query Console</span>
               </button>
 
-              {contextMenu.connection.driver !== 'redis' &&
-                contextMenu.connection.driver !== 'qdrant' &&
-                contextMenu.connection.driver !== 'mongodb' && (
+              {getDriverCapabilities(contextMenu.connection.driver).supportsErDiagram && (
                 <button
                   type="button"
                   onClick={() => {
                     closeContextMenu();
                     handleOpenERDiagram(
                       contextMenu.connection!.id,
-                      contextMenu.database || (contextMenu.connection!.driver === 'postgres' ? 'postgres' : ''),
-                      contextMenu.schema || (contextMenu.connection!.driver === 'postgres' ? 'public' : contextMenu.database || '')
+                      contextMenu.database || getDefaultDatabase(contextMenu.connection!.driver),
+                      contextMenu.schema || getDefaultSchema(contextMenu.connection!.driver, contextMenu.database)
                     );
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
@@ -6562,21 +6562,23 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 <span>New Query Console</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  closeContextMenu();
-                  handleOpenERDiagram(
-                    contextMenu.connection!.id,
-                    contextMenu.database!,
-                    contextMenu.schema!
-                  );
-                }}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
-              >
-                <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
-                <span>Open ER Diagram...</span>
-              </button>
+              {getDriverCapabilities(contextMenu.connection!.driver).supportsErDiagram && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeContextMenu();
+                    handleOpenERDiagram(
+                      contextMenu.connection!.id,
+                      contextMenu.database!,
+                      contextMenu.schema!
+                    );
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                >
+                  <Layers className="h-3.5 w-3.5 text-blue-400 group-hover:text-white" />
+                  <span>Open ER Diagram...</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -7093,7 +7095,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>New Query Console</span>
                   </button>
 
-                  {contextMenu.connection!.driver !== 'qdrant' && contextMenu.connection!.driver !== 'elasticsearch' && (
+                  {getDriverCapabilities(contextMenu.connection!.driver).supportsErDiagram && (
                     <button
                       type="button"
                       onClick={() => {
@@ -7117,8 +7119,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       closeContextMenu();
                       handleRefreshTable(
                         contextMenu.connection!.id,
-                        contextMenu.database || 'main',
-                        contextMenu.schema || 'main',
+                        contextMenu.database || getDefaultDatabase(contextMenu.connection!.driver),
+                        contextMenu.schema || getDefaultSchema(contextMenu.connection!.driver, contextMenu.database),
                         contextMenu.table!.name
                       );
                     }}

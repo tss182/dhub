@@ -23,7 +23,8 @@ import (
 func configureMySQLTLS(mc *mysqldriver.Config, cfg store.ConnectionConfig) error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.SSLMode))
 	hasFiles := strings.TrimSpace(cfg.SSLCAPath) != "" ||
-		(strings.TrimSpace(cfg.SSLCertPath) != "" && strings.TrimSpace(cfg.SSLKeyPath) != "")
+		strings.TrimSpace(cfg.SSLCertPath) != "" ||
+		strings.TrimSpace(cfg.SSLKeyPath) != ""
 
 	switch mode {
 	case "disable", "disabled":
@@ -54,6 +55,13 @@ func configureMySQLTLS(mc *mysqldriver.Config, cfg store.ConnectionConfig) error
 		case "required":
 			mc.TLSConfig = "skip-verify"
 		case "verify-identity":
+			if cfg.SSHEnabled && strings.TrimSpace(cfg.Host) != "" {
+				tlsCfg, err := buildMySQLTLS(cfg, mode)
+				if err != nil {
+					return err
+				}
+				return registerMySQLTLS(mc, cfg, tlsCfg)
+			}
 			mc.TLSConfig = "true"
 		case "verify-ca":
 			tlsCfg, err := buildMySQLTLS(cfg, mode)

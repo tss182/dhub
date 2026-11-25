@@ -23,6 +23,15 @@ func TestRedactSQLSecrets(t *testing.T) {
 		{"double quoted", `CREATE USER u IDENTIFIED BY "dq-secret"`, "dq-secret"},
 		{"lowercase", "create user u identified by 'low'", "low"},
 		{"doubled quote", "CREATE USER u IDENTIFIED BY 'it''s'", "it''s"},
+		{"mysql quoted plugin", "CREATE USER u IDENTIFIED WITH 'caching_sha2_password' BY 'plug-sec'", "plug-sec"},
+		{"mssql login", "CREATE LOGIN app WITH PASSWORD = N'ms-secret'", "ms-secret"},
+		{"oracle unquoted", "CREATE USER app IDENTIFIED BY OraSec123", "OraSec123"},
+		{"postgres dollar", "ALTER USER u WITH PASSWORD $$pg-dollar$$", "pg-dollar"},
+		{"sqlite pragma key", "PRAGMA key = 'sqlcipher-sec'", "sqlcipher-sec"},
+		{"mongodb createUser", `db.createUser({ user: "u", pwd: "mongo-sec", roles: [] })`, "mongo-sec"},
+		{"elasticsearch user", `POST /_security/user/u { "password": "es-secret" }`, "es-secret"},
+		{"redis auth", "AUTH myredispass", "myredispass"},
+		{"redis acl", "ACL SETUSER alice on >acl-secret", "acl-secret"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

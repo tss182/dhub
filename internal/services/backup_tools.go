@@ -203,6 +203,15 @@ func (s *SchemaService) CheckBackupToolStatus(driverName, mode, filePath, custom
 // into DHub's local tools folder (<configDir>/tools/<driver>/) and returns the updated status.
 func (s *SchemaService) DownloadBackupTool(driverName, mode string) (*BackupToolStatus, error) {
 	drv := strings.ToLower(strings.TrimSpace(driverName))
+	switch drv {
+	case "sqlserver":
+		drv = "mssql"
+	case "mongo":
+		drv = "mongodb"
+	case "postgres", "mysql", "mariadb", "sqlite", "mssql", "mongodb", "redis", "oracle", "clickhouse":
+	default:
+		return nil, fmt.Errorf("unsupported backup tool driver %q", driverName)
+	}
 	primary, candidates, label := getBackupToolCandidates(drv, mode, "")
 
 	toolsRoot, err := config.GetToolsDir()
@@ -291,8 +300,10 @@ func getAllToolsForDriver(drv string) []string {
 		return []string{"sqlplus"}
 	case "sqlite":
 		return []string{"sqlite3"}
+	case "mongodb", "mongo":
+		return []string{"mongodump", "mongorestore"}
 	default:
-		return []string{drv}
+		return nil
 	}
 }
 

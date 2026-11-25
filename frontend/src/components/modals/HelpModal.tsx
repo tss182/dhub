@@ -739,7 +739,7 @@ export const HelpModal: React.FC = () => {
                         Welcome to DHub Desktop
                       </h3>
                       <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
-                        DHub is a keyboard-first multi-database IDE supporting 8 SQL &amp; NoSQL
+                        DHub is a keyboard-first multi-database IDE supporting 11 SQL, OLAP, &amp; NoSQL
                         engines with high-speed virtualized grids, safe inline editing, SSH/SSL
                         tunneling, schema tools, and workspace sessions.
                       </p>

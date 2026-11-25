@@ -66,6 +66,10 @@ func NewElasticsearchDriver(baseURL, username, password string, tlsCfg *tls.Conf
 			// Rely on request context deadlines instead of a hardcoded 30s timeout
 			// so long exports, _reindex, _delete_by_query, and heavy aggregations can complete.
 			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Prevent leaking Authorization/ApiKey across origins or downgrading HTTPS -> HTTP.
+				return http.ErrUseLastResponse
+			},
 		},
 		keywordSubfieldMap: make(map[string]map[string]bool),
 	}, nil

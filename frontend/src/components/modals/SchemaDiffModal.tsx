@@ -172,7 +172,7 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
               className="w-full rounded bg-[#191a20] border border-[#272932] px-2.5 py-1.5 text-zinc-200"
             >
               <option value="">Select Connection...</option>
-              {connections.map((c) => (
+              {connections.filter((c) => c.driver !== 'redis').map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} ({c.driver})
                 </option>
@@ -220,7 +220,7 @@ export const SchemaDiffModal: React.FC<SchemaDiffModalProps> = ({
               className="w-full rounded bg-[#191a20] border border-[#272932] px-2.5 py-1.5 text-zinc-200"
             >
               <option value="">Select Connection...</option>
-              {connections.map((c) => (
+              {connections.filter((c) => c.driver !== 'redis').map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} ({c.driver})
                 </option>

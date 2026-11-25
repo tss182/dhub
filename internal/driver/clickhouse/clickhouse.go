@@ -33,12 +33,11 @@ func openPool(connStr string, tlsCfg *tls.Config) (*sql.DB, error) {
 	var err error
 	if tlsCfg != nil {
 		opts, perr := chdriver.ParseDSN(connStr)
-		if perr == nil {
-			opts.TLS = tlsCfg
-			db = chdriver.OpenDB(opts)
-		} else {
-			db, err = sql.Open("clickhouse", connStr)
+		if perr != nil {
+			return nil, fmt.Errorf("invalid ClickHouse DSN for TLS connection: %w", perr)
 		}
+		opts.TLS = tlsCfg
+		db = chdriver.OpenDB(opts)
 	} else {
 		db, err = sql.Open("clickhouse", connStr)
 	}
