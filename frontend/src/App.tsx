@@ -2138,11 +2138,11 @@ export function App() {
     return queryPagination.lastSql;
   };
 
-  const handleCountTableRows = async (tab: WorkbenchTab) => {
-    if (!tab.connectionId || !tab.table) return;
+  const handleCountTableRows = async (tab: WorkbenchTab): Promise<number | undefined> => {
+    if (!tab.connectionId || !tab.table) return undefined;
     const conn = connections.find((c) => c.id === tab.connectionId);
     const driver = conn?.driver || tab.driver;
-    if (driver === 'redis') return;
+    if (driver === 'redis') return undefined;
 
     const isMSSQL = driver === 'mssql';
     const targetDb = tab.database || conn?.databaseName || 'main';
@@ -2174,17 +2174,19 @@ export function App() {
             totalCount: num,
           },
         }));
+        return num;
       }
     } catch (err) {
       console.warn('Count query failed:', err);
     }
+    return undefined;
   };
 
-  const handleCountQueryRows = async () => {
+  const handleCountQueryRows = async (): Promise<number | undefined> => {
     const pagingSql = getPagingSql();
-    if (!pagingSql || !queryPagination.connectionId) return;
+    if (!pagingSql || !queryPagination.connectionId) return undefined;
     const cleanSql = pagingSql.trim().replace(/;+\s*$/, '');
-    if (!cleanSql) return;
+    if (!cleanSql) return undefined;
 
     try {
       const conn = useConnectionStore.getState().connections.find((c) => c.id === queryPagination.connectionId);
@@ -2193,13 +2195,13 @@ export function App() {
         const fromMatch = cleanSql.match(/\bFROM\s+[`"\[]?([a-zA-Z0-9_.-]+)[`"\]]?/i);
         const restMatch = cleanSql.match(/\/collections\/([^\/\s?]+)/i);
         const coll = fromMatch?.[1] || (restMatch?.[1] ? decodeURIComponent(restMatch[1]) : '');
-        if (!coll) return;
+        if (!coll) return undefined;
         countSql = `SELECT COUNT(*) FROM "${coll}"`;
       } else if (conn?.driver === 'elasticsearch') {
         const fromMatch = cleanSql.match(/\bFROM\s+[`"\[]?([a-zA-Z0-9_.*,-]+)[`"\]]?/i);
         const restMatch = cleanSql.match(/^(?:GET|POST)\s+\/([^\/\s?]+)\/_search/i);
         const idx = fromMatch?.[1] || (restMatch?.[1] ? decodeURIComponent(restMatch[1]) : '');
-        if (!idx || idx.startsWith('_')) return;
+        if (!idx || idx.startsWith('_')) return undefined;
         countSql = `SELECT COUNT(*) FROM "${idx}"`;
       }
       const countRes = await QueryService.ExecuteQuery({
@@ -2216,10 +2218,12 @@ export function App() {
       const num = typeof countVal === 'number' ? countVal : parseInt(String(countVal), 10);
       if (!isNaN(num) && num >= 0) {
         setQueryPagination((p) => ({ ...p, totalCount: num }));
+        return num;
       }
     } catch (err) {
       console.warn('Query count failed:', err);
     }
+    return undefined;
   };
 
   const handleQueryLoadMore = async () => {

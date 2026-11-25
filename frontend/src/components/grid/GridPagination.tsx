@@ -31,6 +31,7 @@ interface GridPaginationProps {
   onNavigatePage: (page: number) => void;
   onPageSizeChange: (size: number) => void;
   onCountRows: () => void;
+  onLastPage: () => void;
 }
 
 export const GridPagination: React.FC<GridPaginationProps> = ({
@@ -54,6 +55,7 @@ export const GridPagination: React.FC<GridPaginationProps> = ({
   onNavigatePage,
   onPageSizeChange,
   onCountRows,
+  onLastPage,
 }) => {
   return (
     <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 rounded-lg border border-[#3b3e4f] bg-[#23252c]/95 backdrop-blur-md px-2 py-1 shadow-[0_8px_24px_rgba(0,0,0,0.55)] text-xs text-zinc-300 select-none">
@@ -167,10 +169,14 @@ export const GridPagination: React.FC<GridPaginationProps> = ({
       </button>
       <button
         type="button"
-        onClick={() => onNavigatePage(totalPages)}
-        disabled={!isExactTotalKnown || currentPage >= totalPages || isLoadingMore}
+        onClick={onLastPage}
+        disabled={
+          (isExactTotalKnown ? currentPage >= totalPages : !hasMore || !hasCountRows) ||
+          isLoadingMore ||
+          isCountingTotal
+        }
         className="p-1 rounded text-zinc-400 hover:text-white hover:bg-[#323541] disabled:opacity-30 disabled:pointer-events-none cursor-pointer transition-colors"
-        title={isExactTotalKnown ? `Last Page (${totalPages})` : 'Click total count first to jump to last page'}
+        title={isExactTotalKnown ? `Last Page (${totalPages})` : 'Last Page (counts total rows first)'}
       >
         <ChevronsRight className="h-3.5 w-3.5" />
       </button>

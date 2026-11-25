@@ -79,7 +79,7 @@ export interface DataGridProps {
   onCopyDml?: () => Promise<boolean | void> | void;
   totalCount?: number;
   minTotalCount?: number;
-  onCountRows?: () => Promise<void> | void;
+  onCountRows?: () => Promise<number | void> | number | void;
   hasMore?: boolean;
   isLoadingMore?: boolean;
   hasPrevious?: boolean;

@@ -2605,13 +2605,26 @@ export const DataGrid: React.FC<DataGridProps> = ({
   const startRow = displayedRows.length === 0 ? 0 : currentOffset + 1;
   const endRow = currentOffset + displayedRows.length;
 
-  const handleCountRows = async () => {
-    if (!onCountRows || isCountingTotal) return;
+  const handleCountRows = async (): Promise<number | undefined> => {
+    if (!onCountRows || isCountingTotal) return undefined;
     setIsCountingTotal(true);
     try {
-      await onCountRows();
+      const n = await onCountRows();
+      return typeof n === 'number' ? n : undefined;
     } finally {
       setIsCountingTotal(false);
+    }
+  };
+
+  // Jump to the last page. When the total is only a lower bound, count rows first.
+  const handleGoToLastPage = async () => {
+    if (isExactTotalKnown) {
+      handleNavigatePage(totalPages);
+      return;
+    }
+    const n = await handleCountRows();
+    if (typeof n === 'number') {
+      handleNavigatePage(Math.max(1, Math.ceil(n / localPageSize)));
     }
   };
 
@@ -3437,7 +3450,12 @@ export const DataGrid: React.FC<DataGridProps> = ({
             onClosePageSizeMenu={() => setIsPageSizeOpen(false)}
             onNavigatePage={handleNavigatePage}
             onPageSizeChange={handlePageSizeChange}
-            onCountRows={handleCountRows}
+            onCountRows={() => {
+              void handleCountRows();
+            }}
+            onLastPage={() => {
+              void handleGoToLastPage();
+            }}
           />
         )}
       </div>
