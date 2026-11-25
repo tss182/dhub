@@ -3604,10 +3604,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   const isDbExpanded =
                     !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
                   const baseList = filterLower && !dbMatches ? matchingObjects : allObjects;
+                  const warnings = c.driver === 'redis' ? [] : allObjects.filter((o) => o.type === 'warning');
                   const tables =
                     c.driver === 'redis'
                       ? baseList
-                      : baseList.filter((o) => o.type === 'table' || (!o.type && !['view', 'materialized_view', 'routine', 'trigger', 'event', 'sequence', 'extension'].includes(o.type)));
+                      : baseList.filter((o) => o.type === 'table' || (!o.type && !['view', 'materialized_view', 'routine', 'trigger', 'event', 'sequence', 'extension', 'warning'].includes(o.type)));
                   const views = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'view');
                   const matViews = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'materialized_view');
                   const routines = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'routine');
@@ -3641,7 +3642,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                           })
                         }
                         onMouseLeave={handleItemMouseLeave}
-                        title={dbName}
+                        title={
+                          warnings.length > 0
+                            ? `${dbName}\nWarnings:\n${warnings.map((w) => `- ${w.name}: ${w.comment}`).join('\n')}`
+                            : dbName
+                        }
                         className={`group/db flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[#22242c] text-zinc-300 ${
                           isDbActive ? 'bg-[#22242c] text-zinc-100 font-medium' : ''
                         }`}
@@ -7585,6 +7590,34 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     >
                       <Hash className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
                       <span>Count Exact Rows</span>
+                    </button>
+                  )}
+
+                  {contextMenu.connection!.driver === 'mariadb' && contextMenu.table!.type === 'table' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const conn = contextMenu.connection!;
+                        const db = contextMenu.database || '';
+                        const tbl = contextMenu.table!.name;
+                        closeContextMenu();
+                        const qTbl = db
+                          ? `${quoteSqlIdentifier('mariadb', db)}.${quoteSqlIdentifier('mariadb', tbl)}`
+                          : quoteSqlIdentifier('mariadb', tbl);
+                        openTab({
+                          id: `temporal-${conn.id}-${db}-${tbl}-${Date.now()}`,
+                          type: 'worksheet',
+                          title: `history_${tbl}.sql`,
+                          connectionId: conn.id,
+                          database: db,
+                          schema: db,
+                          content: `-- MariaDB System-Versioned Temporal Query\nSELECT * FROM ${qTbl} FOR SYSTEM_TIME ALL LIMIT 100;\n-- SELECT * FROM ${qTbl} FOR SYSTEM_TIME AS OF TIMESTAMP '2026-01-01 00:00:00';\n`,
+                        });
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Clock className="h-3.5 w-3.5 text-purple-400 group-hover:text-white" />
+                      <span>Query Temporal History (FOR SYSTEM_TIME)</span>
                     </button>
                   )}
 

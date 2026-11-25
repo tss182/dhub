@@ -31,10 +31,18 @@ export const GridCellEditor: React.FC<GridCellEditorProps> = ({
 
   const enumValues = column?.enumValues?.filter(Boolean) || [];
   const rawType = (column?.rawType || column?.dataType || '').toLowerCase().trim();
+  const dataTypeLower = (column?.dataType || '').toLowerCase().trim();
+  const isSetType = dataTypeLower.startsWith('set(');
   const isBoolean = rawType === 'bool' || rawType === 'boolean';
+  const isBitOne = rawType === 'bit(1)' || dataTypeLower === 'bit(1)';
 
-  if (enumValues.length > 0 || isBoolean) {
-    const options = enumValues.length > 0 ? enumValues : ['true', 'false'];
+  if ((!isSetType && enumValues.length > 0) || isBoolean || isBitOne) {
+    const options =
+      !isSetType && enumValues.length > 0
+        ? enumValues
+        : isBitOne
+        ? ['1', '0']
+        : ['true', 'false'];
     const normalizedVal = isBoolean
       ? editVal.toLowerCase() === 't' || editVal.toLowerCase() === 'true' || editVal === '1'
         ? 'true'

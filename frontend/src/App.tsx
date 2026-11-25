@@ -582,8 +582,16 @@ export function App() {
     loadTableData(tab, 0, currentSize, 'replace', 1);
   };
 
+  const prevTabsRef = useRef<WorkbenchTab[]>([]);
   useEffect(() => {
     const tabIdSet = new Set(tabs.map((t) => t.id));
+    prevTabsRef.current.forEach((prevTab) => {
+      if (!tabIdSet.has(prevTab.id) && prevTab.connectionId) {
+        (QueryService as any).CloseTabSession?.(prevTab.connectionId, prevTab.id)?.catch?.(() => {});
+      }
+    });
+    prevTabsRef.current = tabs;
+
     Object.entries(txStatusByTab).forEach(([tId, st]) => {
       if (!tabIdSet.has(tId) && st.isOpen) {
         // Remove entry first so rollback is only sent once per closed tab

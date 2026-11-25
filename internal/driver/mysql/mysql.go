@@ -194,6 +194,15 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 				})
 			}
 		}
+	} else {
+		objects = append(objects, driver.ObjectSummary{
+			Schema:      targetDB,
+			Name:        "routines",
+			Type:        "warning",
+			RowEstimate: -1,
+			Comment:     rErr.Error(),
+			IsInternal:  true,
+		})
 	}
 
 	// Triggers
@@ -213,6 +222,15 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 				})
 			}
 		}
+	} else {
+		objects = append(objects, driver.ObjectSummary{
+			Schema:      targetDB,
+			Name:        "triggers",
+			Type:        "warning",
+			RowEstimate: -1,
+			Comment:     tErr.Error(),
+			IsInternal:  true,
+		})
 	}
 
 	// Events (Scheduled Tasks - supported in MySQL 5.1+)
@@ -231,6 +249,15 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 				})
 			}
 		}
+	} else {
+		objects = append(objects, driver.ObjectSummary{
+			Schema:      targetDB,
+			Name:        "events",
+			Type:        "warning",
+			RowEstimate: -1,
+			Comment:     eErr.Error(),
+			IsInternal:  true,
+		})
 	}
 
 	return objects, nil

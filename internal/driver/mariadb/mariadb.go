@@ -197,6 +197,15 @@ func (m *MariaDBDriver) ListObjects(ctx context.Context, database, schema string
 				})
 			}
 		}
+	} else {
+		objects = append(objects, driver.ObjectSummary{
+			Schema:      targetDB,
+			Name:        "routines",
+			Type:        "warning",
+			RowEstimate: -1,
+			Comment:     rErr.Error(),
+			IsInternal:  true,
+		})
 	}
 
 	// Triggers
@@ -216,6 +225,15 @@ func (m *MariaDBDriver) ListObjects(ctx context.Context, database, schema string
 				})
 			}
 		}
+	} else {
+		objects = append(objects, driver.ObjectSummary{
+			Schema:      targetDB,
+			Name:        "triggers",
+			Type:        "warning",
+			RowEstimate: -1,
+			Comment:     tErr.Error(),
+			IsInternal:  true,
+		})
 	}
 
 	// Events (Scheduled Tasks)
@@ -234,6 +252,15 @@ func (m *MariaDBDriver) ListObjects(ctx context.Context, database, schema string
 				})
 			}
 		}
+	} else {
+		objects = append(objects, driver.ObjectSummary{
+			Schema:      targetDB,
+			Name:        "events",
+			Type:        "warning",
+			RowEstimate: -1,
+			Comment:     eErr.Error(),
+			IsInternal:  true,
+		})
 	}
 
 	return objects, nil
