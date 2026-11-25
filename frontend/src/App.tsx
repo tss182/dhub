@@ -16,6 +16,7 @@ import { CopyFormatSelector } from './components/grid/CopyFormatSelector';
 import { ResultChartPanel } from './components/grid/ResultChartPanel';
 import { VectorSearchPanel, VectorSearchStats } from './components/grid/VectorSearchPanel';
 import { VectorPcaChart } from './components/grid/VectorPcaChart';
+import { isVectorColumn } from './components/grid/gridFormatters';
 
 const SqlWorksheet = lazy(() =>
   import('./components/editor/SqlWorksheet').then((m) => ({ default: m.SqlWorksheet }))
@@ -470,13 +471,15 @@ export function App() {
     }));
 
     try {
+      const limitMatch = sql.match(/\bLIMIT\s+(\d+)\b/i);
+      const requestedLimit = limitMatch ? Math.max(100, Number(limitMatch[1]) || 100) : 100;
       const res = await QueryService.ExecuteQuery({
         executionId: 'vec-search-' + Date.now(),
         connectionId: tab.connectionId,
         database: targetDb,
         schema: targetSchema,
         sql,
-        limit: 100,
+        limit: requestedLimit,
         offset: 0,
       } as any);
 
@@ -511,10 +514,10 @@ export function App() {
             }
             return c;
           });
-          // Keep vector columns from schema metadata even if Return Vectors was unchecked
+          // Keep vector columns from schema metadata even if Return Vectors / Hide Vector Fields was toggled
           for (const old of prevCols) {
             if (
-              (old.name === 'vector' || old.name.startsWith('vector.') || old.rawType === 'vector') &&
+              (old.name === 'vector' || old.name.startsWith('vector.') || isVectorColumn(old.dataType, old.rawType)) &&
               !mergedCols.some((c) => c.name === old.name)
             ) {
               mergedCols.push(old);
@@ -1593,10 +1596,10 @@ export function App() {
 
       // 3. Query table data using dialect-aware pagination via ExecuteQuery limit/offset
       let selectProjection = '*';
-      if (effectiveDriver === 'elasticsearch' && excludeVectorsByTab[tab.id] && structureColumns.length > 0) {
+      if ((effectiveDriver === 'elasticsearch' || effectiveDriver === 'postgres') && excludeVectorsByTab[tab.id] && structureColumns.length > 0) {
         const nonVecCols = structureColumns
-          .filter((c) => c.rawType !== 'vector')
-          .map((c) => c.name);
+          .filter((c) => !isVectorColumn(c.dataType, c.rawType))
+          .map((c) => (effectiveDriver === 'postgres' ? quoteIdent(c.name) : c.name));
         if (nonVecCols.length > 0) {
           selectProjection = nonVecCols.join(', ');
         }

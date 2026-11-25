@@ -83,6 +83,17 @@ export const ConnectionDialog: React.FC = () => {
   const [mongoReadPreference, setMongoReadPreference] = useState('primaryPreferred');
   const [pgExecMode, setPgExecMode] = useState<'cache_statement' | 'simple_protocol'>('cache_statement');
 
+  // MySQL / MariaDB advanced options (persisted in optionsJson)
+  const [mysqlUnixSocket, setMysqlUnixSocket] = useState('');
+  const [mysqlCollation, setMysqlCollation] = useState('');
+  const [mysqlTimeZone, setMysqlTimeZone] = useState('');
+  const [mysqlInitSql, setMysqlInitSql] = useState('');
+  const [mysqlMaxExecMs, setMysqlMaxExecMs] = useState('');
+  const [mysqlCompress, setMysqlCompress] = useState(false);
+  const [mysqlAllowCleartext, setMysqlAllowCleartext] = useState(false);
+  const [mysqlReadTimeout, setMysqlReadTimeout] = useState('');
+  const [mysqlWriteTimeout, setMysqlWriteTimeout] = useState('');
+
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -145,12 +156,30 @@ export const ConnectionDialog: React.FC = () => {
             setMongoReplicaSet(typeof opts.replicaSet === 'string' ? opts.replicaSet : '');
             setMongoDirectConnection(Boolean(opts.directConnection));
             setMongoReadPreference(typeof opts.readPreference === 'string' ? opts.readPreference : 'primaryPreferred');
+            setMysqlUnixSocket(typeof opts.unixSocket === 'string' ? opts.unixSocket : '');
+            setMysqlCollation(typeof opts.collation === 'string' ? opts.collation : '');
+            setMysqlTimeZone(typeof opts.timeZone === 'string' ? opts.timeZone : '');
+            setMysqlInitSql(typeof opts.initSql === 'string' ? opts.initSql : '');
+            setMysqlMaxExecMs(opts.maxExecutionTimeMs ? String(opts.maxExecutionTimeMs) : '');
+            setMysqlCompress(Boolean(opts.compress));
+            setMysqlAllowCleartext(Boolean(opts.allowCleartextPasswords));
+            setMysqlReadTimeout(typeof opts.readTimeout === 'string' ? opts.readTimeout : '');
+            setMysqlWriteTimeout(typeof opts.writeTimeout === 'string' ? opts.writeTimeout : '');
           } catch {
             setMongoAuthSource('admin');
             setMongoAuthMechanism('');
             setMongoReplicaSet('');
             setMongoDirectConnection(false);
             setMongoReadPreference('primaryPreferred');
+            setMysqlUnixSocket('');
+            setMysqlCollation('');
+            setMysqlTimeZone('');
+            setMysqlInitSql('');
+            setMysqlMaxExecMs('');
+            setMysqlCompress(false);
+            setMysqlAllowCleartext(false);
+            setMysqlReadTimeout('');
+            setMysqlWriteTimeout('');
           }
         }
       }).catch((e) => {
@@ -372,6 +401,18 @@ export const ConnectionDialog: React.FC = () => {
           ? JSON.stringify({
               ...(existing?.optionsJson ? (() => { try { return JSON.parse(existing.optionsJson); } catch { return {}; } })() : {}),
               defaultQueryExecMode: pgExecMode,
+            })
+          : driver === 'mysql' || driver === 'mariadb'
+          ? JSON.stringify({
+              unixSocket: mysqlUnixSocket.trim() || undefined,
+              collation: mysqlCollation.trim() || undefined,
+              timeZone: mysqlTimeZone.trim() || undefined,
+              initSql: mysqlInitSql.trim() || undefined,
+              maxExecutionTimeMs: Number(mysqlMaxExecMs) > 0 ? Number(mysqlMaxExecMs) : undefined,
+              compress: mysqlCompress || undefined,
+              allowCleartextPasswords: mysqlAllowCleartext || undefined,
+              readTimeout: mysqlReadTimeout.trim() || undefined,
+              writeTimeout: mysqlWriteTimeout.trim() || undefined,
             })
           : existing?.optionsJson || '{}',
       sortOrder,
@@ -1046,6 +1087,108 @@ export const ConnectionDialog: React.FC = () => {
                                 {p.label}
                               </button>
                             ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {(driver === 'mysql' || driver === 'mariadb') && (
+                        <div className="space-y-2.5 pt-2 border-t border-[#232530]">
+                          <div className="text-[11px] font-semibold text-zinc-300">
+                            {driver === 'mariadb' ? 'MariaDB' : 'MySQL'} Advanced Options
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">Unix Socket Path</label>
+                              <input
+                                type="text"
+                                placeholder="/var/run/mysqld/mysqld.sock"
+                                value={mysqlUnixSocket}
+                                onChange={(e) => setMysqlUnixSocket(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">Collation</label>
+                              <input
+                                type="text"
+                                placeholder="utf8mb4_general_ci"
+                                value={mysqlCollation}
+                                onChange={(e) => setMysqlCollation(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono text-xs"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">Session Time Zone</label>
+                              <input
+                                type="text"
+                                placeholder="+07:00 or UTC"
+                                value={mysqlTimeZone}
+                                onChange={(e) => setMysqlTimeZone(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">Query Timeout (ms)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                placeholder="e.g. 30000"
+                                value={mysqlMaxExecMs}
+                                onChange={(e) => setMysqlMaxExecMs(e.target.value)}
+                                className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] text-zinc-400 mb-1">Read / Write Timeout</label>
+                              <div className="flex gap-1">
+                                <input
+                                  type="text"
+                                  placeholder="30s"
+                                  value={mysqlReadTimeout}
+                                  onChange={(e) => setMysqlReadTimeout(e.target.value)}
+                                  className="w-1/2 rounded bg-[#121317] border border-[#272932] px-2 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono text-xs"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="30s"
+                                  value={mysqlWriteTimeout}
+                                  onChange={(e) => setMysqlWriteTimeout(e.target.value)}
+                                  className="w-1/2 rounded bg-[#121317] border border-[#272932] px-2 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono text-xs"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] text-zinc-400 mb-1">Init SQL (per connection)</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. SET SESSION sql_mode='STRICT_TRANS_TABLES'"
+                              value={mysqlInitSql}
+                              onChange={(e) => setMysqlInitSql(e.target.value)}
+                              className="w-full rounded bg-[#121317] border border-[#272932] px-3 py-1.5 text-zinc-200 focus:border-blue-500 focus:outline-none font-mono text-xs"
+                            />
+                          </div>
+                          <div className="flex items-center gap-4 pt-1">
+                            <label className="flex items-center gap-2 text-[11px] text-zinc-300 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={mysqlCompress}
+                                onChange={(e) => setMysqlCompress(e.target.checked)}
+                                className="rounded border-[#3b3e4f] bg-[#121317]"
+                              />
+                              <span>Protocol Compression</span>
+                            </label>
+                            <label className="flex items-center gap-2 text-[11px] text-zinc-300 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={mysqlAllowCleartext}
+                                onChange={(e) => setMysqlAllowCleartext(e.target.checked)}
+                                className="rounded border-[#3b3e4f] bg-[#121317]"
+                              />
+                              <span>Allow Cleartext Passwords (TLS only)</span>
+                            </label>
                           </div>
                         </div>
                       )}

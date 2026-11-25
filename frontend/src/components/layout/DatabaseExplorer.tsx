@@ -6432,8 +6432,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       closeContextMenu();
                       handleSequenceClick(
                         contextMenu.connection!,
-                        contextMenu.database || 'main',
-                        contextMenu.schema || 'main',
+                        contextMenu.database || getDriverCapabilities(contextMenu.connection!.driver).defaultDatabase,
+                        contextMenu.schema || getDriverCapabilities(contextMenu.connection!.driver).defaultDatabase,
                         contextMenu.table!.name
                       );
                     }}
@@ -6511,8 +6511,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       closeContextMenu();
                       handleDeleteSequence(
                         contextMenu.connection!,
-                        contextMenu.database || 'main',
-                        contextMenu.schema || 'main',
+                        contextMenu.database || getDriverCapabilities(contextMenu.connection!.driver).defaultDatabase,
+                        contextMenu.schema || getDriverCapabilities(contextMenu.connection!.driver).defaultDatabase,
                         contextMenu.table!.name
                       );
                     }}

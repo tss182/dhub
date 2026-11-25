@@ -1064,7 +1064,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
             {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </button>
 
-          {driver === 'elasticsearch' && onToggleExcludeVectors && vectorColumns.length > 0 && (
+          {(driver === 'elasticsearch' || driver === 'postgres') && onToggleExcludeVectors && vectorColumns.length > 0 && (
             <button
               type="button"
               onClick={onToggleExcludeVectors}
@@ -1073,9 +1073,19 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                   ? 'bg-amber-600/20 border-amber-500/40 text-amber-200 font-medium'
                   : 'bg-[#1e2028] hover:bg-[#272a35] text-zinc-400 border-[#2d303c]'
               }`}
-              title="Exclude dense_vector / knn_vector fields from _source when browsing for faster loads"
+              title={
+                driver === 'postgres'
+                  ? 'Exclude vector / halfvec / sparsevec / bit columns when browsing for faster table loads'
+                  : 'Exclude dense_vector / knn_vector fields from _source when browsing for faster loads'
+              }
             >
-              <span>{excludeVectors ? 'Vectors Hidden (_source.excludes)' : 'Hide Vector Fields'}</span>
+              <span>
+                {excludeVectors
+                  ? driver === 'postgres'
+                    ? 'Vectors Hidden (Fast Browse)'
+                    : 'Vectors Hidden (_source.excludes)'
+                  : 'Hide Vector Fields'}
+              </span>
             </button>
           )}
 

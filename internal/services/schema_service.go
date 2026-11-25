@@ -9,6 +9,7 @@ import (
 
 	"dhub/internal/app"
 	"dhub/internal/driver"
+	"dhub/internal/driver/postgres"
 	"dhub/internal/manager"
 	"dhub/internal/store"
 
@@ -299,4 +300,61 @@ func (s *SchemaService) UploadQdrantSnapshot(connectionID, collectionName, fileP
 		return fmt.Errorf("connection does not support Qdrant snapshot upload")
 	}
 	return qd.UploadSnapshot(ctx, collectionName, filePath)
+}
+
+// GetPgVectorStatus returns pgvector extension status and version capabilities for a PostgreSQL database.
+func (s *SchemaService) GetPgVectorStatus(connectionID, database string) (*postgres.PgVectorStatus, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	pgDrv, ok := drv.(*postgres.PostgresDriver)
+	if !ok {
+		return nil, fmt.Errorf("connection is not a PostgreSQL driver")
+	}
+	return pgDrv.GetPgVectorStatus(ctx, database)
+}
+
+// GetTableVectorOverview returns vector columns, vector indexes (with parsed opclasses & WITH params),
+// and active index build progress for a PostgreSQL table.
+func (s *SchemaService) GetTableVectorOverview(connectionID, database, schema, table string) (*postgres.TableVectorOverview, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	pgDrv, ok := drv.(*postgres.PostgresDriver)
+	if !ok {
+		return nil, fmt.Errorf("connection is not a PostgreSQL driver")
+	}
+	return pgDrv.GetTableVectorOverview(ctx, database, schema, table)
+}
+
+// InstallOrUpgradePgVector installs or updates the pgvector extension on a PostgreSQL database.
+func (s *SchemaService) InstallOrUpgradePgVector(connectionID, database, action string) (*postgres.PgVectorStatus, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg, cErr := s.store.GetConnection(ctx, connectionID)
+	if cErr != nil {
+		return nil, fmt.Errorf("blocked: failed to verify connection permissions: %w", cErr)
+	}
+	if cfg != nil && cfg.IsReadOnly {
+		return nil, fmt.Errorf("blocked: connection %q is configured as read-only", cfg.Name)
+	}
+
+	drv, err := s.sessions.GetOrConnect(ctx, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	pgDrv, ok := drv.(*postgres.PostgresDriver)
+	if !ok {
+		return nil, fmt.Errorf("connection is not a PostgreSQL driver")
+	}
+	return pgDrv.InstallOrUpgradePgVector(ctx, database, action)
 }

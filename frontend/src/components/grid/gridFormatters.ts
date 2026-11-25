@@ -2,6 +2,7 @@ import { ColumnMeta } from '../../types/domain';
 import { CopyFormat } from '../../stores/useSettingsStore';
 import { StagedRowChange } from '../../stores/useGridEditStore';
 import { CellRect, VisualRow } from './gridTypes';
+import { detectPgVectorColumnKind, parsePgBitVec, parsePgSparseVec } from '../../utils/pgvector';
 
 export function parseColumnTypeDetails(dataType?: string) {
   if (!dataType) return { baseType: 'UNKNOWN', size: null, extra: null };
@@ -1027,16 +1028,10 @@ export function formatSelectedCells(params: {
 export function isVectorColumn(dataType?: string, rawType?: string): boolean {
   const dt = (dataType || '').trim().toLowerCase();
   const rt = (rawType || '').trim().toLowerCase();
-  return (
-    dt.startsWith('vector') ||
-    dt.startsWith('halfvec') ||
-    dt.startsWith('sparsevec') ||
-    dt.startsWith('dense_vector') ||
-    rt === 'vector' ||
-    rt === 'halfvec' ||
-    rt === 'sparsevec' ||
-    rt === 'dense_vector'
-  );
+  if (detectPgVectorColumnKind(dataType, rawType).kind !== null) {
+    return true;
+  }
+  return dt.startsWith('dense_vector') || rt === 'dense_vector';
 }
 
 /**
@@ -1048,10 +1043,29 @@ export function parseVectorPreview(
   dataType?: string,
   rawType?: string,
   maxPreview = 4
-): { dims: number; preview: string; kind?: 'dense' | 'sparse' | 'multi' } | null {
+): { dims: number; preview: string; kind?: 'dense' | 'sparse' | 'multi' | 'bit' } | null {
   if (val === null || val === undefined) return null;
+  const pgKind = detectPgVectorColumnKind(dataType, rawType);
   const knownVector = isVectorColumn(dataType, rawType);
   const dtLower = (dataType || '').toLowerCase();
+
+  // pgvector native sparsevec `{1:0.5,3:0.8}/1000`
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') && trimmed.includes('}/')) {
+      const sp = parsePgSparseVec(trimmed);
+      if (sp) {
+        return { dims: sp.dims, preview: `sparse (${sp.nnz}/${sp.dims})`, kind: 'sparse' };
+      }
+    }
+    if (pgKind.kind === 'bit') {
+      const bv = parsePgBitVec(trimmed);
+      if (bv) {
+        const pct = Math.round(bv.density * 100);
+        return { dims: bv.dims, preview: `bit (${bv.dims}b, ${pct}% 1s)`, kind: 'bit' };
+      }
+    }
+  }
 
   // Sparse vector object or JSON string: {"indices": [...], "values": [...]}
   if (typeof val === 'object' && !Array.isArray(val) && Array.isArray(val.indices) && Array.isArray(val.values)) {

@@ -10,6 +10,7 @@ import (
 
 	"dhub/internal/app"
 	"dhub/internal/driver"
+	"dhub/internal/driver/postgres"
 	"dhub/internal/manager"
 	"dhub/internal/store"
 
@@ -540,6 +541,53 @@ func (q *QueryService) SubmitChanges(connectionID, database, schema, table strin
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return drv.ApplyChanges(ctx, database, schema, table, changes)
+}
+
+type PgVectorSearchRequest struct {
+	ExecutionID   string            `json:"executionId"`
+	ConnectionID  string            `json:"connectionId"`
+	Database      string            `json:"database"`
+	Schema        string            `json:"schema"`
+	SQL           string            `json:"sql"`
+	Limit         int               `json:"limit"`
+	SessionParams map[string]string `json:"sessionParams,omitempty"`
+}
+
+func (q *QueryService) ExecutePgVectorSearch(req PgVectorSearchRequest) (*driver.QueryResult, error) {
+	cfg, cfgErr := q.store.GetConnection(context.Background(), req.ConnectionID)
+	if cfgErr != nil {
+		return nil, fmt.Errorf("execution blocked: failed to verify connection permissions: %w", cfgErr)
+	}
+	if cfg != nil && cfg.IsReadOnly {
+		stmts := driver.SplitStatementsForDialect(req.SQL, "postgres")
+		for _, stmt := range stmts {
+			if !driver.IsReadOnlySafeQueryForDialect(stmt, "postgres") {
+				return nil, fmt.Errorf("execution blocked: connection %q is configured as read-only", cfg.Name)
+			}
+		}
+	}
+
+	drv, err := q.sessions.GetOrConnect(context.Background(), req.ConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	pgDrv, ok := drv.(*postgres.PostgresDriver)
+	if !ok {
+		return nil, fmt.Errorf("connection is not a PostgreSQL driver")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	qReq := driver.QueryRequest{
+		ExecutionID:  req.ExecutionID,
+		ConnectionID: req.ConnectionID,
+		Database:     req.Database,
+		Schema:       req.Schema,
+		SQL:          req.SQL,
+		Limit:        req.Limit,
+	}
+	return pgDrv.ExecutePgVectorSearch(ctx, qReq, req.SessionParams)
 }
 
 func (q *QueryService) emitStatus(execID, state, message string) {

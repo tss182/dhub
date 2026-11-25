@@ -59,6 +59,36 @@ const PG_DBA_SNIPPETS: Snippet[] = [
   },
 ];
 
+const MARIADB_SNIPPETS: Snippet[] = [
+  {
+    id: 'mariadb-sequence-ops',
+    title: 'MariaDB: Sequence Operations (NEXTVAL / SETVAL)',
+    description: 'Read next value, last value, or reset a MariaDB sequence',
+    sqlText: `SELECT NEXT VALUE FOR my_seq;\nSELECT LASTVAL(my_seq);\nSELECT SETVAL(my_seq, 100, 0);`,
+    driver: 'mariadb',
+    tags: 'sequence,nextval,setval',
+    updatedAt: '',
+  },
+  {
+    id: 'mariadb-insert-returning',
+    title: 'MariaDB: INSERT / DELETE ... RETURNING',
+    description: 'Return inserted or deleted rows directly in MariaDB 10.5+',
+    sqlText: `INSERT INTO my_table (name) VALUES ('alice') RETURNING id, name, created_at;`,
+    driver: 'mariadb',
+    tags: 'returning,dml',
+    updatedAt: '',
+  },
+  {
+    id: 'mariadb-system-time',
+    title: 'MariaDB: Temporal Query (FOR SYSTEM_TIME)',
+    description: 'Query historical rows from a system-versioned table',
+    sqlText: `SELECT * FROM my_versioned_table FOR SYSTEM_TIME AS OF TIMESTAMP '2026-01-01 00:00:00';`,
+    driver: 'mariadb',
+    tags: 'temporal,system_time,versioning',
+    updatedAt: '',
+  },
+];
+
 export const SnippetsModal: React.FC<SnippetsModalProps> = ({
   isOpen,
   onClose,
@@ -76,7 +106,11 @@ export const SnippetsModal: React.FC<SnippetsModalProps> = ({
       const list = await (WorkspaceService as any).ListSnippets();
       const custom = list || [];
       const existingTitles = new Set(custom.map((s: Snippet) => s.title));
-      setSnippets([...custom, ...PG_DBA_SNIPPETS.filter((s) => !existingTitles.has(s.title))]);
+      setSnippets([
+        ...custom,
+        ...PG_DBA_SNIPPETS.filter((s) => !existingTitles.has(s.title)),
+        ...MARIADB_SNIPPETS.filter((s) => !existingTitles.has(s.title)),
+      ]);
     } catch (err: any) {
       alertError(err?.message || 'Failed to load snippets');
     }
