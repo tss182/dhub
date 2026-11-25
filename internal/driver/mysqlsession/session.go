@@ -51,7 +51,12 @@ type Manager struct {
 
 // New opens separated metadata and session pools for a MySQL or MariaDB driver.
 func New(dsn, defaultDB, dialect string, readOnly bool) (*Manager, error) {
-	metaPool, err := mysqlconn.Open(dsn, readOnly)
+	return NewWithInitSQL(dsn, defaultDB, dialect, readOnly, "")
+}
+
+// NewWithInitSQL opens separated metadata and session pools, running initSQL on every new connection.
+func NewWithInitSQL(dsn, defaultDB, dialect string, readOnly bool, initSQL string) (*Manager, error) {
+	metaPool, err := mysqlconn.OpenWithInitSQL(dsn, readOnly, initSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +65,7 @@ func New(dsn, defaultDB, dialect string, readOnly bool) (*Manager, error) {
 	metaPool.SetConnMaxIdleTime(2 * time.Minute)
 	metaPool.SetConnMaxLifetime(30 * time.Minute)
 
-	sessionPool, err := mysqlconn.Open(dsn, readOnly)
+	sessionPool, err := mysqlconn.OpenWithInitSQL(dsn, readOnly, initSQL)
 	if err != nil {
 		_ = metaPool.Close()
 		return nil, err

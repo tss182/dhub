@@ -97,8 +97,9 @@ type ObjectSummary struct {
 }
 
 type CheckConstraintMeta struct {
-	Name   string `json:"name"`
-	Clause string `json:"clause"`
+	Name       string `json:"name"`
+	Clause     string `json:"clause"`
+	IsEnforced *bool  `json:"isEnforced,omitempty"`
 }
 
 type TriggerMeta struct {

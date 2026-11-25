@@ -6443,6 +6443,57 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     <span>Open Sequence Definition</span>
                   </button>
 
+                  {contextMenu.connection?.driver === 'mariadb' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || '';
+                          const seqName = contextMenu.table!.name;
+                          closeContextMenu();
+                          const qSeq = db ? `${quoteSqlIdentifier('mariadb', db)}.${quoteSqlIdentifier('mariadb', seqName)}` : quoteSqlIdentifier('mariadb', seqName);
+                          openTab({
+                            id: `seq-nextval-${Date.now()}`,
+                            type: 'worksheet',
+                            title: `nextval_${seqName}.sql`,
+                            connectionId: conn.id,
+                            database: db,
+                            schema: db,
+                            content: `-- Advance and read next sequence value\nSELECT NEXT VALUE FOR ${qSeq};\n-- SELECT LASTVAL(${qSeq});\n`,
+                          });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Hash className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                        <span>Next Value / Alter Sequence</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const conn = contextMenu.connection!;
+                          const db = contextMenu.database || '';
+                          const seqName = contextMenu.table!.name;
+                          closeContextMenu();
+                          const qSeq = db ? `${quoteSqlIdentifier('mariadb', db)}.${quoteSqlIdentifier('mariadb', seqName)}` : quoteSqlIdentifier('mariadb', seqName);
+                          openTab({
+                            id: `seq-alter-${Date.now()}`,
+                            type: 'worksheet',
+                            title: `alter_${seqName}.sql`,
+                            connectionId: conn.id,
+                            database: db,
+                            schema: db,
+                            content: `-- Alter or reset sequence ${seqName}\nALTER SEQUENCE ${qSeq} RESTART WITH 1;\n-- SELECT SETVAL(${qSeq}, 100, 0);\n`,
+                          });
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                      >
+                        <Pencil className="h-3.5 w-3.5 text-amber-400 group-hover:text-white" />
+                        <span>Alter / Reset Sequence...</span>
+                      </button>
+                    </>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => handleCopyText(contextMenu.table!.name)}

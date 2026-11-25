@@ -398,10 +398,11 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		if err != nil {
 			return nil, err
 		}
+		initSQL := extractMySQLInitSQL(cfg)
 		if cfg.Driver == "mariadb" {
-			return mariadb.NewMariaDBDriverWithOptions(mc.FormatDSN(), cfg.IsReadOnly)
+			return mariadb.NewMariaDBDriverWithInitSQL(mc.FormatDSN(), cfg.IsReadOnly, initSQL)
 		}
-		return mysql.NewMySQLDriverWithOptions(mc.FormatDSN(), cfg.IsReadOnly)
+		return mysql.NewMySQLDriverWithInitSQL(mc.FormatDSN(), cfg.IsReadOnly, initSQL)
 	case "redis":
 		if port <= 0 {
 			port = 6379

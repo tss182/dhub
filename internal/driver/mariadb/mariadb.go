@@ -37,12 +37,17 @@ func NewMariaDBDriver(dsn string) (*MariaDBDriver, error) {
 // NewMariaDBDriverWithOptions opens the driver. With readOnly set, the server itself rejects writes on every
 // pooled connection, as a second line of defence behind the client-side read-only check.
 func NewMariaDBDriverWithOptions(dsn string, readOnly bool) (*MariaDBDriver, error) {
+	return NewMariaDBDriverWithInitSQL(dsn, readOnly, "")
+}
+
+// NewMariaDBDriverWithInitSQL opens the driver with read-only enforcement and an optional init SQL statement.
+func NewMariaDBDriverWithInitSQL(dsn string, readOnly bool, initSQL string) (*MariaDBDriver, error) {
 	var defaultDB string
 	if cfg, parseErr := mysqldriver.ParseDSN(dsn); parseErr == nil {
 		defaultDB = cfg.DBName
 	}
 
-	sess, err := mysqlsession.New(dsn, defaultDB, "mariadb", readOnly)
+	sess, err := mysqlsession.NewWithInitSQL(dsn, defaultDB, "mariadb", readOnly, initSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -145,11 +150,19 @@ func (m *MariaDBDriver) ListObjects(ctx context.Context, database, schema string
 		}
 		upperType := strings.ToUpper(strings.TrimSpace(objType))
 		t := "table"
+		isInternal := false
 		if strings.Contains(upperType, "VIEW") {
 			t = "view"
+			if strings.Contains(upperType, "SYSTEM") {
+				isInternal = true
+			}
 		} else if upperType == "SEQUENCE" {
 			t = "sequence"
 			rowsEst = -1
+		}
+		switch strings.ToLower(targetDB) {
+		case "mysql", "information_schema", "performance_schema", "sys":
+			isInternal = true
 		}
 		objects = append(objects, driver.ObjectSummary{
 			Schema:      targetDB,
@@ -158,6 +171,7 @@ func (m *MariaDBDriver) ListObjects(ctx context.Context, database, schema string
 			RowEstimate: rowsEst,
 			SizePretty:  formatBytes(sizeBytes),
 			Comment:     comment,
+			IsInternal:  isInternal,
 		})
 	}
 
@@ -415,6 +429,10 @@ func (m *MariaDBDriver) GetTableStructure(ctx context.Context, database, schema,
 		for chkRows.Next() {
 			var cName, clause string
 			if err := chkRows.Scan(&cName, &clause); err == nil {
+				// MariaDB creates an implicit json_valid(...) check constraint for JSON alias columns.
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(clause)), "json_valid(") {
+					continue
+				}
 				structure.CheckConstraints = append(structure.CheckConstraints, driver.CheckConstraintMeta{
 					Name:   cName,
 					Clause: clause,

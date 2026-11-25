@@ -37,12 +37,17 @@ func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
 // NewMySQLDriverWithOptions opens the driver. With readOnly set, the server itself rejects writes on every
 // pooled connection, as a second line of defence behind the client-side read-only check.
 func NewMySQLDriverWithOptions(dsn string, readOnly bool) (*MySQLDriver, error) {
+	return NewMySQLDriverWithInitSQL(dsn, readOnly, "")
+}
+
+// NewMySQLDriverWithInitSQL opens the driver with read-only enforcement and an optional init SQL statement.
+func NewMySQLDriverWithInitSQL(dsn string, readOnly bool, initSQL string) (*MySQLDriver, error) {
 	var defaultDB string
 	if cfg, parseErr := mysqldriver.ParseDSN(dsn); parseErr == nil {
 		defaultDB = cfg.DBName
 	}
 
-	sess, err := mysqlsession.New(dsn, defaultDB, "mysql", readOnly)
+	sess, err := mysqlsession.NewWithInitSQL(dsn, defaultDB, "mysql", readOnly, initSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -144,8 +149,17 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 			return nil, fmt.Errorf("reading tables of %s: %w", targetDB, err)
 		}
 		t := "table"
-		if strings.Contains(strings.ToUpper(objType), "VIEW") {
+		isInternal := false
+		upperType := strings.ToUpper(objType)
+		if strings.Contains(upperType, "VIEW") {
 			t = "view"
+			if strings.Contains(upperType, "SYSTEM") {
+				isInternal = true
+			}
+		}
+		switch strings.ToLower(targetDB) {
+		case "mysql", "information_schema", "performance_schema", "sys":
+			isInternal = true
 		}
 		objects = append(objects, driver.ObjectSummary{
 			Schema:      targetDB,
@@ -154,6 +168,7 @@ func (m *MySQLDriver) ListObjects(ctx context.Context, database, schema string) 
 			RowEstimate: rowsEst,
 			SizePretty:  formatBytes(sizeBytes),
 			Comment:     comment,
+			IsInternal:  isInternal,
 		})
 	}
 
@@ -389,7 +404,7 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 	}
 
 	// 3c. Fetch Check Constraints (MySQL 8.0.16+)
-	chkQuery := `SELECT tc.constraint_name, cc.check_clause
+	chkQuery := `SELECT tc.constraint_name, cc.check_clause, tc.enforced
 		FROM information_schema.table_constraints tc
 		JOIN information_schema.check_constraints cc
 			ON tc.constraint_schema = cc.constraint_schema
@@ -400,12 +415,35 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 	if chkRows, chkErr := m.db.QueryContext(ctx, chkQuery, targetDB, table); chkErr == nil {
 		defer chkRows.Close()
 		for chkRows.Next() {
-			var cName, clause string
-			if err := chkRows.Scan(&cName, &clause); err == nil {
+			var cName, clause, enforced string
+			if err := chkRows.Scan(&cName, &clause, &enforced); err == nil {
+				isEnf := strings.EqualFold(enforced, "YES")
 				structure.CheckConstraints = append(structure.CheckConstraints, driver.CheckConstraintMeta{
-					Name:   cName,
-					Clause: clause,
+					Name:       cName,
+					Clause:     clause,
+					IsEnforced: &isEnf,
 				})
+			}
+		}
+	} else {
+		chkFallback := `SELECT tc.constraint_name, cc.check_clause
+			FROM information_schema.table_constraints tc
+			JOIN information_schema.check_constraints cc
+				ON tc.constraint_schema = cc.constraint_schema
+				AND tc.constraint_name = cc.constraint_name
+			WHERE tc.table_schema = ? AND tc.table_name = ?
+				AND tc.constraint_type = 'CHECK'
+			ORDER BY tc.constraint_name`
+		if fbRows, fbErr := m.db.QueryContext(ctx, chkFallback, targetDB, table); fbErr == nil {
+			defer fbRows.Close()
+			for fbRows.Next() {
+				var cName, clause string
+				if err := fbRows.Scan(&cName, &clause); err == nil {
+					structure.CheckConstraints = append(structure.CheckConstraints, driver.CheckConstraintMeta{
+						Name:   cName,
+						Clause: clause,
+					})
+				}
 			}
 		}
 	}

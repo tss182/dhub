@@ -16,11 +16,23 @@ type mysqlOptions struct {
 	UnixSocket              string `json:"unixSocket"`
 	Collation               string `json:"collation"`
 	TimeZone                string `json:"timeZone"`
+	InitSQL                 string `json:"initSql"`
 	MaxExecutionTimeMs      int    `json:"maxExecutionTimeMs"`
 	AllowCleartextPasswords bool   `json:"allowCleartextPasswords"`
 	Compress                bool   `json:"compress"`
 	ReadTimeout             string `json:"readTimeout"`
 	WriteTimeout            string `json:"writeTimeout"`
+}
+
+func extractMySQLInitSQL(cfg store.ConnectionConfig) string {
+	if strings.TrimSpace(cfg.OptionsJSON) == "" {
+		return ""
+	}
+	var opts mysqlOptions
+	if err := json.Unmarshal([]byte(cfg.OptionsJSON), &opts); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(opts.InitSQL)
 }
 
 // newMySQLConfig builds the go-sql-driver config shared by the MySQL and MariaDB drivers.

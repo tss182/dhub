@@ -34,6 +34,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pgTab, setPgTab] = useState<'sessions' | 'locks' | 'stats' | 'bloat' | 'replication'>('sessions');
+  const [mysqlTab, setMysqlTab] = useState<'processes' | 'trx' | 'locks'>('processes');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadProcesses = useCallback(async () => {
@@ -65,7 +66,16 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
 
     let sql = '';
     if (drv === 'mysql' || drv === 'mariadb') {
-      sql = 'SHOW FULL PROCESSLIST;';
+      if (mysqlTab === 'trx') {
+        sql = `SELECT trx_mysql_thread_id AS id, COALESCE(trx_state, '') AS user, COALESCE(trx_operation_state, '') AS host, '' AS db, 'TRX' AS command, TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS time, CONCAT('locks:', trx_rows_locked, ' mod:', trx_rows_modified) AS state, COALESCE(trx_query, '') AS info FROM information_schema.innodb_trx ORDER BY trx_started ASC;`;
+      } else if (mysqlTab === 'locks') {
+        sql =
+          drv === 'mariadb'
+            ? `SELECT r.trx_mysql_thread_id AS id, CONCAT('blocked_by:', b.trx_mysql_thread_id) AS user, '' AS host, '' AS db, 'LOCK_WAIT' AS command, TIMESTAMPDIFF(SECOND, r.trx_started, NOW()) AS time, COALESCE(r.trx_state, '') AS state, COALESCE(r.trx_query, '') AS info FROM information_schema.innodb_lock_waits w JOIN information_schema.innodb_trx r ON r.trx_id = w.requesting_trx_id JOIN information_schema.innodb_trx b ON b.trx_id = w.blocking_trx_id;`
+            : `SELECT r.trx_mysql_thread_id AS id, CONCAT('blocked_by:', b.trx_mysql_thread_id) AS user, '' AS host, '' AS db, 'LOCK_WAIT' AS command, TIMESTAMPDIFF(SECOND, r.trx_started, NOW()) AS time, COALESCE(r.trx_state, '') AS state, COALESCE(r.trx_query, '') AS info FROM performance_schema.data_lock_waits w JOIN information_schema.innodb_trx r ON r.trx_id = w.REQUESTING_ENGINE_TRANSACTION_ID JOIN information_schema.innodb_trx b ON b.trx_id = w.BLOCKING_ENGINE_TRANSACTION_ID;`;
+      } else {
+        sql = `SELECT ID AS id, USER AS user, HOST AS host, COALESCE(DB, '') AS db, COMMAND AS command, TIME AS time, COALESCE(STATE, '') AS state, COALESCE(INFO, '') AS info FROM information_schema.processlist WHERE ID <> CONNECTION_ID() ORDER BY TIME DESC;`;
+      }
     } else if (drv === 'postgres') {
       if (pgTab === 'locks') {
         sql = `SELECT l.pid, COALESCE(a.usename, ''), COALESCE(a.datname, ''), l.locktype || ' (' || l.mode || ')', 0, CASE WHEN l.granted THEN 'granted' ELSE 'WAITING' END, COALESCE(c.relname::text, l.relation::text, '') || ' | ' || COALESCE(a.query, '') FROM pg_locks l LEFT JOIN pg_stat_activity a ON a.pid = l.pid LEFT JOIN pg_class c ON c.oid = l.relation WHERE l.pid <> pg_backend_pid() ORDER BY l.granted ASC, l.pid LIMIT 300;`;
@@ -192,7 +202,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     } finally {
       setIsLoading(false);
     }
-  }, [connection, pgTab]);
+  }, [connection, pgTab, mysqlTab]);
 
   useEffect(() => {
     loadProcesses();
@@ -356,6 +366,28 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
         </div>
 
         <div className="flex items-center gap-2">
+          {(connection.driver === 'mysql' || connection.driver === 'mariadb') && (
+            <div className="flex items-center rounded bg-[#191a20] border border-[#272932] p-0.5 text-[11px]">
+              {(
+                [
+                  { id: 'processes', label: 'Processes' },
+                  { id: 'trx', label: 'Transactions' },
+                  { id: 'locks', label: 'Lock Waits' },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setMysqlTab(t.id)}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    mysqlTab === t.id ? 'bg-blue-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
           {connection.driver === 'postgres' && (
             <div className="flex items-center rounded bg-[#191a20] border border-[#272932] p-0.5 text-[11px]">
               {(
@@ -462,7 +494,29 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
                     <td className="py-2 px-3 text-right whitespace-nowrap">
                       {!connection.isReadOnly && (connection.driver !== 'postgres' || pgTab === 'sessions' || pgTab === 'locks') && (
                         <div className="inline-flex items-center gap-1">
-                          {connection.driver === 'postgres' && (
+                          {(connection.driver === 'mysql' || connection.driver === 'mariadb') && (
+            <div className="flex items-center rounded bg-[#191a20] border border-[#272932] p-0.5 text-[11px]">
+              {(
+                [
+                  { id: 'processes', label: 'Processes' },
+                  { id: 'trx', label: 'Transactions' },
+                  { id: 'locks', label: 'Lock Waits' },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setMysqlTab(t.id)}
+                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    mysqlTab === t.id ? 'bg-blue-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {connection.driver === 'postgres' && (
                             <button
                               type="button"
                               onClick={() => handleCancelPgQuery(p)}
