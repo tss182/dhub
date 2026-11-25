@@ -17,6 +17,11 @@ import (
 
 const maxExtraPools = 8
 
+type chExecEntry struct {
+	queryID string
+	db      string
+}
+
 type ClickHouseDriver struct {
 	db        *sql.DB
 	connStr   string
@@ -26,6 +31,9 @@ type ClickHouseDriver struct {
 	mu        sync.Mutex
 	pools     map[string]*sql.DB
 	poolOrder []string
+
+	execMu      sync.Mutex
+	activeExecs map[string]chExecEntry
 }
 
 func openPool(connStr string, tlsCfg *tls.Config) (*sql.DB, error) {
@@ -517,10 +525,52 @@ func generateClickHouseDDL(database, table string, s *driver.TableStructure) str
 	return sb.String()
 }
 
+var (
+	_ driver.QueryCanceller     = (*ClickHouseDriver)(nil)
+	_ driver.ServerInfoProvider = (*ClickHouseDriver)(nil)
+	_ driver.RowStreamer        = (*ClickHouseDriver)(nil)
+)
+
+func (c *ClickHouseDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {
+	ver, err := c.ServerVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	maj, min, pat := driver.ParseVersionTriplet(ver)
+	return &driver.ServerInfo{
+		Flavor:  "clickhouse",
+		Version: ver,
+		Major:   maj,
+		Minor:   min,
+		Patch:   pat,
+	}, nil
+}
+
 func (c *ClickHouseDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
 	db, err := c.dbFor(req.Database)
 	if err != nil {
 		return nil, err
+	}
+
+	if req.ExecutionID != "" {
+		queryID := "dhub-" + strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+				return r
+			}
+			return '_'
+		}, req.ExecutionID)
+		ctx = chdriver.Context(ctx, chdriver.WithQueryID(queryID))
+		c.execMu.Lock()
+		if c.activeExecs == nil {
+			c.activeExecs = make(map[string]chExecEntry)
+		}
+		c.activeExecs[req.ExecutionID] = chExecEntry{queryID: queryID, db: req.Database}
+		c.execMu.Unlock()
+		defer func() {
+			c.execMu.Lock()
+			delete(c.activeExecs, req.ExecutionID)
+			c.execMu.Unlock()
+		}()
 	}
 
 	conn, err := db.Conn(ctx)
@@ -530,6 +580,29 @@ func (c *ClickHouseDriver) Execute(ctx context.Context, req driver.QueryRequest)
 	defer conn.Close()
 
 	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "clickhouse")
+}
+
+func (c *ClickHouseDriver) TrackExecution(executionID, tabID string) func() {
+	return func() {}
+}
+
+func (c *ClickHouseDriver) CancelExecution(executionID string) (bool, error) {
+	c.execMu.Lock()
+	entry, ok := c.activeExecs[executionID]
+	c.execMu.Unlock()
+	if !ok || entry.queryID == "" {
+		return false, nil
+	}
+	db, err := c.dbFor(entry.db)
+	if err != nil {
+		return false, err
+	}
+	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := db.ExecContext(cctx, "KILL QUERY WHERE query_id = ?", entry.queryID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (c *ClickHouseDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {

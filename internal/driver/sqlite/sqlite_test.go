@@ -195,3 +195,67 @@ func TestSQLiteApplyChangesAndDMLPreview(t *testing.T) {
 		t.Errorf("unexpected inserted row: %+v", res.Rows[1])
 	}
 }
+
+func TestSQLite_ServerInfo_ViewDDL_GeneratedColumns_StreamQuery(t *testing.T) {
+	drv := newTestDriver(t)
+	ctx := context.Background()
+
+	info, err := drv.ServerInfo(ctx)
+	if err != nil {
+		t.Fatalf("ServerInfo failed: %v", err)
+	}
+	if info.Flavor != "sqlite" || info.Major < 3 || info.Version == "" {
+		t.Fatalf("unexpected ServerInfo: %+v", info)
+	}
+
+	_, err = drv.Execute(ctx, driver.QueryRequest{
+		SQL: `CREATE TABLE items (
+			id INTEGER PRIMARY KEY,
+			price INTEGER NOT NULL,
+			qty INTEGER NOT NULL,
+			total INTEGER GENERATED ALWAYS AS (price * qty) STORED
+		);
+		INSERT INTO items (id, price, qty) VALUES (1, 10, 3), (2, 20, 2);
+		CREATE VIEW item_totals AS SELECT id, total FROM items;`,
+	})
+	if err != nil {
+		t.Fatalf("setup schema failed: %v", err)
+	}
+
+	tblStruct, err := drv.GetTableStructure(ctx, "main", "main", "items")
+	if err != nil {
+		t.Fatalf("GetTableStructure(items) failed: %v", err)
+	}
+	var foundGenerated bool
+	for _, c := range tblStruct.Columns {
+		if c.Name == "total" {
+			foundGenerated = true
+			if c.ColumnKind != "STORED" || c.DefaultKind != "GENERATED_STORED" {
+				t.Errorf("expected generated STORED column, got ColumnKind=%q DefaultKind=%q", c.ColumnKind, c.DefaultKind)
+			}
+		}
+	}
+	if !foundGenerated {
+		t.Fatalf("expected generated column 'total' in table_xinfo output")
+	}
+
+	viewStruct, err := drv.GetTableStructure(ctx, "main", "main", "item_totals")
+	if err != nil {
+		t.Fatalf("GetTableStructure(item_totals) failed: %v", err)
+	}
+	if !strings.Contains(strings.ToUpper(viewStruct.DDL), "CREATE VIEW") {
+		t.Errorf("expected CREATE VIEW DDL, got %q", viewStruct.DDL)
+	}
+
+	var streamedRows int
+	err = drv.StreamQuery(ctx, driver.QueryRequest{SQL: "SELECT id, total FROM item_totals ORDER BY id;"}, func(cols []driver.ColumnMeta, row []any) error {
+		streamedRows++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamQuery failed: %v", err)
+	}
+	if streamedRows != 2 {
+		t.Errorf("expected 2 streamed rows, got %d", streamedRows)
+	}
+}

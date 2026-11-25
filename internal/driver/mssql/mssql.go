@@ -596,6 +596,29 @@ func (m *MSSQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "mssql")
 }
 
+var (
+	_ driver.RowStreamer        = (*MSSQLDriver)(nil)
+	_ driver.ServerInfoProvider = (*MSSQLDriver)(nil)
+)
+
+func (m *MSSQLDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {
+	var ver string
+	if err := m.db.QueryRowContext(ctx, `SELECT CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128))`).Scan(&ver); err != nil {
+		return nil, err
+	}
+	ver = strings.TrimSpace(ver)
+	maj, min, pat := driver.ParseVersionTriplet(ver)
+	return &driver.ServerInfo{
+		Flavor:                   "mssql",
+		Version:                  ver,
+		Major:                    maj,
+		Minor:                    min,
+		Patch:                    pat,
+		SupportsCheckConstraints: true,
+		SupportsSequences:        maj >= 11, // SQL Server 2012+
+	}, nil
+}
+
 func (m *MSSQLDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
 	db, err := m.dbFor(req.Database)
 	if err != nil {

@@ -630,6 +630,32 @@ func (o *OracleDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "oracle")
 }
 
+var (
+	_ driver.RowStreamer        = (*OracleDriver)(nil)
+	_ driver.ServerInfoProvider = (*OracleDriver)(nil)
+)
+
+func (o *OracleDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {
+	var ver string
+	if err := o.db.QueryRowContext(ctx, `SELECT VERSION FROM PRODUCT_COMPONENT_VERSION WHERE ROWNUM = 1`).Scan(&ver); err != nil {
+		if err2 := o.db.QueryRowContext(ctx, `SELECT BANNER FROM V$VERSION WHERE ROWNUM = 1`).Scan(&ver); err2 != nil {
+			return nil, err2
+		}
+	}
+	ver = strings.TrimSpace(ver)
+	maj, min, pat := driver.ParseVersionTriplet(ver)
+	return &driver.ServerInfo{
+		Flavor:                   "oracle",
+		Version:                  ver,
+		Major:                    maj,
+		Minor:                    min,
+		Patch:                    pat,
+		SupportsCheckConstraints: true,
+		SupportsSequences:        true,
+		SupportsReturning:        true,
+	}, nil
+}
+
 func (o *OracleDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
 	conn, err := o.db.Conn(ctx)
 	if err != nil {

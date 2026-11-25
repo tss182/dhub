@@ -26,7 +26,7 @@ import * as QueryService from '../../../bindings/dhub/internal/services/queryser
 import { ParameterPromptModal } from '../modals/ParameterPromptModal';
 import { DangerousQueryModal } from '../modals/DangerousQueryModal';
 import { DbDriverIcon } from '../common/DbDriverIcon';
-import { getDriverCapabilities } from '../../utils/driverCapabilities';
+import { getDriverCapabilities, getDefaultSchema } from '../../utils/driverCapabilities';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
 const modKey = isMac ? 'Cmd' : 'Ctrl';
@@ -2277,7 +2277,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                   <RotateCcw className="h-3.5 w-3.5" />
                 </button>
 
-                {connection?.driver === 'postgres' && (
+                {getDriverCapabilities(connection?.driver).supportsSavepoints && (
                   <>
                     <button
                       type="button"
@@ -2311,16 +2311,16 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             )}
               </div>
 
-              {connection?.driver === 'postgres' && onSchemaChange && (
+              {getDriverCapabilities(connection?.driver).hasSeparateSchemas && onSchemaChange && (
                 <>
                   <span className="text-zinc-600 font-mono">.</span>
                   <select
-                    value={schema || 'public'}
+                    value={schema || getDefaultSchema(connection?.driver, database)}
                     onChange={(e) => onSchemaChange(e.target.value)}
-                    title="Active PostgreSQL search_path schema"
+                    title="Active schema"
                     className="px-2 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-cyan-300 font-mono text-xs font-semibold outline-none cursor-pointer max-w-[140px]"
                   >
-                    {(availableSchemas.length > 0 ? availableSchemas : [schema || 'public']).map((s) => (
+                    {(availableSchemas.length > 0 ? availableSchemas : [schema || getDefaultSchema(connection?.driver, database)]).map((s) => (
                       <option key={s} value={s}>
                         {s}
                       </option>
@@ -2424,16 +2424,16 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 )}
               </div>
 
-              {connection?.driver === 'postgres' && onSchemaChange && (
+              {getDriverCapabilities(connection?.driver).hasSeparateSchemas && onSchemaChange && (
                 <>
                   <span className="text-zinc-600 font-mono">.</span>
                   <select
-                    value={schema || 'public'}
+                    value={schema || getDefaultSchema(connection?.driver, database)}
                     onChange={(e) => onSchemaChange(e.target.value)}
-                    title="Active PostgreSQL search_path schema"
+                    title="Active schema"
                     className="px-2 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-cyan-300 font-mono text-xs font-semibold outline-none cursor-pointer max-w-[140px]"
                   >
-                    {(availableSchemas.length > 0 ? availableSchemas : [schema || 'public']).map((s) => (
+                    {(availableSchemas.length > 0 ? availableSchemas : [schema || getDefaultSchema(connection?.driver, database)]).map((s) => (
                       <option key={s} value={s}>
                         {s}
                       </option>

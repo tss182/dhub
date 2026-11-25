@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { ConnectionConfig, WorkbenchTab } from '../../types/domain';
 import { ConsoleRecord } from '../../stores/useWorkbenchStore';
+import { getDriverCapabilities } from '../../utils/driverCapabilities';
 
 export interface TabContextMenuProps {
   isOpen: boolean;
@@ -342,13 +343,12 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
             >
               <Eraser className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
               <span>
-                {tableMeta?.driver === 'qdrant'
-                  ? 'Clear All Points...'
-                  : tableMeta?.driver === 'elasticsearch'
-                  ? 'Clear All Documents...'
-                  : tableMeta?.driver === 'mongodb'
-                  ? 'Clear Collection...'
-                  : 'Truncate Table...'}
+                {(() => {
+                  const caps = getDriverCapabilities(tableMeta?.driver);
+                  if (caps.category === 'relational' || caps.category === 'olap') return 'Truncate Table...';
+                  if (caps.category === 'document') return 'Clear Collection...';
+                  return `Clear All ${caps.recordPluralLabel}...`;
+                })()}
               </span>
             </button>
           )}
@@ -362,11 +362,12 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
           >
             <Trash2 className="h-3.5 w-3.5 text-rose-400 group-hover:text-white" />
             <span>
-              {tableMeta?.driver === 'qdrant' || tableMeta?.driver === 'mongodb'
-                ? 'Drop Collection...'
-                : tableMeta?.driver === 'elasticsearch'
-                ? 'Delete Index...'
-                : `Drop ${tableMeta?.objectType === 'view' ? 'View' : 'Table'}...`}
+              {(() => {
+                const caps = getDriverCapabilities(tableMeta?.driver);
+                if (caps.category === 'search') return 'Delete Index...';
+                if (caps.category === 'document' || caps.category === 'vector') return 'Drop Collection...';
+                return `Drop ${tableMeta?.objectType === 'view' ? 'View' : caps.entityLabel}...`;
+              })()}
             </span>
           </button>
         </>

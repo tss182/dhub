@@ -123,18 +123,18 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 
 	quotedTable := quoteLiteral(table)
 
-	// 1. Get Columns via PRAGMA table_info
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", quotedTable))
+	// 1. Get Columns via PRAGMA table_xinfo (supports generated columns; hidden=2 virtual, hidden=3 stored)
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_xinfo(%s)", quotedTable))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var cid, notnull, pk int
+		var cid, notnull, pk, hidden int
 		var name, typeStr string
 		var dfltValue *string
-		if err := rows.Scan(&cid, &name, &typeStr, &notnull, &dfltValue, &pk); err != nil {
+		if err := rows.Scan(&cid, &name, &typeStr, &notnull, &dfltValue, &pk, &hidden); err != nil {
 			continue
 		}
 		dflt := ""
@@ -145,14 +145,23 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 		if isPk {
 			structure.PrimaryKeys = append(structure.PrimaryKeys, name)
 		}
-		structure.Columns = append(structure.Columns, driver.ColumnMeta{
+		colMeta := driver.ColumnMeta{
 			Name:         name,
 			DataType:     typeStr,
 			RawType:      strings.ToLower(typeStr),
 			IsNullable:   notnull == 0,
 			IsPrimaryKey: isPk,
 			DefaultValue: dflt,
-		})
+		}
+		switch hidden {
+		case 2:
+			colMeta.ColumnKind = "VIRTUAL"
+			colMeta.DefaultKind = "GENERATED_VIRTUAL"
+		case 3:
+			colMeta.ColumnKind = "STORED"
+			colMeta.DefaultKind = "GENERATED_STORED"
+		}
+		structure.Columns = append(structure.Columns, colMeta)
 	}
 
 	// 2. Get Foreign Keys via PRAGMA foreign_key_list
@@ -245,12 +254,34 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 		}
 	}
 
-	// 3. Get DDL
+	// 3. Get DDL (tables and views)
 	var ddl string
-	_ = s.db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&ddl)
+	_ = s.db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?", table).Scan(&ddl)
 	structure.DDL = ddl
 
 	return structure, nil
+}
+
+var (
+	_ driver.RowStreamer        = (*SQLiteDriver)(nil)
+	_ driver.ServerInfoProvider = (*SQLiteDriver)(nil)
+)
+
+func (s *SQLiteDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {
+	var ver string
+	if err := s.db.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&ver); err != nil {
+		return nil, err
+	}
+	maj, min, pat := driver.ParseVersionTriplet(ver)
+	return &driver.ServerInfo{
+		Flavor:                   "sqlite",
+		Version:                  ver,
+		Major:                    maj,
+		Minor:                    min,
+		Patch:                    pat,
+		SupportsCheckConstraints: true,
+		SupportsReturning:        maj > 3 || (maj == 3 && min >= 35),
+	}, nil
 }
 
 func (s *SQLiteDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {

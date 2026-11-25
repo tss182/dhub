@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { alertWarning } from '../../stores/useAlertStore';
+import { getDriverCapabilities, getDefaultDatabase, getDefaultSchema } from '../../utils/driverCapabilities';
 
 const ValueViewerPanel = lazy(() =>
   import('../grid/ValueViewerPanel').then((m) => ({ default: m.ValueViewerPanel }))
@@ -72,18 +73,18 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({
 
     const { activeDatabase, activeSchema } = useConnectionStore.getState();
     const isActiveConn = conn.id === activeConnectionId;
-    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys', 'template0', 'template1', 'rdsadmin', 'cloudsqladmin', 'azure_maintenance', 'azure_sys'];
+    const caps = getDriverCapabilities(conn.driver);
+    const systemDbs = caps.systemDatabases;
     const nonSystemDb = effectiveDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
-    const fallbackDb = conn.driver === 'postgres' ? 'postgres' : conn.driver === 'sqlite' ? 'main' : 'default';
+    const fallbackDb = getDefaultDatabase(conn.driver) || 'default';
     const targetDb =
       (isActiveConn && activeDatabase && activeDatabase !== 'main' ? activeDatabase : '') ||
       (conn.databaseName && (!visibleList || visibleList.includes(conn.databaseName) || visibleList.some((v) => v.toLowerCase() === conn.databaseName.toLowerCase())) ? conn.databaseName : '') ||
       nonSystemDb ||
       (effectiveDbs.length > 0 ? effectiveDbs[0] : fallbackDb);
-    const targetSchema =
-      conn.driver === 'postgres'
-        ? (isActiveConn && activeSchema && activeSchema !== 'main' ? activeSchema : 'public')
-        : targetDb;
+    const targetSchema = caps.hasSeparateSchemas
+      ? (isActiveConn && activeSchema && activeSchema !== 'main' ? activeSchema : getDefaultSchema(conn.driver, targetDb))
+      : targetDb;
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
     const title = `${conn.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_console_${count}.sql`;

@@ -243,6 +243,33 @@ type ServerInfoProvider interface {
 	ServerInfo(ctx context.Context) (*ServerInfo, error)
 }
 
+// ParseVersionTriplet extracts the first major.minor.patch numeric triplet from a version string.
+func ParseVersionTriplet(raw string) (major, minor, patch int) {
+	var nums [3]int
+	idx := 0
+	cur := 0
+	inNum := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if c >= '0' && c <= '9' {
+			cur = cur*10 + int(c-'0')
+			inNum = true
+		} else if inNum {
+			nums[idx] = cur
+			idx++
+			cur = 0
+			inNum = false
+			if idx == 3 {
+				break
+			}
+		}
+	}
+	if inNum && idx < 3 {
+		nums[idx] = cur
+	}
+	return nums[0], nums[1], nums[2]
+}
+
 // RowStreamer is optionally implemented by drivers that stream query rows without OFFSET paging.
 type RowStreamer interface {
 	StreamQuery(ctx context.Context, req QueryRequest, onRow func(cols []ColumnMeta, row []any) error) error

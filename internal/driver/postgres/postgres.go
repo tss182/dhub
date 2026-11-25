@@ -197,6 +197,36 @@ func (p *PostgresDriver) ServerVersion(ctx context.Context) (string, error) {
 	return strings.TrimSpace(ver), nil
 }
 
+var (
+	_ driver.QueryCanceller     = (*PostgresDriver)(nil)
+	_ driver.ServerInfoProvider = (*PostgresDriver)(nil)
+	_ driver.RowStreamer        = (*PostgresDriver)(nil)
+)
+
+// ServerInfo returns structured PostgreSQL server metadata.
+func (p *PostgresDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {
+	ver, err := p.ServerVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var tz string
+	_ = p.db.QueryRowContext(ctx, `SHOW TimeZone;`).Scan(&tz)
+	maj, min, pat := driver.ParseVersionTriplet(ver)
+	return &driver.ServerInfo{
+		Flavor:                   "postgres",
+		Version:                  ver,
+		Major:                    maj,
+		Minor:                    min,
+		Patch:                    pat,
+		TimeZone:                 strings.TrimSpace(tz),
+		SupportsExplainAnalyze:   true,
+		SupportsCheckConstraints: true,
+		SupportsRoles:            true,
+		SupportsSequences:        true,
+		SupportsReturning:        true,
+	}, nil
+}
+
 // CloseDatabasePool closes and evicts any cached connection pool for the given database
 // so administrative operations such as DROP DATABASE are not blocked by DHub's own pool.
 func (p *PostgresDriver) CloseDatabasePool(database string) {

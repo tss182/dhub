@@ -176,14 +176,14 @@ const SQL_SNIPPETS: SnippetItem[] = [
     description: 'DHub prompts you to enter parameter values interactively before running.',
   },
   {
-    label: 'Positional Parameters ($1 / ?)',
-    code: 'SELECT id, email FROM users WHERE id = $1;',
-    description: 'Supports PostgreSQL-style ($1, $2) and standard (?) parameter placeholders.',
+    label: 'Positional Parameters (? / $1)',
+    code: '-- Standard SQL / MySQL / SQLite:\nSELECT id, email FROM users WHERE id = ?;\n-- PostgreSQL:\nSELECT id, email FROM users WHERE id = $1;',
+    description: 'Supports standard (?) placeholders across SQL engines and PostgreSQL-style ($1, $2).',
   },
   {
     label: 'Explain Execution Plan',
-    code: 'SELECT * FROM orders WHERE created_at >= CURRENT_DATE - INTERVAL \'7 days\';',
-    description: 'Use the Explain button in the toolbar to visualize query execution costs.',
+    code: 'SELECT * FROM orders WHERE status = \'paid\' AND total_amount > 100;',
+    description: 'Use the Explain button in the toolbar to visualize query execution costs across SQL dialects.',
   },
 ];
 
