@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -2080,10 +2079,6 @@ func (q *QdrantDriver) executeSingle(ctx context.Context, req driver.QueryReques
 	}
 
 	return nil, fmt.Errorf("unsupported Qdrant command (use SQL SELECT, SHOW COLLECTIONS, or HTTP syntax like 'POST /collections/<name>/points/search {...}')")
-}
-
-func (q *QdrantDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
-	return nil, fmt.Errorf("transactions are not supported in Qdrant")
 }
 
 func parsePointID(raw any) any {

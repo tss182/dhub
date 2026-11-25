@@ -329,8 +329,10 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 	tabDrv, isTabDrv := drv.(driver.TabSessionDriver)
 	if isTabDrv {
 		tx, err = tabDrv.BeginTxForTab(context.Background(), tabID, database)
+	} else if txDrv, ok := drv.(driver.TxDriver); ok {
+		tx, err = txDrv.BeginTx(context.Background(), database)
 	} else {
-		tx, err = drv.BeginTx(context.Background(), database)
+		return nil, fmt.Errorf("manual transactions are not supported by this driver")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)

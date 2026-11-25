@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"regexp"
 	"sort"
@@ -906,10 +905,6 @@ func ParseRedisCommandArgs(cmdStr string) []any {
 		args = append(args, current.String())
 	}
 	return args
-}
-
-func (r *RedisDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
-	return nil, fmt.Errorf("manual transactions are not supported for Redis")
 }
 
 func formatRedisPreviewArg(s string) string {

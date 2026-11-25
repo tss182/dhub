@@ -2,7 +2,6 @@ package mongodb
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -587,10 +586,6 @@ func docsToQueryResult(docs []bson.M, elapsed time.Duration, hasMore bool) *driv
 		ElapsedMs:    elapsed.Milliseconds(),
 		HasMore:      hasMore,
 	}
-}
-
-func (m *MongoDBDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
-	return nil, fmt.Errorf("manual transactions are not supported for MongoDB")
 }
 
 func (m *MongoDBDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {

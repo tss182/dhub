@@ -2,6 +2,7 @@ package services
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	"dhub/internal/store"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type ExportRequest struct {
@@ -319,6 +321,13 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	}
 
 	driverLower := strings.ToLower(strings.TrimSpace(driverType))
+	reqFormat := strings.ToLower(strings.TrimSpace(req.Format))
+	if (reqFormat == "sql_insert" || reqFormat == "sql") &&
+		(driverLower == "mongodb" || driverLower == "mongo" || driverLower == "redis" || driverLower == "qdrant" || driverLower == "elasticsearch" || driverLower == "es") {
+		errMsg := fmt.Sprintf("SQL INSERT export is not supported for %s; use JSON, JSONL, or CSV", driverType)
+		e.emitProgress(opID, "export", "error", 0, errMsg)
+		return nil, fmt.Errorf("%s", errMsg)
+	}
 	if cfg != nil && cfg.IsReadOnly && strings.TrimSpace(req.SQL) != "" {
 		if unsafeStmt, isSafe := driver.ValidateReadOnlyScript(req.SQL, driverLower); !isSafe {
 			errMsg := fmt.Sprintf("export blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(unsafeStmt, 60))
@@ -778,9 +787,24 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 						}
 					}
 				}
-				raw, err := json.MarshalIndent(jsonObj, "  ", "  ")
-				if err != nil {
-					return nil, fmt.Errorf("failed to encode JSON export: %w", err)
+				var raw []byte
+				var err error
+				if format == "ejson" {
+					extBytes, mErr := bson.MarshalExtJSON(jsonObj, false, false)
+					if mErr != nil {
+						return nil, fmt.Errorf("failed to encode Extended JSON export: %w", mErr)
+					}
+					var indentBuf bytes.Buffer
+					if iErr := json.Indent(&indentBuf, extBytes, "  ", "  "); iErr != nil {
+						raw = extBytes
+					} else {
+						raw = indentBuf.Bytes()
+					}
+				} else {
+					raw, err = json.MarshalIndent(jsonObj, "  ", "  ")
+					if err != nil {
+						return nil, fmt.Errorf("failed to encode JSON export: %w", err)
+					}
 				}
 				if exportedRows > 0 {
 					if _, err := bw.WriteString(",\n"); err != nil {

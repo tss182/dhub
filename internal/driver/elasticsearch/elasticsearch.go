@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -1790,10 +1789,6 @@ func (e *ElasticsearchDriver) executeSingle(ctx context.Context, req driver.Quer
 	}
 
 	return nil, fmt.Errorf("unsupported Elasticsearch command (use SQL SELECT, SHOW INDICES, or HTTP syntax like 'POST /<index>/_search {...}')")
-}
-
-func (e *ElasticsearchDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
-	return nil, fmt.Errorf("transactions are not supported in Elasticsearch")
 }
 
 func parseESFieldValue(v any) any {

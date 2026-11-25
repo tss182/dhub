@@ -275,6 +275,11 @@ type RowStreamer interface {
 	StreamQuery(ctx context.Context, req QueryRequest, onRow func(cols []ColumnMeta, row []any) error) error
 }
 
+// TxDriver is optionally implemented by relational SQL drivers that support explicit transactions.
+type TxDriver interface {
+	BeginTx(ctx context.Context, database string) (*sql.Tx, error)
+}
+
 type DatabaseDriver interface {
 	Ping(ctx context.Context) error
 	Close() error
@@ -287,7 +292,6 @@ type DatabaseDriver interface {
 
 	// Execution & Staged Changes
 	Execute(ctx context.Context, req QueryRequest) (*QueryResult, error)
-	BeginTx(ctx context.Context, database string) (*sql.Tx, error)
 	ApplyChanges(ctx context.Context, database, schema, table string, changes []RowChange) (int64, error)
 	GenerateDMLPreview(database, schema, table string, changes []RowChange) ([]string, error)
 }
