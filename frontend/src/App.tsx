@@ -103,6 +103,25 @@ import { useWorkspaceSessionStore } from './stores/useWorkspaceSessionStore';
 import { usePanelResizers } from './hooks/usePanelResizers';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { WorkspaceSelector } from './components/layout/WorkspaceSelector';
+
+/** Preserves the exact total count or monotonic lower-bound (`minTotalCount`) across page navigation. */
+function resolvePaginationTotals(
+  observedCount: number,
+  hasMore: boolean,
+  prevTotal?: number,
+  prevMinTotal?: number
+): { totalCount: number | undefined; minTotalCount: number } {
+  const totalCount = !hasMore
+    ? Math.max(prevTotal || 0, observedCount)
+    : prevTotal !== undefined
+    ? Math.max(prevTotal, observedCount)
+    : undefined;
+  const minTotalCount =
+    totalCount !== undefined
+      ? totalCount
+      : Math.max(prevMinTotal || 0, hasMore ? observedCount + 1 : observedCount);
+  return { totalCount, minTotalCount };
+}
 import { WorkbenchHeader } from './components/layout/WorkbenchHeader';
 import { EmptyWorkbenchState } from './components/layout/EmptyWorkbenchState';
 import { TabContextMenu } from './components/layout/TabContextMenu';
@@ -418,6 +437,7 @@ export function App() {
         isLoadingPrevious?: boolean;
         error: string | null;
         totalCount?: number;
+        minTotalCount?: number;
         hasMore: boolean;
         hasPrevious?: boolean;
         pageSize: number;
@@ -446,6 +466,7 @@ export function App() {
         page: number;
         pageSize: number;
         totalCount?: number;
+        minTotalCount?: number;
         isLoadingMore: boolean;
         lastSql: string;
         connectionId: string;
@@ -1236,6 +1257,7 @@ export function App() {
           page: number;
           pageSize: number;
           totalCount?: number;
+          minTotalCount?: number;
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
@@ -1247,6 +1269,7 @@ export function App() {
           page: number;
           pageSize: number;
           totalCount?: number;
+          minTotalCount?: number;
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
@@ -1257,6 +1280,7 @@ export function App() {
           page: number;
           pageSize: number;
           totalCount?: number;
+          minTotalCount?: number;
           isLoadingMore: boolean;
           lastSql: string;
           connectionId: string;
@@ -1542,6 +1566,7 @@ export function App() {
           isLoadingPrevious: false,
           error: null,
           totalCount: filtersChanged ? undefined : prev[tab.id]?.totalCount,
+          minTotalCount: filtersChanged ? undefined : prev[tab.id]?.minTotalCount,
           hasMore: false,
           hasPrevious: false,
           startOffset: effectiveOffset,
@@ -1725,12 +1750,12 @@ export function App() {
             newHasPrevious = effectiveOffset > 0;
           }
 
-          const prevTotal = currentTabState?.totalCount;
-          const knownTotal = !newHasMore
-            ? Math.max(prevTotal || 0, newStartOffset + combinedRows.length)
-            : prevTotal !== undefined
-            ? Math.max(prevTotal, newStartOffset + combinedRows.length)
-            : undefined;
+          const { totalCount: knownTotal, minTotalCount: nextMinTotal } = resolvePaginationTotals(
+            newStartOffset + combinedRows.length,
+            newHasMore,
+            currentTabState?.totalCount,
+            currentTabState?.minTotalCount
+          );
 
           return {
             ...prev,
@@ -1743,6 +1768,7 @@ export function App() {
               isLoadingPrevious: false,
               error: null,
               totalCount: knownTotal,
+              minTotalCount: nextMinTotal,
               hasMore: newHasMore,
               hasPrevious: newHasPrevious,
               startOffset: newStartOffset,
@@ -2066,6 +2092,7 @@ export function App() {
         page: 1,
         pageSize: defaultLimit,
         totalCount: undefined,
+        minTotalCount: undefined,
         isLoadingMore: false,
         lastSql: sql,
         connectionId: targetConnId,
@@ -2245,6 +2272,10 @@ export function App() {
             hasMore,
           };
         });
+        setQueryPagination((p) => ({
+          ...p,
+          ...resolvePaginationTotals(combined.length, hasMore, p.totalCount, p.minTotalCount),
+        }));
         setStatusMessage(`Loaded +${fetchedRows.length} more rows (${combined.length} total)`);
       }
     } catch (e: any) {
@@ -2298,6 +2329,10 @@ export function App() {
             hasMore,
           };
         });
+        setQueryPagination((p) => ({
+          ...p,
+          ...resolvePaginationTotals(offset + fetchedRows.length, hasMore, p.totalCount, p.minTotalCount),
+        }));
         setStatusMessage(`Page ${newPage}: Loaded ${fetchedRows.length} rows`);
       }
     } catch (e: any) {
@@ -2348,6 +2383,10 @@ export function App() {
             hasMore,
           };
         });
+        setQueryPagination((p) => ({
+          ...p,
+          ...resolvePaginationTotals(fetchedRows.length, hasMore, p.totalCount, p.minTotalCount),
+        }));
         setStatusMessage(`Batch size changed to ${newSize} rows`);
       }
     } catch (e: any) {
@@ -3581,6 +3620,7 @@ export function App() {
                       rows={finalRows}
                       primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
                       totalCount={tableDataByTab[activeTab.id]?.totalCount}
+                      minTotalCount={tableDataByTab[activeTab.id]?.minTotalCount}
                       onCountRows={() => handleCountTableRows(activeTab)}
                       hasMore={tableDataByTab[activeTab.id]?.hasMore}
                       isLoadingMore={tableDataByTab[activeTab.id]?.isLoadingMore}
@@ -4303,6 +4343,7 @@ export function App() {
                             columns={resultSource?.columns || currentRes.columns || []}
                             rows={currentRes.rows || []}
                             totalCount={queryPagination.totalCount}
+                            minTotalCount={queryPagination.minTotalCount}
                             onCountRows={handleCountQueryRows}
                             hasMore={currentRes.hasMore}
                             isLoadingMore={queryPagination.isLoadingMore}
@@ -4452,6 +4493,7 @@ export function App() {
                       rows={tableDataByTab[splitTab.id]?.rows || []}
                       primaryKeys={tableDataByTab[splitTab.id]?.primaryKeys || []}
                       totalCount={tableDataByTab[splitTab.id]?.totalCount}
+                      minTotalCount={tableDataByTab[splitTab.id]?.minTotalCount}
                       onCountRows={() => handleCountTableRows(splitTab)}
                       hasMore={tableDataByTab[splitTab.id]?.hasMore}
                       isLoadingMore={tableDataByTab[splitTab.id]?.isLoadingMore}

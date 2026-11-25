@@ -16,6 +16,7 @@ export interface BackupProgressEvent {
     "bytesWritten": number;
     "totalBytes"?: number;
     "message"?: string;
+    "logLine"?: string;
 }
 
 export interface ConnectionStateEvent {

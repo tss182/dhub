@@ -144,10 +144,10 @@ export const GridPagination: React.FC<GridPaginationProps> = ({
             {isCountingTotal ? (
               <span className="inline-flex items-center gap-1 text-blue-400">
                 <RefreshCw className="h-3 w-3 animate-spin" />
-                <span>{endRow + 1}+</span>
+                <span>{effectiveTotal}+</span>
               </span>
             ) : (
-              `${endRow + 1}+`
+              `${effectiveTotal}+`
             )}
           </button>
         )}

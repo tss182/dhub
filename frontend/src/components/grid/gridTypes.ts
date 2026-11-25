@@ -78,6 +78,7 @@ export interface DataGridProps {
   onPreviewChanges: () => void;
   onCopyDml?: () => Promise<boolean | void> | void;
   totalCount?: number;
+  minTotalCount?: number;
   onCountRows?: () => Promise<void> | void;
   hasMore?: boolean;
   isLoadingMore?: boolean;

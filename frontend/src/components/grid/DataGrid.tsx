@@ -107,6 +107,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
   onPreviewChanges,
   onCopyDml,
   totalCount,
+  minTotalCount,
   onCountRows,
   hasMore = false,
   isLoadingMore = false,
@@ -2621,7 +2622,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
       ? rows.length
       : !hasMore
       ? endRow
-      : Math.max(endRow + 1, totalCount || 0);
+      : Math.max(endRow + 1, minTotalCount || 0, totalCount || 0);
 
   const isExactTotalKnown =
     (totalCount !== undefined && totalCount >= endRow) || !hasMore || isMultiPageInMemory;
