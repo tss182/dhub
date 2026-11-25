@@ -34,7 +34,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pgTab, setPgTab] = useState<'sessions' | 'locks' | 'stats' | 'bloat' | 'replication'>('sessions');
-  const [mysqlTab, setMysqlTab] = useState<'processes' | 'trx' | 'locks'>('processes');
+  const [mysqlTab, setMysqlTab] = useState<'processes' | 'trx' | 'locks' | 'status' | 'variables'>('processes');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadProcesses = useCallback(async () => {
@@ -73,6 +73,10 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
           drv === 'mariadb'
             ? `SELECT r.trx_mysql_thread_id AS id, CONCAT('blocked_by:', b.trx_mysql_thread_id) AS user, '' AS host, '' AS db, 'LOCK_WAIT' AS command, TIMESTAMPDIFF(SECOND, r.trx_started, NOW()) AS time, COALESCE(r.trx_state, '') AS state, COALESCE(r.trx_query, '') AS info FROM information_schema.innodb_lock_waits w JOIN information_schema.innodb_trx r ON r.trx_id = w.requesting_trx_id JOIN information_schema.innodb_trx b ON b.trx_id = w.blocking_trx_id;`
             : `SELECT r.trx_mysql_thread_id AS id, CONCAT('blocked_by:', b.trx_mysql_thread_id) AS user, '' AS host, '' AS db, 'LOCK_WAIT' AS command, TIMESTAMPDIFF(SECOND, r.trx_started, NOW()) AS time, COALESCE(r.trx_state, '') AS state, COALESCE(r.trx_query, '') AS info FROM performance_schema.data_lock_waits w JOIN information_schema.innodb_trx r ON r.trx_id = w.REQUESTING_ENGINE_TRANSACTION_ID JOIN information_schema.innodb_trx b ON b.trx_id = w.BLOCKING_ENGINE_TRANSACTION_ID;`;
+      } else if (mysqlTab === 'status') {
+        sql = `SHOW GLOBAL STATUS;`;
+      } else if (mysqlTab === 'variables') {
+        sql = `SHOW GLOBAL VARIABLES;`;
       } else {
         sql = `SELECT ID AS id, USER AS user, HOST AS host, COALESCE(DB, '') AS db, COMMAND AS command, TIME AS time, COALESCE(STATE, '') AS state, COALESCE(INFO, '') AS info FROM information_schema.processlist WHERE ID <> CONNECTION_ID() ORDER BY TIME DESC;`;
       }
@@ -142,22 +146,36 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
         });
         setProcesses(parsed);
       } else if (drv === 'mysql' || drv === 'mariadb') {
-        const cols: string[] = (res?.columns || []).map((c: any) => String(c.name || '').toLowerCase());
-        const idxOf = (name: string, fallback: number) => {
-          const found = cols.indexOf(name);
-          return found !== -1 ? found : fallback;
-        };
-        const parsed: ProcessRow[] = rows.map((r) => ({
-          id: String(r[idxOf('id', 0)] ?? ''),
-          user: String(r[idxOf('user', 1)] ?? ''),
-          host: String(r[idxOf('host', 2)] ?? ''),
-          database: String(r[idxOf('db', 3)] ?? ''),
-          command: String(r[idxOf('command', 4)] ?? ''),
-          time: `${String(r[idxOf('time', 5)] ?? 0)}s`,
-          state: String(r[idxOf('state', 6)] ?? ''),
-          info: String(r[idxOf('info', 7)] ?? ''),
-        }));
-        setProcesses(parsed);
+        if (mysqlTab === 'status' || mysqlTab === 'variables') {
+          const parsed: ProcessRow[] = rows.map((r, i) => ({
+            id: String(i + 1),
+            user: mysqlTab === 'status' ? 'STATUS' : 'VAR',
+            host: '',
+            database: '',
+            command: String(r[0] ?? ''),
+            time: '',
+            state: String(r[0] ?? ''),
+            info: String(r[1] ?? ''),
+          }));
+          setProcesses(parsed);
+        } else {
+          const cols: string[] = (res?.columns || []).map((c: any) => String(c.name || '').toLowerCase());
+          const idxOf = (name: string, fallback: number) => {
+            const found = cols.indexOf(name);
+            return found !== -1 ? found : fallback;
+          };
+          const parsed: ProcessRow[] = rows.map((r) => ({
+            id: String(r[idxOf('id', 0)] ?? ''),
+            user: String(r[idxOf('user', 1)] ?? ''),
+            host: String(r[idxOf('host', 2)] ?? ''),
+            database: String(r[idxOf('db', 3)] ?? ''),
+            command: String(r[idxOf('command', 4)] ?? ''),
+            time: `${String(r[idxOf('time', 5)] ?? 0)}s`,
+            state: String(r[idxOf('state', 6)] ?? ''),
+            info: String(r[idxOf('info', 7)] ?? ''),
+          }));
+          setProcesses(parsed);
+        }
       } else if (drv === 'mongodb') {
         const cols: string[] = (res?.columns || []).map((c: any) => String(c.name || ''));
         const inprogIdx = cols.indexOf('inprog');
@@ -373,6 +391,8 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
                   { id: 'processes', label: 'Processes' },
                   { id: 'trx', label: 'Transactions' },
                   { id: 'locks', label: 'Lock Waits' },
+                  { id: 'status', label: 'Status' },
+                  { id: 'variables', label: 'Variables' },
                 ] as const
               ).map((t) => (
                 <button
@@ -492,31 +512,12 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
                       {p.info || '-'}
                     </td>
                     <td className="py-2 px-3 text-right whitespace-nowrap">
-                      {!connection.isReadOnly && (connection.driver !== 'postgres' || pgTab === 'sessions' || pgTab === 'locks') && (
+                      {!connection.isReadOnly &&
+                        (connection.driver !== 'postgres' || pgTab === 'sessions' || pgTab === 'locks') &&
+                        ((connection.driver !== 'mysql' && connection.driver !== 'mariadb') ||
+                          (mysqlTab !== 'status' && mysqlTab !== 'variables')) && (
                         <div className="inline-flex items-center gap-1">
-                          {(connection.driver === 'mysql' || connection.driver === 'mariadb') && (
-            <div className="flex items-center rounded bg-[#191a20] border border-[#272932] p-0.5 text-[11px]">
-              {(
-                [
-                  { id: 'processes', label: 'Processes' },
-                  { id: 'trx', label: 'Transactions' },
-                  { id: 'locks', label: 'Lock Waits' },
-                ] as const
-              ).map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setMysqlTab(t.id)}
-                  className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                    mysqlTab === t.id ? 'bg-blue-600 text-white font-medium' : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          )}
-          {connection.driver === 'postgres' && (
+                          {connection.driver === 'postgres' && (
                             <button
                               type="button"
                               onClick={() => handleCancelPgQuery(p)}

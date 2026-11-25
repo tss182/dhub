@@ -166,6 +166,14 @@ export interface StatementResult {
     "warnings"?: string[] | null;
 }
 
+export interface PartitionMeta {
+    "name": string;
+    "method": string;
+    "expression": string;
+    "description": string;
+    "rowEstimate": number;
+}
+
 export interface TableStructure {
     "schema": string;
     "name": string;
@@ -175,10 +183,17 @@ export interface TableStructure {
     "indexes": IndexMeta[] | null;
     "checkConstraints"?: CheckConstraintMeta[] | null;
     "triggers"?: TriggerMeta[] | null;
+    "partitions"?: PartitionMeta[] | null;
     "ddl": string;
     "engine"?: string;
     "collation"?: string;
     "comment"?: string;
+    "rowFormat"?: string;
+    "autoIncrement"?: number | null;
+    "dataFreeBytes"?: number | null;
+    "isUpdatable"?: boolean | null;
+    "securityType"?: string;
+    "viewDefiner"?: string;
 }
 
 export interface TriggerMeta {

@@ -254,21 +254,25 @@ func (m *MariaDBDriver) GetTableStructure(ctx context.Context, database, schema,
 		CheckConstraints: []driver.CheckConstraintMeta{},
 	}
 
-	// 1. Fetch table options (Engine, Collation, Comment)
-	tblQuery := `SELECT engine, table_collation, table_comment
-		FROM information_schema.tables
-		WHERE table_schema = ? AND table_name = ?`
-	var engine, collation, tblComment *string
-	if err := m.db.QueryRowContext(ctx, tblQuery, targetDB, table).Scan(&engine, &collation, &tblComment); err == nil {
-		if engine != nil {
-			structure.Engine = *engine
-		}
-		if collation != nil {
-			structure.Collation = *collation
-		}
-		if tblComment != nil {
-			structure.Comment = *tblComment
-		}
+	// 1. Fetch table options, view updatability, and partitions
+	details := mysqlschema.FetchTableDetails(ctx, m.db, targetDB, table)
+	structure.Engine = details.Engine
+	structure.Collation = details.Collation
+	structure.Comment = details.Comment
+	structure.RowFormat = details.RowFormat
+	structure.AutoIncrement = details.AutoIncrement
+	structure.DataFreeBytes = details.DataFreeBytes
+	structure.IsUpdatable = details.IsUpdatable
+	structure.SecurityType = details.SecurityType
+	structure.ViewDefiner = details.ViewDefiner
+	for _, p := range details.Partitions {
+		structure.Partitions = append(structure.Partitions, driver.PartitionMeta{
+			Name:        p.Name,
+			Method:      p.Method,
+			Expression:  p.Expression,
+			Description: p.Description,
+			RowEstimate: p.RowEstimate,
+		})
 	}
 
 	// 2. Fetch columns. Older servers lack some information_schema columns, so try the richest

@@ -114,6 +114,14 @@ type ProjectionMeta struct {
 	Query string `json:"query"`
 }
 
+type PartitionMeta struct {
+	Name        string `json:"name"`
+	Method      string `json:"method"`
+	Expression  string `json:"expression"`
+	Description string `json:"description"`
+	RowEstimate int64  `json:"rowEstimate"`
+}
+
 type TableStructure struct {
 	Schema            string                `json:"schema"`
 	Name              string                `json:"name"`
@@ -124,10 +132,17 @@ type TableStructure struct {
 	CheckConstraints  []CheckConstraintMeta `json:"checkConstraints,omitempty"`
 	Triggers          []TriggerMeta         `json:"triggers,omitempty"`
 	Projections       []ProjectionMeta      `json:"projections,omitempty"`
+	Partitions        []PartitionMeta       `json:"partitions,omitempty"`
 	DDL               string                `json:"ddl"`
 	Engine            string                `json:"engine,omitempty"`
 	Collation         string                `json:"collation,omitempty"`
 	Comment           string                `json:"comment,omitempty"`
+	RowFormat         string                `json:"rowFormat,omitempty"`
+	AutoIncrement     *int64                `json:"autoIncrement,omitempty"`
+	DataFreeBytes     *int64                `json:"dataFreeBytes,omitempty"`
+	IsUpdatable       *bool                 `json:"isUpdatable,omitempty"`
+	SecurityType      string                `json:"securityType,omitempty"`
+	ViewDefiner       string                `json:"viewDefiner,omitempty"`
 	SortingKey        string                `json:"sortingKey,omitempty"`
 	PrimaryKeyExpr    string                `json:"primaryKeyExpr,omitempty"`
 	PartitionKey      string                `json:"partitionKey,omitempty"`
