@@ -16,6 +16,7 @@ import {
 import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
+import { QueryService } from '../../../bindings/dhub/internal/services';
 
 export type VectorDistanceMetric = 'cosine' | 'l2' | 'ip' | 'l1' | 'hamming' | 'jaccard';
 
@@ -333,6 +334,64 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const [esHighlight, setEsHighlight] = useState(true);
   const [esNumCandidates, setEsNumCandidates] = useState<string>('50');
   const [esSimilarity, setEsSimilarity] = useState<string>('');
+  const [mongoVectorIndex, setMongoVectorIndex] = useState<string>('vector_index');
+  const [mongoVectorIndexes, setMongoVectorIndexes] = useState<{ name: string; path?: string }[]>([]);
+
+  React.useEffect(() => {
+    if (driver !== 'mongodb' || !tableName) return;
+    const wb = useWorkbenchStore.getState();
+    const activeTab = wb.tabs.find((t) => t.id === wb.activeTabId);
+    const connId = activeTab?.connectionId;
+    const dbName = activeTab?.database || schema || 'admin';
+    if (!connId) return;
+
+    let cancelled = false;
+    QueryService.ExecuteQuery({
+      executionId: 'mongo-list-search-idx-' + Date.now(),
+      connectionId: connId,
+      database: dbName,
+      schema: dbName,
+      sql: `db.getCollection(${JSON.stringify(tableName)}).aggregate([{ "$listSearchIndexes": {} }]);`,
+      limit: 50,
+      offset: 0,
+    } as any)
+      .then((res: any) => {
+        if (cancelled || !res?.rows?.length || !res?.columns?.length) return;
+        const cols: any[] = res.columns;
+        const nameIdx = cols.findIndex((c) => c.name === 'name');
+        const typeIdx = cols.findIndex((c) => c.name === 'type');
+        const defIdx = cols.findIndex((c) => c.name === 'latestDefinition');
+        const found: { name: string; path?: string }[] = [];
+        for (const r of res.rows) {
+          if (!r) continue;
+          const idxType = typeIdx >= 0 ? String(r[typeIdx] || '') : '';
+          if (idxType && idxType !== 'vectorSearch') continue;
+          const idxName = nameIdx >= 0 ? String(r[nameIdx] || '') : '';
+          let vecPath: string | undefined;
+          if (defIdx >= 0 && r[defIdx]) {
+            try {
+              const defObj = typeof r[defIdx] === 'string' ? JSON.parse(r[defIdx]) : r[defIdx];
+              const vecField = Array.isArray(defObj?.fields)
+                ? defObj.fields.find((f: any) => f?.type === 'vector')
+                : undefined;
+              if (vecField?.path) vecPath = String(vecField.path);
+            } catch {}
+          }
+          if (idxName) found.push({ name: idxName, path: vecPath });
+        }
+        if (found.length > 0) {
+          setMongoVectorIndexes(found);
+          setMongoVectorIndex(found[0].name);
+        }
+      })
+      .catch(() => {
+        // Non-Atlas / older MongoDB versions do not support $listSearchIndexes; silently keep default.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [driver, schema, tableName]);
   const [esOpenSearchKnn, setEsOpenSearchKnn] = useState(false);
   const [esQueryBoost, setEsQueryBoost] = useState<string>('1.0');
   const [esKnnBoost, setEsKnnBoost] = useState<string>('1.0');
@@ -738,10 +797,11 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
           parsedMongoFilter = JSON.parse(filter.trim());
         } catch {}
       }
+      const matchedMeta = mongoVectorIndexes.find((m) => m.name === mongoVectorIndex);
       const vectorStage: Record<string, any> = {
         $vectorSearch: {
-          index: 'vector_index',
-          path: selectedCol || 'embedding',
+          index: mongoVectorIndex || 'vector_index',
+          path: selectedCol || matchedMeta?.path || 'embedding',
           queryVector: vec,
           numCandidates: Math.max(k * 10, 100),
           limit: k,

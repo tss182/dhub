@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, FileText, Trash2, RefreshCw, Loader2, Download } from 'lucide-react';
+import { X, FileText, Trash2, RefreshCw, Loader2, Download, Upload, Copy } from 'lucide-react';
+import { Call, Dialogs } from '@wailsio/runtime';
 import { QueryService } from '../../../bindings/dhub/internal/services';
 import { alertError, alertSuccess, confirmDialog } from '../../stores/useAlertStore';
 
@@ -22,6 +23,7 @@ export const MongoGridFSModal: React.FC<MongoGridFSModalProps> = ({
 }) => {
   const [files, setFiles] = useState<Record<string, any>[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const filesColl = `${bucketPrefix}.files`;
   const chunksColl = `${bucketPrefix}.chunks`;
@@ -58,6 +60,55 @@ export const MongoGridFSModal: React.FC<MongoGridFSModalProps> = ({
   useEffect(() => {
     if (isOpen) loadFiles();
   }, [isOpen, loadFiles]);
+
+  const handleUploadFile = async () => {
+    try {
+      const chosen: any = await Dialogs.OpenFile({
+        Title: `Upload File to GridFS (${database}.${bucketPrefix})`,
+        CanChooseFiles: true,
+        AllowsMultipleSelection: false,
+      });
+      const picked = Array.isArray(chosen) ? chosen[0] : chosen;
+      if (!picked || typeof picked !== 'string') return;
+      setUploading(true);
+      await Call.ByName(
+        'dhub/internal/services.SchemaService.MongoGridFSUpload',
+        connectionId,
+        database,
+        bucketPrefix,
+        picked
+      );
+      alertSuccess(`Uploaded "${picked.split(/[\\/]/).pop()}" to GridFS.`, 'GridFS Upload Complete');
+      await loadFiles();
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'GridFS Upload Failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownloadFile = async (fileDoc: Record<string, any>) => {
+    try {
+      const defaultName = fileDoc.filename || `${String(fileDoc._id)}.bin`;
+      const dest: any = await Dialogs.SaveFile({
+        Title: `Download GridFS File (${defaultName})`,
+        Filename: defaultName,
+        CanCreateDirectories: true,
+      });
+      if (!dest || typeof dest !== 'string') return;
+      await Call.ByName(
+        'dhub/internal/services.SchemaService.MongoGridFSDownload',
+        connectionId,
+        database,
+        bucketPrefix,
+        String(fileDoc._id ?? ''),
+        dest
+      );
+      alertSuccess(`Downloaded "${defaultName}" successfully.`, 'GridFS Download Complete');
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'GridFS Download Failed');
+    }
+  };
 
   const handleDeleteFile = async (fileDoc: Record<string, any>) => {
     const ok = await confirmDialog({
@@ -105,6 +156,17 @@ db.getCollection(${JSON.stringify(filesColl)}).deleteOne({ _id: ${idExpr} });
             </h3>
           </div>
           <div className="flex items-center gap-2">
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={handleUploadFile}
+                disabled={uploading}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-medium text-white cursor-pointer"
+              >
+                {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                Upload File
+              </button>
+            )}
             <button type="button" onClick={loadFiles} className="p-1.5 rounded hover:bg-[#232633] text-zinc-400 hover:text-white cursor-pointer">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             </button>
@@ -147,11 +209,19 @@ db.getCollection(${JSON.stringify(filesColl)}).deleteOne({ _id: ${idExpr} });
                       <td className="px-3 py-2 text-right space-x-1">
                         <button
                           type="button"
+                          onClick={() => handleDownloadFile(f)}
+                          className="p-1 rounded hover:bg-emerald-500/20 text-zinc-400 hover:text-emerald-300 cursor-pointer"
+                          title="Download Binary File"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => navigator.clipboard.writeText(JSON.stringify(f, null, 2))}
                           className="p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 cursor-pointer"
                           title="Copy File Metadata JSON"
                         >
-                          <Download className="w-3.5 h-3.5" />
+                          <Copy className="w-3.5 h-3.5" />
                         </button>
                         {!isReadOnly && (
                           <button

@@ -80,6 +80,11 @@ func (m *MongoDBDriver) Close() error {
 	return nil
 }
 
+// Client returns the underlying *mongo.Client for GridFS and Change Stream operations.
+func (m *MongoDBDriver) Client() *mongo.Client {
+	return m.client
+}
+
 // ServerVersion returns the MongoDB server version string via buildInfo.
 func (m *MongoDBDriver) ServerVersion(ctx context.Context) (string, error) {
 	var res bson.M
@@ -103,6 +108,11 @@ func (m *MongoDBDriver) targetDatabase(database string) string {
 func (m *MongoDBDriver) ListDatabases(ctx context.Context) ([]string, error) {
 	names, err := m.client.ListDatabaseNames(ctx, bson.M{})
 	if err != nil {
+		// Non-admin / Atlas shared-cluster users may lack listDatabases privilege; fall back to configured defaultDB.
+		lowerErr := strings.ToLower(err.Error())
+		if m.defaultDB != "" && (strings.Contains(lowerErr, "authorized") || strings.Contains(lowerErr, "permission") || strings.Contains(lowerErr, "authentication")) {
+			return []string{m.defaultDB}, nil
+		}
 		return nil, err
 	}
 	sort.Strings(names)
