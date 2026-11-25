@@ -24,6 +24,11 @@ import (
 // connection string (and therefore the same SSH tunnel / credentials).
 const maxExtraPools = 8
 
+type pgExecEntry struct {
+	pid int
+	db  string
+}
+
 type PostgresDriver struct {
 	db        *sql.DB // pool for the default database
 	connStr   string
@@ -32,6 +37,9 @@ type PostgresDriver struct {
 	mu        sync.Mutex
 	pools     map[string]*sql.DB // extra pools keyed by database name
 	poolOrder []string           // LRU order of extra pool keys
+
+	execMu      sync.Mutex
+	activeExecs map[string]pgExecEntry
 }
 
 func openPool(connStr string) (*sql.DB, error) {
@@ -754,7 +762,26 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 	}
 
 	// 5. Generate DDL
-	structure.DDL = generatePostgresDDL(schema, table, structure)
+	var relKind, viewDef string
+	_ = db.QueryRowContext(ctx, `
+		SELECT c.relkind::text, COALESCE(pg_get_viewdef(c.oid, true), '')
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relname = $2
+		LIMIT 1`, schema, table).Scan(&relKind, &viewDef)
+	if (relKind == "v" || relKind == "m") && strings.TrimSpace(viewDef) != "" {
+		prefix := qualifiedName(schema, table)
+		if schema == "" || schema == "public" {
+			prefix = quoteIdent(table)
+		}
+		if relKind == "m" {
+			structure.DDL = fmt.Sprintf("CREATE MATERIALIZED VIEW %s AS\n%s;", prefix, strings.TrimRight(strings.TrimSpace(viewDef), ";"))
+		} else {
+			structure.DDL = fmt.Sprintf("CREATE OR REPLACE VIEW %s AS\n%s;", prefix, strings.TrimRight(strings.TrimSpace(viewDef), ";"))
+		}
+	} else {
+		structure.DDL = generatePostgresDDL(schema, table, structure)
+	}
 
 	return structure, nil
 }
@@ -908,7 +935,71 @@ func (p *PostgresDriver) Execute(ctx context.Context, req driver.QueryRequest) (
 		}()
 	}
 
+	if req.ExecutionID != "" {
+		var pid int
+		if pErr := conn.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid); pErr == nil && pid > 0 {
+			p.execMu.Lock()
+			if p.activeExecs == nil {
+				p.activeExecs = make(map[string]pgExecEntry)
+			}
+			p.activeExecs[req.ExecutionID] = pgExecEntry{pid: pid, db: req.Database}
+			p.execMu.Unlock()
+			defer func() {
+				p.execMu.Lock()
+				delete(p.activeExecs, req.ExecutionID)
+				p.execMu.Unlock()
+			}()
+		}
+	}
+
 	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "postgres")
+}
+
+func (p *PostgresDriver) TrackExecution(executionID, tabID string) func() {
+	return func() {}
+}
+
+func (p *PostgresDriver) CancelExecution(executionID string) (bool, error) {
+	p.execMu.Lock()
+	entry, ok := p.activeExecs[executionID]
+	p.execMu.Unlock()
+	if !ok || entry.pid <= 0 {
+		return false, nil
+	}
+	db, err := p.dbFor(entry.db)
+	if err != nil {
+		return false, err
+	}
+	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var cancelled bool
+	if err := db.QueryRowContext(cctx, `SELECT pg_cancel_backend($1)`, entry.pid).Scan(&cancelled); err != nil {
+		return false, err
+	}
+	return cancelled, nil
+}
+
+func (p *PostgresDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
+	db, err := p.dbFor(req.Database)
+	if err != nil {
+		return err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if req.Schema != "" && req.Schema != "main" {
+		if _, sErr := conn.ExecContext(ctx, fmt.Sprintf(`SET search_path TO %s, public`, quoteIdent(req.Schema))); sErr != nil {
+			return fmt.Errorf("failed to set search_path to %q: %w", req.Schema, sErr)
+		}
+		defer func() {
+			_, _ = conn.ExecContext(context.Background(), `RESET search_path`)
+		}()
+	}
+
+	return driver.StreamQueryWithDialect(ctx, conn, req, "postgres", onRow)
 }
 
 func (p *PostgresDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {

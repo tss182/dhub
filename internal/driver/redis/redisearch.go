@@ -277,6 +277,31 @@ func ftSearchResultToQueryResult(execID, database, indexName string, raw any, el
 			}
 			docs = append(docs, docEntry{key: key, fields: fMap})
 		}
+	} else if m, ok := raw.(map[any]any); ok {
+		if resultsRaw, hasRes := m["results"]; hasRes {
+			if results, okRes := resultsRaw.([]any); okRes {
+				for _, item := range results {
+					docMap, okDoc := item.(map[any]any)
+					if !okDoc {
+						continue
+					}
+					key := fmt.Sprint(docMap["id"])
+					fMap := make(map[string]any)
+					if attrs, okAttr := docMap["extra_attributes"].(map[any]any); okAttr {
+						for ak, av := range attrs {
+							ks := fmt.Sprint(ak)
+							fMap[ks] = av
+							fieldSet[ks] = true
+						}
+					}
+					if score, okScore := docMap["score"]; okScore {
+						fMap["score"] = score
+						fieldSet["score"] = true
+					}
+					docs = append(docs, docEntry{key: key, fields: fMap})
+				}
+			}
+		}
 	}
 
 	fieldNames := make([]string, 0, len(fieldSet))

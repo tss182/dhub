@@ -648,6 +648,13 @@ func (m *MongoDBDriver) executeCollMethod(ctx context.Context, dbName, collName 
 		qr.ExecutionID = req.ExecutionID
 		qr.SourceSchema = dbName
 		qr.SourceTable = collName
+		for _, col := range qr.Columns {
+			if col.Name == "_id" && collName != "" {
+				qr.IsEditable = true
+				qr.PrimaryKeys = []string{"_id"}
+				break
+			}
+		}
 		return qr, nil
 
 	case "findone":

@@ -48,6 +48,20 @@ func ParseDB(database string) int {
 	return 0
 }
 
+func (r *RedisDriver) ServerVersion(ctx context.Context) (string, error) {
+	info, err := r.client.Info(ctx, "server").Result()
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(info, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "redis_version:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "redis_version:")), nil
+		}
+	}
+	return "", nil
+}
+
 func (r *RedisDriver) ListDatabases(ctx context.Context) ([]string, error) {
 	var dbs []string
 	for i := 0; i < 16; i++ {

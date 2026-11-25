@@ -175,6 +175,14 @@ func (m *SessionManager) TestConnectionInfo(ctx context.Context, cfg store.Conne
 			return ver, nil
 		}
 	}
+	if sip, ok := drv.(driver.ServerInfoProvider); ok {
+		if info, iErr := sip.ServerInfo(ctx); iErr == nil && info != nil && info.Version != "" {
+			if info.Flavor != "" {
+				return info.Flavor + " " + info.Version, nil
+			}
+			return info.Version, nil
+		}
+	}
 	return "", nil
 }
 

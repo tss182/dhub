@@ -163,6 +163,12 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 				untrack = canceller.TrackExecution(req.ExecutionID, req.TabID)
 			}
 		}
+		if drvDialect == "postgres" && req.Schema != "" && req.Schema != "main" {
+			safeSchema := `"` + strings.ReplaceAll(req.Schema, `"`, `""`) + `"`
+			if _, sErr := activeTxSession.Tx.ExecContext(ctx, fmt.Sprintf(`SET LOCAL search_path TO %s, public`, safeSchema)); sErr != nil {
+				return nil, fmt.Errorf("failed to set search_path to %q: %w", req.Schema, sErr)
+			}
+		}
 		res, execErr = driver.ExecuteStatementsWithDialect(ctx, activeTxSession.Tx, req, drvDialect)
 		if untrack != nil {
 			untrack()

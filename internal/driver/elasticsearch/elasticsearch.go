@@ -747,7 +747,7 @@ func (e *ElasticsearchDriver) hitsToQueryResult(ctx context.Context, execID, ind
 				}
 			default:
 				if hit.Source != nil {
-					row = append(row, formatESCellValue(hit.Source[col.Name]))
+					row = append(row, formatESCellValue(lookupNestedField(hit.Source, col.Name)))
 				} else {
 					row = append(row, nil)
 				}
@@ -770,11 +770,34 @@ func (e *ElasticsearchDriver) hitsToQueryResult(ctx context.Context, execID, ind
 	}
 }
 
+func lookupNestedField(m map[string]any, path string) any {
+	if m == nil || path == "" {
+		return nil
+	}
+	if v, ok := m[path]; ok {
+		return v
+	}
+	parts := strings.Split(path, ".")
+	var cur any = m
+	for _, p := range parts {
+		cm, ok := cur.(map[string]any)
+		if !ok || cm == nil {
+			return nil
+		}
+		v, exists := cm[p]
+		if !exists {
+			return nil
+		}
+		cur = v
+	}
+	return cur
+}
+
 var (
-	sqlSelectCountRegex = regexp.MustCompile(`(?i)^\s*SELECT\s+COUNT\(\*\)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
-	sqlSelectRegex      = regexp.MustCompile(`(?i)^\s*SELECT\s+(.+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*;?\s*$`)
+	sqlSelectCountRegex = regexp.MustCompile(`(?is)^\s*SELECT\s+COUNT\(\*\)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
+	sqlSelectRegex      = regexp.MustCompile(`(?is)^\s*SELECT\s+(.+?)\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?(?:\s+OFFSET\s+(\d+))?\s*;?\s*$`)
 	sqlTruncateRegex    = regexp.MustCompile(`(?i)^\s*TRUNCATE\s+(?:TABLE\s+)?([^\s;]+)\s*;?\s*$`)
-	sqlDeleteRegex      = regexp.MustCompile(`(?i)^\s*DELETE\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
+	sqlDeleteRegex      = regexp.MustCompile(`(?is)^\s*DELETE\s+FROM\s+([^\s;]+)(?:\s+WHERE\s+(.+?))?\s*;?\s*$`)
 	httpCmdRegex        = regexp.MustCompile(`(?i)^(GET|POST|PUT|DELETE|PATCH|HEAD)\s+(\S+)(?:\s+([\s\S]*))?$`)
 )
 

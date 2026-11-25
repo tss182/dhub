@@ -244,6 +244,13 @@ func (m *MongoDBDriver) executePseudoSQL(ctx context.Context, dbName string, req
 	res.ExecutionID = req.ExecutionID
 	res.SourceSchema = dbName
 	res.SourceTable = collName
+	for _, col := range res.Columns {
+		if col.Name == "_id" && collName != "" {
+			res.IsEditable = true
+			res.PrimaryKeys = []string{"_id"}
+			break
+		}
+	}
 	return res, nil
 }
 
