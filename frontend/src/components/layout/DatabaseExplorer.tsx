@@ -6219,6 +6219,68 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                 </>
               )}
 
+              {contextMenu.connection.driver === 'postgres' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const conn = contextMenu.connection!;
+                    const dbName = contextMenu.database!;
+                    closeContextMenu();
+                    try {
+                      const st: any = await Call.ByName(
+                        'dhub/internal/services.SchemaService.GetPgVectorStatus',
+                        conn.id,
+                        dbName
+                      );
+                      if (!st?.installed) {
+                        if (conn.isReadOnly) {
+                          alertWarning('pgvector', `pgvector is not installed in "${dbName}" (read-only connection).`);
+                          return;
+                        }
+                        const ok = await confirmDialog({
+                          title: 'Install pgvector Extension',
+                          message: `Install pgvector extension (default v${st?.defaultVersion || 'latest'}) in database "${dbName}"?`,
+                          confirmLabel: 'Install pgvector',
+                        });
+                        if (!ok) return;
+                        const res: any = await Call.ByName(
+                          'dhub/internal/services.SchemaService.InstallOrUpgradePgVector',
+                          conn.id,
+                          dbName,
+                          'install'
+                        );
+                        alertSuccess('pgvector Installed', `pgvector v${res?.installedVersion || ''} is now active in "${dbName}".`);
+                      } else if (st.defaultVersion && st.installedVersion !== st.defaultVersion && !conn.isReadOnly) {
+                        const ok = await confirmDialog({
+                          title: 'Upgrade pgvector Extension',
+                          message: `pgvector v${st.installedVersion} is installed in "${dbName}". Upgrade to v${st.defaultVersion}?`,
+                          confirmLabel: 'Upgrade',
+                        });
+                        if (!ok) return;
+                        const res: any = await Call.ByName(
+                          'dhub/internal/services.SchemaService.InstallOrUpgradePgVector',
+                          conn.id,
+                          dbName,
+                          'upgrade'
+                        );
+                        alertSuccess('pgvector Upgraded', `pgvector upgraded to v${res?.installedVersion || st.defaultVersion}.`);
+                      } else {
+                        alertInfo(
+                          'pgvector Status',
+                          `pgvector v${st.installedVersion} is installed in "${dbName}" (HNSW: ${st.supportsHnsw ? 'yes' : 'no'}, halfvec: ${st.supportsHalfvec ? 'yes' : 'no'}, iterative_scan: ${st.supportsIterative ? 'yes' : 'no'}).`
+                        );
+                      }
+                    } catch (err: any) {
+                      alertError('pgvector Check Failed', err?.message || String(err));
+                    }
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group font-medium"
+                >
+                  <Layers className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                  <span>pgvector Extension Status / Install...</span>
+                </button>
+              )}
+
               {contextMenu.connection.driver?.toLowerCase() !== 'redis' && (
                 <button
                   type="button"

@@ -1147,7 +1147,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
                   </div>
                   <div className="rounded bg-[#16171d] border border-[#272932] p-2.5 space-y-1.5">
                     <div className="text-[10px] text-zinc-400">Binary Strip (first {sample.length} bits)</div>
-                    <div className="grid grid-cols-32 gap-0.5">
+                    <div className="grid gap-0.5" style={{ gridTemplateColumns: 'repeat(32, minmax(0, 1fr))' }}>
                       {Array.from(sample).map((b, idx) => (
                         <div
                           key={idx}

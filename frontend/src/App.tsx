@@ -85,9 +85,7 @@ const SnippetsModal = lazy(() =>
 const MockDataModal = lazy(() =>
   import('./components/modals/MockDataModal').then((m) => ({ default: m.MockDataModal }))
 );
-const PgVectorIndexModal = lazy(() =>
-  import('./components/modals/PgVectorIndexModal').then((m) => ({ default: m.PgVectorIndexModal }))
-);
+import { PgVectorIndexModal } from './components/modals/PgVectorIndexModal';
 const UserManager = lazy(() =>
   import('./components/users/UserManager').then((m) => ({ default: m.UserManager }))
 );
@@ -4827,29 +4825,27 @@ export function App() {
       />
 
       {/* pgvector Index Manager & Advisor Modal */}
-      <Suspense fallback={null}>
-        <PgVectorIndexModal
-          isOpen={pgVectorIndexModal.isOpen}
-          onClose={() => setPgVectorIndexModal((prev) => ({ ...prev, isOpen: false }))}
-          connectionId={pgVectorIndexModal.connectionId}
-          database={pgVectorIndexModal.database}
-          schema={pgVectorIndexModal.schema}
-          tableName={pgVectorIndexModal.tableName}
-          onOpenInConsole={(sql) => {
-            const conn = connections.find((c) => c.id === pgVectorIndexModal.connectionId);
-            openTab({
-              id: `console-pgvec-${Date.now()}`,
-              type: 'worksheet',
-              title: `${pgVectorIndexModal.tableName} (pgvector Index)`,
-              connectionId: pgVectorIndexModal.connectionId,
-              driver: conn?.driver || 'postgres',
-              database: pgVectorIndexModal.database,
-              schema: pgVectorIndexModal.schema,
-              content: sql,
-            });
-          }}
-        />
-      </Suspense>
+      <PgVectorIndexModal
+        isOpen={pgVectorIndexModal.isOpen}
+        onClose={() => setPgVectorIndexModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={pgVectorIndexModal.connectionId}
+        database={pgVectorIndexModal.database}
+        schema={pgVectorIndexModal.schema}
+        tableName={pgVectorIndexModal.tableName}
+        onOpenInConsole={(sql) => {
+          const conn = connections.find((c) => c.id === pgVectorIndexModal.connectionId);
+          openTab({
+            id: `console-pgvec-${Date.now()}`,
+            type: 'worksheet',
+            title: `${pgVectorIndexModal.tableName} (pgvector Index)`,
+            connectionId: pgVectorIndexModal.connectionId,
+            driver: conn?.driver || 'postgres',
+            database: pgVectorIndexModal.database,
+            schema: pgVectorIndexModal.schema,
+            content: sql,
+          });
+        }}
+      />
 
       {/* Resizing Backdrop Overlays */}
       {isDraggingBottomResizer && (
