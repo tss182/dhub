@@ -28,6 +28,7 @@ import {
   Filter,
   Users,
   Lock,
+  Briefcase,
 } from 'lucide-react';
 import { useWorkbenchStore, HelpTab } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -257,6 +258,11 @@ const FAQ_ITEMS: Array<{ q: string; a: string; tags: string[] }> = [
     a: 'DHub automatically issues a rollback on the open transaction when the worksheet tab is closed, ensuring uncommitted locks are not left dangling on your database server.',
     tags: ['transaction', 'rollback', 'manual', 'commit'],
   },
+  {
+    q: 'How do Workspaces and Connection Filters work?',
+    a: 'Each Workspace saves its own set of open tabs and active tab. You can switch, create, or rename workspaces from the header dropdown or the Left Sidebar Workspaces panel. To focus on specific databases, click the Filter icon next to any workspace to pick All Connections or a Custom Selection — only those connections will appear in Explorer and Search Everywhere.',
+    tags: ['workspace', 'workspaces', 'filter', 'connection', 'session', 'tabs'],
+  },
 ];
 
 const SEARCHABLE_TOPICS: SearchableTopic[] = [
@@ -362,6 +368,30 @@ const SEARCHABLE_TOPICS: SearchableTopic[] = [
       'Click Preview SQL to inspect generated statements before pressing Ctrl+S / ⌘S to apply.',
       'Press Ctrl+T / ⌘T on any cell to view/edit long text or JSON in the Value Viewer panel.',
       'Choose Copy Format (CSV, JSON, SQL INSERT, SQL UPDATE, SQL UPSERT) from the toolbar.',
+    ],
+  },
+  {
+    id: 'tools-workspaces',
+    tab: 'tools',
+    tabLabel: 'Tools & Security',
+    title: 'Workspaces & Connection Filtering',
+    keywords: [
+      'workspace',
+      'workspaces',
+      'session',
+      'tabs',
+      'filter connection',
+      'connection filter',
+      'custom selection',
+      'switch',
+    ],
+    summary:
+      'Organize projects into isolated Workspaces with their own open tabs, and filter which connections are visible per workspace.',
+    bullets: [
+      'Switch or create workspaces from the top header dropdown or the Left Sidebar Workspaces panel.',
+      'Each workspace automatically persists its open query consoles, table tabs, and active tab.',
+      'Click the Filter icon on any workspace to choose All Connections or a Custom Selection (by folder or individual connection).',
+      'Filtered workspaces scope Database Explorer and Search Everywhere to only the selected connections.',
     ],
   },
   {
@@ -1197,6 +1227,23 @@ export const HelpModal: React.FC = () => {
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-[#272932] bg-[#1e2027] p-4 space-y-1.5 sm:col-span-2">
+                        <div className="font-semibold text-zinc-100 flex items-center gap-2">
+                          <Briefcase className="h-4 w-4 text-sky-400" />
+                          <span>Workspaces &amp; Connection Filtering</span>
+                        </div>
+                        <p className="text-[11px] text-zinc-400 leading-relaxed">
+                          Group your work into separate <strong>Workspaces</strong> using the header
+                          selector or the <strong>Workspaces</strong> panel in the Left Sidebar.
+                          Each workspace saves its own open console &amp; table tabs so you can
+                          switch contexts cleanly. Click the <strong>Filter</strong> icon next to
+                          any workspace to switch between <strong>All Connections</strong> or a{' '}
+                          <strong>Custom Selection</strong> (selectable by folder or connection)—scoping
+                          both Database Explorer and Search Everywhere (<code>{isMac ? '⌘P' : 'Ctrl+P'}</code>)
+                          to only the connections you need.
+                        </p>
+                      </div>
+
                       <div className="rounded-xl border border-[#272932] bg-[#1e2027] p-4 space-y-1.5">
                         <div className="font-semibold text-zinc-100 flex items-center gap-2">
                           <GitCompare className="h-4 w-4 text-blue-400" />
