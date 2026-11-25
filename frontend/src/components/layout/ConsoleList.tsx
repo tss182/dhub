@@ -4,6 +4,7 @@ import { useConnectionStore } from '../../stores/useConnectionStore';
 import { useWorkspaceSessionStore } from '../../stores/useWorkspaceSessionStore';
 import { getActiveWorkspaceAllowedConnectionIds } from '../../types/domain';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
+import { getDriverCapabilities, getDefaultDatabase, getDefaultSchema } from '../../utils/driverCapabilities';
 import {
   Terminal,
   FileCode,
@@ -254,30 +255,30 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
 
     const { activeConnectionId, activeDatabase, activeSchema } = useConnectionStore.getState();
     const isActiveConn = conn.id === activeConnectionId;
-    const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys', 'template0', 'template1', 'rdsadmin', 'cloudsqladmin', 'azure_maintenance', 'azure_sys'];
+    const caps = getDriverCapabilities(conn.driver);
+    const systemDbs = caps.systemDatabases;
     const nonSystemDb = effectiveDbs.find((d) => !systemDbs.includes(d.toLowerCase()));
-    const fallbackDb = conn.driver === 'postgres' ? 'postgres' : conn.driver === 'sqlite' ? 'main' : 'default';
+    const fallbackDb = getDefaultDatabase(conn.driver) || 'default';
     const targetDb =
       (isActiveConn && activeDatabase && activeDatabase !== 'main' ? activeDatabase : '') ||
       (conn.databaseName && (!visibleList || visibleList.includes(conn.databaseName) || visibleList.some((v) => v.toLowerCase() === conn.databaseName.toLowerCase())) ? conn.databaseName : '') ||
       nonSystemDb ||
       (effectiveDbs.length > 0 ? effectiveDbs[0] : fallbackDb);
-    const targetSchema =
-      conn.driver === 'postgres'
-        ? (isActiveConn && activeSchema && activeSchema !== 'main' ? activeSchema : 'public')
-        : targetDb;
+    const targetSchema = caps.hasSeparateSchemas
+      ? (isActiveConn && activeSchema && activeSchema !== 'main' ? activeSchema : getDefaultSchema(conn.driver, targetDb))
+      : targetDb;
 
     const count = consoles.filter((c) => c.connectionId === conn.id).length + 1;
     const title = `${conn.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_console_${count}.sql`;
     const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || navigator.platform);
     let starter: string | undefined;
-    if (conn.driver === 'elasticsearch') {
+    if (caps.category === 'search') {
       starter = `-- Elasticsearch Query Console\n-- Run REST commands (GET /_cat/indices, POST /index/_search) or SQL (SELECT * FROM "index" LIMIT 50)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nGET /_cat/indices?format=json\n`;
-    } else if (conn.driver === 'qdrant') {
+    } else if (caps.category === 'vector') {
       starter = `-- Qdrant Query Console\n-- Run pseudo-SQL (SELECT * FROM collection LIMIT 50, SHOW COLLECTIONS) or REST API commands\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nSHOW COLLECTIONS;\n`;
-    } else if (conn.driver === 'redis') {
+    } else if (caps.category === 'keyvalue') {
       starter = `-- Redis Query Console for ${targetDb}\n-- Type Redis commands directly (e.g. GET key, SET key val, KEYS *)\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nKEYS *\n`;
-    } else if (conn.driver === 'mongodb') {
+    } else if (caps.category === 'document') {
       starter = `-- MongoDB Query Console for ${targetDb}\n-- ${isMac ? 'Cmd' : 'Ctrl'}+Enter to execute\n\nshow collections;\n`;
     }
 
@@ -573,22 +574,25 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                                 kind: 'console',
                                 title: record.title,
                                 badge: isTabOpen ? 'OPEN' : 'CONSOLE',
-                                subtitle:
-                                  conn.driver === 'elasticsearch' || conn.driver === 'qdrant'
-                                    ? conn.name
-                                    : conn.driver === 'postgres'
-                                    ? `${conn.name} / ${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''}`
-                                    : `${conn.name} / ${record.database || 'main'}`,
+                                subtitle: (() => {
+                                  const cCaps = getDriverCapabilities(conn.driver);
+                                  if (cCaps.category === 'search' || cCaps.category === 'vector') return conn.name;
+                                  if (cCaps.hasSeparateSchemas) {
+                                    return `${conn.name} / ${record.database || getDefaultDatabase(conn.driver)}${record.schema ? '.' + record.schema : ''}`;
+                                  }
+                                  return `${conn.name} / ${record.database || getDefaultDatabase(conn.driver) || 'main'}`;
+                                })(),
                               })
                             }
                             onMouseLeave={handleItemMouseLeave}
-                            title={
-                              conn.driver === 'elasticsearch' || conn.driver === 'qdrant'
-                                ? record.title
-                                : conn.driver === 'postgres'
-                                ? `${record.title} (${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''})`
-                                : `${record.title} (${record.database || 'main'})`
-                            }
+                            title={(() => {
+                              const cCaps = getDriverCapabilities(conn.driver);
+                              if (cCaps.category === 'search' || cCaps.category === 'vector') return record.title;
+                              if (cCaps.hasSeparateSchemas) {
+                                return `${record.title} (${record.database || getDefaultDatabase(conn.driver)}${record.schema ? '.' + record.schema : ''})`;
+                              }
+                              return `${record.title} (${record.database || getDefaultDatabase(conn.driver) || 'main'})`;
+                            })()}
                             className={`group flex flex-col p-2 rounded cursor-pointer border transition-colors ${
                               isTabActive
                                 ? 'bg-[#22242c] border-zinc-500/60 text-white'
@@ -642,23 +646,21 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
                             </div>
 
                             {/* Database info tag */}
-                            {conn.driver !== 'elasticsearch' && conn.driver !== 'qdrant' && (
-                              <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500">
-                                <Database className="h-2.5 w-2.5 text-blue-400 shrink-0" />
-                                <span
-                                  className="font-mono text-zinc-400 truncate"
-                                  title={
-                                    conn.driver === 'postgres'
-                                      ? `${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''}`
-                                      : record.database || 'main'
-                                  }
-                                >
-                                  {conn.driver === 'postgres'
-                                    ? `${record.database || 'postgres'}${record.schema ? '.' + record.schema : ''}`
-                                    : record.database || 'main'}
-                                </span>
-                              </div>
-                            )}
+                            {(() => {
+                              const cCaps = getDriverCapabilities(conn.driver);
+                              if (cCaps.category === 'search' || cCaps.category === 'vector') return null;
+                              const dbLabel = cCaps.hasSeparateSchemas
+                                ? `${record.database || getDefaultDatabase(conn.driver)}${record.schema ? '.' + record.schema : ''}`
+                                : record.database || getDefaultDatabase(conn.driver) || 'main';
+                              return (
+                                <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500">
+                                  <Database className="h-2.5 w-2.5 text-blue-400 shrink-0" />
+                                  <span className="font-mono text-zinc-400 truncate" title={dbLabel}>
+                                    {dbLabel}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })
@@ -751,11 +753,12 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
               >
                 <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-white" />
                 <span>
-                  {contextMenu.connection.driver === 'elasticsearch'
-                    ? 'Refresh Indices'
-                    : contextMenu.connection.driver === 'qdrant'
-                    ? 'Refresh Collections'
-                    : 'Refresh Databases'}
+                  {(() => {
+                    const cCaps = getDriverCapabilities(contextMenu.connection.driver);
+                    if (cCaps.category === 'search') return 'Refresh Indices';
+                    if (cCaps.category === 'vector') return 'Refresh Collections';
+                    return 'Refresh Databases';
+                  })()}
                 </span>
               </button>
             </>

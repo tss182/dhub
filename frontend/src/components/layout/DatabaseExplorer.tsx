@@ -521,7 +521,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       title: `${conn.name} - Users`,
       connectionId: conn.id,
       driver: conn.driver,
-      database: db || (conn.driver === 'postgres' ? 'postgres' : conn.driver === 'mssql' ? 'master' : conn.driver === 'oracle' ? 'ORCL' : 'mysql'),
+      database: db || getDefaultDatabase(conn.driver) || 'mysql',
       schema: getDefaultSchema(conn.driver, db) || (conn.driver === 'oracle' ? (conn.username || 'SYSTEM').toUpperCase() : ''),
     });
   };
@@ -621,19 +621,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
 
       setNodeExpanded(connectionId, true);
 
-      const isES = conn.driver === 'elasticsearch';
+      const caps = getDriverCapabilities(conn.driver);
+      const isES = caps.category === 'search';
       const targetDb = isES ? 'default' : database || conn.databaseName || getDefaultDatabase(conn.driver);
-      const isSchemaDriver =
-        conn.driver === 'postgres' || conn.driver === 'mssql' || conn.driver === 'oracle';
+      const isSchemaDriver = caps.hasSeparateSchemas;
       const defaultSchema = isES
         ? 'default'
-        : conn.driver === 'postgres'
-          ? 'public'
-          : conn.driver === 'mssql'
-          ? 'dbo'
-          : conn.driver === 'oracle'
-          ? (conn.username || 'SYSTEM').toUpperCase()
-          : targetDb;
+        : conn.driver === 'oracle'
+        ? (conn.username || 'SYSTEM').toUpperCase()
+        : getDefaultSchema(conn.driver, targetDb);
       const targetSchema = isES ? 'default' : schema || defaultSchema;
 
       try {
@@ -1159,7 +1155,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       dumpMode: 'full',
       format: 'plain',
       schema: 'all',
-      availableSchemas: treeSchemas[`${conn.id}:${database}`] || (conn.driver === 'postgres' ? ['public'] : []),
+      availableSchemas: treeSchemas[`${conn.id}:${database}`] || (getDriverCapabilities(conn.driver).hasSeparateSchemas ? [getDefaultSchema(conn.driver, database)].filter(Boolean) : []),
       includeRoutines: true,
       includeTriggers: true,
       includeEvents: false,
@@ -1175,7 +1171,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     });
 
     try {
-      const targetSchema = conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : conn.driver === 'oracle' ? '' : database;
+      const targetSchema = getDefaultSchema(conn.driver, database);
       const objs = await SchemaService.GetObjects(conn.id, database, targetSchema);
       const tables = (objs || [])
         .filter((o) => o.type === 'table')
@@ -1598,15 +1594,15 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
             conn?.databaseName && prefetchedDbs.includes(conn.databaseName)
               ? conn.databaseName
               : prefetchedDbs[0] || conn?.databaseName || 'main';
-          const currentSchema = conn?.driver === 'postgres' ? 'public' : conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || '').toUpperCase() : currentDb;
+          const currentSchema = conn?.driver === 'oracle' ? (conn?.username || '').toUpperCase() : getDefaultSchema(conn?.driver, currentDb);
           setActiveConnection(connId, currentDb, currentSchema);
 
           // Pre-fetch objects for visible databases in background
           for (const dbName of prefetchedDbs) {
-            if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
+            if (getDriverCapabilities(conn?.driver).hasSeparateSchemas) {
               SchemaService.GetSchemas(connId, dbName)
                 .then((schemas) => {
-                  const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
+                  const defaultSchema = conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : getDefaultSchema(conn?.driver, dbName);
                   const safeSchemas = schemas && schemas.length > 0 ? schemas : [defaultSchema];
                   setTreeSchemas((prev) => ({ ...prev, [`${connId}:${dbName}`]: safeSchemas }));
                   for (const s of safeSchemas) {
@@ -1652,11 +1648,11 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     toggleNode(nodeKey);
     const conn = connections.find((c) => c.id === connId);
 
-    if (conn?.driver === 'postgres' || conn?.driver === 'mssql' || conn?.driver === 'oracle') {
+    if (getDriverCapabilities(conn?.driver).hasSeparateSchemas) {
       if (!expandedNodes[nodeKey]) {
         try {
           let schemas = treeSchemas[nodeKey];
-          const defaultSchema = conn?.driver === 'mssql' ? 'dbo' : conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : 'public';
+          const defaultSchema = conn?.driver === 'oracle' ? (conn?.username || 'SYSTEM').toUpperCase() : getDefaultSchema(conn?.driver, dbName);
           if (!schemas || schemas.length === 0) {
             schemas = (await SchemaService.GetSchemas(connId, dbName)) ?? [];
             if (schemas.length === 0) schemas = [defaultSchema];
@@ -3642,7 +3638,9 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
               ) : (
                 databases.map((dbName) => {
                   const filterLower = filterText.toLowerCase().trim();
-                  const targetSchema = c.driver === 'postgres' ? 'public' : c.driver === 'mssql' ? 'dbo' : dbName;
+                  const dbCaps = getDriverCapabilities(c.driver);
+                  const isRedis = dbCaps.category === 'keyvalue';
+                  const targetSchema = dbCaps.hasSeparateSchemas ? getDefaultSchema(c.driver, dbName) : dbName;
                   const schemaKey = `${c.id}:${dbName}:${targetSchema}`;
                   const allObjects = treeObjects[schemaKey] || [];
 
@@ -3659,17 +3657,17 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                   const isDbExpanded =
                     !!expandedNodes[`${c.id}:${dbName}`] || (!!filterLower && hasMatchingObject);
                   const baseList = filterLower && !dbMatches ? matchingObjects : allObjects;
-                  const warnings = c.driver === 'redis' ? [] : allObjects.filter((o) => o.type === 'warning');
+                  const warnings = isRedis ? [] : allObjects.filter((o) => o.type === 'warning');
                   const tables =
-                    c.driver === 'redis'
+                    isRedis
                       ? baseList
                       : baseList.filter((o) => o.type === 'table' || (!o.type && !['view', 'materialized_view', 'routine', 'trigger', 'event', 'sequence', 'extension', 'warning'].includes(o.type)));
-                  const views = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'view');
-                  const matViews = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'materialized_view');
-                  const routines = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'routine');
-                  const triggers = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'trigger');
-                  const events = c.driver === 'redis' ? [] : baseList.filter((o) => o.type === 'event');
-                  const sequences = c.driver === 'redis' || !getDriverCapabilities(c.driver).supportsSequences ? [] : baseList.filter((o) => o.type === 'sequence');
+                  const views = isRedis ? [] : baseList.filter((o) => o.type === 'view');
+                  const matViews = isRedis ? [] : baseList.filter((o) => o.type === 'materialized_view');
+                  const routines = isRedis ? [] : baseList.filter((o) => o.type === 'routine');
+                  const triggers = isRedis ? [] : baseList.filter((o) => o.type === 'trigger');
+                  const events = isRedis ? [] : baseList.filter((o) => o.type === 'event');
+                  const sequences = isRedis || !dbCaps.supportsSequences ? [] : baseList.filter((o) => o.type === 'sequence');
                   const isDbActive = activeConnectionId === c.id && activeDatabase === dbName;
 
                   return (
@@ -3790,8 +3788,8 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                       {/* Tables & Views under this database */}
                       {isDbExpanded && (
                         <div className="ml-4 mt-0.5 border-l border-[#272932] pl-2 space-y-0.5">
-                          {c.driver === 'postgres' || c.driver === 'mssql' || c.driver === 'oracle' ? (
-                            (treeSchemas[`${c.id}:${dbName}`] || (c.driver === 'mssql' ? ['dbo'] : c.driver === 'oracle' ? [(c.username || 'SYSTEM').toUpperCase()] : ['public'])).map((sName) => {
+                          {getDriverCapabilities(c.driver).hasSeparateSchemas ? (
+                            (treeSchemas[`${c.id}:${dbName}`] || [c.driver === 'oracle' ? (c.username || 'SYSTEM').toUpperCase() : getDefaultSchema(c.driver, dbName)]).map((sName) => {
                               const sNodeKey = `${c.id}:${dbName}:schema:${sName}`;
                               const isSExpanded = expandedNodes[sNodeKey] !== false; // default open
                               const sKey = `${c.id}:${dbName}:${sName}`;

@@ -12,29 +12,18 @@ import { ConnectionConfig } from '../../types/domain';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { ConnectionService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertError } from '../../stores/useAlertStore';
+import { getDriverCapabilities, getDefaultSchema } from '../../utils/driverCapabilities';
+
+function isSystemDatabase(driver: string, dbName: string): boolean {
+  const lower = dbName.toLowerCase();
+  return getDriverCapabilities(driver).systemDatabases.includes(lower);
+}
 
 interface SchemaFilterModalProps {
   isOpen: boolean;
   onClose: () => void;
   connection: ConnectionConfig | null;
   anchorRect?: DOMRect | null;
-}
-
-function isSystemDatabase(driver: string, dbName: string): boolean {
-  const lower = dbName.toLowerCase();
-  if (driver === 'mysql' || driver === 'mariadb') {
-    return ['information_schema', 'mysql', 'performance_schema', 'sys'].includes(lower);
-  }
-  if (driver === 'postgres') {
-    return ['template0', 'template1', 'rdsadmin', 'cloudsqladmin', 'azure_maintenance', 'azure_sys'].includes(lower);
-  }
-  if (driver === 'clickhouse') {
-    return ['system', 'information_schema'].includes(lower);
-  }
-  if (driver === 'mongodb' || driver === 'mongo') {
-    return ['admin', 'local', 'config'].includes(lower);
-  }
-  return false;
 }
 
 export const SchemaFilterModal: React.FC<SchemaFilterModalProps> = ({
@@ -154,7 +143,7 @@ export const SchemaFilterModal: React.FC<SchemaFilterModalProps> = ({
     // If active database was deselected, switch to first visible database if possible
     if (activeConnectionId === connId && !selectedDatabases.includes(activeDatabase)) {
       const fallbackDb = selectedDatabases[0] || '';
-      const fallbackSchema = connection.driver === 'postgres' ? 'public' : fallbackDb;
+      const fallbackSchema = getDefaultSchema(connection.driver, fallbackDb);
       setActiveConnection(connId, fallbackDb, fallbackSchema);
     }
 
@@ -323,7 +312,7 @@ export const SchemaFilterModal: React.FC<SchemaFilterModalProps> = ({
             <Search className="absolute left-2 h-3.5 w-3.5 text-zinc-500 pointer-events-none" />
             <input
               type="text"
-              placeholder={connection.driver === 'postgres' ? 'Search databases...' : 'Search schemas...'}
+              placeholder={getDriverCapabilities(connection.driver).hasSeparateSchemas ? 'Search databases...' : 'Search schemas...'}
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
               className="w-full bg-[#131419] pl-7 pr-2 py-1 rounded text-[11px] text-zinc-200 placeholder-zinc-500 border border-[#2b2d38] focus:border-blue-500 focus:outline-none"
@@ -356,7 +345,7 @@ export const SchemaFilterModal: React.FC<SchemaFilterModalProps> = ({
                 ) : null}
               </div>
               <span className="text-[11px] font-medium text-zinc-200 truncate">
-                {connection.driver === 'postgres' ? 'All databases' : 'All schemas'}
+                {getDriverCapabilities(connection.driver).hasSeparateSchemas ? 'All databases' : 'All schemas'}
               </span>
             </div>
 
@@ -418,7 +407,7 @@ export const SchemaFilterModal: React.FC<SchemaFilterModalProps> = ({
                   {isDefaultSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
                 </div>
                 <span className="text-[11px] text-zinc-200 truncate">
-                  {connection.driver === 'postgres' ? 'Default database' : 'Default schema'}
+                  {getDriverCapabilities(connection.driver).hasSeparateSchemas ? 'Default database' : 'Default schema'}
                 </span>
               </div>
               <span className="text-[10px] font-mono text-zinc-500 truncate max-w-[110px]">
@@ -434,14 +423,14 @@ export const SchemaFilterModal: React.FC<SchemaFilterModalProps> = ({
             <div className="py-8 flex flex-col items-center justify-center gap-2 text-zinc-400">
               <RefreshCw className="h-5 w-5 animate-spin text-blue-400" />
               <span className="text-[11px]">
-                {connection.driver === 'postgres' ? 'Connecting and loading databases...' : 'Connecting and loading schemas...'}
+                {getDriverCapabilities(connection.driver).hasSeparateSchemas ? 'Connecting and loading databases...' : 'Connecting and loading schemas...'}
               </span>
             </div>
           ) : filteredDatabases.length === 0 ? (
             <div className="py-6 text-center text-zinc-500 text-[11px]">
               {filterText
-                ? `No ${connection.driver === 'postgres' ? 'databases' : 'schemas'} matching "${filterText}"`
-                : `No ${connection.driver === 'postgres' ? 'databases' : 'schemas'} found`}
+                ? `No ${getDriverCapabilities(connection.driver).hasSeparateSchemas ? 'databases' : 'schemas'} matching "${filterText}"`
+                : `No ${getDriverCapabilities(connection.driver).hasSeparateSchemas ? 'databases' : 'schemas'} found`}
             </div>
           ) : (
             filteredDatabases.map((db) => {
@@ -473,7 +462,7 @@ export const SchemaFilterModal: React.FC<SchemaFilterModalProps> = ({
 
                     {/* Lightning bolt indicator for system schemas/databases (DataGrip style) */}
                     {isSystem && (
-                      <span title={connection.driver === 'postgres' ? 'System database' : 'System schema'} className="inline-flex items-center">
+                      <span title={getDriverCapabilities(connection.driver).hasSeparateSchemas ? 'System database' : 'System schema'} className="inline-flex items-center">
                         <Zap className="h-3 w-3 text-amber-400 shrink-0 ml-0.5" />
                       </span>
                     )}

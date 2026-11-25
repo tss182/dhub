@@ -4,6 +4,7 @@ import { X, Eye, Copy, Check, Download, RefreshCw, AlertCircle, FileCode } from 
 import { SchemaService } from '../../../bindings/dhub/internal/services';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { alertError, alertSuccess } from '../../stores/useAlertStore';
+import { getDriverCapabilities, getDefaultDatabase, getDefaultSchema } from '../../utils/driverCapabilities';
 
 function stripTableOptionsFromDdl(rawDdl: string): string {
   // Remove MySQL/MariaDB trailing table options like ENGINE=InnoDB AUTO_INCREMENT=123 DEFAULT CHARSET=utf8mb4 COLLATE=...
@@ -134,16 +135,10 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
       const targetDb =
         database ||
         connection.databaseName ||
-        (connection.driver === 'postgres' ? 'postgres' : connection.driver === 'clickhouse' ? 'default' : 'main');
+        getDefaultDatabase(connection.driver);
       const targetSchema =
         schema ||
-        (connection.driver === 'postgres'
-          ? 'public'
-          : connection.driver === 'mssql'
-          ? 'dbo'
-          : connection.driver === 'oracle'
-          ? ''
-          : targetDb);
+        getDefaultSchema(connection.driver, targetDb);
 
       if (scope === 'table') {
         if (!tableName) {
@@ -160,9 +155,10 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
         if (!resultDdl) {
           setError(`No DDL available for "${tableName}".`);
         } else {
+          const caps = getDriverCapabilities(connection.driver);
           const isJsonConfig =
-            connection.driver === 'qdrant' ||
-            connection.driver === 'elasticsearch' ||
+            caps.category === 'vector' ||
+            caps.category === 'search' ||
             resultDdl.trim().startsWith('{');
           setDdl(isJsonConfig || resultDdl.trim().endsWith(';') ? resultDdl : `${resultDdl};`);
         }
@@ -211,9 +207,10 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
       ? 'bg-emerald-950/75 border-emerald-800/70'
       : 'bg-[#14151a] border-[#272932]';
 
-  const isQdrant = connection?.driver === 'qdrant';
-  const isElasticsearch = connection?.driver === 'elasticsearch';
-  const isMongo = connection?.driver === 'mongodb';
+  const viewCaps = getDriverCapabilities(connection?.driver);
+  const isQdrant = viewCaps.category === 'vector';
+  const isElasticsearch = viewCaps.category === 'search';
+  const isMongo = viewCaps.category === 'document';
   const isJsonSchema = (isQdrant || isElasticsearch) && scope === 'table';
   const title =
     isQdrant && scope === 'table'
@@ -234,7 +231,7 @@ export const ViewDdlModal: React.FC<ViewDdlModalProps> = ({
     scope === 'table'
       ? isQdrant || isElasticsearch
         ? `${connection?.name || ''}`
-        : `${connection?.name || ''} • ${database}${schema && (connection?.driver === 'postgres' || schema !== database) ? `.${schema}` : ''}`
+        : `${connection?.name || ''} • ${database}${schema && (viewCaps.hasSeparateSchemas || schema !== database) ? `.${schema}` : ''}`
       : `${connection?.name || ''} • Structure only (no data)`;
 
   const defaultFileName = (() => {

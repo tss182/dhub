@@ -24,6 +24,16 @@ type MSSQLDriver struct {
 	mu        sync.Mutex
 	pools     map[string]*sql.DB
 	poolOrder []string
+
+	tabSessOnce sync.Once
+	tabSess     *driver.TabSessionManager
+}
+
+func (m *MSSQLDriver) tabSessionMgr() *driver.TabSessionManager {
+	m.tabSessOnce.Do(func() {
+		m.tabSess = driver.NewTabSessionManager(m.dbFor)
+	})
+	return m.tabSess
 }
 
 func openPool(connStr string) (*sql.DB, error) {
@@ -117,6 +127,9 @@ func (m *MSSQLDriver) Ping(ctx context.Context) error {
 }
 
 func (m *MSSQLDriver) Close() error {
+	if m.tabSess != nil {
+		m.tabSess.CloseAll()
+	}
 	m.mu.Lock()
 	for name, pool := range m.pools {
 		_ = pool.Close()
@@ -455,6 +468,58 @@ func (m *MSSQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
+	// 4b. Check Constraints
+	chkQuery := `
+		SELECT cc.name, cc.definition
+		FROM sys.check_constraints cc
+		JOIN sys.tables t ON cc.parent_object_id = t.object_id
+		JOIN sys.schemas s ON t.schema_id = s.schema_id
+		WHERE s.name = @p1 AND t.name = @p2
+		ORDER BY cc.name;`
+	if chkRows, chkErr := db.QueryContext(ctx, chkQuery, schema, table); chkErr == nil {
+		defer chkRows.Close()
+		for chkRows.Next() {
+			var cName, cDef string
+			if err := chkRows.Scan(&cName, &cDef); err == nil {
+				structure.CheckConstraints = append(structure.CheckConstraints, driver.CheckConstraintMeta{
+					Name:   cName,
+					Clause: strings.TrimSpace(cDef),
+				})
+			}
+		}
+	}
+
+	// 4c. Triggers
+	trgQuery := `
+		SELECT tr.name,
+			CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing,
+			COALESCE(STUFF((
+				SELECT ', ' + te.type_desc
+				FROM sys.trigger_events te
+				WHERE te.object_id = tr.object_id
+				FOR XML PATH('')
+			), 1, 2, ''), '') AS events,
+			COALESCE(OBJECT_DEFINITION(tr.object_id), '')
+		FROM sys.triggers tr
+		JOIN sys.tables t ON tr.parent_id = t.object_id
+		JOIN sys.schemas s ON t.schema_id = s.schema_id
+		WHERE s.name = @p1 AND t.name = @p2
+		ORDER BY tr.name;`
+	if trgRows, trgErr := db.QueryContext(ctx, trgQuery, schema, table); trgErr == nil {
+		defer trgRows.Close()
+		for trgRows.Next() {
+			var tName, timing, event, stmt string
+			if err := trgRows.Scan(&tName, &timing, &event, &stmt); err == nil {
+				structure.Triggers = append(structure.Triggers, driver.TriggerMeta{
+					Name:      tName,
+					Timing:    timing,
+					Event:     event,
+					Statement: strings.TrimSpace(stmt),
+				})
+			}
+		}
+	}
+
 	// 5. Generate DDL (use view definition for views)
 	var viewDef sql.NullString
 	_ = db.QueryRowContext(ctx, `
@@ -582,23 +647,51 @@ func generateMSSQLDDL(schema, table string, s *driver.TableStructure) string {
 }
 
 func (m *MSSQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	db, err := m.dbFor(req.Database)
-	if err != nil {
-		return nil, err
+	var conn *sql.Conn
+	var sessionReset bool
+	if req.TabID != "" {
+		var release func()
+		var err error
+		conn, release, sessionReset, err = m.tabSessionMgr().Acquire(ctx, req.TabID, req.Database)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	} else {
+		db, err := m.dbFor(req.Database)
+		if err != nil {
+			return nil, err
+		}
+		conn, err = db.Conn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer conn.Close()
 	}
 
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return nil, err
+	res, err := driver.ExecuteStatementsWithDialect(ctx, conn, req, "mssql")
+	if res != nil && sessionReset {
+		res.SessionReset = true
 	}
-	defer conn.Close()
+	return res, err
+}
 
-	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "mssql")
+func (m *MSSQLDriver) BeginTxForTab(ctx context.Context, tabID, database string) (*sql.Tx, error) {
+	return m.tabSessionMgr().BeginTxForTab(ctx, tabID, database)
+}
+
+func (m *MSSQLDriver) TxEnded(tabID string) {
+	m.tabSessionMgr().TxEnded(tabID)
+}
+
+func (m *MSSQLDriver) CloseSession(tabID string) {
+	m.tabSessionMgr().CloseSession(tabID)
 }
 
 var (
 	_ driver.RowStreamer        = (*MSSQLDriver)(nil)
 	_ driver.ServerInfoProvider = (*MSSQLDriver)(nil)
+	_ driver.TabSessionDriver   = (*MSSQLDriver)(nil)
 )
 
 func (m *MSSQLDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {

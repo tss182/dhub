@@ -40,6 +40,16 @@ type PostgresDriver struct {
 
 	execMu      sync.Mutex
 	activeExecs map[string]pgExecEntry
+
+	tabSessOnce sync.Once
+	tabSess     *driver.TabSessionManager
+}
+
+func (p *PostgresDriver) tabSessionMgr() *driver.TabSessionManager {
+	p.tabSessOnce.Do(func() {
+		p.tabSess = driver.NewTabSessionManager(p.dbFor)
+	})
+	return p.tabSess
 }
 
 func openPool(connStr string) (*sql.DB, error) {
@@ -201,6 +211,7 @@ var (
 	_ driver.QueryCanceller     = (*PostgresDriver)(nil)
 	_ driver.ServerInfoProvider = (*PostgresDriver)(nil)
 	_ driver.RowStreamer        = (*PostgresDriver)(nil)
+	_ driver.TabSessionDriver   = (*PostgresDriver)(nil)
 )
 
 // ServerInfo returns structured PostgreSQL server metadata.
@@ -249,6 +260,9 @@ func (p *PostgresDriver) CloseDatabasePool(database string) {
 }
 
 func (p *PostgresDriver) Close() error {
+	if p.tabSess != nil {
+		p.tabSess.CloseAll()
+	}
 	p.mu.Lock()
 	for name, pool := range p.pools {
 		_ = pool.Close()
@@ -791,6 +805,19 @@ func (p *PostgresDriver) GetTableStructure(ctx context.Context, database, schema
 		}
 	}
 
+	// 4d. Get Partition Key (for partitioned tables)
+	var partKey string
+	_ = db.QueryRowContext(ctx, `
+		SELECT COALESCE(pg_get_partkeydef(c.oid), '')
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_partitioned_table pt ON pt.partrelid = c.oid
+		WHERE n.nspname = $1 AND c.relname = $2
+		LIMIT 1`, schema, table).Scan(&partKey)
+	if strings.TrimSpace(partKey) != "" {
+		structure.PartitionKey = strings.TrimSpace(partKey)
+	}
+
 	// 5. Generate DDL
 	var relKind, viewDef string
 	_ = db.QueryRowContext(ctx, `
@@ -945,24 +972,37 @@ func generatePostgresDDL(schema, table string, s *driver.TableStructure) string 
 }
 
 func (p *PostgresDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	db, err := p.dbFor(req.Database)
-	if err != nil {
-		return nil, err
+	var conn *sql.Conn
+	var sessionReset bool
+	var err error
+	if req.TabID != "" {
+		var release func()
+		conn, release, sessionReset, err = p.tabSessionMgr().Acquire(ctx, req.TabID, req.Database)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	} else {
+		db, dErr := p.dbFor(req.Database)
+		if dErr != nil {
+			return nil, dErr
+		}
+		conn, err = db.Conn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer conn.Close()
 	}
-
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
 
 	if req.Schema != "" && req.Schema != "main" {
 		if _, sErr := conn.ExecContext(ctx, fmt.Sprintf(`SET search_path TO %s, public`, quoteIdent(req.Schema))); sErr != nil {
 			return nil, fmt.Errorf("failed to set search_path to %q: %w", req.Schema, sErr)
 		}
-		defer func() {
-			_, _ = conn.ExecContext(context.Background(), `RESET search_path`)
-		}()
+		if req.TabID == "" {
+			defer func() {
+				_, _ = conn.ExecContext(context.Background(), `RESET search_path`)
+			}()
+		}
 	}
 
 	if req.ExecutionID != "" {
@@ -982,7 +1022,23 @@ func (p *PostgresDriver) Execute(ctx context.Context, req driver.QueryRequest) (
 		}
 	}
 
-	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "postgres")
+	res, execErr := driver.ExecuteStatementsWithDialect(ctx, conn, req, "postgres")
+	if res != nil && sessionReset {
+		res.SessionReset = true
+	}
+	return res, execErr
+}
+
+func (p *PostgresDriver) BeginTxForTab(ctx context.Context, tabID, database string) (*sql.Tx, error) {
+	return p.tabSessionMgr().BeginTxForTab(ctx, tabID, database)
+}
+
+func (p *PostgresDriver) TxEnded(tabID string) {
+	p.tabSessionMgr().TxEnded(tabID)
+}
+
+func (p *PostgresDriver) CloseSession(tabID string) {
+	p.tabSessionMgr().CloseSession(tabID)
 }
 
 func (p *PostgresDriver) TrackExecution(executionID, tabID string) func() {

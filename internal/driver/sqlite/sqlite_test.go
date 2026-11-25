@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -258,4 +259,69 @@ func TestSQLite_ServerInfo_ViewDDL_GeneratedColumns_StreamQuery(t *testing.T) {
 	if streamedRows != 2 {
 		t.Errorf("expected 2 streamed rows, got %d", streamedRows)
 	}
+}
+
+func TestSQLite_CheckConstraints_And_TabSessionManager(t *testing.T) {
+	drv := newTestDriver(t)
+	ctx := context.Background()
+
+	_, err := drv.Execute(ctx, driver.QueryRequest{
+		SQL: `CREATE TABLE orders_chk (
+			id INTEGER PRIMARY KEY,
+			qty INTEGER NOT NULL CONSTRAINT chk_positive_qty CHECK (qty > 0),
+			status TEXT CHECK (status IN ('open', 'closed'))
+		);`,
+	})
+	if err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+
+	st, err := drv.GetTableStructure(ctx, "main", "main", "orders_chk")
+	if err != nil {
+		t.Fatalf("GetTableStructure failed: %v", err)
+	}
+	if len(st.CheckConstraints) != 2 {
+		t.Fatalf("expected 2 check constraints, got %d: %+v", len(st.CheckConstraints), st.CheckConstraints)
+	}
+	if st.CheckConstraints[0].Name != "chk_positive_qty" || st.CheckConstraints[0].Clause != "qty > 0" {
+		t.Errorf("unexpected first check constraint: %+v", st.CheckConstraints[0])
+	}
+
+	mgr := driver.NewTabSessionManager(func(string) (*sql.DB, error) {
+		return drv.db, nil
+	})
+	defer mgr.CloseAll()
+
+	conn1, release1, reset1, err := mgr.Acquire(ctx, "tab-1", "main")
+	if err != nil {
+		t.Fatalf("Acquire 1 failed: %v", err)
+	}
+	if reset1 {
+		t.Errorf("expected reset1=false on first acquire")
+	}
+	if _, err := conn1.ExecContext(ctx, `CREATE TEMP TABLE tmp_tab_session (x INT); INSERT INTO tmp_tab_session VALUES (42);`); err != nil {
+		release1()
+		t.Fatalf("temp table create failed: %v", err)
+	}
+	release1()
+
+	// Second acquire on the same tab must see the temp table on the same pinned connection.
+	conn2, release2, reset2, err := mgr.Acquire(ctx, "tab-1", "main")
+	if err != nil {
+		t.Fatalf("Acquire 2 failed: %v", err)
+	}
+	if reset2 {
+		t.Errorf("expected reset2=false on healthy pinned conn")
+	}
+	var got int
+	if err := conn2.QueryRowContext(ctx, `SELECT x FROM tmp_tab_session`).Scan(&got); err != nil {
+		release2()
+		t.Fatalf("expected temp table to persist across tab session acquires: %v", err)
+	}
+	release2()
+	if got != 42 {
+		t.Errorf("expected 42 from temp table, got %d", got)
+	}
+
+	mgr.CloseSession("tab-1")
 }

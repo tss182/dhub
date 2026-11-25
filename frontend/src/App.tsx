@@ -174,7 +174,7 @@ import { QueryResult, ColumnMeta, WorkbenchTab, ConnectionConfig, resolveConnect
 import { parseSingleTableSelect } from './utils/querySource';
 import { pickRowKey } from './utils/rowKey';
 import { quoteSqlIdentifier, buildQualifiedTablePath } from './utils/sqlIdentifier';
-import { getDefaultDatabase, getDefaultSchema } from './utils/driverCapabilities';
+import { getDefaultDatabase, getDefaultSchema, getDriverCapabilities } from './utils/driverCapabilities';
 
 interface ChangeTarget {
   stagedKey: string;
@@ -817,7 +817,8 @@ export function App() {
   const handleTruncateTableFromTab = async (tab: WorkbenchTab) => {
     if (!tab.connectionId || !tab.table) return;
     const { conn, driver, targetDb, targetSchema, schemaKey, objectType } = resolveTableTabMeta(tab);
-    if (conn?.isReadOnly || driver === 'redis') return;
+    const caps = getDriverCapabilities(driver);
+    if (conn?.isReadOnly || caps.category === 'keyvalue') return;
 
     if (objectType === 'view' || objectType === 'materialized_view') {
       alertWarning('Views cannot be truncated. Use Drop View instead.', 'Cannot Truncate View');
@@ -825,9 +826,9 @@ export function App() {
     }
 
     const tableName = tab.table;
-    const isQdrant = driver === 'qdrant';
-    const isElasticsearch = driver === 'elasticsearch' || driver === 'es';
-    const isMongo = driver === 'mongodb' || driver === 'mongo';
+    const isQdrant = caps.category === 'vector';
+    const isElasticsearch = caps.category === 'search';
+    const isMongo = caps.category === 'document';
     const ok = await confirmDialog({
       title: isQdrant
         ? 'Clear All Points'
@@ -914,13 +915,14 @@ export function App() {
   const handleDropTableFromTab = async (tab: WorkbenchTab) => {
     if (!tab.connectionId || !tab.table) return;
     const { conn, driver, targetDb, targetSchema, schemaKey, objectType } = resolveTableTabMeta(tab);
-    if (conn?.isReadOnly || driver === 'redis') return;
+    const caps = getDriverCapabilities(driver);
+    if (conn?.isReadOnly || caps.category === 'keyvalue') return;
 
     const isView = objectType === 'view';
     const isMatView = objectType === 'materialized_view';
-    const isQdrant = driver === 'qdrant';
-    const isElasticsearch = driver === 'elasticsearch' || driver === 'es';
-    const isMongo = driver === 'mongodb' || driver === 'mongo';
+    const isQdrant = caps.category === 'vector';
+    const isElasticsearch = caps.category === 'search';
+    const isMongo = caps.category === 'document';
     const keyword =
       isQdrant || isMongo
         ? 'COLLECTION'
@@ -1864,17 +1866,13 @@ export function App() {
         detail.database ||
         useConnectionStore.getState().activeDatabase ||
         conn?.databaseName ||
-        (driver === 'sqlite' ? 'main' : '');
+        getDefaultDatabase(driver);
       const targetSchema =
         tableSchemaFromName ||
         detail.schema ||
-        (driver === 'postgres'
-          ? useConnectionStore.getState().activeSchema || 'public'
-          : driver === 'mssql'
-          ? 'dbo'
-          : driver === 'oracle'
-          ? ''
-          : targetDb);
+        (getDriverCapabilities(driver).hasSeparateSchemas
+          ? (useConnectionStore.getState().activeSchema || getDefaultSchema(driver, targetDb))
+          : getDefaultSchema(driver, targetDb));
 
       const cleanWhere = (detail.whereClause || '').trim().replace(/^where\s+/i, '').trim();
       const sortConfigs = Array.isArray(detail.sortConfigs) ? detail.sortConfigs : [];
@@ -2039,14 +2037,11 @@ export function App() {
       conn?.databaseName ||
       nonSystemDb ||
       (connDbs.length > 0 ? connDbs[0] : useConnectionStore.getState().activeDatabase) ||
-      (conn?.driver === 'sqlite' ? 'main' : '');
+      getDefaultDatabase(conn?.driver);
 
-    const targetSchema =
-      conn?.driver === 'postgres'
-        ? (currentTab?.schema || useConnectionStore.getState().activeSchema || 'public')
-        : conn?.driver === 'mssql'
-        ? (currentTab?.schema || 'dbo')
-        : targetDb;
+    const targetSchema = getDriverCapabilities(conn?.driver).hasSeparateSchemas
+      ? (currentTab?.schema || useConnectionStore.getState().activeSchema || getDefaultSchema(conn?.driver, targetDb))
+      : targetDb;
 
     setIsRunning(true);
     setStatusMessage(`Executing query on [${conn?.name || 'db'}] / [${targetDb}]...`);
@@ -2140,7 +2135,7 @@ export function App() {
     if (!tab.connectionId || !tab.table) return undefined;
     const conn = connections.find((c) => c.id === tab.connectionId);
     const driver = conn?.driver || tab.driver;
-    if (driver === 'redis') return undefined;
+    if (getDriverCapabilities(driver).category === 'keyvalue') return undefined;
 
     const targetDb = tab.database || conn?.databaseName || getDefaultDatabase(driver);
     const targetSchema =
@@ -3111,23 +3106,22 @@ export function App() {
                 return visibleList.includes(dbName) || visibleList.some((v) => v.toLowerCase() === dbName.toLowerCase());
               };
 
+              const tabCaps = getDriverCapabilities(tabConn?.driver);
               const effectiveDb =
                 (activeTab.database && isDbAllowed(activeTab.database) ? activeTab.database : '') ||
                 (tabConn?.databaseName && isDbAllowed(tabConn.databaseName) ? tabConn.databaseName : '') ||
                 nonSystemDb ||
-                (visibleDbs.length > 0 ? visibleDbs[0] : (tabConn?.driver === 'sqlite' ? 'main' : ''));
-              const effectiveSchema =
-                tabConn?.driver === 'postgres'
-                  ? (activeTab.schema || useConnectionStore.getState().activeSchema || 'public')
-                  : tabConn?.driver === 'mssql'
-                  ? (activeTab.schema || 'dbo')
-                  : effectiveDb;
+                (visibleDbs.length > 0 ? visibleDbs[0] : getDefaultDatabase(tabConn?.driver));
+              const effectiveSchema = tabCaps.hasSeparateSchemas
+                ? (activeTab.schema || useConnectionStore.getState().activeSchema || getDefaultSchema(tabConn?.driver, effectiveDb))
+                : effectiveDb;
+              const defaultDbFallback = getDefaultDatabase(tabConn?.driver);
               const availableDbs =
                 visibleDbs.length > 0
                   ? visibleDbs
                   : (visibleList !== undefined
                       ? visibleList
-                      : (tabConn?.databaseName ? [tabConn.databaseName] : (tabConn?.driver === 'sqlite' ? ['main'] : [])));
+                      : (tabConn?.databaseName ? [tabConn.databaseName] : (defaultDbFallback ? [defaultDbFallback] : [])));
 
               return (
                 <div className="flex-1 min-h-0">
@@ -3167,12 +3161,9 @@ export function App() {
                         .tabs.find((t) => t.id === useWorkbenchStore.getState().activeTabId);
                       const connId = currentTab?.connectionId || activeConnectionId || '';
                       const conn = connections.find((c) => c.id === connId);
-                      const targetSchema =
-                        conn?.driver === 'postgres'
-                          ? (currentTab?.schema || useConnectionStore.getState().activeSchema || 'public')
-                          : conn?.driver === 'mssql'
-                          ? (currentTab?.schema || 'dbo')
-                          : newDb;
+                      const targetSchema = getDriverCapabilities(conn?.driver).hasSeparateSchemas
+                        ? (currentTab?.schema || useConnectionStore.getState().activeSchema || getDefaultSchema(conn?.driver, newDb))
+                        : newDb;
                       if (currentTab) {
                         updateTabDatabase(currentTab.id, newDb, targetSchema);
                       }
@@ -3459,9 +3450,9 @@ export function App() {
                     )}
 
                     <CopyFormatSelector
-                      isQdrant={tableConn?.driver === 'qdrant'}
-                      isElasticsearch={tableConn?.driver === 'elasticsearch'}
-                      isMongo={tableConn?.driver === 'mongodb'}
+                      isQdrant={getDriverCapabilities(tableConn?.driver).category === 'vector'}
+                      isElasticsearch={getDriverCapabilities(tableConn?.driver).category === 'search'}
+                      isMongo={getDriverCapabilities(tableConn?.driver).category === 'document'}
                     />
 
                     <button

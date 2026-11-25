@@ -258,8 +258,85 @@ func (s *SQLiteDriver) GetTableStructure(ctx context.Context, database, schema, 
 	var ddl string
 	_ = s.db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name=?", table).Scan(&ddl)
 	structure.DDL = ddl
+	structure.CheckConstraints = extractSQLiteCheckConstraints(ddl)
 
 	return structure, nil
+}
+
+func extractSQLiteCheckConstraints(ddl string) []driver.CheckConstraintMeta {
+	if ddl == "" {
+		return nil
+	}
+	var out []driver.CheckConstraintMeta
+	upper := strings.ToUpper(ddl)
+	searchFrom := 0
+	anonIdx := 1
+	for {
+		idx := strings.Index(upper[searchFrom:], "CHECK")
+		if idx < 0 {
+			break
+		}
+		absIdx := searchFrom + idx
+		// Ensure word boundary before CHECK
+		if absIdx > 0 && ((upper[absIdx-1] >= 'A' && upper[absIdx-1] <= 'Z') || (upper[absIdx-1] >= '0' && upper[absIdx-1] <= '9') || upper[absIdx-1] == '_') {
+			searchFrom = absIdx + 5
+			continue
+		}
+		// Find opening '('
+		openIdx := absIdx + 5
+		for openIdx < len(ddl) && (ddl[openIdx] == ' ' || ddl[openIdx] == '\t' || ddl[openIdx] == '\n' || ddl[openIdx] == '\r') {
+			openIdx++
+		}
+		if openIdx >= len(ddl) || ddl[openIdx] != '(' {
+			searchFrom = absIdx + 5
+			continue
+		}
+		depth := 0
+		endIdx := -1
+		inSingle := false
+		for i := openIdx; i < len(ddl); i++ {
+			ch := ddl[i]
+			if ch == '\'' {
+				inSingle = !inSingle
+				continue
+			}
+			if inSingle {
+				continue
+			}
+			if ch == '(' {
+				depth++
+			} else if ch == ')' {
+				depth--
+				if depth == 0 {
+					endIdx = i
+					break
+				}
+			}
+		}
+		if endIdx < 0 {
+			break
+		}
+		clause := strings.TrimSpace(ddl[openIdx+1 : endIdx])
+		name := fmt.Sprintf("chk_%d", anonIdx)
+		// Check if preceded by CONSTRAINT <name>
+		prefix := strings.TrimSpace(ddl[:absIdx])
+		pUpper := strings.ToUpper(prefix)
+		if cPos := strings.LastIndex(pUpper, "CONSTRAINT"); cPos >= 0 {
+			cand := strings.TrimSpace(prefix[cPos+len("CONSTRAINT"):])
+			if cand != "" && !strings.ContainsAny(cand, ",()\n\r") {
+				name = strings.Trim(cand, "\"`[]")
+			}
+		}
+		if name == fmt.Sprintf("chk_%d", anonIdx) {
+			anonIdx++
+		}
+		out = append(out, driver.CheckConstraintMeta{
+			Name:   name,
+			Clause: clause,
+		})
+		searchFrom = endIdx + 1
+	}
+	return out
 }
 
 var (

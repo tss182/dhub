@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { getDefaultDatabase, getDefaultSchema } from '../../utils/driverCapabilities';
 import {
   Users,
   User,
@@ -207,21 +208,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     setErrorMessage(null);
 
     const execId = `list-users-${Date.now()}`;
-    const targetDb =
-      connection.databaseName ||
-      (connection.driver === 'postgres'
-        ? 'postgres'
-        : connection.driver === 'mssql'
-        ? 'master'
-        : connection.driver === 'clickhouse'
-        ? 'default'
-        : connection.driver === 'oracle'
-        ? 'ORCL'
-        : connection.driver === 'redis'
-        ? 'db0'
-        : '');
-    const targetSchema =
-      connection.driver === 'postgres' ? 'public' : connection.driver === 'mssql' ? 'dbo' : connection.driver === 'oracle' ? '' : 'main';
+    const targetDb = connection.databaseName || getDefaultDatabase(connection.driver);
+    const targetSchema = getDefaultSchema(connection.driver, targetDb || 'main');
 
     try {
       if (isMySQLLike(connection.driver)) {
@@ -518,8 +506,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     setCreateModal((prev) => ({ ...prev, isExecuting: true }));
     const execId = `create-user-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
-    const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
+    const targetDb = connection.databaseName || getDefaultDatabase(connection.driver);
+    const targetSchema = getDefaultSchema(connection.driver, targetDb || 'main');
 
     try {
       if (isMySQLLike(connection.driver)) {
@@ -841,8 +829,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     setPermissionModal((prev) => ({ ...prev, isExecuting: true }));
     const execId = `update-perm-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
-    const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
+    const targetDb = connection.databaseName || getDefaultDatabase(connection.driver);
+    const targetSchema = getDefaultSchema(connection.driver, targetDb || 'main');
 
     try {
       if (isMySQLLike(connection.driver)) {
@@ -976,8 +964,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
 
     setPasswordModal((prev) => ({ ...prev, isExecuting: true }));
     const execId = `chpass-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
-    const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
+    const targetDb = connection.databaseName || getDefaultDatabase(connection.driver);
+    const targetSchema = getDefaultSchema(connection.driver, targetDb || 'main');
 
     try {
       let sql = '';
@@ -1041,8 +1029,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     if (!ok) return;
 
     const execId = `del-user-${Date.now()}`;
-    const targetDb = connection.databaseName || (connection.driver === 'postgres' ? 'postgres' : '');
-    const targetSchema = connection.driver === 'postgres' ? 'public' : 'main';
+    const targetDb = connection.databaseName || getDefaultDatabase(connection.driver);
+    const targetSchema = getDefaultSchema(connection.driver, targetDb || 'main');
 
     try {
       const sql =

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { getDefaultSchema } from '../../utils/driverCapabilities';
 import {
   X,
   Table,
@@ -1982,7 +1983,7 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
   const [isLoadingStructure, setIsLoadingStructure] = useState(false);
 
   const driver = connection?.driver || 'mysql';
-  const targetSchema = schema || (driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : driver === 'oracle' ? '' : database);
+  const targetSchema = schema || getDefaultSchema(driver, database);
 
   const typeGroups = useMemo(() => {
     if (driver === 'postgres') return POSTGRES_TYPE_GROUPS;

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"dhub/internal/driver"
@@ -16,6 +17,18 @@ type OracleDriver struct {
 	db        *sql.DB
 	connStr   string
 	defaultDB string
+
+	tabSessOnce sync.Once
+	tabSess     *driver.TabSessionManager
+}
+
+func (o *OracleDriver) tabSessionMgr() *driver.TabSessionManager {
+	o.tabSessOnce.Do(func() {
+		o.tabSess = driver.NewTabSessionManager(func(string) (*sql.DB, error) {
+			return o.db, nil
+		})
+	})
+	return o.tabSess
 }
 
 func NewOracleDriver(connStr, defaultDB string) (*OracleDriver, error) {
@@ -44,6 +57,9 @@ func (o *OracleDriver) Ping(ctx context.Context) error {
 }
 
 func (o *OracleDriver) Close() error {
+	if o.tabSess != nil {
+		o.tabSess.CloseAll()
+	}
 	if o.db != nil {
 		return o.db.Close()
 	}
@@ -621,18 +637,54 @@ func generateOracleDDL(schema, table string, s *driver.TableStructure) string {
 }
 
 func (o *OracleDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	conn, err := o.db.Conn(ctx)
-	if err != nil {
-		return nil, err
+	var conn *sql.Conn
+	var sessionReset bool
+	if req.TabID != "" {
+		var release func()
+		var err error
+		conn, release, sessionReset, err = o.tabSessionMgr().Acquire(ctx, req.TabID, req.Database)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	} else {
+		var err error
+		conn, err = o.db.Conn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer conn.Close()
 	}
-	defer conn.Close()
 
-	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "oracle")
+	if req.Schema != "" && req.Schema != "main" {
+		if _, sErr := conn.ExecContext(ctx, fmt.Sprintf(`ALTER SESSION SET CURRENT_SCHEMA = %s`, quoteIdent(req.Schema))); sErr != nil {
+			return nil, fmt.Errorf("failed to set CURRENT_SCHEMA to %q: %w", req.Schema, sErr)
+		}
+	}
+
+	res, err := driver.ExecuteStatementsWithDialect(ctx, conn, req, "oracle")
+	if res != nil && sessionReset {
+		res.SessionReset = true
+	}
+	return res, err
+}
+
+func (o *OracleDriver) BeginTxForTab(ctx context.Context, tabID, database string) (*sql.Tx, error) {
+	return o.tabSessionMgr().BeginTxForTab(ctx, tabID, database)
+}
+
+func (o *OracleDriver) TxEnded(tabID string) {
+	o.tabSessionMgr().TxEnded(tabID)
+}
+
+func (o *OracleDriver) CloseSession(tabID string) {
+	o.tabSessionMgr().CloseSession(tabID)
 }
 
 var (
 	_ driver.RowStreamer        = (*OracleDriver)(nil)
 	_ driver.ServerInfoProvider = (*OracleDriver)(nil)
+	_ driver.TabSessionDriver   = (*OracleDriver)(nil)
 )
 
 func (o *OracleDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {
@@ -662,6 +714,12 @@ func (o *OracleDriver) StreamQuery(ctx context.Context, req driver.QueryRequest,
 		return err
 	}
 	defer conn.Close()
+
+	if req.Schema != "" && req.Schema != "main" {
+		if _, sErr := conn.ExecContext(ctx, fmt.Sprintf(`ALTER SESSION SET CURRENT_SCHEMA = %s`, quoteIdent(req.Schema))); sErr != nil {
+			return fmt.Errorf("failed to set CURRENT_SCHEMA to %q: %w", req.Schema, sErr)
+		}
+	}
 
 	return driver.StreamQueryWithDialect(ctx, conn, req, "oracle", onRow)
 }

@@ -781,7 +781,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
     let isCancelled = false;
     const connId = connection.id;
     const dbName = database;
-    const schemaName = schema || (connection.driver === 'postgres' ? 'public' : dbName);
+    const schemaName = schema || getDefaultSchema(connection.driver, dbName);
 
     const loadMeta = async () => {
       const currentMap = new Map<string, TableColumnMeta>();
@@ -970,7 +970,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             // If columns not loaded yet, fetch on-demand!
             if (targetTable.columns.length === 0 && connectionId && database) {
               try {
-                const targetSchema = schema || (driver === 'postgres' ? 'public' : database);
+                const targetSchema = schema || getDefaultSchema(driver, database);
                 const struct = await SchemaService.GetTableStructure(connectionId, database, targetSchema, targetTable.name);
                 if (struct?.columns) {
                   targetTable.columns = struct.columns;
@@ -2107,7 +2107,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                   className="w-full text-left px-2.5 py-1.5 rounded hover:bg-[#2c303c] text-zinc-200 text-xs flex items-center justify-between"
                 >
                   <span>
-                    {connection?.driver === 'mongodb' ? 'Explain (queryPlanner)' : 'Explain Plan'}
+                    {getDriverCapabilities(connection?.driver).category === 'document' ? 'Explain (queryPlanner)' : 'Explain Plan'}
                   </span>
                 </button>
                 <button
@@ -2116,7 +2116,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                   className="w-full text-left px-2.5 py-1.5 rounded hover:bg-[#2c303c] text-amber-300 text-xs flex items-center justify-between"
                 >
                   <span>
-                    {connection?.driver === 'mongodb' ? 'Explain (executionStats)' : 'Explain Analyze'}
+                    {getDriverCapabilities(connection?.driver).category === 'document' ? 'Explain (executionStats)' : 'Explain Analyze'}
                   </span>
                   <Zap className="h-3 w-3 text-amber-400" />
                 </button>
@@ -2627,7 +2627,7 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
         <Editor
           height="100%"
           defaultLanguage="sql"
-          language={connection?.driver === 'mongodb' ? 'mongodb' : 'sql'}
+          language={getDriverCapabilities(connection?.driver).category === 'document' ? 'mongodb' : 'sql'}
           theme={theme === 'light' ? 'vs' : 'vs-dark'}
           value={sql}
           onChange={(v) => onChange(v ?? '')}

@@ -3,6 +3,7 @@ import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
 import { ConnectionService } from '../../../bindings/dhub/internal/services';
 import { Dialogs } from '@wailsio/runtime';
+import { getDriverCapabilities, getDefaultDatabase, getDefaultSchema } from '../../utils/driverCapabilities';
 import {
   X,
   CheckCircle,
@@ -121,7 +122,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((conn.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(conn.host || 'localhost');
-          setPort(conn.port || (conn.driver === 'mysql' || conn.driver === 'mariadb' ? 3306 : conn.driver === 'redis' ? 6379 : conn.driver === 'mssql' ? 1433 : conn.driver === 'mongodb' ? 27017 : conn.driver === 'clickhouse' ? 9000 : conn.driver === 'oracle' ? 1521 : conn.driver === 'qdrant' ? 6333 : conn.driver === 'elasticsearch' ? 9200 : 5432));
+          setPort(conn.port || getDriverCapabilities(conn.driver).defaultPort);
           setUsername(conn.username || '');
           setPassword(conn.password || '');
           setDatabaseName(conn.databaseName || '');
@@ -191,7 +192,7 @@ export const ConnectionDialog: React.FC = () => {
           setDriver((existing.driver as any) || 'sqlite');
           setEnvType(resolvedEnv);
           setHost(existing.host || 'localhost');
-          setPort(existing.port || (existing.driver === 'mysql' || existing.driver === 'mariadb' ? 3306 : existing.driver === 'redis' ? 6379 : existing.driver === 'mssql' ? 1433 : existing.driver === 'mongodb' ? 27017 : existing.driver === 'clickhouse' ? 9000 : existing.driver === 'oracle' ? 1521 : existing.driver === 'qdrant' ? 6333 : existing.driver === 'elasticsearch' ? 9200 : 5432));
+          setPort(existing.port || getDriverCapabilities(existing.driver).defaultPort);
           setUsername(existing.username || '');
           setDatabaseName(existing.databaseName || '');
           setFilePath(existing.filePath || '');
@@ -451,18 +452,10 @@ export const ConnectionDialog: React.FC = () => {
       setConnections(updated as any);
       moveConnectionToFolder(id, folderId || null);
       setPendingFolderIdForNewConn(null);
-      const defaultDb =
-        driver === 'postgres'
-          ? 'postgres'
-          : driver === 'qdrant' || driver === 'elasticsearch'
-          ? 'default'
-          : driver === 'mssql'
-          ? 'master'
-          : driver === 'mongodb'
-          ? 'admin'
-          : 'main';
-      const defaultSchema = driver === 'postgres' ? 'public' : driver === 'mssql' ? 'dbo' : defaultDb;
-      setActiveConnection(id, databaseName || defaultDb, defaultSchema);
+      const defaultDb = getDefaultDatabase(driver);
+      const activeDb = databaseName || defaultDb;
+      const defaultSchema = getDefaultSchema(driver, activeDb);
+      setActiveConnection(id, activeDb, defaultSchema);
       setConnectionDialogOpen(false);
     } catch (e: any) {
       alertError(e?.message || String(e), 'Failed to Save Connection');
@@ -489,18 +482,9 @@ export const ConnectionDialog: React.FC = () => {
       if (activeConnectionId === editingConnectionId) {
         if (updated && updated.length > 0) {
           const nextConn = updated[0];
-          const nextDb =
-            nextConn.driver === 'postgres'
-              ? 'postgres'
-              : nextConn.driver === 'qdrant' || nextConn.driver === 'elasticsearch'
-              ? 'default'
-              : nextConn.driver === 'mssql'
-              ? 'master'
-              : nextConn.driver === 'mongodb'
-              ? 'admin'
-              : 'main';
-          const nextSchema = nextConn.driver === 'postgres' ? 'public' : nextConn.driver === 'mssql' ? 'dbo' : nextDb;
-          setActiveConnection(nextConn.id, nextConn.databaseName || nextDb, nextSchema);
+          const nextDb = nextConn.databaseName || getDefaultDatabase(nextConn.driver);
+          const nextSchema = getDefaultSchema(nextConn.driver, nextDb);
+          setActiveConnection(nextConn.id, nextDb, nextSchema);
         } else {
           setActiveConnection('', '', '');
         }

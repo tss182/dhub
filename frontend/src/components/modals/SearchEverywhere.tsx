@@ -17,6 +17,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { DbDriverIcon } from '../common/DbDriverIcon';
+import { getDriverCapabilities, getDefaultDatabase, getDefaultSchema } from '../../utils/driverCapabilities';
 
 interface SearchResultItem {
   id: string;
@@ -187,7 +188,7 @@ export const SearchEverywhere: React.FC = () => {
     const conn = connections.find((c) => c.id === connId);
     if (!conn) return false;
 
-    const targetDb = databaseName || conn.databaseName || (conn.driver === 'sqlite' ? 'main' : '');
+    const targetDb = databaseName || conn.databaseName || getDefaultDatabase(conn.driver);
 
     // 1. If explicit visibleDatabases configuration exists for this connection:
     const visibleList = visibleDatabases[connId];
@@ -331,14 +332,15 @@ export const SearchEverywhere: React.FC = () => {
 
           const conn = connections.find((c) => c.id === item.connectionId);
           const driver = conn?.driver;
-          const isMultiSchema = driver === 'postgres' || driver === 'mssql' || driver === 'oracle';
+          const caps = getDriverCapabilities(driver);
+          const isMultiSchema = caps.hasSeparateSchemas;
 
           let effectiveSchema = item.schemaName || '';
           if (!isMultiSchema) {
-            effectiveSchema = driver === 'sqlite' ? 'main' : (item.databaseName || '');
+            effectiveSchema = getDefaultSchema(driver, item.databaseName || '');
           } else {
             if (!effectiveSchema || effectiveSchema === 'main') {
-              effectiveSchema = driver === 'mssql' ? 'dbo' : driver === 'oracle' ? '' : 'public';
+              effectiveSchema = getDefaultSchema(driver, item.databaseName || '');
             }
           }
 
@@ -362,13 +364,7 @@ export const SearchEverywhere: React.FC = () => {
 
           const isView = item.objectType?.toLowerCase() === 'view';
 
-          const badgeLabel = isView
-            ? 'VIEW'
-            : driver === 'qdrant' || driver === 'mongodb'
-            ? 'COLLECTION'
-            : driver === 'elasticsearch'
-            ? 'INDEX'
-            : 'TABLE';
+          const badgeLabel = isView ? 'VIEW' : caps.entityLabel.toUpperCase();
 
           const resItem: SearchResultItem = {
             id: `obj-${dedupKey}`,
@@ -528,17 +524,9 @@ export const SearchEverywhere: React.FC = () => {
     if (item.kind === 'connection' && item.connectionId) {
       const conn = connections.find((c) => c.id === item.connectionId);
       if (conn) {
-        const defaultDb =
-          conn.driver === 'postgres'
-            ? 'postgres'
-            : conn.driver === 'qdrant' || conn.driver === 'elasticsearch'
-            ? 'default'
-            : conn.driver === 'mongodb'
-            ? 'admin'
-            : conn.driver === 'mssql'
-            ? 'master'
-            : 'main';
-        setActiveConnection(conn.id, conn.databaseName || defaultDb, conn.driver === 'postgres' ? 'public' : conn.driver === 'mssql' ? 'dbo' : defaultDb);
+        const defaultDb = getDefaultDatabase(conn.driver);
+        const activeDb = conn.databaseName || defaultDb;
+        setActiveConnection(conn.id, activeDb, getDefaultSchema(conn.driver, activeDb));
       }
     }
   };
