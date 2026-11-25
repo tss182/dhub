@@ -158,3 +158,25 @@ func TestConvertRow(t *testing.T) {
 		t.Errorf("without type info values must pass through: %#v", same)
 	}
 }
+
+func TestParseEnumValues(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"enum('draft','published','archived')", []string{"draft", "published", "archived"}},
+		{"set('read','write','it''s','a\\'b')", []string{"read", "write", "it's", "a'b"}},
+		{"varchar(255)", nil},
+	}
+	for _, tc := range cases {
+		got := ParseEnumValues(tc.in)
+		if len(got) != len(tc.want) {
+			t.Fatalf("ParseEnumValues(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("ParseEnumValues(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}

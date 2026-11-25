@@ -330,6 +330,7 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 			IsAutoIncr:   ex.AutoIncrement,
 			DefaultValue: def.Value,
 			DefaultKind:  def.Kind,
+			EnumValues:   mysqlmeta.ParseEnumValues(colType),
 			Comment:      cmt,
 			ColumnKind:   ex.Kind,
 			OnUpdate:     ex.OnUpdate,

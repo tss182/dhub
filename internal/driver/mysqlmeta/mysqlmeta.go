@@ -269,3 +269,54 @@ func ConvertRow(types map[string]string, m map[string]any) (map[string]any, erro
 	}
 	return out, nil
 }
+
+// ParseEnumValues extracts the allowed labels from a MySQL/MariaDB enum(...) or set(...)
+// column_type string, unescaping embedded ” and \' quotes.
+func ParseEnumValues(colType string) []string {
+	trimmed := strings.TrimSpace(colType)
+	lower := strings.ToLower(trimmed)
+	var start int
+	switch {
+	case strings.HasPrefix(lower, "enum("):
+		start = len("enum(")
+	case strings.HasPrefix(lower, "set("):
+		start = len("set(")
+	default:
+		return nil
+	}
+	end := strings.LastIndexByte(trimmed, ')')
+	if end <= start {
+		return nil
+	}
+	body := trimmed[start:end]
+	var values []string
+	var cur strings.Builder
+	inQuote := false
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if !inQuote {
+			if c == '\'' {
+				inQuote = true
+				cur.Reset()
+			}
+			continue
+		}
+		if c == '\\' && i+1 < len(body) {
+			cur.WriteByte(body[i+1])
+			i++
+			continue
+		}
+		if c == '\'' {
+			if i+1 < len(body) && body[i+1] == '\'' {
+				cur.WriteByte('\'')
+				i++
+				continue
+			}
+			values = append(values, cur.String())
+			inQuote = false
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	return values
+}

@@ -7491,6 +7491,44 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </>
                   )}
 
+                  {(contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const conn = contextMenu.connection!;
+                        const db = contextMenu.database || '';
+                        const tbl = contextMenu.table!.name;
+                        closeContextMenu();
+                        const qTbl = db
+                          ? `${quoteSqlIdentifier(conn.driver, db)}.${quoteSqlIdentifier(conn.driver, tbl)}`
+                          : quoteSqlIdentifier(conn.driver, tbl);
+                        try {
+                          const res = await QueryService.ExecuteQuery({
+                            executionId: `count-${Date.now()}`,
+                            connectionId: conn.id,
+                            database: db,
+                            schema: db,
+                            sql: `SELECT COUNT(*) AS exact_rows FROM ${qTbl};`,
+                            limit: 1,
+                            offset: 0,
+                            skipHistory: true,
+                          } as any);
+                          const exact = res?.rows?.[0]?.[0];
+                          alertInfo(
+                            `Exact row count for ${tbl}: ${exact ?? 'unknown'}`,
+                            'Exact Row Count'
+                          );
+                        } catch (err: any) {
+                          alertError(err?.message || String(err), 'Count Failed');
+                        }
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Hash className="h-3.5 w-3.5 text-cyan-400 group-hover:text-white" />
+                      <span>Count Exact Rows</span>
+                    </button>
+                  )}
+
                   {contextMenu.table!.type !== 'view' && !contextMenu.connection!.isReadOnly && (
                     <button
                       type="button"
