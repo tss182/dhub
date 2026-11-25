@@ -363,6 +363,16 @@ func (w *WorkspaceService) ImportConfig(jsonContent string, opts ConfigImportOpt
 
 					if opts.ConflictStrategy == "overwrite" && nameExists {
 						c.ID = existingByNameConn.ID
+						if c.Password == "" || c.SSHPassword == "" {
+							if fullExisting, gErr := w.store.GetConnection(ctx, existingByNameConn.ID); gErr == nil && fullExisting != nil {
+								if c.Password == "" {
+									c.Password = fullExisting.Password
+								}
+								if c.SSHPassword == "" {
+									c.SSHPassword = fullExisting.SSHPassword
+								}
+							}
+						}
 					} else if opts.ConflictStrategy == "duplicate" || idExists {
 						c.ID = uuid.NewString()
 						if nameExists {

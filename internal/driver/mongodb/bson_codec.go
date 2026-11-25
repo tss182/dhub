@@ -87,6 +87,12 @@ func bsonValueToCleanValue(v any) any {
 		return "$minKey"
 	case primitive.MaxKey:
 		return "$maxKey"
+	case int64:
+		const maxSafeJSInt = int64(9007199254740991)
+		if val > maxSafeJSInt || val < -maxSafeJSInt {
+			return fmt.Sprintf("%d", val)
+		}
+		return val
 	case primitive.Undefined, primitive.Null:
 		return nil
 	case float64:
@@ -334,7 +340,7 @@ func coerceValueForBson(val any, dataTypeHint string) any {
 	}
 
 	// No strict hint: infer from explicit Mongo shell wrappers or JSON literals.
-	if oid, ok := tryParseObjectID(trimmed); ok && (strings.HasPrefix(trimmed, "ObjectId(") || len(trimmed) == 24) {
+	if oid, ok := tryParseObjectID(trimmed); ok && strings.HasPrefix(trimmed, "ObjectId(") {
 		return oid
 	}
 	if strings.HasPrefix(trimmed, "ISODate(") || strings.HasPrefix(trimmed, "new Date(") {

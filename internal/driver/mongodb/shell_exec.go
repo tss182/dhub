@@ -10,6 +10,7 @@ import (
 
 	"dhub/internal/driver"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -895,6 +896,24 @@ func (m *MongoDBDriver) executeCollMethod(ctx context.Context, dbName, collName 
 		replacement, err := unmarshalExtJSONDoc(args[1])
 		if err != nil {
 			return nil, fmt.Errorf("invalid replacement in replaceOne: %w", err)
+		}
+		// Preserve immutable ObjectId _id when the UI sends the stringified hex _id back in the replacement doc.
+		var filterID any
+		for _, elem := range filter {
+			if elem.Key == "_id" {
+				filterID = elem.Value
+				break
+			}
+		}
+		if oid, isOID := filterID.(primitive.ObjectID); isOID {
+			for idx, elem := range replacement {
+				if elem.Key == "_id" {
+					if s, ok := elem.Value.(string); ok && strings.EqualFold(s, oid.Hex()) {
+						replacement[idx].Value = oid
+					}
+					break
+				}
+			}
 		}
 		res, err := coll.ReplaceOne(ctx, filter, replacement)
 		if err != nil {

@@ -306,19 +306,34 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	e.registerOp(opID, cancel)
 	defer e.unregisterOp(opID)
 
+	cfg, cfgErr := e.store.GetConnection(context.Background(), req.ConnectionID)
+	if cfgErr != nil {
+		errMsg := fmt.Sprintf("export blocked: failed to verify connection permissions: %v", cfgErr)
+		e.emitProgress(opID, "export", "error", 0, errMsg)
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
+	var driverType string
+	if cfg != nil {
+		driverType = cfg.Driver
+	}
+
+	driverLower := strings.ToLower(strings.TrimSpace(driverType))
+	if cfg != nil && cfg.IsReadOnly && strings.TrimSpace(req.SQL) != "" {
+		if unsafeStmt, isSafe := driver.ValidateReadOnlyScript(req.SQL, driverLower); !isSafe {
+			errMsg := fmt.Sprintf("export blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(unsafeStmt, 60))
+			e.emitProgress(opID, "export", "error", 0, errMsg)
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+	}
+
 	drv, err := e.sessions.GetOrConnect(ctx, req.ConnectionID)
 	if err != nil {
 		e.emitProgress(opID, "export", "error", 0, err.Error())
 		return nil, err
 	}
 
-	var driverType string
-	if cfg, err := e.store.GetConnection(context.Background(), req.ConnectionID); err == nil && cfg != nil {
-		driverType = cfg.Driver
-	}
-
 	// Prepare query SQL
-	driverLower := strings.ToLower(strings.TrimSpace(driverType))
 	querySQL := req.SQL
 	if strings.TrimSpace(querySQL) == "" {
 		if req.Table == "" {
@@ -858,7 +873,7 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 		if err := bw.Flush(); err != nil {
 			return nil, err
 		}
-	case "jsonl", "ndjson", "sql_insert", "sql", "markdown", "md":
+	case "jsonl", "ndjson", "es_bulk", "bulk_ndjson", "sql_insert", "sql", "markdown", "md":
 		if err := bw.Flush(); err != nil {
 			return nil, err
 		}

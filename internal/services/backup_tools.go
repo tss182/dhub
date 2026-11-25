@@ -894,7 +894,13 @@ func (s *SchemaService) backupDatabaseNativeSQL(
 					Limit:        chunkSize,
 					Offset:       offset,
 				})
-				if qErr != nil || res == nil || len(res.Rows) == 0 {
+				if qErr != nil {
+					return fmt.Errorf("backup query failed for table %s: %w", tbl.Name, qErr)
+				}
+				if res != nil && res.Error != "" {
+					return fmt.Errorf("backup query error for table %s: %s", tbl.Name, res.Error)
+				}
+				if res == nil || len(res.Rows) == 0 {
 					break
 				}
 

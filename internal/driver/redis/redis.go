@@ -853,27 +853,7 @@ func formatRedisResult(cmd string, res any, err error) ([]driver.ColumnMeta, [][
 }
 
 func splitRedisStatements(raw string) []string {
-	var stmts []string
-	rawLines := strings.Split(raw, "\n")
-	for _, l := range rawLines {
-		trimmed := strings.TrimSpace(l)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "--") {
-			continue
-		}
-		// Semicolon separation on single line
-		if strings.Contains(trimmed, ";") {
-			subParts := strings.Split(trimmed, ";")
-			for _, sp := range subParts {
-				spTrim := strings.TrimSpace(sp)
-				if spTrim != "" && !strings.HasPrefix(spTrim, "#") && !strings.HasPrefix(spTrim, "--") {
-					stmts = append(stmts, spTrim)
-				}
-			}
-		} else {
-			stmts = append(stmts, trimmed)
-		}
-	}
-	return stmts
+	return driver.SplitRedisStatements(raw)
 }
 
 func ParseRedisCommandArgs(cmdStr string) []any {
@@ -918,6 +898,13 @@ func (r *RedisDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, er
 	return nil, fmt.Errorf("manual transactions are not supported for Redis")
 }
 
+func formatRedisPreviewArg(s string) string {
+	if s == "" || strings.ContainsAny(s, " \t\n\r\"'\\") {
+		return fmt.Sprintf("%q", s)
+	}
+	return s
+}
+
 func (r *RedisDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	if isRediSearchChanges(changes) {
 		return generateRediSearchDML(changes), nil
@@ -933,29 +920,68 @@ func (r *RedisDriver) GenerateDMLPreview(database, schema, table string, changes
 				targetKey = fmt.Sprintf("%v", k)
 			}
 		}
+		qKey := formatRedisPreviewArg(targetKey)
 
 		switch c.Type {
 		case "insert", "update":
-			if val, ok := c.Changes["value"]; ok {
-				if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
-					statements = append(statements, fmt.Sprintf("HSET %s %s %q", targetKey, field, fmt.Sprintf("%v", val)))
-				} else {
-					statements = append(statements, fmt.Sprintf("SET %s %q", targetKey, fmt.Sprintf("%v", val)))
+			if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
+				if val, ok := c.Changes["value"]; ok {
+					statements = append(statements, fmt.Sprintf("HSET %s %s %q", qKey, formatRedisPreviewArg(fmt.Sprintf("%v", field)), fmt.Sprintf("%v", val)))
 				}
+				continue
+			}
+			if fieldVal, hasFieldChange := c.Changes["field"]; hasFieldChange && cleanTable != "keys" && cleanTable != "*" {
+				statements = append(statements, fmt.Sprintf("HSET %s %s %q", qKey, formatRedisPreviewArg(fmt.Sprintf("%v", fieldVal)), fmt.Sprintf("%v", c.Changes["value"])))
+				continue
+			}
+			if idxVal, okIdx := c.PrimaryKey["index"]; okIdx && cleanTable != "keys" && cleanTable != "*" {
+				if val, ok := c.Changes["value"]; ok {
+					statements = append(statements, fmt.Sprintf("LSET %s %v %q", qKey, idxVal, fmt.Sprintf("%v", val)))
+				}
+				continue
+			}
+			if _, okIdx := c.Changes["index"]; okIdx && cleanTable != "keys" && cleanTable != "*" {
+				if val, ok := c.Changes["value"]; ok {
+					statements = append(statements, fmt.Sprintf("RPUSH %s %q", qKey, fmt.Sprintf("%v", val)))
+				}
+				continue
+			}
+			if member, okMember := c.PrimaryKey["member"]; okMember && cleanTable != "keys" && cleanTable != "*" {
+				if score, okScore := c.Changes["score"]; okScore {
+					statements = append(statements, fmt.Sprintf("ZADD %s %v %s", qKey, score, formatRedisPreviewArg(fmt.Sprintf("%v", member))))
+				} else if newMember, okNew := c.Changes["member"]; okNew {
+					statements = append(statements, fmt.Sprintf("SREM %s %s; SADD %s %s", qKey, formatRedisPreviewArg(fmt.Sprintf("%v", member)), qKey, formatRedisPreviewArg(fmt.Sprintf("%v", newMember))))
+				}
+				continue
+			}
+			if memberVal, okMember := c.Changes["member"]; okMember && cleanTable != "keys" && cleanTable != "*" {
+				if score, okScore := c.Changes["score"]; okScore {
+					statements = append(statements, fmt.Sprintf("ZADD %s %v %s", qKey, score, formatRedisPreviewArg(fmt.Sprintf("%v", memberVal))))
+				} else {
+					statements = append(statements, fmt.Sprintf("SADD %s %s", qKey, formatRedisPreviewArg(fmt.Sprintf("%v", memberVal))))
+				}
+				continue
+			}
+			if val, ok := c.Changes["value"]; ok {
+				statements = append(statements, fmt.Sprintf("SET %s %q", qKey, fmt.Sprintf("%v", val)))
 			}
 			if ttlVal, ok := c.Changes["ttl"]; ok {
 				dur, isPersist, err := parseRedisTTL(ttlVal)
 				if isPersist {
-					statements = append(statements, fmt.Sprintf("PERSIST %s", targetKey))
+					statements = append(statements, fmt.Sprintf("PERSIST %s", qKey))
 				} else if err == nil {
-					statements = append(statements, fmt.Sprintf("EXPIRE %s %d", targetKey, int64(dur.Seconds())))
+					statements = append(statements, fmt.Sprintf("EXPIRE %s %d", qKey, int64(dur.Seconds())))
 				}
 			}
 		case "delete":
 			if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
-				statements = append(statements, fmt.Sprintf("HDEL %s %s", targetKey, field))
+				statements = append(statements, fmt.Sprintf("HDEL %s %s", qKey, formatRedisPreviewArg(fmt.Sprintf("%v", field))))
+			} else if idxVal, okIdx := c.PrimaryKey["index"]; okIdx && cleanTable != "keys" && cleanTable != "*" {
+				statements = append(statements, fmt.Sprintf("-- remove list item at index %v from %s (LSET + LREM)", idxVal, qKey))
+			} else if member, okMember := c.PrimaryKey["member"]; okMember && cleanTable != "keys" && cleanTable != "*" {
+				statements = append(statements, fmt.Sprintf("SREM/ZREM %s %s", qKey, formatRedisPreviewArg(fmt.Sprintf("%v", member))))
 			} else {
-				statements = append(statements, fmt.Sprintf("DEL %s", targetKey))
+				statements = append(statements, fmt.Sprintf("DEL %s", qKey))
 			}
 		}
 	}
@@ -1055,12 +1081,130 @@ func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table 
 		switch c.Type {
 		case "insert", "update":
 			var rowUpdated bool
-			if val, ok := c.Changes["value"]; ok {
-				if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
-					if err := conn.HSet(ctx, targetKey, fmt.Sprintf("%v", field), fmt.Sprintf("%v", val)).Err(); err == nil {
+			isSingleKeyView := cleanTable != "keys" && cleanTable != "*"
+			kType := ""
+			if isSingleKeyView {
+				kType, _ = conn.Type(ctx, targetKey).Result()
+			}
+
+			// Hash mutations
+			if field, okField := c.PrimaryKey["field"]; okField && isSingleKeyView {
+				if val, ok := c.Changes["value"]; ok {
+					if err := conn.HSet(ctx, targetKey, fmt.Sprintf("%v", field), fmt.Sprintf("%v", val)).Err(); err != nil {
+						return affected, fmt.Errorf("HSET failed on %q: %w", targetKey, err)
+					}
+					rowUpdated = true
+				}
+			} else if kType == "hash" {
+				fieldVal, okField := c.Changes["field"]
+				if !okField || fmt.Sprintf("%v", fieldVal) == "" {
+					return affected, fmt.Errorf("hash insert requires a 'field' name")
+				}
+				valStr := ""
+				if v, ok := c.Changes["value"]; ok && v != nil {
+					valStr = fmt.Sprintf("%v", v)
+				}
+				if err := conn.HSet(ctx, targetKey, fmt.Sprintf("%v", fieldVal), valStr).Err(); err != nil {
+					return affected, fmt.Errorf("HSET failed on %q: %w", targetKey, err)
+				}
+				rowUpdated = true
+			} else if idxVal, okIdx := c.PrimaryKey["index"]; okIdx && isSingleKeyView {
+				// List update by index
+				idx, convErr := strconv.ParseInt(fmt.Sprintf("%v", idxVal), 10, 64)
+				if convErr != nil {
+					return affected, fmt.Errorf("invalid list index %v: %w", idxVal, convErr)
+				}
+				if val, ok := c.Changes["value"]; ok {
+					if err := conn.LSet(ctx, targetKey, idx, fmt.Sprintf("%v", val)).Err(); err != nil {
+						return affected, fmt.Errorf("LSET failed on %q[%d]: %w", targetKey, idx, err)
+					}
+					rowUpdated = true
+				}
+			} else if kType == "list" {
+				// List insert
+				valStr := ""
+				if v, ok := c.Changes["value"]; ok && v != nil {
+					valStr = fmt.Sprintf("%v", v)
+				}
+				if err := conn.RPush(ctx, targetKey, valStr).Err(); err != nil {
+					return affected, fmt.Errorf("RPUSH failed on %q: %w", targetKey, err)
+				}
+				rowUpdated = true
+			} else if member, okMember := c.PrimaryKey["member"]; okMember && isSingleKeyView {
+				// Set or ZSet update
+				oldMember := fmt.Sprintf("%v", member)
+				if kType == "zset" {
+					score := 0.0
+					if sVal, okScore := c.Changes["score"]; okScore {
+						parsed, pErr := strconv.ParseFloat(fmt.Sprintf("%v", sVal), 64)
+						if pErr != nil {
+							return affected, fmt.Errorf("invalid zset score %v: %w", sVal, pErr)
+						}
+						score = parsed
+					} else {
+						curScore, sErr := conn.ZScore(ctx, targetKey, oldMember).Result()
+						if sErr != nil {
+							return affected, fmt.Errorf("ZSCORE failed on %q: %w", targetKey, sErr)
+						}
+						score = curScore
+					}
+					newMember := oldMember
+					if mVal, okNew := c.Changes["member"]; okNew && fmt.Sprintf("%v", mVal) != "" {
+						newMember = fmt.Sprintf("%v", mVal)
+					}
+					if newMember != oldMember {
+						if err := conn.ZRem(ctx, targetKey, oldMember).Err(); err != nil {
+							return affected, fmt.Errorf("ZREM failed on %q: %w", targetKey, err)
+						}
+					}
+					if err := conn.ZAdd(ctx, targetKey, redis.Z{Score: score, Member: newMember}).Err(); err != nil {
+						return affected, fmt.Errorf("ZADD failed on %q: %w", targetKey, err)
+					}
+					rowUpdated = true
+				} else if kType == "set" {
+					if mVal, okNew := c.Changes["member"]; okNew && fmt.Sprintf("%v", mVal) != "" && fmt.Sprintf("%v", mVal) != oldMember {
+						if err := conn.SRem(ctx, targetKey, oldMember).Err(); err != nil {
+							return affected, fmt.Errorf("SREM failed on %q: %w", targetKey, err)
+						}
+						if err := conn.SAdd(ctx, targetKey, fmt.Sprintf("%v", mVal)).Err(); err != nil {
+							return affected, fmt.Errorf("SADD failed on %q: %w", targetKey, err)
+						}
 						rowUpdated = true
 					}
-				} else {
+				}
+			} else if kType == "zset" {
+				mVal, okM := c.Changes["member"]
+				if !okM || fmt.Sprintf("%v", mVal) == "" {
+					return affected, fmt.Errorf("zset insert requires a 'member'")
+				}
+				score := 0.0
+				if sVal, okS := c.Changes["score"]; okS && sVal != nil {
+					parsed, pErr := strconv.ParseFloat(fmt.Sprintf("%v", sVal), 64)
+					if pErr != nil {
+						return affected, fmt.Errorf("invalid zset score %v: %w", sVal, pErr)
+					}
+					score = parsed
+				}
+				if err := conn.ZAdd(ctx, targetKey, redis.Z{Score: score, Member: fmt.Sprintf("%v", mVal)}).Err(); err != nil {
+					return affected, fmt.Errorf("ZADD failed on %q: %w", targetKey, err)
+				}
+				rowUpdated = true
+			} else if kType == "set" {
+				mVal, okM := c.Changes["member"]
+				if !okM || fmt.Sprintf("%v", mVal) == "" {
+					return affected, fmt.Errorf("set insert requires a 'member'")
+				}
+				if err := conn.SAdd(ctx, targetKey, fmt.Sprintf("%v", mVal)).Err(); err != nil {
+					return affected, fmt.Errorf("SADD failed on %q: %w", targetKey, err)
+				}
+				rowUpdated = true
+			} else {
+				// String or keys-list view: guard against overwriting structured keys with SET
+				if val, ok := c.Changes["value"]; ok {
+					existingType, _ := conn.Type(ctx, targetKey).Result()
+					if existingType != "" && existingType != "none" && existingType != "string" {
+						return affected, fmt.Errorf("cannot overwrite %s key %q with string SET; open the key directly to edit its items", existingType, targetKey)
+					}
 					var exp time.Duration = redis.KeepTTL
 					if c.Type == "insert" {
 						exp = 0
@@ -1075,24 +1219,28 @@ func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table 
 							}
 						}
 					}
-					if err := conn.Set(ctx, targetKey, fmt.Sprintf("%v", val), exp).Err(); err == nil {
-						rowUpdated = true
+					if err := conn.Set(ctx, targetKey, fmt.Sprintf("%v", val), exp).Err(); err != nil {
+						return affected, fmt.Errorf("SET failed on %q: %w", targetKey, err)
 					}
+					rowUpdated = true
 				}
 			}
 
 			if ttlVal, ok := c.Changes["ttl"]; ok {
 				dur, isPersist, err := parseRedisTTL(ttlVal)
-				if err == nil {
-					if isPersist {
-						if err := conn.Persist(ctx, targetKey).Err(); err == nil {
-							rowUpdated = true
-						}
-					} else {
-						if err := conn.Expire(ctx, targetKey, dur).Err(); err == nil {
-							rowUpdated = true
-						}
+				if err != nil {
+					return affected, err
+				}
+				if isPersist {
+					if err := conn.Persist(ctx, targetKey).Err(); err != nil {
+						return affected, fmt.Errorf("PERSIST failed on %q: %w", targetKey, err)
 					}
+					rowUpdated = true
+				} else {
+					if err := conn.Expire(ctx, targetKey, dur).Err(); err != nil {
+						return affected, fmt.Errorf("EXPIRE failed on %q: %w", targetKey, err)
+					}
+					rowUpdated = true
 				}
 			}
 
@@ -1100,12 +1248,49 @@ func (r *RedisDriver) ApplyChanges(ctx context.Context, database, schema, table 
 				affected++
 			}
 		case "delete":
-			if field, okField := c.PrimaryKey["field"]; okField && cleanTable != "keys" && cleanTable != "*" {
-				_ = conn.HDel(ctx, targetKey, fmt.Sprintf("%v", field)).Err()
-				affected++
+			isSingleKeyView := cleanTable != "keys" && cleanTable != "*"
+			if field, okField := c.PrimaryKey["field"]; okField && isSingleKeyView {
+				n, err := conn.HDel(ctx, targetKey, fmt.Sprintf("%v", field)).Result()
+				if err != nil {
+					return affected, fmt.Errorf("HDEL failed on %q: %w", targetKey, err)
+				}
+				affected += n
+			} else if idxVal, okIdx := c.PrimaryKey["index"]; okIdx && isSingleKeyView {
+				idx, convErr := strconv.ParseInt(fmt.Sprintf("%v", idxVal), 10, 64)
+				if convErr != nil {
+					return affected, fmt.Errorf("invalid list index %v: %w", idxVal, convErr)
+				}
+				sentinel := fmt.Sprintf("__dhub_del_%d__", time.Now().UnixNano())
+				if err := conn.LSet(ctx, targetKey, idx, sentinel).Err(); err != nil {
+					return affected, fmt.Errorf("LSET failed during delete on %q[%d]: %w", targetKey, idx, err)
+				}
+				n, err := conn.LRem(ctx, targetKey, 1, sentinel).Result()
+				if err != nil {
+					return affected, fmt.Errorf("LREM failed on %q: %w", targetKey, err)
+				}
+				affected += n
+			} else if member, okMember := c.PrimaryKey["member"]; okMember && isSingleKeyView {
+				kType, _ := conn.Type(ctx, targetKey).Result()
+				memberStr := fmt.Sprintf("%v", member)
+				if kType == "zset" {
+					n, err := conn.ZRem(ctx, targetKey, memberStr).Result()
+					if err != nil {
+						return affected, fmt.Errorf("ZREM failed on %q: %w", targetKey, err)
+					}
+					affected += n
+				} else {
+					n, err := conn.SRem(ctx, targetKey, memberStr).Result()
+					if err != nil {
+						return affected, fmt.Errorf("SREM failed on %q: %w", targetKey, err)
+					}
+					affected += n
+				}
 			} else {
-				_ = conn.Del(ctx, targetKey).Err()
-				affected++
+				n, err := conn.Del(ctx, targetKey).Result()
+				if err != nil {
+					return affected, fmt.Errorf("DEL failed on %q: %w", targetKey, err)
+				}
+				affected += n
 			}
 		}
 	}

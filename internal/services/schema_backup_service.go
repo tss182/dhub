@@ -1418,7 +1418,10 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		if err != nil {
 			return "", emitErr(err)
 		}
-		if isDHubPortableTool(binPath) && !strings.HasSuffix(strings.ToLower(filePath), ".bak") {
+		if isDHubPortableTool(binPath) {
+			if strings.HasSuffix(strings.ToLower(filePath), ".bak") {
+				return "", emitErr(fmt.Errorf("restoring binary .bak backups requires the real Microsoft sqlcmd/mssql-tools binary; portable fallback only supports .sql files"))
+			}
 			if err := s.restoreDatabaseNativeSQL(ctx, connectionID, conn.Driver, database, filePath, totalBytes); err != nil {
 				return "", emitErr(err)
 			}
@@ -1516,7 +1519,9 @@ func buildMongoToolsCommonArgs(conn *store.ConnectionConfig, database string) []
 			if strings.TrimSpace(conn.OptionsJSON) != "" {
 				var mOpts map[string]any
 				if json.Unmarshal([]byte(conn.OptionsJSON), &mOpts) == nil {
-					if v, ok := mOpts["mongoAuthSource"].(string); ok && strings.TrimSpace(v) != "" {
+					if v, ok := mOpts["authSource"].(string); ok && strings.TrimSpace(v) != "" {
+						authDB = strings.TrimSpace(v)
+					} else if v, ok := mOpts["mongoAuthSource"].(string); ok && strings.TrimSpace(v) != "" {
 						authDB = strings.TrimSpace(v)
 					}
 				}

@@ -41,6 +41,11 @@ func TestIsReadOnlySafeMongoQuery(t *testing.T) {
 		`db.dropDatabase()`,
 		`db.users.aggregate([{ $match: {} }, { $out: "backup" }])`,
 		`db.users.aggregate([{ $match: {} }, { $merge: "target" }])`,
+		`db.users.aggregate([{ $match: {} }, { "\$out": "backup" }])`,
+		`db.users.drop (".find(")`,
+		`db.users.deleteMany ({ "$comment": ".find(" })`,
+		`db.runCommand({ dropDatabase: 1, comment: "ping" })`,
+		`{ drop: "accounts" }`,
 		`db.createUser({ user: "u", pwd: "p", roles: [] })`,
 	}
 	for _, q := range unsafe {

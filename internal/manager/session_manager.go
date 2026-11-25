@@ -299,7 +299,7 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		if targetPath == "" {
 			targetPath = cfg.DatabaseName
 		}
-		return sqlite.NewSQLiteDriver(targetPath)
+		return sqlite.NewSQLiteDriverWithOptions(targetPath, cfg.IsReadOnly)
 	case "postgres":
 		sslMode := strings.TrimSpace(cfg.SSLMode)
 		if sslMode == "" {
@@ -465,6 +465,9 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 		q := u.Query()
 		q.Set("database", dbName)
+		if cfg.IsReadOnly {
+			q.Set("ApplicationIntent", "ReadOnly")
+		}
 
 		switch cfg.SSLMode {
 		case "require", "required":
@@ -516,18 +519,23 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 	case "clickhouse":
 		connStr := strings.TrimSpace(cfg.Host)
 		if strings.HasPrefix(connStr, "clickhouse://") || strings.HasPrefix(connStr, "http://") || strings.HasPrefix(connStr, "https://") {
-			if cfg.SSHEnabled && host != "" && port > 0 {
-				if u, err := url.Parse(connStr); err == nil {
-					origHost := u.Hostname()
+			if u, err := url.Parse(connStr); err == nil {
+				origHost := u.Hostname()
+				if cfg.SSHEnabled && host != "" && port > 0 {
 					u.Host = fmt.Sprintf("%s:%d", host, port)
-					if u.Path == "" || u.Path == "/" {
-						if dbName := strings.TrimSpace(cfg.DatabaseName); dbName != "" {
-							u.Path = "/" + dbName
-						}
-					}
-					tlsCfg, _ := buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
-					return clickhouse.NewClickHouseDriverWithTLS(u.String(), tlsCfg)
 				}
+				if u.Path == "" || u.Path == "/" {
+					if dbName := strings.TrimSpace(cfg.DatabaseName); dbName != "" {
+						u.Path = "/" + dbName
+					}
+				}
+				if cfg.IsReadOnly {
+					q := u.Query()
+					q.Set("readonly", "1")
+					u.RawQuery = q.Encode()
+				}
+				tlsCfg, _ := buildHTTPDriverTLSConfig(cfg, u.String(), origHost)
+				return clickhouse.NewClickHouseDriverWithTLS(u.String(), tlsCfg)
 			}
 			tlsCfg, _ := buildHTTPDriverTLSConfig(cfg, connStr, "")
 			return clickhouse.NewClickHouseDriverWithTLS(connStr, tlsCfg)
@@ -580,6 +588,9 @@ func (m *SessionManager) createDriver(cfg store.ConnectionConfig, host string, p
 		}
 		q := u.Query()
 		q.Set("dial_timeout", "10s")
+		if cfg.IsReadOnly {
+			q.Set("readonly", "1")
+		}
 
 		var tlsCfg *tls.Config
 		if cfg.SSLMode != "" && cfg.SSLMode != "disable" {
@@ -667,17 +678,37 @@ func resolveSSHRemoteTarget(cfg store.ConnectionConfig) (string, int) {
 }
 
 type mongoConnectionOptions struct {
-	AuthSource       string `json:"mongoAuthSource"`
-	AuthMechanism    string `json:"mongoAuthMechanism"`
-	ReplicaSet       string `json:"mongoReplicaSet"`
-	DirectConnection bool   `json:"mongoDirectConnection"`
-	ReadPreference   string `json:"mongoReadPreference"`
+	AuthSource            string `json:"authSource"`
+	AuthMechanism         string `json:"authMechanism"`
+	ReplicaSet            string `json:"replicaSet"`
+	DirectConnection      bool   `json:"directConnection"`
+	ReadPreference        string `json:"readPreference"`
+	LegacyAuthSource      string `json:"mongoAuthSource"`
+	LegacyAuthMechanism   string `json:"mongoAuthMechanism"`
+	LegacyReplicaSet      string `json:"mongoReplicaSet"`
+	LegacyDirect          bool   `json:"mongoDirectConnection"`
+	LegacyReadPreference  string `json:"mongoReadPreference"`
 }
 
 func buildMongoDriver(cfg store.ConnectionConfig, host string, port int) (driver.DatabaseDriver, error) {
 	var mOpts mongoConnectionOptions
 	if strings.TrimSpace(cfg.OptionsJSON) != "" {
 		_ = json.Unmarshal([]byte(cfg.OptionsJSON), &mOpts)
+		if mOpts.AuthSource == "" {
+			mOpts.AuthSource = mOpts.LegacyAuthSource
+		}
+		if mOpts.AuthMechanism == "" {
+			mOpts.AuthMechanism = mOpts.LegacyAuthMechanism
+		}
+		if mOpts.ReplicaSet == "" {
+			mOpts.ReplicaSet = mOpts.LegacyReplicaSet
+		}
+		if !mOpts.DirectConnection {
+			mOpts.DirectConnection = mOpts.LegacyDirect
+		}
+		if mOpts.ReadPreference == "" {
+			mOpts.ReadPreference = mOpts.LegacyReadPreference
+		}
 	}
 
 	rawConn := strings.TrimSpace(cfg.Host)

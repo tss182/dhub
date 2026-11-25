@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"net/url"
 	"strings"
 	"unicode"
 )
@@ -16,6 +17,44 @@ func dialectFlags(dialect string) (isMySQLFamily, isMariaDB bool) {
 		return true, true
 	}
 	return false, false
+}
+
+type sqlDialectRules struct {
+	isGeneric        bool
+	isPostgres       bool
+	isMySQLFamily    bool
+	isMariaDB        bool
+	isMSSQL          bool
+	isClickHouse     bool
+	backslashEscapes bool
+	hashComment      bool
+	bracketIdent     bool
+	dollarQuote      bool
+	backtickIdent    bool
+	delimiterDir     bool
+}
+
+func getSQLDialectRules(dialect string) sqlDialectRules {
+	d := strings.ToLower(strings.TrimSpace(dialect))
+	isMySQLFamily, isMariaDB := dialectFlags(d)
+	isGeneric := d == ""
+	isPostgres := d == "postgres" || d == "postgresql"
+	isMSSQL := d == "mssql" || d == "sqlserver"
+	isClickHouse := d == "clickhouse"
+	return sqlDialectRules{
+		isGeneric:        isGeneric,
+		isPostgres:       isPostgres,
+		isMySQLFamily:    isMySQLFamily,
+		isMariaDB:        isMariaDB,
+		isMSSQL:          isMSSQL,
+		isClickHouse:     isClickHouse,
+		backslashEscapes: isMySQLFamily || isClickHouse || isGeneric,
+		hashComment:      isMySQLFamily || isClickHouse || isGeneric,
+		bracketIdent:     isMSSQL || isGeneric,
+		dollarQuote:      isPostgres || isGeneric,
+		backtickIdent:    !isPostgres,
+		delimiterDir:     isMySQLFamily || isGeneric,
+	}
 }
 
 // isMySQLDashComment reports whether "--" at runes[i:i+2] starts a comment in MySQL,
@@ -169,8 +208,10 @@ func SplitStatements(sql string) []string {
 
 // SplitStatementsForDialect splits a multi-statement SQL script using dialect-aware quoting and comment rules.
 func SplitStatementsForDialect(sql, dialect string) []string {
-	isPostgres := strings.EqualFold(strings.TrimSpace(dialect), "postgres")
-	isMySQLFamily, isMariaDB := dialectFlags(dialect)
+	rules := getSQLDialectRules(dialect)
+	isPostgres := rules.isPostgres
+	isMySQLFamily := rules.isMySQLFamily
+	isMariaDB := rules.isMariaDB
 	var statements []string
 	var current strings.Builder
 	runes := []rune(sql)
@@ -207,7 +248,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 		r := runes[i]
 
 		// Handle client DELIMITER directive at line start when not inside quotes/comments
-		if atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !inDollarQuote && !inLineComment && blockCommentDepth == 0 {
+		if rules.delimiterDir && !stmtStarted && atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !inDollarQuote && !inLineComment && blockCommentDepth == 0 {
 			if newDelim, nextIdx, ok := parseDelimiterLine(runes, i); ok {
 				delim = []rune(newDelim)
 				i = nextIdx - 1
@@ -267,7 +308,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 		// Check double quote end
 		if inDoubleQuote {
 			current.WriteRune(r)
-			if !isPostgres && r == '\\' && i+1 < n {
+			if rules.backslashEscapes && r == '\\' && i+1 < n {
 				current.WriteRune(runes[i+1])
 				i++
 			} else if r == '"' {
@@ -332,7 +373,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 			atLineStart = false
 			continue
 		}
-		if r == '#' && !isPostgres {
+		if r == '#' && rules.hashComment {
 			current.WriteRune(r)
 			inLineComment = true
 			atLineStart = false
@@ -360,7 +401,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 		}
 		if r == '\'' {
 			inSingleQuote = true
-			singleQuoteEscape = !isPostgres
+			singleQuoteEscape = rules.backslashEscapes
 			if isPostgres && i > 0 && (runes[i-1] == 'e' || runes[i-1] == 'E') && (i == 1 || !isIdentChar(runes[i-2])) {
 				singleQuoteEscape = true
 			}
@@ -376,14 +417,14 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 			atLineStart = false
 			continue
 		}
-		if r == '`' && !isPostgres {
+		if r == '`' && rules.backtickIdent {
 			inBacktick = true
 			stmtStarted = true
 			current.WriteRune(r)
 			atLineStart = false
 			continue
 		}
-		if r == '[' && !isPostgres {
+		if r == '[' && rules.bracketIdent {
 			inBracket = true
 			stmtStarted = true
 			current.WriteRune(r)
@@ -405,7 +446,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 			continue
 		}
 
-		if r == '$' {
+		if r == '$' && rules.dollarQuote {
 			if tag, ok := parseDollarTag(runes, i); ok {
 				inDollarQuote = true
 				dollarTag = tag
@@ -440,7 +481,8 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 
 			if word == "BEGIN" {
 				nextWord := peekNextWord(runes, j)
-				isStandaloneTx := nextWord == ";" || nextWord == "" || nextWord == "TRANSACTION" || nextWord == "WORK" ||
+				isStandaloneTx := nextWord == ";" || nextWord == "" || nextWord == "TRANSACTION" || nextWord == "TRAN" || nextWord == "WORK" ||
+					nextWord == "DISTRIBUTED" || nextWord == "DEFERRED" || nextWord == "IMMEDIATE" || nextWord == "EXCLUSIVE" ||
 					(isPostgres && (nextWord == "ISOLATION" || nextWord == "READ" || nextWord == "DEFERRABLE" || nextWord == "NOT"))
 				if pendingCompoundBody || beginDepth > 0 || !isStandaloneTx {
 					beginDepth++
@@ -545,13 +587,15 @@ func sanitizeSQL(sql, dialect string) (string, bool) {
 
 // sanitizeSQLFlags also reports whether any comment (executable or not) was present.
 func sanitizeSQLFlags(sql, dialect string) (string, bool, bool) {
-	isMySQLFamily, isMariaDB := dialectFlags(dialect)
+	rules := getSQLDialectRules(dialect)
+	isMySQLFamily := rules.isMySQLFamily
+	isMariaDB := rules.isMariaDB
 	hasExecComment := false
 	hasComment := false
 	var out strings.Builder
 	runes := []rune(sql)
 	n := len(runes)
-	var inSingle, inDouble, inBacktick, inBracket, inDollar, inLineComment, inBlockComment bool
+	var inSingle, singleEscape, inDouble, inBacktick, inBracket, inDollar, inLineComment, inBlockComment bool
 	var dollarTag []rune
 
 	for i := 0; i < n; i++ {
@@ -574,20 +618,21 @@ func sanitizeSQLFlags(sql, dialect string) (string, bool, bool) {
 			continue
 		}
 		if inSingle {
-			if r == '\\' && i+1 < n {
+			if singleEscape && r == '\\' && i+1 < n {
 				i++
 			} else if r == '\'' {
 				if i+1 < n && runes[i+1] == '\'' {
 					i++
 				} else {
 					inSingle = false
+					singleEscape = false
 				}
 			}
 			out.WriteRune(' ')
 			continue
 		}
 		if inDouble {
-			if r == '\\' && i+1 < n {
+			if rules.backslashEscapes && r == '\\' && i+1 < n {
 				i++
 			} else if r == '"' {
 				if i+1 < n && runes[i+1] == '"' {
@@ -633,7 +678,7 @@ func sanitizeSQLFlags(sql, dialect string) (string, bool, bool) {
 			out.WriteRune(' ')
 			continue
 		}
-		if r == '#' {
+		if r == '#' && rules.hashComment {
 			inLineComment = true
 			hasComment = true
 			out.WriteRune(' ')
@@ -657,6 +702,10 @@ func sanitizeSQLFlags(sql, dialect string) (string, bool, bool) {
 		}
 		if r == '\'' {
 			inSingle = true
+			singleEscape = rules.backslashEscapes
+			if rules.isPostgres && i > 0 && (runes[i-1] == 'e' || runes[i-1] == 'E') && (i == 1 || !isIdentChar(runes[i-2])) {
+				singleEscape = true
+			}
 			out.WriteRune(' ')
 			continue
 		}
@@ -665,17 +714,17 @@ func sanitizeSQLFlags(sql, dialect string) (string, bool, bool) {
 			out.WriteRune(' ')
 			continue
 		}
-		if r == '`' {
+		if r == '`' && rules.backtickIdent {
 			inBacktick = true
 			out.WriteRune(' ')
 			continue
 		}
-		if r == '[' {
+		if r == '[' && rules.bracketIdent {
 			inBracket = true
 			out.WriteRune(' ')
 			continue
 		}
-		if r == '$' {
+		if r == '$' && rules.dollarQuote {
 			if tag, ok := parseDollarTag(runes, i); ok {
 				inDollar = true
 				dollarTag = tag
@@ -739,7 +788,33 @@ func IsQueryReturningRows(sql string) bool {
 	return containsStandaloneWord(sanitizedUpper, "RETURNING")
 }
 
-func isReadOnlyHTTPCommand(clean string) bool {
+func hasUnsafeHTTPPathSegments(rawPath string) bool {
+	if strings.Contains(rawPath, "\\") {
+		return true
+	}
+	check := func(p string) bool {
+		if strings.Contains(p, "\\") {
+			return true
+		}
+		for _, seg := range strings.Split(strings.Trim(p, "/"), "/") {
+			if seg == "." || seg == ".." {
+				return true
+			}
+		}
+		return false
+	}
+	if check(rawPath) {
+		return true
+	}
+	if unescaped, err := url.PathUnescape(rawPath); err == nil {
+		if check(unescaped) {
+			return true
+		}
+	}
+	return false
+}
+
+func isReadOnlyHTTPCommand(clean, dialect string) bool {
 	fields := strings.Fields(clean)
 	if len(fields) < 2 {
 		return false
@@ -754,15 +829,19 @@ func isReadOnlyHTTPCommand(clean string) bool {
 	if len(path) > 1 {
 		path = strings.TrimRight(path, "/")
 	}
+	if hasUnsafeHTTPPathSegments(path) {
+		return false
+	}
 	if method == "GET" || method == "HEAD" {
 		return true
 	}
 	if method == "POST" {
+		d := strings.ToLower(strings.TrimSpace(dialect))
 		lowerPath := strings.ToLower(path)
-		if strings.HasPrefix(lowerPath, "/collections/") {
+		if (d == "qdrant" || d == "") && strings.HasPrefix(lowerPath, "/collections/") {
 			rest := strings.TrimPrefix(lowerPath, "/collections/")
 			collSeg, actionSeg, hasAction := strings.Cut(rest, "/")
-			if collSeg != "" && hasAction {
+			if collSeg != "" && collSeg != "." && collSeg != ".." && hasAction {
 				actionPath := "/" + actionSeg
 				switch actionPath {
 				case "/points/search",
@@ -787,34 +866,44 @@ func isReadOnlyHTTPCommand(clean string) bool {
 				}
 			}
 		}
-		if lowerPath == "/_sql" ||
-			lowerPath == "/_sql/translate" ||
-			lowerPath == "/_plugins/_sql" ||
-			lowerPath == "/_plugins/_sql/_explain" ||
-			lowerPath == "/_query" ||
-			lowerPath == "/_search" ||
-			lowerPath == "/_msearch" ||
-			lowerPath == "/_mget" ||
-			lowerPath == "/_count" ||
-			lowerPath == "/_analyze" ||
-			lowerPath == "/_field_caps" ||
-			lowerPath == "/_search/template" ||
-			lowerPath == "/_msearch/template" ||
-			lowerPath == "/_rank_eval" ||
-			strings.HasSuffix(lowerPath, "/_search") ||
-			strings.HasSuffix(lowerPath, "/_msearch") ||
-			strings.HasSuffix(lowerPath, "/_mget") ||
-			strings.HasSuffix(lowerPath, "/_count") ||
-			strings.HasSuffix(lowerPath, "/_analyze") ||
-			strings.HasSuffix(lowerPath, "/_validate/query") ||
-			strings.HasSuffix(lowerPath, "/_field_caps") ||
-			strings.HasSuffix(lowerPath, "/_terms_enum") ||
-			strings.HasSuffix(lowerPath, "/_search/template") ||
-			strings.HasSuffix(lowerPath, "/_msearch/template") ||
-			strings.HasSuffix(lowerPath, "/_rank_eval") ||
-			strings.HasSuffix(lowerPath, "/_explain") ||
-			strings.Contains(lowerPath, "/_explain/") {
-			return true
+		if d == "elasticsearch" || d == "es" || d == "" {
+			switch lowerPath {
+			case "/_sql",
+				"/_sql/translate",
+				"/_plugins/_sql",
+				"/_plugins/_sql/_explain",
+				"/_query",
+				"/_search",
+				"/_msearch",
+				"/_mget",
+				"/_count",
+				"/_analyze",
+				"/_field_caps",
+				"/_search/template",
+				"/_msearch/template",
+				"/_rank_eval":
+				return true
+			}
+			segs := strings.Split(strings.Trim(lowerPath, "/"), "/")
+			if len(segs) >= 2 && segs[0] != "" {
+				switch segs[0] {
+				case "_doc", "_create", "_update", "_bulk", "_reindex", "_delete_by_query", "_update_by_query":
+					return false
+				}
+			}
+			if len(segs) == 2 {
+				switch segs[1] {
+				case "_search", "_msearch", "_mget", "_count", "_analyze", "_field_caps", "_terms_enum", "_rank_eval", "_explain":
+					return true
+				}
+			} else if len(segs) == 3 {
+				if (segs[1] == "_validate" && segs[2] == "query") ||
+					(segs[1] == "_search" && segs[2] == "template") ||
+					(segs[1] == "_msearch" && segs[2] == "template") ||
+					(segs[1] == "_explain" && segs[2] != "") {
+					return true
+				}
+			}
 		}
 	}
 	return false
@@ -830,14 +919,25 @@ func IsReadOnlySafeQuery(sql string) bool {
 // server. For MySQL and MariaDB it rejects any statement containing an executable comment,
 // because the server runs its body even though a generic parser sees only a comment.
 func IsReadOnlySafeQueryForDialect(sql, dialect string) bool {
-	if isMySQLFamily, _ := dialectFlags(dialect); isMySQLFamily {
-		if _, hasExec := sanitizeSQL(sql, dialect); hasExec {
+	d := strings.ToLower(strings.TrimSpace(dialect))
+	if d == "redis" {
+		return IsReadOnlySafeRedisQuery(sql)
+	}
+	if d == "mongodb" || d == "mongo" {
+		return IsReadOnlySafeMongoQuery(sql)
+	}
+	if isMySQLFamily, _ := dialectFlags(d); isMySQLFamily {
+		if _, hasExec := sanitizeSQL(sql, d); hasExec {
 			return false
 		}
 	}
 	clean := StripLeadingComments(sql)
-	if isReadOnlyHTTPCommand(clean) {
+	isHTTPDialect := d == "qdrant" || d == "elasticsearch" || d == "es" || d == ""
+	if isHTTPDialect && isReadOnlyHTTPCommand(clean, d) {
 		return true
+	}
+	if d == "qdrant" {
+		// Qdrant also accepts pseudo-SQL SELECT/SHOW queries; non-HTTP queries must pass SQL checks below.
 	}
 	upper := strings.ToUpper(clean)
 	isAnalyzeSelect := false
@@ -845,6 +945,7 @@ func IsReadOnlySafeQueryForDialect(sql, dialect string) bool {
 		rest := strings.TrimSpace(upper[len("ANALYZE"):])
 		isAnalyzeSelect = strings.HasPrefix(rest, "SELECT") || strings.HasPrefix(rest, "FORMAT")
 	}
+	isESDialect := d == "elasticsearch" || d == "es" || d == ""
 	isReadLeading := hasLeadingKeyword(upper, "SELECT") ||
 		hasLeadingKeyword(upper, "SHOW") ||
 		hasLeadingKeyword(upper, "DESCRIBE") ||
@@ -857,22 +958,34 @@ func IsReadOnlySafeQueryForDialect(sql, dialect string) bool {
 		hasLeadingKeyword(upper, "TABLE") ||
 		hasLeadingKeyword(upper, "EXISTS") ||
 		hasLeadingKeyword(upper, "CHECK") ||
-		(hasLeadingKeyword(upper, "FROM") && strings.Contains(clean, "|")) ||
-		hasLeadingKeyword(upper, "ROW")
+		(isESDialect && ((hasLeadingKeyword(upper, "FROM") && strings.Contains(clean, "|")) || hasLeadingKeyword(upper, "ROW")))
 	if !isReadLeading {
 		return false
 	}
-	sanitized, _ := sanitizeSQL(clean, dialect)
+	sanitized, _ := sanitizeSQL(clean, d)
 	sanitizedUpper := strings.ToUpper(sanitized)
+	if hasLeadingKeyword(upper, "PRAGMA") {
+		if strings.Contains(sanitizedUpper, "=") || containsStandaloneWord(sanitizedUpper,
+			"WAL_CHECKPOINT", "OPTIMIZE", "INCREMENTAL_VACUUM", "SHRINK_MEMORY", "WRITABLE_SCHEMA",
+		) {
+			return false
+		}
+	}
 	if containsStandaloneWord(sanitizedUpper,
 		"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
 		"TRUNCATE", "MERGE", "GRANT", "REVOKE",
 		"SYSTEM", "KILL", "OPTIMIZE", "ATTACH", "DETACH",
 		"EXCHANGE", "RENAME", "BACKUP", "RESTORE", "SET",
 		"VACUUM", "REINDEX", "CLUSTER", "REFRESH", "COPY",
-		"PG_TERMINATE_BACKEND", "PG_CANCEL_BACKEND", "PG_RELOAD_CONF",
+		"INTO", "EXEC", "EXECUTE", "DBCC", "SHUTDOWN",
+		"CALL", "LOAD", "IMPORT", "EXPORT",
+		"SET_CONFIG", "NEXTVAL", "PG_TERMINATE_BACKEND", "PG_CANCEL_BACKEND", "PG_RELOAD_CONF",
 		"PG_ROTATE_LOGFILE", "SETVAL", "LO_UNLINK", "LO_EXPORT", "LO_IMPORT",
-		"PG_CREATE_RESTORE_POINT",
+		"LO_FROM_BYTEA", "LO_PUT", "LO_TRUNCATE",
+		"PG_CREATE_RESTORE_POINT", "PG_FILE_WRITE", "PG_FILE_UNLINK", "PG_FILE_RENAME",
+		"PG_DROP_REPLICATION_SLOT", "PG_CREATE_PHYSICAL_REPLICATION_SLOT",
+		"PG_CREATE_LOGICAL_REPLICATION_SLOT", "PG_REPLICATION_SLOT_ADVANCE",
+		"PG_SWITCH_WAL", "PG_START_BACKUP", "PG_STOP_BACKUP", "PG_BACKUP_START", "PG_BACKUP_STOP",
 	) {
 		return false
 	}
@@ -1149,6 +1262,148 @@ func SplitMongoStatements(raw string) []string {
 	return stmts
 }
 
+func sanitizeMongoJS(raw string) string {
+	var out strings.Builder
+	n := len(raw)
+	i := 0
+	inSingle := false
+	inDouble := false
+	inBacktick := false
+	escaped := false
+
+	for i < n {
+		ch := raw[i]
+		if escaped {
+			out.WriteByte(' ')
+			escaped = false
+			i++
+			continue
+		}
+		if (inSingle || inDouble || inBacktick) && ch == '\\' {
+			out.WriteByte(' ')
+			escaped = true
+			i++
+			continue
+		}
+		if ch == '\'' && !inDouble && !inBacktick {
+			inSingle = !inSingle
+			out.WriteByte(' ')
+			i++
+			continue
+		}
+		if ch == '"' && !inSingle && !inBacktick {
+			inDouble = !inDouble
+			out.WriteByte(' ')
+			i++
+			continue
+		}
+		if ch == '`' && !inSingle && !inDouble {
+			inBacktick = !inBacktick
+			out.WriteByte(' ')
+			i++
+			continue
+		}
+		if inSingle || inDouble || inBacktick {
+			out.WriteByte(' ')
+			i++
+			continue
+		}
+		if ch == '/' && i+1 < n && raw[i+1] == '/' {
+			for i < n && raw[i] != '\n' {
+				out.WriteByte(' ')
+				i++
+			}
+			continue
+		}
+		if ch == '/' && i+1 < n && raw[i+1] == '*' {
+			out.WriteString("  ")
+			i += 2
+			for i+1 < n && !(raw[i] == '*' && raw[i+1] == '/') {
+				out.WriteByte(' ')
+				i++
+			}
+			if i+1 < n {
+				out.WriteString("  ")
+				i += 2
+			}
+			continue
+		}
+		out.WriteByte(ch)
+		i++
+	}
+	return out.String()
+}
+
+func hasMongoMethod(sanitizedLower, method string) bool {
+	needle := "." + method
+	idx := 0
+	for {
+		pos := strings.Index(sanitizedLower[idx:], needle)
+		if pos == -1 {
+			return false
+		}
+		after := idx + pos + len(needle)
+		if after == len(sanitizedLower) {
+			return true
+		}
+		next := sanitizedLower[after]
+		if next == '(' || next == '.' || next == ';' || next == ' ' || next == '\t' || next == '\n' || next == '\r' {
+			return true
+		}
+		idx = idx + pos + 1
+	}
+}
+
+func extractMongoCommandKey(clean string) string {
+	s := strings.TrimSpace(clean)
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "db.runcommand") {
+		s = strings.TrimSpace(s[len("db.runcommand"):])
+		if !strings.HasPrefix(s, "(") {
+			return ""
+		}
+		s = strings.TrimSpace(s[1:])
+	} else if strings.HasPrefix(lower, "db.admincommand") {
+		s = strings.TrimSpace(s[len("db.admincommand"):])
+		if !strings.HasPrefix(s, "(") {
+			return ""
+		}
+		s = strings.TrimSpace(s[1:])
+	}
+	if !strings.HasPrefix(s, "{") {
+		return ""
+	}
+	s = strings.TrimSpace(s[1:])
+	if len(s) == 0 {
+		return ""
+	}
+	if s[0] == '"' || s[0] == '\'' {
+		quote := s[0]
+		end := 1
+		for end < len(s) {
+			if s[end] == '\\' && end+1 < len(s) {
+				end += 2
+				continue
+			}
+			if s[end] == quote {
+				return strings.ToLower(s[1:end])
+			}
+			end++
+		}
+		return ""
+	}
+	end := 0
+	for end < len(s) {
+		c := s[end]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$' {
+			end++
+		} else {
+			break
+		}
+	}
+	return strings.ToLower(s[:end])
+}
+
 // IsReadOnlySafeMongoQuery checks whether a MongoDB shell statement or pseudo-SQL query
 // is safe to execute on a Read-Only connection.
 func IsReadOnlySafeMongoQuery(stmt string) bool {
@@ -1160,7 +1415,7 @@ func IsReadOnlySafeMongoQuery(stmt string) bool {
 
 	// Allow read-only pseudo-SQL SELECT
 	if strings.HasPrefix(lower, "select ") || strings.HasPrefix(lower, "select\n") || strings.HasPrefix(lower, "select\t") {
-		return IsReadOnlySafeQuery(clean)
+		return IsReadOnlySafeQueryForDialect(clean, "postgres")
 	}
 
 	// Shell navigation and inspection
@@ -1175,59 +1430,292 @@ func IsReadOnlySafeMongoQuery(stmt string) bool {
 		return true
 	}
 
-	// Explicitly block mutating collection/db methods
-	for _, writePattern := range []string{
-		".insertone(", ".insertmany(", ".insert(",
-		".updateone(", ".updatemany(", ".update(",
-		".replaceone(", ".findoneandupdate(", ".findoneandreplace(", ".findoneanddelete(",
-		".deleteone(", ".deletemany(", ".remove(",
-		".drop(", ".dropdatabase(", ".createcollection(", ".createview(",
-		".createindex(", ".dropindex(", ".dropindexes(", ".hideindex(", ".unhideindex(",
-		".renamecollection(", ".bulkwrite(",
-		".createuser(", ".updateuser(", ".dropuser(", ".createrole(", ".droprole(",
-		".killop(",
+	sanitizedLower := strings.ToLower(sanitizeMongoJS(clean))
+
+	// Explicitly block mutating collection/db methods (whitespace-tolerant before '(' or bare property)
+	for _, writeMethod := range []string{
+		"insertone", "insertmany", "insert",
+		"updateone", "updatemany", "update",
+		"replaceone", "findoneandupdate", "findoneandreplace", "findoneanddelete",
+		"deleteone", "deletemany", "remove",
+		"drop", "dropdatabase", "createcollection", "createview",
+		"createindex", "dropindex", "dropindexes", "hideindex", "unhideindex",
+		"renamecollection", "bulkwrite",
+		"createuser", "updateuser", "dropuser", "createrole", "droprole",
+		"killop",
 	} {
-		if strings.Contains(lower, writePattern) {
+		if hasMongoMethod(sanitizedLower, writeMethod) {
 			return false
 		}
 	}
 
-	// Aggregate is read-only unless it uses $out or $merge
-	if strings.Contains(lower, ".aggregate(") {
-		sanitized := strings.ToLower(clean)
-		if strings.Contains(sanitized, "$out") || strings.Contains(sanitized, "$merge") {
+	// Aggregate is read-only unless it uses $out or $merge (strip backslashes so "\$out" cannot bypass)
+	if hasMongoMethod(sanitizedLower, "aggregate") {
+		noEscapeLower := strings.ReplaceAll(lower, "\\", "")
+		if strings.Contains(noEscapeLower, "$out") || strings.Contains(noEscapeLower, "$merge") {
 			return false
 		}
 		return true
 	}
 
 	// Known read-only collection/db methods
-	for _, readPattern := range []string{
-		".find(", ".findone(", ".countdocuments(", ".estimateddocumentcount(",
-		".count(", ".distinct(", ".getindexes(", ".stats(", ".validate(",
-		"db.getcollectionnames(", "db.getcollectioninfos(", "db.stats(",
-		"db.version(", "db.serverstatus(", "db.currentop(", "db.listcommands(",
-		"db.getusers(", "db.getroles(", "db.getname(",
+	for _, readMethod := range []string{
+		"find", "findone", "countdocuments", "estimateddocumentcount",
+		"count", "distinct", "getindexes", "stats", "validate",
+		"getcollectionnames", "getcollectioninfos", "version",
+		"serverstatus", "currentop", "listcommands",
+		"getusers", "getroles", "getname",
 	} {
-		if strings.Contains(lower, readPattern) {
+		if hasMongoMethod(sanitizedLower, readMethod) {
 			return true
 		}
 	}
 
-	// Raw command or runCommand: allow only known safe read commands
-	if strings.HasPrefix(lower, "db.runcommand(") || strings.HasPrefix(lower, "db.admincommand(") || strings.HasPrefix(lower, "{") {
-		for _, safeCmd := range []string{
-			"ping", "hello", "ismaster", "buildinfo", "serverstatus", "dbstats",
+	// Raw command or runCommand: allow only if the first command key is a known safe read command
+	trimmedSanitized := strings.TrimSpace(sanitizedLower)
+	if strings.HasPrefix(trimmedSanitized, "db.runcommand") || strings.HasPrefix(trimmedSanitized, "db.admincommand") || strings.HasPrefix(trimmedSanitized, "{") {
+		cmdKey := extractMongoCommandKey(clean)
+		switch cmdKey {
+		case "ping", "hello", "ismaster", "buildinfo", "serverstatus", "dbstats",
 			"collstats", "listcollections", "listdatabases", "listindexes",
 			"usersinfo", "rolesinfo", "explain", "count", "distinct", "find",
-			"replsetgetstatus", "replsetgetconfig", "listshards", "listcommands",
-		} {
-			if strings.Contains(lower, safeCmd) {
-				return true
-			}
+			"replsetgetstatus", "replsetgetconfig", "listshards", "listcommands":
+			return true
 		}
 		return false
 	}
 
 	return false
+}
+
+// SplitRedisStatements splits a Redis script by newlines and unquoted semicolons, skipping # and -- comment lines.
+func SplitRedisStatements(raw string) []string {
+	var stmts []string
+	var cur strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func() {
+		s := strings.TrimSpace(cur.String())
+		cur.Reset()
+		if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, "--") {
+			return
+		}
+		stmts = append(stmts, s)
+	}
+
+	runes := []rune(raw)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if escaped {
+			cur.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if (inSingle || inDouble) && r == '\\' {
+			cur.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			cur.WriteRune(r)
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			cur.WriteRune(r)
+			continue
+		}
+		if !inSingle && !inDouble && (r == '\n' || r == '\r' || r == ';') {
+			flush()
+			continue
+		}
+		cur.WriteRune(r)
+	}
+	flush()
+	return stmts
+}
+
+func parseRedisArgsForCheck(cmdStr string) []string {
+	var args []string
+	var current strings.Builder
+	inQuote := false
+	hadQuote := false
+	var quoteChar rune
+
+	runes := []rune(cmdStr)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if inQuote {
+			if r == quoteChar {
+				inQuote = false
+			} else if r == '\\' && i+1 < len(runes) {
+				i++
+				current.WriteRune(runes[i])
+			} else {
+				current.WriteRune(r)
+			}
+		} else {
+			if r == '"' || r == '\'' {
+				inQuote = true
+				hadQuote = true
+				quoteChar = r
+			} else if r == ' ' || r == '\t' {
+				if current.Len() > 0 || hadQuote {
+					args = append(args, current.String())
+					current.Reset()
+					hadQuote = false
+				}
+			} else {
+				current.WriteRune(r)
+			}
+		}
+	}
+	if current.Len() > 0 || hadQuote {
+		args = append(args, current.String())
+	}
+	return args
+}
+
+// IsReadOnlySafeRedisQuery verifies that a Redis command or pseudo-SQL SELECT is read-only.
+func IsReadOnlySafeRedisQuery(stmt string) bool {
+	clean := strings.TrimSpace(StripLeadingComments(stmt))
+	if clean == "" {
+		return true
+	}
+	upper := strings.ToUpper(clean)
+	// Allow pseudo-SQL SELECT * / SELECT COUNT(*) FROM ...
+	if hasLeadingKeyword(upper, "SELECT") {
+		fields := strings.Fields(upper)
+		if len(fields) >= 4 && (fields[1] == "*" || fields[1] == "COUNT(*)") && fields[2] == "FROM" {
+			return !strings.ContainsAny(clean, "\n\r")
+		}
+		// Redis native SELECT <db>
+		if len(fields) == 2 {
+			return true
+		}
+		return false
+	}
+
+	args := parseRedisArgsForCheck(clean)
+	if len(args) == 0 {
+		return true
+	}
+	cmd := strings.ToUpper(args[0])
+	switch cmd {
+	case "PING", "ECHO", "INFO", "DBSIZE", "TIME", "LASTSAVE", "LOLWUT", "HELLO",
+		"COMMAND", "OBJECT",
+		"EXISTS", "TYPE", "TTL", "PTTL", "EXPIRETIME", "PEXPIRETIME", "KEYS", "SCAN", "RANDOMKEY", "DUMP",
+		"GET", "MGET", "GETRANGE", "STRLEN", "GETBIT", "BITCOUNT", "BITPOS", "LCS",
+		"HGET", "HMGET", "HGETALL", "HKEYS", "HVALS", "HLEN", "HEXISTS", "HSTRLEN", "HSCAN", "HRANDFIELD",
+		"LINDEX", "LLEN", "LRANGE", "LPOS",
+		"SCARD", "SISMEMBER", "SMISMEMBER", "SMEMBERS", "SRANDMEMBER", "SSCAN", "SINTER", "SINTERCARD", "SUNION", "SDIFF",
+		"ZCARD", "ZCOUNT", "ZLEXCOUNT", "ZRANGE", "ZRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGE", "ZREVRANGEBYSCORE", "ZREVRANGEBYLEX", "ZRANK", "ZREVRANK", "ZSCORE", "ZMSCORE", "ZSCAN", "ZRANDMEMBER",
+		"XLEN", "XRANGE", "XREVRANGE", "XREAD", "XINFO", "XPENDING",
+		"PFCOUNT",
+		"GEODIST", "GEOHASH", "GEOPOS", "GEORADIUS_RO", "GEORADIUSBYMEMBER_RO", "GEOSEARCH",
+		"JSON.GET", "JSON.MGET", "JSON.TYPE", "JSON.STRLEN", "JSON.OBJLEN", "JSON.OBJKEYS", "JSON.ARRLEN", "JSON.ARRINDEX",
+		"FT.SEARCH", "FT.AGGREGATE", "FT.INFO", "FT._LIST", "FT.EXPLAIN", "FT.EXPLAINCLI", "FT.PROFILE", "FT.TAGVALS", "FT.SUGGET", "FT.SUGLEN", "FT.SYNDUMP", "FT.SPELLCHECK", "FT.DICTUMP":
+		return true
+	case "CONFIG", "FT.CONFIG":
+		return len(args) >= 2 && strings.EqualFold(args[1], "GET")
+	case "CLIENT":
+		if len(args) < 2 {
+			return false
+		}
+		switch strings.ToUpper(args[1]) {
+		case "LIST", "INFO", "GETNAME", "ID", "TRACKINGINFO":
+			return true
+		}
+		return false
+	case "MEMORY":
+		if len(args) < 2 {
+			return false
+		}
+		switch strings.ToUpper(args[1]) {
+		case "USAGE", "STATS", "DOCTOR", "MALLOC-STATS":
+			return true
+		}
+		return false
+	case "SLOWLOG":
+		if len(args) < 2 {
+			return false
+		}
+		switch strings.ToUpper(args[1]) {
+		case "GET", "LEN":
+			return true
+		}
+		return false
+	case "LATENCY":
+		if len(args) < 2 {
+			return false
+		}
+		switch strings.ToUpper(args[1]) {
+		case "LATEST", "HISTORY", "GRAPH", "DOCTOR":
+			return true
+		}
+		return false
+	case "ACL":
+		if len(args) < 2 {
+			return false
+		}
+		switch strings.ToUpper(args[1]) {
+		case "LIST", "USERS", "GETUSER", "WHOAMI", "CAT", "LOG", "HELP":
+			return true
+		}
+		return false
+	case "CLUSTER":
+		if len(args) < 2 {
+			return false
+		}
+		switch strings.ToUpper(args[1]) {
+		case "INFO", "NODES", "SLOTS", "SHARDS", "KEYSLOT", "COUNTKEYSINSLOT", "GETKEYSINSLOT":
+			return true
+		}
+		return false
+	case "MODULE":
+		return len(args) >= 2 && strings.EqualFold(args[1], "LIST")
+	}
+	return false
+}
+
+// ValidateReadOnlyScript splits a script using the appropriate driver splitter and checks every
+// statement for read-only safety. Returns the first unsafe statement and false if blocked.
+func ValidateReadOnlyScript(script, dialect string) (string, bool) {
+	d := strings.ToLower(strings.TrimSpace(dialect))
+	var statements []string
+	switch d {
+	case "qdrant", "elasticsearch", "es":
+		statements = SplitHTTPOrSQLStatements(script)
+	case "mongodb", "mongo":
+		statements = SplitMongoStatements(script)
+	case "redis":
+		// Preserve single pseudo-SQL SELECT * / SELECT COUNT(*) FROM ... queries
+		trimmed := strings.TrimSpace(script)
+		upper := strings.ToUpper(trimmed)
+		if (hasLeadingKeyword(upper, "SELECT") && strings.Contains(upper, " FROM ")) && !strings.ContainsAny(trimmed, "\n\r") {
+			statements = []string{trimmed}
+		} else {
+			statements = SplitRedisStatements(script)
+		}
+	default:
+		statements = SplitStatementsForDialect(script, d)
+	}
+	for _, stmt := range statements {
+		var isSafe bool
+		switch d {
+		case "mongodb", "mongo":
+			isSafe = IsReadOnlySafeMongoQuery(stmt)
+		case "redis":
+			isSafe = IsReadOnlySafeRedisQuery(stmt)
+		default:
+			isSafe = IsReadOnlySafeQueryForDialect(stmt, d)
+		}
+		if !isSafe {
+			return stmt, false
+		}
+	}
+	return "", true
 }

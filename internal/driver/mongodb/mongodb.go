@@ -443,9 +443,6 @@ func pickDominantType(hist map[string]int) string {
 			best = t
 		}
 	}
-	if len(hist) > 1 {
-		return "mixed"
-	}
 	return best
 }
 
@@ -606,6 +603,9 @@ func (m *MongoDBDriver) GenerateDMLPreview(database, schema, table string, chang
 			doc := make(bson.D, 0, len(c.Changes))
 			for k, v := range c.Changes {
 				if k == "_id" {
+					if v == nil || v == "" {
+						continue
+					}
 					doc = append(doc, bson.E{Key: k, Value: parseID(v)})
 				} else {
 					doc = append(doc, bson.E{Key: k, Value: coerceValueForBson(v, "")})
@@ -619,26 +619,18 @@ func (m *MongoDBDriver) GenerateDMLPreview(database, schema, table string, chang
 				filterDoc = append(filterDoc, bson.E{Key: k, Value: parseID(v)})
 			}
 			setDoc := make(bson.D, 0)
-			unsetDoc := make(bson.D, 0)
 			for k, v := range c.Changes {
 				if k == "_id" {
 					continue
 				}
 				if v == nil {
-					unsetDoc = append(unsetDoc, bson.E{Key: k, Value: ""})
+					setDoc = append(setDoc, bson.E{Key: k, Value: nil})
 				} else {
 					setDoc = append(setDoc, bson.E{Key: k, Value: coerceValueForBson(v, "")})
 				}
 			}
-			var updateOps []string
 			if len(setDoc) > 0 {
-				updateOps = append(updateOps, fmt.Sprintf("$set: %s", formatShellOrderedDoc(setDoc)))
-			}
-			if len(unsetDoc) > 0 {
-				updateOps = append(updateOps, fmt.Sprintf("$unset: %s", formatShellOrderedDoc(unsetDoc)))
-			}
-			if len(updateOps) > 0 {
-				statements = append(statements, fmt.Sprintf("%s.updateOne(%s, { %s });", collRef, formatShellOrderedDoc(filterDoc), strings.Join(updateOps, ", ")))
+				statements = append(statements, fmt.Sprintf("%s.updateOne(%s, { $set: %s });", collRef, formatShellOrderedDoc(filterDoc), formatShellOrderedDoc(setDoc)))
 			}
 
 		case "delete":
@@ -691,13 +683,12 @@ func (m *MongoDBDriver) ApplyChanges(ctx context.Context, database, schema, tabl
 				filter[k] = parseID(v)
 			}
 			setDoc := bson.M{}
-			unsetDoc := bson.M{}
 			for k, v := range c.Changes {
 				if k == "_id" {
 					continue
 				}
 				if v == nil {
-					unsetDoc[k] = ""
+					setDoc[k] = nil
 				} else {
 					setDoc[k] = coerceValueForBson(v, typeHints[k])
 				}
@@ -705,9 +696,6 @@ func (m *MongoDBDriver) ApplyChanges(ctx context.Context, database, schema, tabl
 			updateDoc := bson.M{}
 			if len(setDoc) > 0 {
 				updateDoc["$set"] = setDoc
-			}
-			if len(unsetDoc) > 0 {
-				updateDoc["$unset"] = unsetDoc
 			}
 			if len(updateDoc) > 0 {
 				writeModels = append(writeModels, mongo.NewUpdateOneModel().SetFilter(filter).SetUpdate(updateDoc))

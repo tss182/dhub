@@ -71,37 +71,20 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 	}
 	if cfg != nil && cfg.IsReadOnly {
 		drvLower := strings.ToLower(strings.TrimSpace(cfg.Driver))
-		var statements []string
-		isMongo := drvLower == "mongodb" || drvLower == "mongo"
-		if drvLower == "qdrant" || drvLower == "elasticsearch" || drvLower == "es" {
-			statements = driver.SplitHTTPOrSQLStatements(req.SQL)
-		} else if isMongo {
-			statements = driver.SplitMongoStatements(req.SQL)
-		} else {
-			statements = driver.SplitStatementsForDialect(req.SQL, drvLower)
-		}
-		for _, stmt := range statements {
-			isSafe := false
-			if isMongo {
-				isSafe = driver.IsReadOnlySafeMongoQuery(stmt)
-			} else {
-				isSafe = driver.IsReadOnlySafeQueryForDialect(stmt, drvLower)
-			}
-			if !isSafe {
-				errMsg := fmt.Sprintf("execution blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(stmt, 60))
-				q.emitStatus(req.ExecutionID, "error", errMsg)
-				_ = q.store.RecordQueryHistory(store.QueryHistoryEntry{
-					ConnectionID: req.ConnectionID,
-					DatabaseName: req.Database,
-					SchemaName:   req.Schema,
-					SQLText:      req.SQL,
-					DurationMs:   0,
-					RowsAffected: 0,
-					Status:       "error",
-					ErrorMessage: errMsg,
-				})
-				return nil, fmt.Errorf("%s", errMsg)
-			}
+		if unsafeStmt, isSafe := driver.ValidateReadOnlyScript(req.SQL, drvLower); !isSafe {
+			errMsg := fmt.Sprintf("execution blocked: connection %q is configured as read-only (statement: %s)", cfg.Name, driver.TruncateSQL(unsafeStmt, 60))
+			q.emitStatus(req.ExecutionID, "error", errMsg)
+			_ = q.store.RecordQueryHistory(store.QueryHistoryEntry{
+				ConnectionID: req.ConnectionID,
+				DatabaseName: req.Database,
+				SchemaName:   req.Schema,
+				SQLText:      req.SQL,
+				DurationMs:   0,
+				RowsAffected: 0,
+				Status:       "error",
+				ErrorMessage: errMsg,
+			})
+			return nil, fmt.Errorf("%s", errMsg)
 		}
 	}
 

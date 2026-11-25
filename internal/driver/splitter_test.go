@@ -318,3 +318,53 @@ func TestIsReadOnlySafeQuery_PostgresEdgeCases(t *testing.T) {
 		}
 	}
 }
+
+func TestReadOnlyBypassHardening_Phase1(t *testing.T) {
+	// SQL dialect isolation & bypasses
+	sqlBlocked := []struct {
+		dialect string
+		script  string
+	}{
+		{"mssql", `SELECT '\'; DROP TABLE users --'`},
+		{"mssql", `SELECT * FROM #tmp; DROP TABLE users`},
+		{"mssql", `SELECT 1 AS a$x$; DROP TABLE users`},
+		{"mssql", `SELECT * INTO new_tbl FROM users`},
+		{"mssql", "SELECT 1\nEXEC sp_who2"},
+		{"postgres", `WITH d AS (SELECT 1 # 1) DELETE FROM users`},
+		{"postgres", `SELECT ARRAY[pg_terminate_backend(12345)]`},
+		{"postgres", `SELECT set_config('default_transaction_read_only', 'off', false)`},
+		{"postgres", `SELECT nextval('users_id_seq')`},
+		{"sqlite", `PRAGMA writable_schema = ON`},
+		{"sqlite", `PRAGMA wal_checkpoint(TRUNCATE)`},
+		{"elasticsearch", `POST /myindex/_delete_by_query/_explain/..`},
+		{"elasticsearch", `POST /myindex/_doc/_search`},
+		{"qdrant", `POST /collections/prod/points/delete/_explain/..`},
+		{"redis", "GET /x\nFLUSHALL"},
+		{"redis", "EXISTS k\nFLUSHALL"},
+		{"redis", `SET foo bar`},
+		{"redis", `CONFIG SET save ""`},
+		{"redis", `EVAL "redis.call('FLUSHALL')" 0`},
+	}
+	for _, tc := range sqlBlocked {
+		if _, ok := ValidateReadOnlyScript(tc.script, tc.dialect); ok {
+			t.Errorf("expected %s script %q to be BLOCKED in read-only mode", tc.dialect, tc.script)
+		}
+	}
+
+	// Legitimate reads that must be allowed
+	allowed := []struct {
+		dialect string
+		script  string
+	}{
+		{"redis", "GET user:1001\nHGETALL profile\nINFO server\nSCAN 0"},
+		{"redis", "SELECT * FROM keys;"},
+		{"sqlite", "PRAGMA table_info('users')"},
+		{"postgres", "SELECT data #>> '{a,b}' FROM docs"},
+		{"elasticsearch", "POST /myindex/_search\n{\"query\":{\"match_all\":{}}}"},
+	}
+	for _, tc := range allowed {
+		if bad, ok := ValidateReadOnlyScript(tc.script, tc.dialect); !ok {
+			t.Errorf("expected %s script %q to be ALLOWED, blocked at %q", tc.dialect, tc.script, bad)
+		}
+	}
+}

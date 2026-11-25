@@ -1,4 +1,4 @@
-package elasticsearch
+ package elasticsearch
 
 import (
 	"bytes"
@@ -1794,6 +1794,13 @@ func cleanIDValue(v any) string {
 	return s
 }
 
+func validateESPathSegment(seg, label string) error {
+	if seg == "" || seg == "." || seg == ".." || strings.ContainsAny(seg, `/\`) {
+		return fmt.Errorf("invalid Elasticsearch %s %q", label, seg)
+	}
+	return nil
+}
+
 func (e *ElasticsearchDriver) GenerateDMLPreview(database, schema, table string, changes []driver.RowChange) ([]string, error) {
 	var statements []string
 	for _, c := range changes {
@@ -1813,12 +1820,27 @@ func (e *ElasticsearchDriver) GenerateDMLPreview(database, schema, table string,
 			}
 			b, _ := json.Marshal(doc)
 			if docID != "" {
-				statements = append(statements, fmt.Sprintf("PUT /%s/_doc/%s?refresh=wait_for\n%s", table, docID, string(b)))
+				if err := validateESPathSegment(table, "index"); err != nil {
+					return nil, err
+				}
+				if err := validateESPathSegment(docID, "document _id"); err != nil {
+					return nil, err
+				}
+				statements = append(statements, fmt.Sprintf("PUT /%s/_doc/%s?refresh=wait_for\n%s", url.PathEscape(table), url.PathEscape(docID), string(b)))
 			} else {
-				statements = append(statements, fmt.Sprintf("POST /%s/_doc?refresh=wait_for\n%s", table, string(b)))
+				if err := validateESPathSegment(table, "index"); err != nil {
+					return nil, err
+				}
+				statements = append(statements, fmt.Sprintf("POST /%s/_doc?refresh=wait_for\n%s", url.PathEscape(table), string(b)))
 			}
 		case "update":
 			docID := cleanIDValue(c.PrimaryKey["_id"])
+			if err := validateESPathSegment(table, "index"); err != nil {
+				return nil, err
+			}
+			if err := validateESPathSegment(docID, "document _id"); err != nil {
+				return nil, err
+			}
 			doc := make(map[string]any)
 			for k, v := range c.Changes {
 				if k != "_id" && k != "_score" {
@@ -1826,10 +1848,16 @@ func (e *ElasticsearchDriver) GenerateDMLPreview(database, schema, table string,
 				}
 			}
 			b, _ := json.Marshal(map[string]any{"doc": doc})
-			statements = append(statements, fmt.Sprintf("POST /%s/_update/%s?refresh=wait_for\n%s", table, docID, string(b)))
+			statements = append(statements, fmt.Sprintf("POST /%s/_update/%s?refresh=wait_for\n%s", url.PathEscape(table), url.PathEscape(docID), string(b)))
 		case "delete":
 			docID := cleanIDValue(c.PrimaryKey["_id"])
-			statements = append(statements, fmt.Sprintf("DELETE /%s/_doc/%s?refresh=wait_for", table, docID))
+			if err := validateESPathSegment(table, "index"); err != nil {
+				return nil, err
+			}
+			if err := validateESPathSegment(docID, "document _id"); err != nil {
+				return nil, err
+			}
+			statements = append(statements, fmt.Sprintf("DELETE /%s/_doc/%s?refresh=wait_for", url.PathEscape(table), url.PathEscape(docID)))
 		}
 	}
 	return statements, nil
@@ -1838,6 +1866,9 @@ func (e *ElasticsearchDriver) GenerateDMLPreview(database, schema, table string,
 func (e *ElasticsearchDriver) ApplyChanges(ctx context.Context, database, schema, table string, changes []driver.RowChange) (int64, error) {
 	if len(changes) == 0 {
 		return 0, nil
+	}
+	if err := validateESPathSegment(table, "index"); err != nil {
+		return 0, err
 	}
 
 	// Use Elasticsearch Bulk API when applying multiple row changes for high performance
@@ -1963,6 +1994,9 @@ func (e *ElasticsearchDriver) ApplyChanges(ctx context.Context, database, schema
 				}
 			}
 			if docID != "" {
+				if err := validateESPathSegment(docID, "document _id"); err != nil {
+					return totalAffected, err
+				}
 				path := fmt.Sprintf("/%s/_doc/%s?refresh=wait_for", url.PathEscape(table), url.PathEscape(docID))
 				if _, _, err := e.doRequest(ctx, http.MethodPut, path, doc); err != nil {
 					return totalAffected, err
@@ -1977,6 +2011,9 @@ func (e *ElasticsearchDriver) ApplyChanges(ctx context.Context, database, schema
 
 		case "update":
 			docID := cleanIDValue(c.PrimaryKey["_id"])
+			if err := validateESPathSegment(docID, "document _id"); err != nil {
+				return totalAffected, err
+			}
 			doc := make(map[string]any)
 			for k, v := range c.Changes {
 				if k != "_id" && k != "_score" {
@@ -1988,11 +2025,14 @@ func (e *ElasticsearchDriver) ApplyChanges(ctx context.Context, database, schema
 				if _, _, err := e.doRequest(ctx, http.MethodPost, path, map[string]any{"doc": doc}); err != nil {
 					return totalAffected, err
 				}
+				totalAffected++
 			}
-			totalAffected++
 
 		case "delete":
 			docID := cleanIDValue(c.PrimaryKey["_id"])
+			if err := validateESPathSegment(docID, "document _id"); err != nil {
+				return totalAffected, err
+			}
 			path := fmt.Sprintf("/%s/_doc/%s?refresh=wait_for", url.PathEscape(table), url.PathEscape(docID))
 			if _, _, err := e.doRequest(ctx, http.MethodDelete, path, nil); err != nil {
 				return totalAffected, err

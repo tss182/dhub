@@ -32,6 +32,13 @@ func (s *SchemaService) getMongoClient(ctx context.Context, connectionID string)
 
 // MongoGridFSUpload streams a local file into a MongoDB GridFS bucket (<bucketPrefix>.files + <bucketPrefix>.chunks).
 func (s *SchemaService) MongoGridFSUpload(ctx context.Context, connectionID, database, bucketPrefix, localFilePath string) (string, error) {
+	cfg, cfgErr := s.store.GetConnection(ctx, connectionID)
+	if cfgErr != nil {
+		return "", fmt.Errorf("upload blocked: failed to verify connection permissions: %w", cfgErr)
+	}
+	if cfg != nil && cfg.IsReadOnly {
+		return "", fmt.Errorf("upload blocked: connection %q is configured as read-only", cfg.Name)
+	}
 	mDrv, err := s.getMongoClient(ctx, connectionID)
 	if err != nil {
 		return "", err

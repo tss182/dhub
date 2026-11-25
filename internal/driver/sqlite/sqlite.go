@@ -19,12 +19,17 @@ type SQLiteDriver struct {
 }
 
 func NewSQLiteDriver(filePath string) (*SQLiteDriver, error) {
+	return NewSQLiteDriverWithOptions(filePath, false)
+}
+
+func NewSQLiteDriverWithOptions(filePath string, readOnly bool) (*SQLiteDriver, error) {
 	cleanPath := strings.TrimSpace(filePath)
 	if cleanPath == "" {
 		return nil, fmt.Errorf("sqlite database file path cannot be empty")
 	}
 
-	if cleanPath != ":memory:" {
+	isMemory := cleanPath == ":memory:" || strings.HasPrefix(cleanPath, "file::memory:")
+	if !isMemory && !readOnly {
 		dir := filepath.Dir(cleanPath)
 		if dir != "" && dir != "." {
 			_ = os.MkdirAll(dir, 0755)
@@ -32,7 +37,17 @@ func NewSQLiteDriver(filePath string) (*SQLiteDriver, error) {
 	}
 
 	dsn := cleanPath
-	if cleanPath != ":memory:" {
+	if readOnly {
+		sep := "?"
+		if strings.Contains(cleanPath, "?") {
+			sep = "&"
+		}
+		if !isMemory && !strings.Contains(cleanPath, "mode=") {
+			dsn = cleanPath + sep + "mode=ro&_pragma=query_only(ON)&_pragma=busy_timeout(10000)"
+		} else {
+			dsn = cleanPath + sep + "_pragma=query_only(ON)&_pragma=busy_timeout(10000)"
+		}
+	} else if !isMemory {
 		if !strings.Contains(cleanPath, "?") {
 			dsn = cleanPath + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 		} else if !strings.Contains(cleanPath, "busy_timeout") {
