@@ -957,8 +957,8 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     setPasswordModal({
       isOpen: true,
       user: u,
-      password: generateSecurePassword(14),
-      showPassword: true,
+      password: '',
+      showPassword: false,
       isExecuting: false,
     });
   };
@@ -1494,7 +1494,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                     onClick={() => setCreateModal((prev) => ({ ...prev, showPassword: !prev.showPassword }))}
                     className="absolute right-2 text-zinc-400 hover:text-white"
                   >
-                    {createModal.showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {createModal.showPassword ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                   </button>
                 </div>
               </div>
@@ -2131,7 +2131,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                     onClick={() => setPasswordModal((prev) => ({ ...prev, showPassword: !prev.showPassword }))}
                     className="absolute right-2 text-zinc-400 hover:text-white"
                   >
-                    {passwordModal.showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {passwordModal.showPassword ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                   </button>
                 </div>
               </div>
