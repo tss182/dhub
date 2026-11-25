@@ -214,6 +214,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           </div>
 
           {/* Format-specific options */}
+          {format === 'sql_insert' && (activeDriver === 'mysql' || activeDriver === 'mariadb') && (
+            <div className="rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-2 text-[11px] text-amber-300">
+              Note: SQL INSERT exports use {activeDriver === 'mariadb' ? 'MariaDB' : 'MySQL'} quoting and hex literals (<code className="font-mono">0x...</code>). Review flavor-specific syntax (such as MariaDB <code className="font-mono">UUID</code>/sequences or MySQL 8 defaults) before importing into a different flavor.
+            </div>
+          )}
+
           {format === 'csv' && (
             <div className="grid grid-cols-2 gap-3 rounded-lg border border-[#272932] bg-[#22242c]/50 p-3">
               <div>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -708,8 +709,145 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 		}
 	}
 
+	// F8 / M13: Compare views (and MariaDB sequences) for MySQL / MariaDB schemas.
+	if dstDriverType == "mysql" || dstDriverType == "mariadb" {
+		srcViews := make(map[string]driver.ObjectSummary)
+		for _, o := range srcObjs {
+			if o.Type == "view" && !o.IsInternal {
+				srcViews[o.Name] = o
+			}
+		}
+		dstViews := make(map[string]driver.ObjectSummary)
+		for _, o := range dstObjs {
+			if o.Type == "view" && !o.IsInternal {
+				dstViews[o.Name] = o
+			}
+		}
+		viewNames := make([]string, 0, len(srcViews)+len(dstViews))
+		seenV := make(map[string]bool)
+		for n := range srcViews {
+			seenV[n] = true
+			viewNames = append(viewNames, n)
+		}
+		for n := range dstViews {
+			if !seenV[n] {
+				viewNames = append(viewNames, n)
+			}
+		}
+		sort.Strings(viewNames)
+		for _, vName := range viewNames {
+			_, inS := srcViews[vName]
+			_, inD := dstViews[vName]
+			qView := qualifyDiffTable(dstDriverType, dstSchema, vName)
+			if !inS && inD {
+				mig := fmt.Sprintf("-- Extra view in target: DROP VIEW %s;", qView)
+				res.ExtraTarget++
+				res.TableDiffs = append(res.TableDiffs, TableDiff{
+					TableName: "VIEW " + vName,
+					Status:    "extra_in_target",
+					Migration: mig,
+				})
+				migrationParts = append(migrationParts, mig)
+				continue
+			}
+			sSt, sErr := srcDrv.GetTableStructure(ctx, srcDB, srcSchema, vName)
+			if sErr != nil || sSt == nil {
+				continue
+			}
+			sDDL := normalizeMySQLDDL(sSt.DDL)
+			if inS && !inD {
+				mig := strings.TrimSpace(sDDL)
+				if !strings.HasSuffix(mig, ";") {
+					mig += ";"
+				}
+				res.MissingTarget++
+				res.TableDiffs = append(res.TableDiffs, TableDiff{
+					TableName: "VIEW " + vName,
+					Status:    "missing_in_target",
+					Migration: mig,
+				})
+				migrationParts = append(migrationParts, mig)
+				continue
+			}
+			dSt, dErr := dstDrv.GetTableStructure(ctx, dstDB, dstSchema, vName)
+			if dErr != nil || dSt == nil {
+				continue
+			}
+			if sDDL != normalizeMySQLDDL(dSt.DDL) {
+				mig := strings.TrimSpace(sDDL)
+				if !strings.HasSuffix(mig, ";") {
+					mig += ";"
+				}
+				res.Modified++
+				res.TableDiffs = append(res.TableDiffs, TableDiff{
+					TableName: "VIEW " + vName,
+					Status:    "modified",
+					ColumnDiffs: []ColumnDiff{{
+						ColumnName: "DEFINITION",
+						Status:     "modified",
+						Detail:     "View DDL differs",
+					}},
+					Migration: mig,
+				})
+				migrationParts = append(migrationParts, mig)
+			} else {
+				res.Identical++
+			}
+		}
+
+		if dstDriverType == "mariadb" {
+			srcSeqs := make(map[string]bool)
+			for _, o := range srcObjs {
+				if o.Type == "sequence" {
+					srcSeqs[o.Name] = true
+				}
+			}
+			dstSeqs := make(map[string]bool)
+			for _, o := range dstObjs {
+				if o.Type == "sequence" {
+					dstSeqs[o.Name] = true
+				}
+			}
+			for seqName := range srcSeqs {
+				if !dstSeqs[seqName] {
+					mig := fmt.Sprintf("CREATE SEQUENCE IF NOT EXISTS %s;", qualifyDiffTable(dstDriverType, dstSchema, seqName))
+					res.MissingTarget++
+					res.TableDiffs = append(res.TableDiffs, TableDiff{
+						TableName: "SEQUENCE " + seqName,
+						Status:    "missing_in_target",
+						Migration: mig,
+					})
+					migrationParts = append(migrationParts, mig)
+				}
+			}
+			for seqName := range dstSeqs {
+				if !srcSeqs[seqName] {
+					mig := fmt.Sprintf("-- Extra sequence in target: DROP SEQUENCE IF EXISTS %s;", qualifyDiffTable(dstDriverType, dstSchema, seqName))
+					res.ExtraTarget++
+					res.TableDiffs = append(res.TableDiffs, TableDiff{
+						TableName: "SEQUENCE " + seqName,
+						Status:    "extra_in_target",
+						Migration: mig,
+					})
+					migrationParts = append(migrationParts, mig)
+				}
+			}
+		}
+	}
+
 	res.MigrationSQL = strings.Join(migrationParts, "\n\n")
 	return res, nil
+}
+
+var (
+	mysqlDefinerRe  = regexp.MustCompile(`(?i)\s+DEFINER\s*=\s*` + "`[^`]+`@`[^`]+`" + `\s*`)
+	mysqlAutoIncrRe = regexp.MustCompile(`(?i)\s+AUTO_INCREMENT=\d+`)
+)
+
+func normalizeMySQLDDL(ddl string) string {
+	out := mysqlDefinerRe.ReplaceAllString(ddl, " ")
+	out = mysqlAutoIncrRe.ReplaceAllString(out, "")
+	return strings.TrimSpace(out)
 }
 
 func columnsDiffer(driverType string, sc, dc driver.ColumnMeta) bool {

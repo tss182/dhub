@@ -2725,6 +2725,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     const isProcedure = kind === 'PROCEDURE';
     let content = `-- Routine${isFunction ? ' (FUNCTION)' : isProcedure ? ' (PROCEDURE)' : ''}: ${routineName}\n-- Connection: ${conn.name} | Database: ${db} | Schema: ${schema}\n\n`;
 
+    let ddlLoaded = false;
     try {
       const ddl = await Call.ByName(
         'dhub/internal/services.SchemaService.GetObjectDDL',
@@ -2734,20 +2735,78 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         'routine',
         routineName
       );
-      if (ddl && typeof ddl === 'string') {
+      if (ddl && typeof ddl === 'string' && ddl.trim() !== '') {
         content += `${ddl.trim()}\n`;
+        ddlLoaded = true;
       }
     } catch {
+      // Fall back below.
+    }
+
+    if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
+      if (!ddlLoaded) {
+        try {
+          const defRes = await QueryService.ExecuteQuery({
+            executionId: `routine-def-${Date.now()}`,
+            connectionId: conn.id,
+            database: db,
+            schema,
+            sql: `SELECT ROUTINE_DEFINITION FROM information_schema.routines WHERE ROUTINE_SCHEMA = '${db.replace(/'/g, "''")}' AND ROUTINE_NAME = '${routineName.replace(/'/g, "''")}' LIMIT 1`,
+            limit: 1,
+            offset: 0,
+            skipHistory: true,
+          } as any);
+          const body = defRes?.rows?.[0]?.[0];
+          if (body) {
+            content += `-- Note: full header unavailable (missing definer/SHOW_ROUTINE); showing ROUTINE_DEFINITION only:\n${String(body).trim()}\n`;
+            ddlLoaded = true;
+          }
+        } catch {
+          // Ignore and show SHOW CREATE template below.
+        }
+      }
+      if (!ddlLoaded) {
+        if (isFunction) {
+          content += `-- 1. View function definition:\nSHOW CREATE FUNCTION ${qMy(db)}.${qMy(routineName)};\n`;
+        } else {
+          content += `-- 1. View procedure definition:\nSHOW CREATE PROCEDURE ${qMy(db)}.${qMy(routineName)};\n`;
+        }
+      }
+
+      // Fetch parameter signature from information_schema.parameters (F5)
+      try {
+        const paramRes = await QueryService.ExecuteQuery({
+          executionId: `routine-params-${Date.now()}`,
+          connectionId: conn.id,
+          database: db,
+          schema,
+          sql: `SELECT COALESCE(PARAMETER_MODE, 'IN'), COALESCE(PARAMETER_NAME, ''), COALESCE(DTD_IDENTIFIER, '') FROM information_schema.parameters WHERE SPECIFIC_SCHEMA = '${db.replace(/'/g, "''")}' AND SPECIFIC_NAME = '${routineName.replace(/'/g, "''")}' AND ORDINAL_POSITION > 0 ORDER BY ORDINAL_POSITION`,
+          limit: 100,
+          offset: 0,
+          skipHistory: true,
+        } as any);
+        const paramRows = paramRes?.rows || [];
+        const callArgs = paramRows.map((pr: any[]) => {
+          const mode = String(pr[0] || 'IN').toUpperCase();
+          const pName = String(pr[1] || 'arg');
+          const pType = String(pr[2] || '');
+          if (mode === 'OUT' || mode === 'INOUT') {
+            return `/* ${mode} ${pName} ${pType} */ @${pName}`;
+          }
+          return `/* ${pName} ${pType} */ ?`;
+        });
+        const qRoutine = db ? `${qMy(db)}.${qMy(routineName)}` : qMy(routineName);
+        if (isFunction) {
+          content += `\n-- Call function:\n-- SELECT ${qRoutine}(${callArgs.join(', ')});\n`;
+        } else {
+          content += `\n-- Call procedure:\n-- CALL ${qRoutine}(${callArgs.join(', ')});\n`;
+        }
+      } catch {
+        // Ignore parameter lookup errors.
+      }
+    } else if (!ddlLoaded) {
       if (conn.driver === 'postgres') {
         content += `-- 1. View definition source:\nSELECT pg_get_functiondef(p.oid)\nFROM pg_proc p\nJOIN pg_namespace n ON n.oid = p.pronamespace\nWHERE n.nspname = '${schema}' AND p.proname = '${routineName}';\n\n-- 2. Execute / Call routine:\n-- SELECT "${schema}"."${routineName}"();\n`;
-      } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
-        if (isFunction) {
-          content += `-- 1. View function definition:\nSHOW CREATE FUNCTION ${qMy(db)}.${qMy(routineName)};\n\n-- 2. Call function:\n-- SELECT ${qMy(db)}.${qMy(routineName)}();\n`;
-        } else if (isProcedure) {
-          content += `-- 1. View procedure definition:\nSHOW CREATE PROCEDURE ${qMy(db)}.${qMy(routineName)};\n\n-- 2. Call procedure:\n-- CALL ${qMy(db)}.${qMy(routineName)}();\n`;
-        } else {
-          content += `-- 1. View definition source:\nSHOW CREATE PROCEDURE ${qMy(db)}.${qMy(routineName)};\n-- Or function:\n-- SHOW CREATE FUNCTION ${qMy(db)}.${qMy(routineName)};\n\n-- 2. Call procedure:\n-- CALL ${qMy(db)}.${qMy(routineName)}();\n`;
-        }
       } else if (conn.driver === 'mssql') {
         content += `-- 1. View definition source:\nSELECT OBJECT_DEFINITION(OBJECT_ID('[${schema}].[${routineName}]'));\n\n-- 2. Execute routine:\n-- EXEC [${schema}].[${routineName}];\n`;
       } else {

@@ -124,6 +124,11 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     pgCreateDb: boolean;
     pgCreateRole: boolean;
     pgCanLogin: boolean;
+    // MySQL / MariaDB specific
+    mysqlAuthPlugin: string;
+    mysqlRequireSsl: boolean;
+    mysqlPasswordExpire: boolean;
+    mysqlAccountLock: boolean;
     isExecuting: boolean;
   }>({
     isOpen: false,
@@ -138,6 +143,10 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
     pgCreateDb: false,
     pgCreateRole: false,
     pgCanLogin: true,
+    mysqlAuthPlugin: '',
+    mysqlRequireSsl: false,
+    mysqlPasswordExpire: false,
+    mysqlAccountLock: false,
     isExecuting: false,
   });
 
@@ -268,16 +277,30 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
             } as any);
           } catch {
             // Fallback if older MySQL without account_locked or plugin
-            res = await QueryService.ExecuteQuery({
-              executionId: `${execId}-fallback`,
-              skipHistory: true,
-              connectionId: connection.id,
-              database: targetDb,
-              schema: targetSchema,
-              sql: `SELECT user, host FROM mysql.user ORDER BY user, host;`,
-              limit: 500,
-              offset: 0,
-            } as any);
+            try {
+              res = await QueryService.ExecuteQuery({
+                executionId: `${execId}-fallback`,
+                skipHistory: true,
+                connectionId: connection.id,
+                database: targetDb,
+                schema: targetSchema,
+                sql: `SELECT user, host FROM mysql.user ORDER BY user, host;`,
+                limit: 500,
+                offset: 0,
+              } as any);
+            } catch {
+              res = await QueryService.ExecuteQuery({
+                executionId: `${execId}-self`,
+                skipHistory: true,
+                connectionId: connection.id,
+                database: targetDb,
+                schema: targetSchema,
+                sql: `SELECT SUBSTRING_INDEX(CURRENT_USER(), '@', 1), SUBSTRING_INDEX(CURRENT_USER(), '@', -1);`,
+                limit: 1,
+                offset: 0,
+              } as any);
+              setErrorMessage('Limited view: SELECT privilege on mysql.* is required to list all users.');
+            }
           }
         }
 
@@ -453,6 +476,10 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
       pgCreateDb: false,
       pgCreateRole: false,
       pgCanLogin: true,
+      mysqlAuthPlugin: '',
+      mysqlRequireSsl: false,
+      mysqlPasswordExpire: false,
+      mysqlAccountLock: false,
       isExecuting: false,
     });
   };
@@ -499,8 +526,30 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
         const host = createModal.host.trim() || '%';
         const pass = createModal.password;
         const account = quoteMySqlAccount(uname, host);
-        const passClause = pass ? ` IDENTIFIED BY ${quoteMySqlString(pass)}` : '';
-        const createSql = `CREATE USER ${account}${passClause};`;
+        const plugin = createModal.mysqlAuthPlugin.trim();
+        let authClause = '';
+        if (plugin) {
+          if (connection.driver === 'mariadb') {
+            authClause =
+              plugin === 'unix_socket' || !pass
+                ? ` IDENTIFIED VIA ${plugin}`
+                : ` IDENTIFIED VIA ${plugin} USING PASSWORD(${quoteMySqlString(pass)})`;
+          } else {
+            authClause = pass
+              ? ` IDENTIFIED WITH ${plugin} BY ${quoteMySqlString(pass)}`
+              : ` IDENTIFIED WITH ${plugin}`;
+          }
+        } else if (pass) {
+          authClause = ` IDENTIFIED BY ${quoteMySqlString(pass)}`;
+        }
+        const extraOpts = [
+          createModal.mysqlRequireSsl ? 'REQUIRE SSL' : '',
+          createModal.mysqlPasswordExpire ? 'PASSWORD EXPIRE' : '',
+          createModal.mysqlAccountLock ? 'ACCOUNT LOCK' : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const createSql = `CREATE USER ${account}${authClause}${extraOpts ? ` ${extraOpts}` : ''};`;
 
         let grantSql = '';
         if (createModal.selectedPrivileges.length > 0) {
@@ -1449,6 +1498,60 @@ export const UserManager: React.FC<UserManagerProps> = ({ tab, connection }) => 
                   </button>
                 </div>
               </div>
+
+              {isMySQLLike(connection.driver) && (
+                <div className="space-y-2 pt-1 border-t border-[#232530]">
+                  <div>
+                    <label className="block text-zinc-300 font-medium mb-1">Authentication Plugin</label>
+                    <select
+                      value={createModal.mysqlAuthPlugin}
+                      onChange={(e) => setCreateModal((prev) => ({ ...prev, mysqlAuthPlugin: e.target.value }))}
+                      className="w-full bg-[#131419] px-2.5 py-1.5 rounded text-xs text-zinc-100 border border-[#2c303c] focus:border-blue-500 focus:outline-none font-mono"
+                    >
+                      <option value="">Server Default</option>
+                      {connection.driver === 'mariadb' ? (
+                        <>
+                          <option value="mysql_native_password">mysql_native_password</option>
+                          <option value="ed25519">ed25519</option>
+                          <option value="unix_socket">unix_socket</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="caching_sha2_password">caching_sha2_password (MySQL 8+)</option>
+                          <option value="mysql_native_password">mysql_native_password (disabled in 8.4+)</option>
+                          <option value="auth_socket">auth_socket</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-zinc-300">
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={createModal.mysqlRequireSsl}
+                        onChange={(e) => setCreateModal((prev) => ({ ...prev, mysqlRequireSsl: e.target.checked }))}
+                      />
+                      <span>REQUIRE SSL</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={createModal.mysqlPasswordExpire}
+                        onChange={(e) => setCreateModal((prev) => ({ ...prev, mysqlPasswordExpire: e.target.checked }))}
+                      />
+                      <span>PASSWORD EXPIRE</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={createModal.mysqlAccountLock}
+                        onChange={(e) => setCreateModal((prev) => ({ ...prev, mysqlAccountLock: e.target.checked }))}
+                      />
+                      <span>ACCOUNT LOCK</span>
+                    </label>
+                  </div>
+                </div>
+              )}
 
               {/* Privileges Presets (MySQL & PostgreSQL) */}
               {(isMySQLLike(connection.driver) || connection.driver === 'postgres') && (

@@ -3635,7 +3635,10 @@ export function App() {
                       onSubmitChanges={(skip) => handleSubmitChanges(skip === true)}
                       onPreviewChanges={() => handlePreviewChanges()}
                       onCopyDml={() => handleCopyDml()}
-                      isReadOnly={Boolean(tableConn?.isReadOnly)}
+                      isReadOnly={
+                        Boolean(tableConn?.isReadOnly) ||
+                        (tableDataByTab[activeTab.id] as any)?.structure?.isUpdatable === false
+                      }
                       initialFrozenColumns={activeTab.tableViewState?.frozenColumns}
                       onFrozenColumnsChange={(frozenCols) => {
                         const currTabs = useWorkbenchStore.getState().tabs;
@@ -4436,7 +4439,10 @@ export function App() {
                         table: splitTab.table || '',
                         onApplied: () => loadTableData(splitTab),
                       })}
-                      isReadOnly={Boolean(splitConn?.isReadOnly)}
+                      isReadOnly={
+                        Boolean(splitConn?.isReadOnly) ||
+                        (tableDataByTab[splitTab.id] as any)?.structure?.isUpdatable === false
+                      }
                     />
                   );
                 })() : splitTab.type === 'er_diagram' ? (
