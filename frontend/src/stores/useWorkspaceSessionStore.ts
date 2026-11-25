@@ -28,7 +28,11 @@ interface WorkspaceSessionState {
   ) => Promise<void>;
   updateWorkspaceMetadata: (
     id: string,
-    updates: Partial<Pick<WorkspaceItem, 'name' | 'colorTag' | 'description' | 'icon'>>
+    updates: Partial<Pick<WorkspaceItem, 'name' | 'colorTag' | 'description' | 'icon' | 'connectionIdsJson'>>
+  ) => Promise<void>;
+  updateWorkspaceConnectionFilter: (
+    id: string,
+    connectionIds: string[] | null
   ) => Promise<void>;
 }
 
@@ -53,6 +57,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         isActive: Boolean(w.isActive),
         tabsJson: w.tabsJson || '[]',
         activeTabId: w.activeTabId || '',
+        connectionIdsJson: w.connectionIdsJson || '',
         createdAt: w.createdAt,
         updatedAt: w.updatedAt,
       }));
@@ -75,6 +80,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
           isActive: true,
           tabsJson: JSON.stringify(currentTabs),
           activeTabId: currentActiveId,
+          connectionIdsJson: '',
         };
         try {
           const newId = await WorkspaceService.SaveWorkspace(defaultWs as any);
@@ -134,6 +140,7 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
         isActive: true,
         tabsJson: '[]',
         activeTabId: '',
+        connectionIdsJson: '',
       };
 
       const savedId = await WorkspaceService.SaveWorkspace(newWs as any);
@@ -304,6 +311,25 @@ export const useWorkspaceSessionStore = create<WorkspaceSessionState>((set, get)
       }));
     } catch (err: any) {
       alertError(err?.message || String(err), 'Failed to update workspace');
+    }
+  },
+
+  updateWorkspaceConnectionFilter: async (id, connectionIds) => {
+    const target = get().workspaces.find((w) => w.id === id);
+    if (!target) return;
+    const connectionIdsJson = connectionIds === null ? '' : JSON.stringify(connectionIds);
+    const updated: WorkspaceItem = {
+      ...target,
+      connectionIdsJson,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await WorkspaceService.SaveWorkspace(updated as any);
+      set((state) => ({
+        workspaces: state.workspaces.map((w) => (w.id === id ? updated : w)),
+      }));
+    } catch (err: any) {
+      alertError(err?.message || String(err), 'Failed to update workspace connection filter');
     }
   },
 }));

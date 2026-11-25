@@ -5,6 +5,8 @@ import { quoteSqlIdentifier } from '../../utils/sqlIdentifier';
 import { getDriverCapabilities } from '../../utils/driverCapabilities';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useWorkspaceSessionStore } from '../../stores/useWorkspaceSessionStore';
+import { WorkspaceConnectionFilterModal } from '../modals/WorkspaceConnectionFilterModal';
 import { ConnectionService, SchemaService, QueryService } from '../../../bindings/dhub/internal/services';
 import { Call, Dialogs, Events } from '@wailsio/runtime';
 import { Popover } from '../common/Popover';
@@ -79,6 +81,7 @@ import {
   resolveConnectionEnv,
   getConnectionEnvInfo,
   buildAlertConnectionContext,
+  getActiveWorkspaceAllowedConnectionIds,
 } from '../../types/domain';
 import { alertSuccess, alertError, alertInfo, alertWarning, confirmDialog } from '../../stores/useAlertStore';
 import { SchemaFilterModal } from '../modals/SchemaFilterModal';
@@ -2794,7 +2797,9 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
           skipHistory: true,
         } as any);
         const paramRows = paramRes?.rows || [];
-        const callArgs = paramRows.map((pr: any[]) => {
+        const callArgs = paramRows
+          .filter((pr): pr is any[] => Array.isArray(pr))
+          .map((pr) => {
           const mode = String(pr[0] || 'IN').toUpperCase();
           const pName = String(pr[1] || 'arg');
           const pType = String(pr[2] || '');
@@ -5177,8 +5182,24 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
     );
   };
 
+  const workspaces = useWorkspaceSessionStore((s) => s.workspaces);
+  const activeWorkspaceId = useWorkspaceSessionStore((s) => s.activeWorkspaceId);
+  const updateWorkspaceConnectionFilter = useWorkspaceSessionStore(
+    (s) => s.updateWorkspaceConnectionFilter
+  );
+  const [isWorkspaceFilterOpen, setIsWorkspaceFilterOpen] = useState(false);
+
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || null;
+  const allowedConnectionIds = getActiveWorkspaceAllowedConnectionIds(
+    workspaces,
+    activeWorkspaceId
+  );
+  const visibleConnections = allowedConnectionIds
+    ? connections.filter((c) => allowedConnectionIds.has(c.id))
+    : connections;
+
   const validFolderIds = new Set(folders.map((f) => f.id));
-  const ungroupedConnections = connections.filter((c) => {
+  const ungroupedConnections = visibleConnections.filter((c) => {
     const fId = connectionFolders[c.id];
     return !fId || !validFolderIds.has(fId);
   });
@@ -5218,6 +5239,26 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
+          <Popover
+            content={
+              allowedConnectionIds
+                ? `Workspace Filter Active (${visibleConnections.length}/${connections.length})`
+                : 'Filter Connections in Workspace'
+            }
+            side="bottom"
+            align="center"
+          >
+            <button
+              onClick={() => setIsWorkspaceFilterOpen(true)}
+              className={`rounded p-1 transition-colors cursor-pointer ${
+                allowedConnectionIds
+                  ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30'
+                  : 'text-zinc-400 hover:bg-[#22242c] hover:text-white'
+              }`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+            </button>
+          </Popover>
           <Popover content="Import & Export Config / Settings" side="bottom" align="center">
             <button
               onClick={() => useSettingsStore.getState().openSettings('backup')}
@@ -5245,7 +5286,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
       </div>
 
       {/* Speed Search */}
-      <div className="p-2 border-b border-[#272932]">
+      <div className="p-2 border-b border-[#272932] space-y-1.5">
         <input
           type="text"
           placeholder="Filter tree... (Speed Search)"
@@ -5253,6 +5294,37 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
           onChange={(e) => setFilterText(e.target.value)}
           className="w-full rounded bg-[#121317] px-2 py-1 text-[11px] text-zinc-200 border border-[#272932] focus:border-blue-500 focus:outline-none"
         />
+        {allowedConnectionIds !== null && (
+          <div className="flex items-center justify-between gap-1.5 rounded bg-blue-500/10 border border-blue-500/25 px-2 py-1 text-[10.5px]">
+            <div className="flex items-center gap-1.5 min-w-0 text-blue-300">
+              <Filter className="h-3 w-3 shrink-0 text-blue-400" />
+              <span className="truncate">
+                Workspace: {visibleConnections.length}/{connections.length} conns
+              </span>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsWorkspaceFilterOpen(true)}
+                className="px-1.5 py-0.5 rounded text-[10px] text-blue-300 hover:text-white hover:bg-blue-500/20 transition-colors cursor-pointer"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeWorkspaceId) {
+                    updateWorkspaceConnectionFilter(activeWorkspaceId, null);
+                  }
+                }}
+                className="px-1.5 py-0.5 rounded text-[10px] text-zinc-400 hover:text-white hover:bg-[#22242c] transition-colors cursor-pointer"
+                title="Show all connections in this workspace"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Connection & Table Tree */}
@@ -5299,13 +5371,45 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
               </button>
             </div>
           </div>
+        ) : allowedConnectionIds !== null && visibleConnections.length === 0 ? (
+          <div className="py-8 px-3 text-center text-zinc-500">
+            <Filter className="h-6 w-6 mx-auto mb-2 text-zinc-600" />
+            <p className="text-zinc-300 font-medium">No connections match workspace filter</p>
+            <p className="text-[11px] text-zinc-500 mt-1">
+              {connections.length} connection{connections.length !== 1 ? 's' : ''} hidden by{' '}
+              {activeWorkspace?.name || 'this workspace'}.
+            </p>
+            <div className="flex items-center justify-center gap-2 mt-3">
+              <button
+                type="button"
+                onClick={() => setIsWorkspaceFilterOpen(true)}
+                className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium cursor-pointer"
+              >
+                Edit Filter
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeWorkspaceId) {
+                    updateWorkspaceConnectionFilter(activeWorkspaceId, null);
+                  }
+                }}
+                className="px-2.5 py-1 rounded bg-[#22242c] hover:bg-[#2c303c] text-zinc-300 text-[11px] cursor-pointer"
+              >
+                Show All
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             {/* Folder Groups */}
             {folders.map((folder) => {
               const folderKey = `folder:${folder.id}`;
               const isFolderExpanded = expandedNodes[folderKey] !== false;
-              const folderConns = connections.filter((c) => connectionFolders[c.id] === folder.id);
+              const folderConns = visibleConnections.filter((c) => connectionFolders[c.id] === folder.id);
+              if (allowedConnectionIds !== null && folderConns.length === 0) {
+                return null;
+              }
               const isDropIntoFolder =
                 dropTarget?.type === 'folder-into' && dropTarget.id === folder.id;
               const isFolderSortBefore =
@@ -8284,6 +8388,11 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
             content: sql,
           });
         }}
+      />
+      <WorkspaceConnectionFilterModal
+        isOpen={isWorkspaceFilterOpen}
+        onClose={() => setIsWorkspaceFilterOpen(false)}
+        workspace={activeWorkspace}
       />
     </div>
   );

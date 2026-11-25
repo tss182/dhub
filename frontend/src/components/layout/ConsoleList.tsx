@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useWorkbenchStore, ConsoleRecord } from '../../stores/useWorkbenchStore';
 import { useConnectionStore } from '../../stores/useConnectionStore';
+import { useWorkspaceSessionStore } from '../../stores/useWorkspaceSessionStore';
+import { getActiveWorkspaceAllowedConnectionIds } from '../../types/domain';
 import { SchemaService } from '../../../bindings/dhub/internal/services';
 import {
   Terminal,
@@ -54,6 +56,9 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
     setTreeDatabases,
   } = useConnectionStore();
 
+  const workspaces = useWorkspaceSessionStore((s) => s.workspaces);
+  const activeWorkspaceId = useWorkspaceSessionStore((s) => s.activeWorkspaceId);
+
   const [filterText, setFilterText] = useState('');
   const [expandedConns, setExpandedConns] = useState<Record<string, boolean>>({});
 
@@ -61,6 +66,11 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
   // Folders first (by folder sortOrder/name), each with its folder connections,
   // followed by ungrouped connections (by sortOrder/connectionOrder/name).
   const orderedConnections = useMemo(() => {
+    const allowedIds = getActiveWorkspaceAllowedConnectionIds(workspaces, activeWorkspaceId);
+    const scopedConnections = allowedIds
+      ? connections.filter((c) => allowedIds.has(c.id))
+      : connections;
+
     const result: ConnectionConfig[] = [];
     const seen = new Set<string>();
 
@@ -84,7 +94,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
     });
 
     sortedFolders.forEach((folder) => {
-      const folderConns = connections.filter((c) => connectionFolders[c.id] === folder.id);
+      const folderConns = scopedConnections.filter((c) => connectionFolders[c.id] === folder.id);
       sortSubList(folderConns).forEach((c) => {
         if (!seen.has(c.id)) {
           seen.add(c.id);
@@ -94,7 +104,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
     });
 
     // 2. Ungrouped connections
-    const ungrouped = connections.filter((c) => !connectionFolders[c.id]);
+    const ungrouped = scopedConnections.filter((c) => !connectionFolders[c.id]);
     sortSubList(ungrouped).forEach((c) => {
       if (!seen.has(c.id)) {
         seen.add(c.id);
@@ -103,7 +113,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
     });
 
     // 3. Fallback for any remaining
-    sortSubList(connections).forEach((c) => {
+    sortSubList(scopedConnections).forEach((c) => {
       if (!seen.has(c.id)) {
         seen.add(c.id);
         result.push(c);
@@ -111,7 +121,7 @@ export const ConsoleList: React.FC<ConsoleListProps> = ({ onRename, hideHeader =
     });
 
     return result;
-  }, [connections, folders, connectionFolders, connectionOrder]);
+  }, [connections, folders, connectionFolders, connectionOrder, workspaces, activeWorkspaceId]);
 
   // Hover Tooltip state for long connection and console names
   const [hoveredItem, setHoveredItem] = useState<{

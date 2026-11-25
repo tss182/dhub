@@ -1,7 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useWorkspaceSessionStore } from '../../stores/useWorkspaceSessionStore';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
-import { Briefcase, ChevronDown, Check, Plus, Layers } from 'lucide-react';
+import { useConnectionStore } from '../../stores/useConnectionStore';
+import { WorkspaceItem, parseWorkspaceConnectionIds } from '../../types/domain';
+import { WorkspaceConnectionFilterModal } from '../modals/WorkspaceConnectionFilterModal';
+import { Briefcase, ChevronDown, Check, Plus, Layers, Filter } from 'lucide-react';
 
 export const WorkspaceSelector: React.FC = () => {
   const {
@@ -17,6 +20,8 @@ export const WorkspaceSelector: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newWsName, setNewWsName] = useState('');
+  const [filterModalWorkspace, setFilterModalWorkspace] = useState<WorkspaceItem | null>(null);
+  const totalConnectionsCount = useConnectionStore((s) => s.connections.length);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -123,11 +128,12 @@ export const WorkspaceSelector: React.FC = () => {
               try {
                 tabCount = JSON.parse(ws.tabsJson || '[]').length;
               } catch {}
+              const allowedIds = parseWorkspaceConnectionIds(ws.connectionIdsJson);
+              const isFiltered = allowedIds !== null;
 
               return (
-                <button
+                <div
                   key={ws.id}
-                  type="button"
                   onClick={() => handleSelectWorkspace(ws.id)}
                   className={`w-full flex items-center justify-between px-3 py-2 text-left hover:bg-[#232530] transition-colors cursor-pointer group ${
                     isActive ? 'bg-blue-600/10 text-white' : 'text-zinc-300'
@@ -143,17 +149,42 @@ export const WorkspaceSelector: React.FC = () => {
                       <div className="text-xs font-medium truncate group-hover:text-white">
                         {ws.name}
                       </div>
-                      <div className="text-[10px] text-zinc-500 flex items-center gap-1 mt-0.5">
-                        <Layers className="h-2.5 w-2.5" />
-                        <span>{tabCount} tabs</span>
+                      <div className="text-[10px] text-zinc-500 flex items-center gap-1.5 mt-0.5">
+                        <span className="flex items-center gap-1">
+                          <Layers className="h-2.5 w-2.5" />
+                          <span>{tabCount} tabs</span>
+                        </span>
+                        {isFiltered && (
+                          <span className="text-blue-400 font-medium">
+                            • {allowedIds.length}/{totalConnectionsCount} conns
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
 
-                  {isActive && (
-                    <Check className="h-3.5 w-3.5 text-blue-400 shrink-0 ml-2" />
-                  )}
-                </button>
+                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsOpen(false);
+                        setFilterModalWorkspace(ws);
+                      }}
+                      className={`p-1 rounded transition-colors cursor-pointer ${
+                        isFiltered
+                          ? 'text-blue-400 hover:bg-blue-500/20'
+                          : 'text-zinc-500 opacity-0 group-hover:opacity-100 hover:text-zinc-200 hover:bg-[#2d303d]'
+                      }`}
+                      title="Filter connections in this workspace"
+                    >
+                      <Filter className="h-3 w-3" />
+                    </button>
+                    {isActive && (
+                      <Check className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                    )}
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -203,6 +234,12 @@ export const WorkspaceSelector: React.FC = () => {
           </div>
         </div>
       )}
+
+      <WorkspaceConnectionFilterModal
+        isOpen={Boolean(filterModalWorkspace)}
+        onClose={() => setFilterModalWorkspace(null)}
+        workspace={filterModalWorkspace}
+      />
     </div>
   );
 };

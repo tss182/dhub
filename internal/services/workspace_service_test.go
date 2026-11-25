@@ -172,3 +172,52 @@ func TestWorkspaceService_ExportAndImportConfig(t *testing.T) {
 	_ = connID
 }
 
+func TestWorkspaceService_WorkspaceConnectionFilter(t *testing.T) {
+	st, err := store.NewLocalStoreWithPath(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create memory store: %v", err)
+	}
+	defer st.Close()
+
+	wsSvc := services.NewWorkspaceService(st)
+
+	id, err := wsSvc.SaveWorkspace(store.WorkspaceSnapshot{
+		Name:              "Prod Only",
+		IsActive:          true,
+		ConnectionIDsJSON: `["conn-1","conn-2"]`,
+	})
+	if err != nil {
+		t.Fatalf("SaveWorkspace failed: %v", err)
+	}
+
+	got, err := wsSvc.GetWorkspace(id)
+	if err != nil {
+		t.Fatalf("GetWorkspace failed: %v", err)
+	}
+	if got.ConnectionIDsJSON != `["conn-1","conn-2"]` {
+		t.Fatalf("expected ConnectionIDsJSON to be preserved, got %q", got.ConnectionIDsJSON)
+	}
+
+	list, err := wsSvc.ListWorkspaces()
+	if err != nil {
+		t.Fatalf("ListWorkspaces failed: %v", err)
+	}
+	if len(list) != 1 || list[0].ConnectionIDsJSON != `["conn-1","conn-2"]` {
+		t.Fatalf("expected ListWorkspaces to return ConnectionIDsJSON, got %+v", list)
+	}
+
+	// Reset filter back to empty string (all connections)
+	got.ConnectionIDsJSON = ""
+	if _, err := wsSvc.SaveWorkspace(*got); err != nil {
+		t.Fatalf("SaveWorkspace reset failed: %v", err)
+	}
+	gotAfterReset, err := wsSvc.GetWorkspace(id)
+	if err != nil {
+		t.Fatalf("GetWorkspace after reset failed: %v", err)
+	}
+	if gotAfterReset.ConnectionIDsJSON != "" {
+		t.Fatalf("expected empty ConnectionIDsJSON after reset, got %q", gotAfterReset.ConnectionIDsJSON)
+	}
+}
+
+

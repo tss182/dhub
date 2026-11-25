@@ -167,16 +167,17 @@ func (s *LocalStore) migrate() error {
 		);`,
 
 		`CREATE TABLE IF NOT EXISTS workspaces (
-			id              TEXT PRIMARY KEY,
-			name            TEXT NOT NULL,
-			description     TEXT NOT NULL DEFAULT '',
-			icon            TEXT NOT NULL DEFAULT 'briefcase',
-			color_tag       TEXT NOT NULL DEFAULT '#3b82f6',
-			is_active       INTEGER NOT NULL DEFAULT 0,
-			tabs_json       TEXT NOT NULL DEFAULT '[]',
-			active_tab_id   TEXT NOT NULL DEFAULT '',
-			created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			id                  TEXT PRIMARY KEY,
+			name                TEXT NOT NULL,
+			description         TEXT NOT NULL DEFAULT '',
+			icon                TEXT NOT NULL DEFAULT 'briefcase',
+			color_tag           TEXT NOT NULL DEFAULT '#3b82f6',
+			is_active           INTEGER NOT NULL DEFAULT 0,
+			tabs_json           TEXT NOT NULL DEFAULT '[]',
+			active_tab_id       TEXT NOT NULL DEFAULT '',
+			connection_ids_json TEXT NOT NULL DEFAULT '',
+			created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active);`,
 
@@ -202,6 +203,8 @@ func (s *LocalStore) migrate() error {
 	_, _ = s.db.Exec(`ALTER TABLE connection_folders ADD COLUMN color TEXT NOT NULL DEFAULT '#3b82f6';`)
 	// Ensure env_type column exists on older connections tables
 	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN env_type TEXT NOT NULL DEFAULT 'local';`)
+	// Ensure connection_ids_json column exists on older workspaces tables
+	_, _ = s.db.Exec(`ALTER TABLE workspaces ADD COLUMN connection_ids_json TEXT NOT NULL DEFAULT '';`)
 
 	// Clean up duplicate schema_cache rows where empty or artificial schemas were stored
 	_, _ = s.db.Exec(`DELETE FROM schema_cache

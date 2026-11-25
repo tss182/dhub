@@ -10,20 +10,21 @@ import (
 )
 
 type WorkspaceSnapshot struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Icon        string    `json:"icon"`
-	ColorTag    string    `json:"colorTag"`
-	IsActive    bool      `json:"isActive"`
-	TabsJSON    string    `json:"tabsJson"`
-	ActiveTabID string    `json:"activeTabId"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	Description       string    `json:"description"`
+	Icon              string    `json:"icon"`
+	ColorTag          string    `json:"colorTag"`
+	IsActive          bool      `json:"isActive"`
+	TabsJSON          string    `json:"tabsJson"`
+	ActiveTabID       string    `json:"activeTabId"`
+	ConnectionIDsJSON string    `json:"connectionIdsJson"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 func (s *LocalStore) ListWorkspaces(ctx context.Context) ([]WorkspaceSnapshot, error) {
-	query := `SELECT id, name, description, icon, color_tag, is_active, tabs_json, active_tab_id, created_at, updated_at
+	query := `SELECT id, name, description, icon, color_tag, is_active, tabs_json, active_tab_id, connection_ids_json, created_at, updated_at
 		FROM workspaces ORDER BY updated_at DESC`
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -45,6 +46,7 @@ func (s *LocalStore) ListWorkspaces(ctx context.Context) ([]WorkspaceSnapshot, e
 			&isActiveInt,
 			&ws.TabsJSON,
 			&ws.ActiveTabID,
+			&ws.ConnectionIDsJSON,
 			&ws.CreatedAt,
 			&ws.UpdatedAt,
 		); err != nil {
@@ -57,7 +59,7 @@ func (s *LocalStore) ListWorkspaces(ctx context.Context) ([]WorkspaceSnapshot, e
 }
 
 func (s *LocalStore) GetWorkspace(ctx context.Context, id string) (*WorkspaceSnapshot, error) {
-	query := `SELECT id, name, description, icon, color_tag, is_active, tabs_json, active_tab_id, created_at, updated_at
+	query := `SELECT id, name, description, icon, color_tag, is_active, tabs_json, active_tab_id, connection_ids_json, created_at, updated_at
 		FROM workspaces WHERE id = ?`
 
 	var ws WorkspaceSnapshot
@@ -71,6 +73,7 @@ func (s *LocalStore) GetWorkspace(ctx context.Context, id string) (*WorkspaceSna
 		&isActiveInt,
 		&ws.TabsJSON,
 		&ws.ActiveTabID,
+		&ws.ConnectionIDsJSON,
 		&ws.CreatedAt,
 		&ws.UpdatedAt,
 	)
@@ -108,8 +111,8 @@ func (s *LocalStore) SaveWorkspace(ctx context.Context, ws WorkspaceSnapshot) (s
 		_, _ = s.db.ExecContext(ctx, `UPDATE workspaces SET is_active = 0 WHERE id != ?`, ws.ID)
 	}
 
-	query := `INSERT INTO workspaces (id, name, description, icon, color_tag, is_active, tabs_json, active_tab_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	query := `INSERT INTO workspaces (id, name, description, icon, color_tag, is_active, tabs_json, active_tab_id, connection_ids_json, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			description = excluded.description,
@@ -118,9 +121,10 @@ func (s *LocalStore) SaveWorkspace(ctx context.Context, ws WorkspaceSnapshot) (s
 			is_active = excluded.is_active,
 			tabs_json = excluded.tabs_json,
 			active_tab_id = excluded.active_tab_id,
+			connection_ids_json = excluded.connection_ids_json,
 			updated_at = CURRENT_TIMESTAMP`
 
-	_, err := s.db.ExecContext(ctx, query, ws.ID, ws.Name, ws.Description, ws.Icon, ws.ColorTag, isActiveInt, ws.TabsJSON, ws.ActiveTabID)
+	_, err := s.db.ExecContext(ctx, query, ws.ID, ws.Name, ws.Description, ws.Icon, ws.ColorTag, isActiveInt, ws.TabsJSON, ws.ActiveTabID, ws.ConnectionIDsJSON)
 	if err != nil {
 		return "", err
 	}

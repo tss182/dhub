@@ -312,7 +312,43 @@ export interface WorkspaceItem {
   isActive: boolean;
   tabsJson: string;
   activeTabId: string;
+  connectionIdsJson?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+/**
+ * Parses a workspace's connectionIdsJson field.
+ * Returns `null` when no filter is active (all connections should appear),
+ * or a `string[]` of allowed connection IDs when filtered.
+ */
+export function parseWorkspaceConnectionIds(connectionIdsJson?: string): string[] | null {
+  if (!connectionIdsJson || !connectionIdsJson.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(connectionIdsJson);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((id): id is string => typeof id === 'string');
+    }
+  } catch {
+    // Malformed JSON falls back to unfiltered so connections remain accessible
+  }
+  return null;
+}
+
+/**
+ * Returns a Set of allowed connection IDs for the active workspace,
+ * or `null` when all connections should be shown.
+ */
+export function getActiveWorkspaceAllowedConnectionIds(
+  workspaces: WorkspaceItem[],
+  activeWorkspaceId: string | null
+): Set<string> | null {
+  if (!activeWorkspaceId) return null;
+  const activeWs = workspaces.find((w) => w.id === activeWorkspaceId);
+  if (!activeWs) return null;
+  const ids = parseWorkspaceConnectionIds(activeWs.connectionIdsJson);
+  return ids === null ? null : new Set(ids);
 }
 
