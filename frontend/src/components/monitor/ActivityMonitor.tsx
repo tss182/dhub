@@ -34,7 +34,7 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [pgTab, setPgTab] = useState<'sessions' | 'locks' | 'stats' | 'bloat' | 'replication'>('sessions');
-  const [mysqlTab, setMysqlTab] = useState<'processes' | 'trx' | 'locks' | 'status' | 'variables'>('processes');
+  const [mysqlTab, setMysqlTab] = useState<'processes' | 'trx' | 'locks' | 'status' | 'variables' | 'innodb' | 'replica'>('processes');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadProcesses = useCallback(async () => {
@@ -77,6 +77,10 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
         sql = `SHOW GLOBAL STATUS;`;
       } else if (mysqlTab === 'variables') {
         sql = `SHOW GLOBAL VARIABLES;`;
+      } else if (mysqlTab === 'innodb') {
+        sql = `SHOW ENGINE INNODB STATUS;`;
+      } else if (mysqlTab === 'replica') {
+        sql = drv === 'mariadb' ? `SHOW ALL SLAVES STATUS;` : `SHOW REPLICA STATUS;`;
       } else {
         sql = `SELECT ID AS id, USER AS user, HOST AS host, COALESCE(DB, '') AS db, COMMAND AS command, TIME AS time, COALESCE(STATE, '') AS state, COALESCE(INFO, '') AS info FROM information_schema.processlist WHERE ID <> CONNECTION_ID() ORDER BY TIME DESC;`;
       }
@@ -157,6 +161,36 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
             state: String(r[0] ?? ''),
             info: String(r[1] ?? ''),
           }));
+          setProcesses(parsed);
+        } else if (mysqlTab === 'innodb') {
+          const parsed: ProcessRow[] = rows.map((r, i) => ({
+            id: String(i + 1),
+            user: String(r[0] ?? 'InnoDB'),
+            host: '',
+            database: '',
+            command: String(r[1] ?? 'STATUS'),
+            time: '',
+            state: 'ENGINE',
+            info: String(r[2] ?? ''),
+          }));
+          setProcesses(parsed);
+        } else if (mysqlTab === 'replica') {
+          const cols: string[] = (res?.columns || []).map((c: any) => String(c.name || ''));
+          const parsed: ProcessRow[] = [];
+          rows.forEach((r, rIdx) => {
+            cols.forEach((cName, cIdx) => {
+              parsed.push({
+                id: `${rIdx + 1}.${cIdx + 1}`,
+                user: 'REPLICA',
+                host: '',
+                database: '',
+                command: cName,
+                time: '',
+                state: cName,
+                info: String(r[cIdx] ?? ''),
+              });
+            });
+          });
           setProcesses(parsed);
         } else {
           const cols: string[] = (res?.columns || []).map((c: any) => String(c.name || '').toLowerCase());
@@ -393,6 +427,8 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
                   { id: 'locks', label: 'Lock Waits' },
                   { id: 'status', label: 'Status' },
                   { id: 'variables', label: 'Variables' },
+                  { id: 'innodb', label: 'InnoDB' },
+                  { id: 'replica', label: 'Replication' },
                 ] as const
               ).map((t) => (
                 <button
@@ -515,7 +551,10 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
                       {!connection.isReadOnly &&
                         (connection.driver !== 'postgres' || pgTab === 'sessions' || pgTab === 'locks') &&
                         ((connection.driver !== 'mysql' && connection.driver !== 'mariadb') ||
-                          (mysqlTab !== 'status' && mysqlTab !== 'variables')) && (
+                          (mysqlTab !== 'status' &&
+                            mysqlTab !== 'variables' &&
+                            mysqlTab !== 'innodb' &&
+                            mysqlTab !== 'replica')) && (
                         <div className="inline-flex items-center gap-1">
                           {connection.driver === 'postgres' && (
                             <button
