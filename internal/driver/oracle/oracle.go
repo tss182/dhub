@@ -471,8 +471,15 @@ func (o *OracleDriver) GetTableStructure(ctx context.Context, database, schema, 
 		}
 	}
 
-	// 6. Generate DDL
-	structure.DDL = generateOracleDDL(targetSchema, table, structure)
+	// 6. Generate DDL (check views / materialized views first)
+	var viewDef sql.NullString
+	if err := o.db.QueryRowContext(ctx, `SELECT TEXT FROM ALL_VIEWS WHERE OWNER = :1 AND VIEW_NAME = :2`, targetSchema, table).Scan(&viewDef); err == nil && strings.TrimSpace(viewDef.String) != "" {
+		structure.DDL = fmt.Sprintf("CREATE OR REPLACE VIEW %s AS\n%s", qualifiedName(targetSchema, table), strings.TrimSpace(viewDef.String))
+	} else if err := o.db.QueryRowContext(ctx, `SELECT QUERY FROM ALL_MVIEWS WHERE OWNER = :1 AND MVIEW_NAME = :2`, targetSchema, table).Scan(&viewDef); err == nil && strings.TrimSpace(viewDef.String) != "" {
+		structure.DDL = fmt.Sprintf("CREATE MATERIALIZED VIEW %s AS\n%s", qualifiedName(targetSchema, table), strings.TrimSpace(viewDef.String))
+	} else {
+		structure.DDL = generateOracleDDL(targetSchema, table, structure)
+	}
 
 	return structure, nil
 }
@@ -534,15 +541,56 @@ func generateOracleDDL(schema, table string, s *driver.TableStructure) string {
 		defs = append(defs, fmt.Sprintf("  CONSTRAINT %s PRIMARY KEY (%s)", quoteIdent("PK_"+table), strings.Join(pkCols, ", ")))
 	}
 
+	type fkGroup struct {
+		name      string
+		cols      []string
+		refCols   []string
+		refSchema string
+		refTable  string
+		onDelete  string
+	}
+	var fkOrder []string
+	fkMap := make(map[string]*fkGroup)
 	for _, fk := range s.ForeignKeys {
 		cName := fk.ConstraintName
 		if cName == "" {
 			cName = fmt.Sprintf("FK_%s_%s", table, fk.ColumnName)
 		}
+		g, exists := fkMap[cName]
+		if !exists {
+			g = &fkGroup{
+				name:      cName,
+				refSchema: fk.RefSchema,
+				refTable:  fk.RefTable,
+				onDelete:  fk.OnDelete,
+			}
+			fkMap[cName] = g
+			fkOrder = append(fkOrder, cName)
+		}
+		if len(fk.Columns) > 0 {
+			g.cols = append(g.cols, fk.Columns...)
+		} else if fk.ColumnName != "" {
+			g.cols = append(g.cols, fk.ColumnName)
+		}
+		if len(fk.RefColumns) > 0 {
+			g.refCols = append(g.refCols, fk.RefColumns...)
+		} else if fk.RefColumn != "" {
+			g.refCols = append(g.refCols, fk.RefColumn)
+		}
+	}
+	for _, cName := range fkOrder {
+		g := fkMap[cName]
+		var qCols, qRefCols []string
+		for _, c := range g.cols {
+			qCols = append(qCols, quoteIdent(c))
+		}
+		for _, c := range g.refCols {
+			qRefCols = append(qRefCols, quoteIdent(c))
+		}
 		def := fmt.Sprintf("  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
-			quoteIdent(cName), quoteIdent(fk.ColumnName), qualifiedName(fk.RefSchema, fk.RefTable), quoteIdent(fk.RefColumn))
-		if fk.OnDelete != "" && !strings.EqualFold(fk.OnDelete, "NO ACTION") {
-			def += " ON DELETE " + fk.OnDelete
+			quoteIdent(g.name), strings.Join(qCols, ", "), qualifiedName(g.refSchema, g.refTable), strings.Join(qRefCols, ", "))
+		if g.onDelete != "" && !strings.EqualFold(g.onDelete, "NO ACTION") {
+			def += " ON DELETE " + g.onDelete
 		}
 		defs = append(defs, def)
 	}
@@ -580,6 +628,16 @@ func (o *OracleDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 	defer conn.Close()
 
 	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "oracle")
+}
+
+func (o *OracleDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
+	conn, err := o.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	return driver.StreamQueryWithDialect(ctx, conn, req, "oracle", onRow)
 }
 
 func (o *OracleDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {

@@ -257,6 +257,10 @@ func (s *SQLiteDriver) Execute(ctx context.Context, req driver.QueryRequest) (*d
 	return driver.ExecuteStatementsWithDialect(ctx, s.db, req, "sqlite")
 }
 
+func (s *SQLiteDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
+	return driver.StreamQueryWithDialect(ctx, s.db, req, "sqlite", onRow)
+}
+
 func (s *SQLiteDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
 	return s.db.BeginTx(ctx, nil)
 }

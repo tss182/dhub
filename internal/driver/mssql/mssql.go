@@ -455,8 +455,18 @@ func (m *MSSQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 		}
 	}
 
-	// 5. Generate DDL
-	structure.DDL = generateMSSQLDDL(schema, table, structure)
+	// 5. Generate DDL (use view definition for views)
+	var viewDef sql.NullString
+	_ = db.QueryRowContext(ctx, `
+		SELECT OBJECT_DEFINITION(v.object_id)
+		FROM sys.views v
+		JOIN sys.schemas s ON s.schema_id = v.schema_id
+		WHERE s.name = @p1 AND v.name = @p2`, schema, table).Scan(&viewDef)
+	if viewDef.Valid && strings.TrimSpace(viewDef.String) != "" {
+		structure.DDL = strings.TrimSpace(viewDef.String)
+	} else {
+		structure.DDL = generateMSSQLDDL(schema, table, structure)
+	}
 
 	return structure, nil
 }
@@ -491,18 +501,61 @@ func generateMSSQLDDL(schema, table string, s *driver.TableStructure) string {
 		defs = append(defs, fmt.Sprintf("  CONSTRAINT %s PRIMARY KEY (%s)", quoteIdent("PK_"+table), strings.Join(pkCols, ", ")))
 	}
 
+	type fkGroup struct {
+		name      string
+		cols      []string
+		refCols   []string
+		refSchema string
+		refTable  string
+		onUpdate  string
+		onDelete  string
+	}
+	var fkOrder []string
+	fkMap := make(map[string]*fkGroup)
 	for _, fk := range s.ForeignKeys {
 		cName := fk.ConstraintName
 		if cName == "" {
 			cName = fmt.Sprintf("FK_%s_%s", table, fk.ColumnName)
 		}
-		def := fmt.Sprintf("  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
-			quoteIdent(cName), quoteIdent(fk.ColumnName), qualifiedName(fk.RefSchema, fk.RefTable), quoteIdent(fk.RefColumn))
-		if fk.OnUpdate != "" && !strings.EqualFold(fk.OnUpdate, "NO ACTION") {
-			def += " ON UPDATE " + fk.OnUpdate
+		g, exists := fkMap[cName]
+		if !exists {
+			g = &fkGroup{
+				name:      cName,
+				refSchema: fk.RefSchema,
+				refTable:  fk.RefTable,
+				onUpdate:  fk.OnUpdate,
+				onDelete:  fk.OnDelete,
+			}
+			fkMap[cName] = g
+			fkOrder = append(fkOrder, cName)
 		}
-		if fk.OnDelete != "" && !strings.EqualFold(fk.OnDelete, "NO ACTION") {
-			def += " ON DELETE " + fk.OnDelete
+		if len(fk.Columns) > 0 {
+			g.cols = append(g.cols, fk.Columns...)
+		} else if fk.ColumnName != "" {
+			g.cols = append(g.cols, fk.ColumnName)
+		}
+		if len(fk.RefColumns) > 0 {
+			g.refCols = append(g.refCols, fk.RefColumns...)
+		} else if fk.RefColumn != "" {
+			g.refCols = append(g.refCols, fk.RefColumn)
+		}
+	}
+	for _, cName := range fkOrder {
+		g := fkMap[cName]
+		var qCols, qRefCols []string
+		for _, c := range g.cols {
+			qCols = append(qCols, quoteIdent(c))
+		}
+		for _, c := range g.refCols {
+			qRefCols = append(qRefCols, quoteIdent(c))
+		}
+		def := fmt.Sprintf("  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+			quoteIdent(g.name), strings.Join(qCols, ", "), qualifiedName(g.refSchema, g.refTable), strings.Join(qRefCols, ", "))
+		if g.onUpdate != "" && !strings.EqualFold(g.onUpdate, "NO ACTION") {
+			def += " ON UPDATE " + g.onUpdate
+		}
+		if g.onDelete != "" && !strings.EqualFold(g.onDelete, "NO ACTION") {
+			def += " ON DELETE " + g.onDelete
 		}
 		defs = append(defs, def)
 	}
@@ -541,6 +594,20 @@ func (m *MSSQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*dr
 	defer conn.Close()
 
 	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "mssql")
+}
+
+func (m *MSSQLDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
+	db, err := m.dbFor(req.Database)
+	if err != nil {
+		return err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	return driver.StreamQueryWithDialect(ctx, conn, req, "mssql", onRow)
 }
 
 func (m *MSSQLDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {

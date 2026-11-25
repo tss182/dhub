@@ -532,6 +532,20 @@ func (c *ClickHouseDriver) Execute(ctx context.Context, req driver.QueryRequest)
 	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "clickhouse")
 }
 
+func (c *ClickHouseDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
+	db, err := c.dbFor(req.Database)
+	if err != nil {
+		return err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	return driver.StreamQueryWithDialect(ctx, conn, req, "clickhouse", onRow)
+}
+
 func (c *ClickHouseDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
 	return nil, fmt.Errorf("manual transactions are not supported by ClickHouse")
 }

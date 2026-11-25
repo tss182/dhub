@@ -368,3 +368,19 @@ func TestReadOnlyBypassHardening_Phase1(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitStatementsForDialect_MSSQLAndOracleBatch(t *testing.T) {
+	mssqlScript := "CREATE TABLE t (id INT)\nGO\nSELECT * FROM t;\nGO 2\nDROP TABLE t"
+	gotMSSQL := SplitStatementsForDialect(mssqlScript, "mssql")
+	wantMSSQL := []string{"CREATE TABLE t (id INT)", "SELECT * FROM t", "DROP TABLE t"}
+	if !reflect.DeepEqual(gotMSSQL, wantMSSQL) {
+		t.Fatalf("MSSQL GO split = %#v, want %#v", gotMSSQL, wantMSSQL)
+	}
+
+	oracleScript := "CREATE OR REPLACE PROCEDURE p AS\nBEGIN\n  NULL;\nEND;\n/\nSELECT 1 FROM DUAL;"
+	gotOracle := SplitStatementsForDialect(oracleScript, "oracle")
+	wantOracle := []string{"CREATE OR REPLACE PROCEDURE p AS\nBEGIN\n  NULL;\nEND;", "SELECT 1 FROM DUAL"}
+	if !reflect.DeepEqual(gotOracle, wantOracle) {
+		t.Fatalf("Oracle / split = %#v, want %#v", gotOracle, wantOracle)
+	}
+}

@@ -1500,6 +1500,31 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			return "", emitErr(fmt.Errorf("oracle restore failed: %w", err))
 		}
 
+	case "redis":
+		if strings.HasSuffix(strings.ToLower(filePath), ".rdb") {
+			return "", emitErr(fmt.Errorf("binary .rdb snapshots cannot be restored over the Redis protocol; place the .rdb file in the Redis server's dir/dbfilename and restart, or restore a .txt/.redis command script"))
+		}
+		rawBytes, rErr := os.ReadFile(filePath)
+		if rErr != nil {
+			return "", emitErr(fmt.Errorf("failed to read Redis restore file: %w", rErr))
+		}
+		drv, dErr := s.sessions.GetOrConnect(ctx, connectionID)
+		if dErr != nil {
+			return "", emitErr(dErr)
+		}
+		res, eErr := drv.Execute(ctx, driver.QueryRequest{
+			ExecutionID:  fmt.Sprintf("restore-redis-%d", time.Now().UnixNano()),
+			ConnectionID: connectionID,
+			Database:     database,
+			SQL:          string(rawBytes),
+		})
+		if eErr != nil {
+			return "", emitErr(fmt.Errorf("redis restore failed: %w", eErr))
+		}
+		if res != nil && res.Error != "" {
+			return "", emitErr(fmt.Errorf("redis restore failed: %s", res.Error))
+		}
+
 	default:
 		return "", emitErr(fmt.Errorf("unsupported driver for restore: %s", conn.Driver))
 	}

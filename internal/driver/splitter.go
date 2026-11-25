@@ -25,6 +25,7 @@ type sqlDialectRules struct {
 	isMySQLFamily    bool
 	isMariaDB        bool
 	isMSSQL          bool
+	isOracle         bool
 	isClickHouse     bool
 	backslashEscapes bool
 	hashComment      bool
@@ -40,6 +41,7 @@ func getSQLDialectRules(dialect string) sqlDialectRules {
 	isGeneric := d == ""
 	isPostgres := d == "postgres" || d == "postgresql"
 	isMSSQL := d == "mssql" || d == "sqlserver"
+	isOracle := d == "oracle"
 	isClickHouse := d == "clickhouse"
 	return sqlDialectRules{
 		isGeneric:        isGeneric,
@@ -47,6 +49,7 @@ func getSQLDialectRules(dialect string) sqlDialectRules {
 		isMySQLFamily:    isMySQLFamily,
 		isMariaDB:        isMariaDB,
 		isMSSQL:          isMSSQL,
+		isOracle:         isOracle,
 		isClickHouse:     isClickHouse,
 		backslashEscapes: isMySQLFamily || isClickHouse || isGeneric,
 		hashComment:      isMySQLFamily || isClickHouse || isGeneric,
@@ -163,6 +166,70 @@ func parseDollarTag(runes []rune, idx int) ([]rune, bool) {
 	return nil, false
 }
 
+func parseMSSQLGoLine(runes []rune, lineStart int) (lineEnd int, ok bool) {
+	n := len(runes)
+	i := lineStart
+	for i < n && (runes[i] == ' ' || runes[i] == '\t') {
+		i++
+	}
+	if i+2 > n || (runes[i] != 'G' && runes[i] != 'g') || (runes[i+1] != 'O' && runes[i+1] != 'o') {
+		return 0, false
+	}
+	i += 2
+	if i < n && (isIdentChar(runes[i]) || runes[i] == '.') {
+		return 0, false
+	}
+	for i < n && runes[i] != '\n' && runes[i] != '\r' {
+		if runes[i] == ' ' || runes[i] == '\t' {
+			i++
+			continue
+		}
+		if runes[i] == '-' && i+1 < n && runes[i+1] == '-' {
+			for i < n && runes[i] != '\n' && runes[i] != '\r' {
+				i++
+			}
+			break
+		}
+		if unicode.IsDigit(runes[i]) {
+			for i < n && unicode.IsDigit(runes[i]) {
+				i++
+			}
+			continue
+		}
+		return 0, false
+	}
+	if i < n && runes[i] == '\r' && i+1 < n && runes[i+1] == '\n' {
+		i += 2
+	} else if i < n && (runes[i] == '\n' || runes[i] == '\r') {
+		i++
+	}
+	return i, true
+}
+
+func parseOracleSlashLine(runes []rune, lineStart int) (lineEnd int, ok bool) {
+	n := len(runes)
+	i := lineStart
+	for i < n && (runes[i] == ' ' || runes[i] == '\t') {
+		i++
+	}
+	if i >= n || runes[i] != '/' {
+		return 0, false
+	}
+	i++
+	for i < n && (runes[i] == ' ' || runes[i] == '\t') {
+		i++
+	}
+	if i < n && runes[i] != '\n' && runes[i] != '\r' {
+		return 0, false
+	}
+	if i < n && runes[i] == '\r' && i+1 < n && runes[i+1] == '\n' {
+		i += 2
+	} else if i < n && (runes[i] == '\n' || runes[i] == '\r') {
+		i++
+	}
+	return i, true
+}
+
 func parseDelimiterLine(runes []rune, lineStart int) (delim string, lineEnd int, ok bool) {
 	n := len(runes)
 	i := lineStart
@@ -233,6 +300,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 	var stmtStarted bool
 	var isCreateStmt bool
 	var pendingCompoundBody bool
+	var hadCompoundBody bool
 	var beginDepth int
 	var caseDepth int
 
@@ -240,6 +308,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 		stmtStarted = false
 		isCreateStmt = false
 		pendingCompoundBody = false
+		hadCompoundBody = false
 		beginDepth = 0
 		caseDepth = 0
 	}
@@ -247,13 +316,39 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 	for i := 0; i < n; i++ {
 		r := runes[i]
 
-		// Handle client DELIMITER directive at line start when not inside quotes/comments
-		if rules.delimiterDir && !stmtStarted && atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !inDollarQuote && !inLineComment && blockCommentDepth == 0 {
-			if newDelim, nextIdx, ok := parseDelimiterLine(runes, i); ok {
-				delim = []rune(newDelim)
-				i = nextIdx - 1
-				atLineStart = true
-				continue
+		// Handle client DELIMITER directive and native batch terminators (MSSQL GO, Oracle /)
+		if atLineStart && !inSingleQuote && !inDoubleQuote && !inBacktick && !inBracket && !inDollarQuote && !inLineComment && blockCommentDepth == 0 {
+			if rules.delimiterDir && !stmtStarted {
+				if newDelim, nextIdx, ok := parseDelimiterLine(runes, i); ok {
+					delim = []rune(newDelim)
+					i = nextIdx - 1
+					atLineStart = true
+					continue
+				}
+			}
+			if rules.isMSSQL {
+				if nextIdx, ok := parseMSSQLGoLine(runes, i); ok {
+					if stmt := strings.TrimSpace(current.String()); stmt != "" {
+						statements = append(statements, stmt)
+					}
+					current.Reset()
+					resetStmtState()
+					i = nextIdx - 1
+					atLineStart = true
+					continue
+				}
+			}
+			if rules.isOracle {
+				if nextIdx, ok := parseOracleSlashLine(runes, i); ok {
+					if stmt := strings.TrimSpace(current.String()); stmt != "" {
+						statements = append(statements, stmt)
+					}
+					current.Reset()
+					resetStmtState()
+					i = nextIdx - 1
+					atLineStart = true
+					continue
+				}
 			}
 		}
 
@@ -435,6 +530,9 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 		// Checked before dollar-quoting so custom client delimiters like `DELIMITER $$` are recognized.
 		isDefaultDelim := len(delim) == 1 && delim[0] == ';'
 		if matchSliceAt(runes, i, delim) && (!isDefaultDelim || beginDepth == 0) {
+			if rules.isOracle && isDefaultDelim && hadCompoundBody {
+				current.WriteRune(';')
+			}
 			stmt := strings.TrimSpace(current.String())
 			if stmt != "" {
 				statements = append(statements, stmt)
@@ -475,7 +573,8 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 				}
 			}
 
-			if isCreateStmt && beginDepth == 0 && (word == "PROCEDURE" || word == "FUNCTION" || word == "TRIGGER" || word == "EVENT") {
+			if isCreateStmt && beginDepth == 0 && (word == "PROCEDURE" || word == "FUNCTION" || word == "TRIGGER" || word == "EVENT" ||
+				(rules.isOracle && (word == "PACKAGE" || word == "TYPE"))) {
 				pendingCompoundBody = true
 			}
 
@@ -486,6 +585,7 @@ func SplitStatementsForDialect(sql, dialect string) []string {
 					(isPostgres && (nextWord == "ISOLATION" || nextWord == "READ" || nextWord == "DEFERRABLE" || nextWord == "NOT"))
 				if pendingCompoundBody || beginDepth > 0 || !isStandaloneTx {
 					beginDepth++
+					hadCompoundBody = true
 					pendingCompoundBody = false
 				}
 			} else if beginDepth > 0 {
