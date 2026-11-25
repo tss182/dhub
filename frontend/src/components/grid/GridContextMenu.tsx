@@ -647,7 +647,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 </button>
               )}
 
-              {isElasticsearch && onFindSimilarDoc && vr && vr.globalRowIndex !== undefined && (
+              {(isElasticsearch || (!isQdrant && !isMongo && !isRedis)) && onFindSimilarDoc && vr && vr.globalRowIndex !== undefined && (
                 <button
                   type="button"
                   onClick={() => {
@@ -659,7 +659,7 @@ export const GridContextMenu: React.FC<GridContextMenuProps> = ({
                 >
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-3.5 w-3.5 text-violet-400 group-hover:text-white" />
-                    <span>Find Similar Documents</span>
+                    <span>{isElasticsearch ? 'Find Similar Documents' : 'Find Similar Rows (pgvector)'}</span>
                   </div>
                 </button>
               )}

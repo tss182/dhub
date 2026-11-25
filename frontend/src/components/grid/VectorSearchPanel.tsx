@@ -16,6 +16,14 @@ import {
 import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
 import { useWorkbenchStore } from '../../stores/useWorkbenchStore';
+import { Call } from '@wailsio/runtime';
+import {
+  detectPgVectorColumnKind,
+  floatArrayToBitString,
+  getOpclassFor,
+  parsePgBitVec,
+  parsePgSparseVec,
+} from '../../utils/pgvector';
 import { QueryService } from '../../../bindings/dhub/internal/services';
 
 export type VectorDistanceMetric = 'cosine' | 'l2' | 'ip' | 'l1' | 'hamming' | 'jaccard';
@@ -65,18 +73,21 @@ function loadEmbeddingConfig(): EmbeddingConfig {
 }
 
 export interface VectorSearchPanelProps {
+  connectionId?: string;
   driver: string;
   database: string;
   schema: string;
   tableName: string;
   columns: ColumnMeta[];
   rows: any[][];
+  primaryKeys?: string[];
   isSearching: boolean;
   isVectorSearchActive: boolean;
   searchStats: VectorSearchStats | null;
   error: string | null;
-  onExecuteVectorSearch: (sql: string) => void;
+  onExecuteVectorSearch: (sql: string, sessionParams?: Record<string, string>) => void;
   onResetSearch: () => void;
+  onOpenVectorIndexModal?: () => void;
   showVisualization?: boolean;
   onToggleVisualization?: () => void;
   excludeVectors?: boolean;
@@ -298,17 +309,21 @@ function parseSimpleQdrantFilter(raw: string): Record<string, any> | null {
 }
 
 export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
+  connectionId,
   driver,
+  database,
   schema,
   tableName,
   columns,
   rows,
+  primaryKeys = [],
   isSearching,
   isVectorSearchActive,
   searchStats,
   error,
   onExecuteVectorSearch,
   onResetSearch,
+  onOpenVectorIndexModal,
   showVisualization = false,
   onToggleVisualization,
   excludeVectors = false,
@@ -442,12 +457,71 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const [isEmbedding, setIsEmbedding] = useState(false);
   const [copiedRest, setCopiedRest] = useState(false);
 
+  // PostgreSQL pgvector Studio state
+  const [pgMode, setPgMode] = useState<'similarity' | 'sparse' | 'two_stage' | 'hybrid' | 'by_row'>('similarity');
+  const [showPgAdvanced, setShowPgAdvanced] = useState(false);
+  const [pgEfSearch, setPgEfSearch] = useState<string>('');
+  const [pgProbes, setPgProbes] = useState<string>('');
+  const [pgIterativeScan, setPgIterativeScan] = useState<'off' | 'relaxed_order' | 'strict_order'>('off');
+  const [pgExactSearch, setPgExactSearch] = useState<boolean>(false);
+  const [pgOversample, setPgOversample] = useState<number>(5);
+  const [pgHybridTextCol, setPgHybridTextCol] = useState<string>('');
+  const [pgHybridLang, setPgHybridLang] = useState<'english' | 'indonesian' | 'simple'>('english');
+  const [pgHybridQuery, setPgHybridQuery] = useState<string>('');
+  const [pgRrfK, setPgRrfK] = useState<number>(60);
+  const [pgRowId, setPgRowId] = useState<string>('');
+  const [pgSparseLiteral, setPgSparseLiteral] = useState<string>('');
+  const [pgBitLiteral, setPgBitLiteral] = useState<string>('');
+  const [pgOverview, setPgOverview] = useState<any>(null);
+  const [pgVecStatus, setPgVecStatus] = useState<any>(null);
+
   const activeVectorCol = useMemo(() => {
     if (selectedCol && vectorColumns.some((c) => c.name === selectedCol)) {
       return selectedCol;
     }
     return vectorColumns[0]?.name || (driver === 'qdrant' ? 'vector' : 'embedding');
   }, [selectedCol, vectorColumns, driver]);
+
+  const activeVectorMeta = useMemo(
+    () => vectorColumns.find((c) => c.name === activeVectorCol),
+    [vectorColumns, activeVectorCol]
+  );
+
+  const activePgVecInfo = useMemo(
+    () => detectPgVectorColumnKind(activeVectorMeta?.dataType, activeVectorMeta?.rawType),
+    [activeVectorMeta]
+  );
+
+  const textColumns = useMemo(
+    () =>
+      columns.filter((c) => {
+        const dt = (c.dataType || c.rawType || '').toLowerCase();
+        return dt.includes('text') || dt.includes('char') || dt.includes('tsvector');
+      }),
+    [columns]
+  );
+
+  React.useEffect(() => {
+    if (!pgHybridTextCol && textColumns.length > 0) {
+      setPgHybridTextCol(textColumns[0].name);
+    }
+  }, [textColumns, pgHybridTextCol]);
+
+  React.useEffect(() => {
+    if (driver !== 'postgres' || !isExpanded || !connectionId || !tableName) return;
+    let cancelled = false;
+    Promise.all([
+      Call.ByName('dhub/internal/services.SchemaService.GetPgVectorStatus', connectionId, database || 'postgres').catch(() => null),
+      Call.ByName('dhub/internal/services.SchemaService.GetTableVectorOverview', connectionId, database || 'postgres', schema || 'public', tableName).catch(() => null),
+    ]).then(([st, ov]) => {
+      if (cancelled) return;
+      if (st) setPgVecStatus(st);
+      if (ov) setPgOverview(ov);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [driver, isExpanded, connectionId, database, schema, tableName]);
 
   if (vectorColumns.length === 0 && driver !== 'qdrant' && driver !== 'elasticsearch') {
     return null;
@@ -471,6 +545,18 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         setSparseIndices(((val as any).indices || []).join(', '));
         setSparseValues(((val as any).values || []).join(', '));
         if (driver === 'qdrant') setQdrantMode('hybrid');
+        setEmbedError(null);
+        return;
+      }
+      if (typeof val === 'string' && val.trim().startsWith('{') && val.includes('}/')) {
+        setPgSparseLiteral(val.trim());
+        if (driver === 'postgres') setPgMode('sparse');
+        setEmbedError(null);
+        return;
+      }
+      if (typeof val === 'string' && activePgVecInfo.kind === 'bit' && parsePgBitVec(val)) {
+        setPgBitLiteral(val.trim());
+        if (driver === 'postgres') setPgMode('sparse');
         setEmbedError(null);
         return;
       }
@@ -986,12 +1072,23 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       return `FT.SEARCH ${tableName} "${prefix}=>[KNN $K @${activeVectorCol} $vec AS score]" PARAMS 4 K ${k} vec '${vecJson}' SORTBY score ASC LIMIT 0 ${k} DIALECT 2`;
     }
 
-    // PostgreSQL (pgvector 0.7+: vector, halfvec, sparsevec, bit)
+    // PostgreSQL (pgvector 0.7 / 0.8+: vector, halfvec, sparsevec, bit, 2-stage, hybrid RRF, by_row)
     const qualifiedTbl =
       schema && schema !== 'main'
         ? `${quotePgIdent(schema)}.${quotePgIdent(tableName)}`
         : quotePgIdent(tableName);
     const colQ = quotePgIdent(activeVectorCol);
+    const pgKind = activePgVecInfo.kind || 'vector';
+    const pgDims = activePgVecInfo.dims;
+    const castType =
+      pgKind === 'halfvec'
+        ? pgDims ? `halfvec(${pgDims})` : 'halfvec'
+        : pgKind === 'sparsevec'
+        ? pgDims ? `sparsevec(${pgDims})` : 'sparsevec'
+        : pgKind === 'bit'
+        ? pgDims ? `bit(${pgDims})` : 'bit'
+        : pgDims ? `vector(${pgDims})` : 'vector';
+
     const op =
       metric === 'l2'
         ? '<->'
@@ -1004,12 +1101,59 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         : metric === 'jaccard'
         ? '<%>'
         : '<=>';
+
+    let literalExpr = `'${vecJson}'::${castType}`;
+    if (pgMode === 'sparse') {
+      if (pgKind === 'sparsevec') {
+        literalExpr = `'${pgSparseLiteral.trim().replace(/'/g, "''")}'::${castType}`;
+      } else if (pgKind === 'bit') {
+        const bitVal = pgBitLiteral.trim() || (Array.isArray(vec) && typeof vec[0] === 'number' ? floatArrayToBitString(vec as number[]) : '');
+        literalExpr = `'${bitVal.replace(/'/g, "''")}'::${castType}`;
+      }
+    }
+
+    if (pgMode === 'two_stage') {
+      const bitDims = pgDims || (Array.isArray(vec) && typeof vec[0] === 'number' ? (vec as number[]).length : 1536);
+      const oversampleLimit = Math.min(5000, k * Math.max(2, pgOversample));
+      const whereSql = filter ? `\n  WHERE (${filter.replace(/^where\s+/i, '')})` : '';
+      return `WITH candidates AS (\n  SELECT *\n  FROM ${qualifiedTbl}${whereSql}\n  ORDER BY binary_quantize(${colQ})::bit(${bitDims}) <~> binary_quantize('${vecJson}'::vector)::bit(${bitDims})\n  LIMIT ${oversampleLimit}\n)\nSELECT *, 1 - (${colQ} <=> '${vecJson}'::vector) AS score\nFROM candidates\nORDER BY ${colQ} <=> '${vecJson}'::vector\nLIMIT ${k};`;
+    }
+
+    if (pgMode === 'hybrid') {
+      const textColName = pgHybridTextCol || textColumns[0]?.name || 'content';
+      const textColQ = quotePgIdent(textColName);
+      const textColMeta = columns.find((c) => c.name === textColName);
+      const isTsv = (textColMeta?.dataType || '').toLowerCase().includes('tsvector');
+      const tsvExpr = isTsv ? textColQ : `to_tsvector('${pgHybridLang}', COALESCE(${textColQ}, ''))`;
+      const pkName = primaryKeys[0] || columns[0]?.name || 'id';
+      const pkQ = quotePgIdent(pkName);
+      const qEsc = (pgHybridQuery.trim() || textQuery.trim()).replace(/'/g, "''");
+      const rrfK = Math.max(1, Number(pgRrfK) || 60);
+      const candidateLimit = Math.min(1000, Math.max(k * 4, 40));
+      const whereExtra = filter ? ` AND (${filter.replace(/^where\s+/i, '')})` : '';
+      return `WITH dense_hits AS (\n  SELECT ${pkQ} AS doc_id, ROW_NUMBER() OVER (ORDER BY ${colQ} ${op} ${literalExpr}) AS rnk\n  FROM ${qualifiedTbl}\n  WHERE ${colQ} IS NOT NULL${whereExtra}\n  ORDER BY ${colQ} ${op} ${literalExpr}\n  LIMIT ${candidateLimit}\n),\nfts_hits AS (\n  SELECT ${pkQ} AS doc_id, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(${tsvExpr}, websearch_to_tsquery('${pgHybridLang}', '${qEsc}')) DESC) AS rnk\n  FROM ${qualifiedTbl}\n  WHERE ${tsvExpr} @@ websearch_to_tsquery('${pgHybridLang}', '${qEsc}')${whereExtra}\n  LIMIT ${candidateLimit}\n),\nrrf AS (\n  SELECT COALESCE(d.doc_id, f.doc_id) AS doc_id,\n         COALESCE(1.0 / (${rrfK} + d.rnk), 0) + COALESCE(1.0 / (${rrfK} + f.rnk), 0) AS score\n  FROM dense_hits d\n  FULL OUTER JOIN fts_hits f ON d.doc_id = f.doc_id\n)\nSELECT t.*, rrf.score\nFROM rrf\nJOIN ${qualifiedTbl} t ON t.${pkQ} = rrf.doc_id\nORDER BY rrf.score DESC\nLIMIT ${k};`;
+    }
+
+    if (pgMode === 'by_row') {
+      const pkName = primaryKeys[0] || columns[0]?.name || 'id';
+      const pkQ = quotePgIdent(pkName);
+      const pkLit = /^\d+$/.test(pgRowId.trim()) ? pgRowId.trim() : `'${pgRowId.trim().replace(/'/g, "''")}'`;
+      const scoreTarget =
+        metric === 'l2' || metric === 'l1' || metric === 'hamming' || metric === 'jaccard'
+          ? `(t.${colQ} ${op} target.vec) AS distance`
+          : metric === 'ip'
+          ? `-(t.${colQ} <#> target.vec) AS score`
+          : `1 - (t.${colQ} <=> target.vec) AS score`;
+      const whereExtra = filter ? ` AND (${filter.replace(/^where\s+/i, '')})` : '';
+      return `WITH target AS (\n  SELECT ${colQ} AS vec FROM ${qualifiedTbl} WHERE ${pkQ} = ${pkLit} LIMIT 1\n)\nSELECT t.*, ${scoreTarget}\nFROM ${qualifiedTbl} t, target\nWHERE t.${pkQ} <> ${pkLit} AND t.${colQ} IS NOT NULL${whereExtra}\nORDER BY t.${colQ} ${op} target.vec\nLIMIT ${k};`;
+    }
+
     const scoreExpr =
       metric === 'l2' || metric === 'l1' || metric === 'hamming' || metric === 'jaccard'
-        ? `(${colQ} ${op} '${vecJson}') AS distance`
+        ? `(${colQ} ${op} ${literalExpr}) AS distance`
         : metric === 'ip'
-        ? `-(${colQ} <#> '${vecJson}') AS score`
-        : `1 - (${colQ} <=> '${vecJson}') AS score`;
+        ? `-(${colQ} <#> ${literalExpr}) AS score`
+        : `1 - (${colQ} <=> ${literalExpr}) AS score`;
 
     const whereParts: string[] = [];
     if (filter) {
@@ -1017,15 +1161,15 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     }
     if (threshold !== null) {
       if (metric === 'l2' || metric === 'l1' || metric === 'hamming' || metric === 'jaccard') {
-        whereParts.push(`(${colQ} ${op} '${vecJson}') <= ${threshold}`);
+        whereParts.push(`(${colQ} ${op} ${literalExpr}) <= ${threshold}`);
       } else if (metric === 'ip') {
-        whereParts.push(`-(${colQ} <#> '${vecJson}') >= ${threshold}`);
+        whereParts.push(`(${colQ} <#> ${literalExpr}) <= ${-threshold}`);
       } else {
-        whereParts.push(`1 - (${colQ} <=> '${vecJson}') >= ${threshold}`);
+        whereParts.push(`(${colQ} <=> ${literalExpr}) <= ${Number((1 - threshold).toFixed(6))}`);
       }
     }
     const whereSql = whereParts.length > 0 ? `\nWHERE ${whereParts.join(' AND ')}` : '';
-    return `SELECT *, ${scoreExpr}\nFROM ${qualifiedTbl}${whereSql}\nORDER BY ${colQ} ${op} '${vecJson}'\nLIMIT ${k};`;
+    return `SELECT *, ${scoreExpr}\nFROM ${qualifiedTbl}${whereSql}\nORDER BY ${colQ} ${op} ${literalExpr}\nLIMIT ${k};`;
   };
 
   const handleRunSearch = async (e?: React.FormEvent) => {
@@ -1079,10 +1223,41 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
         setEmbedError('Enter sample text or Document _id for More Like This search.');
         return;
       }
+    } else if (driver === 'postgres' && pgMode === 'by_row') {
+      if (!pgRowId.trim()) {
+        setEmbedError('Enter a Primary Key value for By Row similarity search.');
+        return;
+      }
+    } else if (driver === 'postgres' && pgMode === 'sparse') {
+      if (activePgVecInfo.kind === 'sparsevec') {
+        const sp = parsePgSparseVec(pgSparseLiteral);
+        if (!sp) {
+          setEmbedError('Enter a valid sparsevec literal, e.g. {1:0.5,3:0.8}/1000');
+          return;
+        }
+        if (activePgVecInfo.dims && sp.dims !== activePgVecInfo.dims) {
+          setEmbedError(`Dimension mismatch: sparsevec has ${sp.dims} dims, column "${activeVectorCol}" expects ${activePgVecInfo.dims}.`);
+          return;
+        }
+      } else if (activePgVecInfo.kind === 'bit') {
+        const bv = parsePgBitVec(pgBitLiteral);
+        if (!bv) {
+          setEmbedError('Enter a valid binary bitstring (only 0 and 1), e.g. 10110010');
+          return;
+        }
+        if (activePgVecInfo.dims && bv.dims !== activePgVecInfo.dims) {
+          setEmbedError(`Dimension mismatch: bitstring has ${bv.dims} bits, column "${activeVectorCol}" expects ${activePgVecInfo.dims}.`);
+          return;
+        }
+      }
     } else if (inputMode === 'vector') {
       vec = parseVectorText(vectorText);
       if (!vec && !(driver === 'qdrant' && qdrantMode === 'hybrid' && sparseIndices.trim())) {
         setEmbedError('Enter a valid numeric vector array, e.g. [0.12, -0.04, 0.88]');
+        return;
+      }
+      if (driver === 'postgres' && Array.isArray(vec) && typeof vec[0] === 'number' && activePgVecInfo.dims && vec.length !== activePgVecInfo.dims) {
+        setEmbedError(`Dimension mismatch: input vector has ${vec.length} dims, column "${activeVectorCol}" expects ${activePgVecInfo.dims}.`);
         return;
       }
     } else {
@@ -1103,7 +1278,31 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       }
     }
 
+    if (driver === 'postgres' && pgMode === 'hybrid' && !pgHybridQuery.trim() && !textQuery.trim()) {
+      setEmbedError('Enter a full-text search phrase for Hybrid RRF.');
+      return;
+    }
+
     const sql = buildSearchQuery(vec);
+    if (driver === 'postgres') {
+      const sessionParams: Record<string, string> = {};
+      if (pgEfSearch.trim() && Number.isFinite(Number(pgEfSearch))) {
+        sessionParams['hnsw.ef_search'] = String(Math.max(1, Math.floor(Number(pgEfSearch))));
+      }
+      if (pgProbes.trim() && Number.isFinite(Number(pgProbes))) {
+        sessionParams['ivfflat.probes'] = String(Math.max(1, Math.floor(Number(pgProbes))));
+      }
+      if (pgIterativeScan !== 'off') {
+        sessionParams['hnsw.iterative_scan'] = pgIterativeScan;
+        sessionParams['ivfflat.iterative_scan'] = pgIterativeScan;
+      }
+      if (pgExactSearch) {
+        sessionParams['enable_indexscan'] = 'off';
+        sessionParams['enable_bitmapscan'] = 'off';
+      }
+      onExecuteVectorSearch(sql, sessionParams);
+      return;
+    }
     onExecuteVectorSearch(sql);
   };
 
@@ -1299,6 +1498,34 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
               </div>
             )}
 
+            {/* PostgreSQL pgvector Mode Selector */}
+            {driver === 'postgres' && (
+              <div className="inline-flex flex-wrap rounded bg-[#101115] border border-[#272932] p-0.5">
+                {(
+                  [
+                    { id: 'similarity', label: 'Similarity' },
+                    { id: 'hybrid', label: 'Hybrid (RRF)' },
+                    { id: 'two_stage', label: '2-Stage Quantized' },
+                    { id: 'sparse', label: 'Sparse / Bit' },
+                    { id: 'by_row', label: 'By Row ID' },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setPgMode(m.id)}
+                    className={`px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
+                      pgMode === m.id
+                        ? 'bg-emerald-600 text-white font-medium'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Input mode toggle */}
             {!(
               driver === 'qdrant' &&
@@ -1306,6 +1533,9 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
             ) && !(
               driver === 'elasticsearch' &&
               (esMode === 'fulltext' || esMode === 'mlt')
+            ) && !(
+              driver === 'postgres' &&
+              (pgMode === 'by_row' || pgMode === 'sparse')
             ) && (
               <div className="inline-flex rounded bg-[#101115] border border-[#272932] p-0.5">
                 <button
@@ -1376,21 +1606,45 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
 
             {/* Distance Metric (for pgvector) */}
             {driver === 'postgres' && (
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] text-zinc-500">Metric:</span>
-                <select
-                  value={metric}
-                  onChange={(e) => setMetric(e.target.value as VectorDistanceMetric)}
-                  className="rounded bg-[#101115] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 focus:border-violet-500 focus:outline-none"
+              <>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-zinc-500">Metric:</span>
+                  <select
+                    value={metric}
+                    onChange={(e) => setMetric(e.target.value as VectorDistanceMetric)}
+                    className="rounded bg-[#101115] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 focus:border-violet-500 focus:outline-none"
+                  >
+                    <option value="cosine">Cosine (&lt;=&gt;)</option>
+                    <option value="l2">L2 (&lt;-&gt;)</option>
+                    <option value="ip">Inner Product (&lt;#&gt;)</option>
+                    <option value="l1">L1 / Manhattan (&lt;+&gt;)</option>
+                    <option value="hamming">Hamming (&lt;~&gt; bit)</option>
+                    <option value="jaccard">Jaccard (&lt;%&gt; bit)</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPgAdvanced((v) => !v)}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] cursor-pointer ${
+                    showPgAdvanced
+                      ? 'bg-blue-600/20 border-blue-500/40 text-blue-200'
+                      : 'bg-[#1b1d25] hover:bg-[#252833] text-zinc-300 border-[#2d303c]'
+                  }`}
                 >
-                  <option value="cosine">Cosine (&lt;=&gt;)</option>
-                  <option value="l2">L2 (&lt;-&gt;)</option>
-                  <option value="ip">Inner Product (&lt;#&gt;)</option>
-                  <option value="l1">L1 / Manhattan (&lt;+&gt;)</option>
-                  <option value="hamming">Hamming (&lt;~&gt; bit)</option>
-                  <option value="jaccard">Jaccard (&lt;%&gt; bit)</option>
-                </select>
-              </div>
+                  <SlidersHorizontal className="h-3 w-3" />
+                  <span>PG Search Params</span>
+                </button>
+                {onOpenVectorIndexModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenVectorIndexModal}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[#1b1d25] hover:bg-[#252833] text-cyan-300 border border-[#2d303c] text-[11px] cursor-pointer"
+                    title="Inspect, create, or advise pgvector HNSW / IVFFlat indexes"
+                  >
+                    <span>Manage Indexes</span>
+                  </button>
+                )}
+              </>
             )}
 
             <button
@@ -1552,6 +1806,183 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                   <span>Like Document _id (instead of raw text)</span>
                 </label>
               )}
+            </div>
+          )}
+
+          {/* PostgreSQL Search Params & Opclass Guard */}
+          {driver === 'postgres' && showPgAdvanced && (
+            <div className="flex flex-wrap items-center gap-3 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <label className="flex items-center gap-1.5 text-zinc-400">
+                <span>hnsw.ef_search:</span>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="40"
+                  value={pgEfSearch}
+                  onChange={(e) => setPgEfSearch(e.target.value)}
+                  className="w-16 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-zinc-400">
+                <span>ivfflat.probes:</span>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="1"
+                  value={pgProbes}
+                  onChange={(e) => setPgProbes(e.target.value)}
+                  className="w-16 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-zinc-400">
+                <span>iterative_scan:</span>
+                <select
+                  value={pgIterativeScan}
+                  onChange={(e) => setPgIterativeScan(e.target.value as any)}
+                  className="rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200"
+                >
+                  <option value="off">off</option>
+                  <option value="relaxed_order">relaxed_order (0.8+)</option>
+                  <option value="strict_order">strict_order (0.8+)</option>
+                </select>
+              </label>
+              {pgMode === 'two_stage' && (
+                <label className="flex items-center gap-1.5 text-zinc-400">
+                  <span>Oversample:</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={20}
+                    value={pgOversample}
+                    onChange={(e) => setPgOversample(Math.max(2, Math.min(20, Number(e.target.value) || 5)))}
+                    className="w-14 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                  />
+                  <span>×</span>
+                </label>
+              )}
+              <label className="flex items-center gap-1.5 text-zinc-300 cursor-pointer">
+                <input type="checkbox" checked={pgExactSearch} onChange={(e) => setPgExactSearch(e.target.checked)} />
+                <span>Exact Search (Seq Scan)</span>
+              </label>
+            </div>
+          )}
+
+          {driver === 'postgres' && pgOverview && (() => {
+            const expectedOp = getOpclassFor(activePgVecInfo.kind || 'vector', metric as any);
+            const matchingIdx = (pgOverview.indexes || []).find(
+              (ix: any) =>
+                ix.columnOrExpr?.toLowerCase().includes(activeVectorCol.toLowerCase()) &&
+                (!expectedOp || ix.opclass === expectedOp)
+            );
+            const colIdxs = (pgOverview.indexes || []).filter((ix: any) =>
+              ix.columnOrExpr?.toLowerCase().includes(activeVectorCol.toLowerCase())
+            );
+            const hasMismatch = !matchingIdx && colIdxs.length > 0;
+            const filterActive = Boolean(filterInput.trim());
+            const showIterWarning = filterActive && pgIterativeScan === 'off' && pgVecStatus?.supportsIterative;
+            return (
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                {matchingIdx ? (
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-mono">
+                    Indexed: {matchingIdx.indexName} ({matchingIdx.method?.toUpperCase()} • {matchingIdx.opclass} • {matchingIdx.sizePretty})
+                  </span>
+                ) : hasMismatch ? (
+                  <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 flex items-center gap-1.5">
+                    <span>
+                      ⚠ Opclass mismatch: index uses {colIdxs[0].opclass || 'different ops'}, query uses {expectedOp || metric} (will Seq Scan)
+                    </span>
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded bg-zinc-800/70 border border-zinc-700 text-zinc-400">
+                    No vector index on "{activeVectorCol}" (Exact Seq Scan)
+                  </span>
+                )}
+                {showIterWarning && (
+                  <button
+                    type="button"
+                    onClick={() => setPgIterativeScan('relaxed_order')}
+                    className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 cursor-pointer"
+                  >
+                    Filter active: Enable iterative_scan (relaxed_order)
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
+          {driver === 'postgres' && pgMode === 'hybrid' && (
+            <div className="flex flex-wrap items-center gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <select
+                value={pgHybridTextCol}
+                onChange={(e) => setPgHybridTextCol(e.target.value)}
+                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+                title="Text / tsvector column for Full-Text Search"
+              >
+                {textColumns.map((tc) => (
+                  <option key={tc.name} value={tc.name}>{tc.name}</option>
+                ))}
+              </select>
+              <select
+                value={pgHybridLang}
+                onChange={(e) => setPgHybridLang(e.target.value as any)}
+                className="rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200"
+              >
+                <option value="english">english</option>
+                <option value="indonesian">indonesian</option>
+                <option value="simple">simple</option>
+              </select>
+              <input
+                type="text"
+                placeholder="Full-text query phrase (websearch_to_tsquery)..."
+                value={pgHybridQuery}
+                onChange={(e) => setPgHybridQuery(e.target.value)}
+                className="flex-1 min-w-[200px] rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200"
+              />
+              <label className="flex items-center gap-1 text-zinc-400">
+                <span>RRF k:</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={pgRrfK}
+                  onChange={(e) => setPgRrfK(Math.max(1, Number(e.target.value) || 60))}
+                  className="w-14 rounded bg-[#161820] border border-[#272932] px-1.5 py-0.5 text-zinc-200 font-mono"
+                />
+              </label>
+            </div>
+          )}
+
+          {driver === 'postgres' && pgMode === 'sparse' && (
+            <div className="flex flex-wrap items-center gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              {activePgVecInfo.kind === 'bit' ? (
+                <input
+                  type="text"
+                  placeholder="Binary bitstring e.g. 10110010... (or use Sample Row)"
+                  value={pgBitLiteral}
+                  onChange={(e) => setPgBitLiteral(e.target.value)}
+                  className="flex-1 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+                />
+              ) : (
+                <input
+                  type="text"
+                  placeholder="pgvector sparsevec literal e.g. {1:0.5,3:0.8}/1000"
+                  value={pgSparseLiteral}
+                  onChange={(e) => setPgSparseLiteral(e.target.value)}
+                  className="flex-1 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+                />
+              )}
+            </div>
+          )}
+
+          {driver === 'postgres' && pgMode === 'by_row' && (
+            <div className="flex items-center gap-2 p-2 rounded bg-[#101115] border border-[#272932] text-[11px]">
+              <span className="text-zinc-400">Source Primary Key ({primaryKeys[0] || columns[0]?.name || 'id'}):</span>
+              <input
+                type="text"
+                placeholder="Enter row ID to find similar rows..."
+                value={pgRowId}
+                onChange={(e) => setPgRowId(e.target.value)}
+                className="flex-1 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-zinc-200 font-mono"
+              />
             </div>
           )}
 

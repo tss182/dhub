@@ -1315,6 +1315,37 @@ export const DataGrid: React.FC<DataGridProps> = ({
     );
   };
 
+  const handleFindSimilarPgRow = (rowIndex: number) => {
+    const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
+    const targetRow = rows[rowInArray] || rows[rowIndex];
+    const pkColName = primaryKeys[0] || columns[0]?.name;
+    const pkIdx = columns.findIndex((c) => c.name === pkColName);
+    const vecCol = columns.find((c) => {
+      const dt = (c.dataType || c.rawType || '').toLowerCase();
+      return dt.startsWith('vector') || dt.startsWith('halfvec') || dt.startsWith('sparsevec');
+    });
+    if (pkIdx < 0 || !vecCol) return;
+    const rawPk = targetRow?.[pkIdx];
+    if (rawPk === undefined || rawPk === null) return;
+    const pkLit = typeof rawPk === 'number' || /^\d+$/.test(String(rawPk).trim())
+      ? String(rawPk).trim()
+      : `'${String(rawPk).replace(/'/g, "''")}'`;
+    const sch = schema && schema !== 'main' ? `"${schema.replace(/"/g, '""')}".` : '';
+    const tbl = `"${(tableName || 'table').replace(/"/g, '""')}"`;
+    const pkQ = `"${pkColName.replace(/"/g, '""')}"`;
+    const vecQ = `"${vecCol.name.replace(/"/g, '""')}"`;
+    const sqlStr = `WITH target AS (\n  SELECT ${vecQ} AS vec FROM ${sch}${tbl} WHERE ${pkQ} = ${pkLit} LIMIT 1\n)\nSELECT t.*, 1 - (t.${vecQ} <=> target.vec) AS score\nFROM ${sch}${tbl} t, target\nWHERE t.${pkQ} <> ${pkLit} AND t.${vecQ} IS NOT NULL\nORDER BY t.${vecQ} <=> target.vec\nLIMIT 20;\n`;
+    const workbenchStore = useWorkbenchStore.getState();
+    const currentTab = workbenchStore.tabs.find((t) => t.id === tabId);
+    workbenchStore.createConsole(
+      currentTab?.connectionId || connectionId || '',
+      currentTab?.database || database || '',
+      currentTab?.schema || schema || '',
+      `similar_${tableName || 'rows'}.sql`,
+      sqlStr
+    );
+  };
+
   const handleFindSimilarDoc = (rowIndex: number) => {
     const rowInArray = rowIndex >= (startOffset || 0) ? rowIndex - (startOffset || 0) : rowIndex;
     const targetRow = rows[rowInArray] || rows[rowIndex];
@@ -3467,7 +3498,7 @@ export const DataGrid: React.FC<DataGridProps> = ({
         onOpenRedisRenameModal={(oldKeyName) => setRedisRenameModal({ isOpen: true, oldKeyName })}
         onOpenUpdateQueryInTab={openUpdateQueryInTab}
         onFindSimilarPoint={isQdrant ? handleFindSimilarPoint : undefined}
-        onFindSimilarDoc={isElasticsearch ? handleFindSimilarDoc : undefined}
+        onFindSimilarDoc={isElasticsearch ? handleFindSimilarDoc : driver === 'postgres' && columns.some((c) => /^(vector|halfvec|sparsevec)\b/i.test(c.dataType || c.rawType || '')) ? handleFindSimilarPgRow : undefined}
         onOpenQdrantFacet={
           isQdrant && tableName
             ? (colName) => setQdrantFacetCol(colName)

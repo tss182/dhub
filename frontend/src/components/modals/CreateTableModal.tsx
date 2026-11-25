@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { ConnectionConfig, ColumnMeta, CheckConstraintMeta, ForeignKeyMeta, TriggerMeta, resolveConnectionEnv } from '../../types/domain';
 import { quoteSqlIdentifier } from '../../utils/sqlIdentifier';
+import { detectPgVectorColumnKind, getOpclassFor, getMaxIndexDimsForKind } from '../../utils/pgvector';
 import { IndexMeta } from '../../../bindings/dhub/internal/driver/models';
 import { QueryService, SchemaService } from '../../../bindings/dhub/internal/services';
 import { alertSuccess, alertError, alertWarning } from '../../stores/useAlertStore';
@@ -87,6 +88,13 @@ export interface IndexDefinition {
   method: string;
   columns: IndexColumnConfig[];
   comment?: string;
+  opclass?: string;
+  withM?: string;
+  withEfConstruction?: string;
+  withLists?: string;
+  quantization?: 'none' | 'halfvec' | 'binary';
+  whereClause?: string;
+  concurrently?: boolean;
 }
 
 export interface CheckConstraintDefinition {
@@ -993,6 +1001,43 @@ function generateAlterSql({
     });
 
     const pgValidMethods = ['BTREE', 'HASH', 'GIN', 'GIST', 'BRIN', 'SPGIST', 'HNSW', 'IVFFLAT'];
+    const buildPgIndexColsExpr = (idx: IndexDefinition, validCols: IndexColumnConfig[]) => {
+      const methodUpper = (idx.method || '').toUpperCase();
+      const isVecMethod = methodUpper === 'HNSW' || methodUpper === 'IVFFLAT';
+      return validCols
+        .map((c, colIdx) => {
+          const colMeta = validNewCols.find((nc) => nc.name.trim() === c.name.trim());
+          const vecInfo = colMeta ? detectPgVectorColumnKind(colMeta.dataType, colMeta.lengthOrValues ? `${colMeta.dataType}(${colMeta.lengthOrValues})` : colMeta.dataType) : null;
+          let expr = `"${c.name.trim()}"`;
+          if (isVecMethod && colIdx === 0 && idx.quantization && idx.quantization !== 'none') {
+            const dims = vecInfo?.dims || (colMeta?.lengthOrValues ? parseInt(colMeta.lengthOrValues, 10) : 0);
+            if (idx.quantization === 'halfvec' && dims > 0) {
+              expr = `(${expr}::halfvec(${dims}))`;
+            } else if (idx.quantization === 'binary' && dims > 0) {
+              expr = `(binary_quantize(${expr})::bit(${dims}))`;
+            }
+          }
+          if (isVecMethod && colIdx === 0 && idx.opclass?.trim()) {
+            expr += ` ${idx.opclass.trim()}`;
+          } else if (!isVecMethod && c.order === 'DESC') {
+            expr += ' DESC';
+          }
+          return expr;
+        })
+        .join(', ');
+    };
+    const buildPgIndexWithClause = (idx: IndexDefinition) => {
+      const methodUpper = (idx.method || '').toUpperCase();
+      const parts: string[] = [];
+      if (methodUpper === 'HNSW') {
+        if (idx.withM?.trim()) parts.push(`m = ${idx.withM.trim()}`);
+        if (idx.withEfConstruction?.trim()) parts.push(`ef_construction = ${idx.withEfConstruction.trim()}`);
+      } else if (methodUpper === 'IVFFLAT') {
+        if (idx.withLists?.trim()) parts.push(`lists = ${idx.withLists.trim()}`);
+      }
+      return parts.length > 0 ? ` WITH (${parts.join(', ')})` : '';
+    };
+
     indexes.forEach((idx) => {
       const validCols = idx.columns.filter((c) => c.name.trim() && validNewCols.some((nc) => nc.name.trim() === c.name.trim()));
       if (validCols.length === 0) return;
@@ -1003,16 +1048,20 @@ function generateAlterSql({
       const uniqueKw = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
       const methodUpper = (idx.method || '').toUpperCase();
       const methodKw = methodUpper && pgValidMethods.includes(methodUpper) ? ` USING ${methodUpper}` : '';
-      const cols = validCols.map((c) => `"${c.name.trim()}"${c.order === 'DESC' ? ' DESC' : ''}`).join(', ');
+      const cols = buildPgIndexColsExpr(idx, validCols);
+      const withClause = buildPgIndexWithClause(idx);
+      const whereClause = idx.whereClause?.trim() ? ` WHERE ${idx.whereClause.trim()}` : '';
+      const concKw = idx.concurrently ? 'CONCURRENTLY ' : '';
       if (!origMatch) {
-        statements.push(`CREATE ${uniqueKw}INDEX IF NOT EXISTS "${idxName}" ON ${tableTarget}${methodKw} (${cols});`);
+        statements.push(`CREATE ${uniqueKw}INDEX ${concKw}IF NOT EXISTS "${idxName}" ON ${tableTarget}${methodKw} (${cols})${withClause}${whereClause};`);
       } else {
         const origColsSig = (origMatch.columns || []).join(',');
         const newColsSig = validCols.map((c) => c.name.trim()).join(',');
         const methodChanged = methodUpper && origMatch.method && origMatch.method.toUpperCase() !== methodUpper;
-        if (origMatch.name !== idxName || origColsSig !== newColsSig || origMatch.isUnique !== (idx.type === 'UNIQUE') || methodChanged) {
-          statements.push(`DROP INDEX IF EXISTS ${schemaPrefix}"${origMatch.name}";`);
-          statements.push(`CREATE ${uniqueKw}INDEX "${idxName}" ON ${tableTarget}${methodKw} (${cols});`);
+        const hasPgVecOpts = Boolean(idx.opclass?.trim() || idx.withM?.trim() || idx.withEfConstruction?.trim() || idx.withLists?.trim() || (idx.quantization && idx.quantization !== 'none') || idx.whereClause?.trim());
+        if (origMatch.name !== idxName || origColsSig !== newColsSig || origMatch.isUnique !== (idx.type === 'UNIQUE') || methodChanged || hasPgVecOpts) {
+          statements.push(`DROP INDEX ${concKw}IF EXISTS ${schemaPrefix}"${origMatch.name}";`);
+          statements.push(`CREATE ${uniqueKw}INDEX ${concKw}"${idxName}" ON ${tableTarget}${methodKw} (${cols})${withClause}${whereClause};`);
         }
       }
     });
@@ -1578,10 +1627,26 @@ function generateCreateTableSql({
       const validCols = idx.columns.filter((c) => c.name.trim() && validColNames.includes(c.name.trim()));
       if (validCols.length === 0) return;
 
+      const methodUpper = (idx.method || '').toUpperCase();
+      const isVecMethod = methodUpper === 'HNSW' || methodUpper === 'IVFFLAT';
       const colParts = validCols
-        .map((c) => {
+        .map((c, colIdx) => {
+          const colMeta = columns.find((nc) => nc.name.trim() === c.name.trim());
+          const vecInfo = colMeta ? detectPgVectorColumnKind(colMeta.dataType, colMeta.lengthOrValues ? `${colMeta.dataType}(${colMeta.lengthOrValues})` : colMeta.dataType) : null;
           let part = `"${c.name.trim()}"`;
-          if (c.order === 'DESC') part += ' DESC';
+          if (isVecMethod && colIdx === 0 && idx.quantization && idx.quantization !== 'none') {
+            const dims = vecInfo?.dims || (colMeta?.lengthOrValues ? parseInt(colMeta.lengthOrValues, 10) : 0);
+            if (idx.quantization === 'halfvec' && dims > 0) {
+              part = `(${part}::halfvec(${dims}))`;
+            } else if (idx.quantization === 'binary' && dims > 0) {
+              part = `(binary_quantize(${part})::bit(${dims}))`;
+            }
+          }
+          if (isVecMethod && colIdx === 0 && idx.opclass?.trim()) {
+            part += ` ${idx.opclass.trim()}`;
+          } else if (!isVecMethod && c.order === 'DESC') {
+            part += ' DESC';
+          }
           return part;
         })
         .join(', ');
@@ -1589,10 +1654,19 @@ function generateCreateTableSql({
       const autoPrefix = idx.type === 'UNIQUE' ? 'uk' : 'idx';
       const idxName = idx.name.trim() || `${autoPrefix}_${cleanTable}_${validCols.map((c) => c.name.trim()).join('_')}`;
       const isUnique = idx.type === 'UNIQUE' ? 'UNIQUE ' : '';
-      const methodUpper = (idx.method || '').toUpperCase();
       const methodClause = methodUpper && ['BTREE', 'HASH', 'GIN', 'GIST', 'BRIN', 'SPGIST', 'HNSW', 'IVFFLAT'].includes(methodUpper) ? ` USING ${methodUpper}` : '';
 
-      statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON ${schemaPrefix}"${cleanTable}"${methodClause} (${colParts});`);
+      const withParts: string[] = [];
+      if (methodUpper === 'HNSW') {
+        if (idx.withM?.trim()) withParts.push(`m = ${idx.withM.trim()}`);
+        if (idx.withEfConstruction?.trim()) withParts.push(`ef_construction = ${idx.withEfConstruction.trim()}`);
+      } else if (methodUpper === 'IVFFLAT') {
+        if (idx.withLists?.trim()) withParts.push(`lists = ${idx.withLists.trim()}`);
+      }
+      const withClause = withParts.length > 0 ? ` WITH (${withParts.join(', ')})` : '';
+      const whereClause = idx.whereClause?.trim() ? ` WHERE ${idx.whereClause.trim()}` : '';
+
+      statements.push(`CREATE ${isUnique}INDEX "${idxName}" ON ${schemaPrefix}"${cleanTable}"${methodClause} (${colParts})${withClause}${whereClause};`);
     });
 
     triggers.forEach((trg) => {
@@ -1942,6 +2016,10 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         { value: 'HASH', label: 'HASH' },
         { value: 'GIN', label: 'GIN' },
         { value: 'GIST', label: 'GIST' },
+        { value: 'BRIN', label: 'BRIN' },
+        { value: 'SPGIST', label: 'SPGIST' },
+        { value: 'HNSW', label: 'HNSW (pgvector)' },
+        { value: 'IVFFLAT', label: 'IVFFLAT (pgvector)' },
       ];
     }
     return [
@@ -3733,11 +3811,169 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
                         <label className="text-[#999ca3] font-medium">Method</label>
                         <CustomSelect
                           value={activeIdx.method}
-                          onChange={(val) => handleUpdateIndex(activeIdx.id, { method: val })}
+                          onChange={(val) => {
+                            const upper = val.toUpperCase();
+                            const patch: Partial<IndexDefinition> = { method: val };
+                            if (driver === 'postgres' && (upper === 'HNSW' || upper === 'IVFFLAT')) {
+                              const firstColName = activeIdx.columns[0]?.name;
+                              const firstCol = columns.find((c) => c.name.trim() === firstColName);
+                              const vInfo = firstCol ? detectPgVectorColumnKind(firstCol.dataType, firstCol.lengthOrValues ? `${firstCol.dataType}(${firstCol.lengthOrValues})` : firstCol.dataType) : null;
+                              if (!activeIdx.opclass && vInfo?.kind) {
+                                patch.opclass = getOpclassFor(vInfo.kind, 'cosine') || undefined;
+                              }
+                              if (upper === 'HNSW') {
+                                if (!activeIdx.withM) patch.withM = '16';
+                                if (!activeIdx.withEfConstruction) patch.withEfConstruction = '64';
+                              } else if (upper === 'IVFFLAT') {
+                                if (!activeIdx.withLists) patch.withLists = '100';
+                              }
+                            }
+                            handleUpdateIndex(activeIdx.id, patch);
+                          }}
                           options={indexMethodOptions}
                         />
                       </div>
                     )}
+
+                    {driver === 'postgres' && (activeIdx.method.toUpperCase() === 'HNSW' || activeIdx.method.toUpperCase() === 'IVFFLAT') && (() => {
+                      const firstColName = activeIdx.columns[0]?.name;
+                      const firstCol = columns.find((c) => c.name.trim() === firstColName);
+                      const vInfo = firstCol
+                        ? detectPgVectorColumnKind(firstCol.dataType, firstCol.lengthOrValues ? `${firstCol.dataType}(${firstCol.lengthOrValues})` : firstCol.dataType)
+                        : null;
+                      const effectiveKind =
+                        activeIdx.quantization === 'halfvec'
+                          ? 'halfvec'
+                          : activeIdx.quantization === 'binary'
+                          ? 'bit'
+                          : vInfo?.kind || 'vector';
+                      const dims = vInfo?.dims || (firstCol?.lengthOrValues ? parseInt(firstCol.lengthOrValues, 10) : 0);
+                      const maxDims = getMaxIndexDimsForKind(effectiveKind);
+                      const opclassOptions =
+                        effectiveKind === 'halfvec'
+                          ? ['halfvec_cosine_ops', 'halfvec_l2_ops', 'halfvec_ip_ops', 'halfvec_l1_ops']
+                          : effectiveKind === 'sparsevec'
+                          ? ['sparsevec_l2_ops', 'sparsevec_ip_ops', 'sparsevec_cosine_ops']
+                          : effectiveKind === 'bit'
+                          ? ['bit_hamming_ops', 'bit_jaccard_ops']
+                          : ['vector_cosine_ops', 'vector_l2_ops', 'vector_ip_ops', 'vector_l1_ops'];
+
+                      return (
+                        <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 space-y-2.5">
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
+                            pgvector {activeIdx.method.toUpperCase()} Index Options
+                          </div>
+
+                          <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                            <label className="text-[#999ca3] font-medium text-xs">Operator Class</label>
+                            <select
+                              value={activeIdx.opclass || opclassOptions[0]}
+                              onChange={(e) => handleUpdateIndex(activeIdx.id, { opclass: e.target.value })}
+                              className="h-8 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] text-xs font-mono text-[#dfe1e5]"
+                            >
+                              {opclassOptions.map((oc) => (
+                                <option key={oc} value={oc}>{oc}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                            <label className="text-[#999ca3] font-medium text-xs">Quantization</label>
+                            <select
+                              value={activeIdx.quantization || 'none'}
+                              onChange={(e) => {
+                                const q = e.target.value as 'none' | 'halfvec' | 'binary';
+                                const nextKind = q === 'halfvec' ? 'halfvec' : q === 'binary' ? 'bit' : (vInfo?.kind || 'vector');
+                                handleUpdateIndex(activeIdx.id, {
+                                  quantization: q,
+                                  opclass: getOpclassFor(nextKind, q === 'binary' ? 'hamming' : 'cosine') || undefined,
+                                });
+                              }}
+                              className="h-8 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] text-xs text-[#dfe1e5]"
+                            >
+                              <option value="none">None (native column type)</option>
+                              <option value="halfvec">Scalar Halfvec (col::halfvec(dims))</option>
+                              <option value="binary">Binary Quantize (binary_quantize(col)::bit(dims))</option>
+                            </select>
+                          </div>
+
+                          {activeIdx.method.toUpperCase() === 'HNSW' ? (
+                            <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                              <label className="text-[#999ca3] font-medium text-xs">HNSW WITH Params</label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={2}
+                                  max={100}
+                                  value={activeIdx.withM ?? '16'}
+                                  onChange={(e) => handleUpdateIndex(activeIdx.id, { withM: e.target.value })}
+                                  placeholder="m (16)"
+                                  className="w-24 h-8 px-2 rounded bg-[#2b2d30] border border-[#393b40] text-xs font-mono text-[#dfe1e5]"
+                                />
+                                <span className="text-[11px] text-[#80858f]">m</span>
+                                <input
+                                  type="number"
+                                  min={4}
+                                  max={1000}
+                                  value={activeIdx.withEfConstruction ?? '64'}
+                                  onChange={(e) => handleUpdateIndex(activeIdx.id, { withEfConstruction: e.target.value })}
+                                  placeholder="ef_construction (64)"
+                                  className="w-28 h-8 px-2 rounded bg-[#2b2d30] border border-[#393b40] text-xs font-mono text-[#dfe1e5]"
+                                />
+                                <span className="text-[11px] text-[#80858f]">ef_construction</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                              <label className="text-[#999ca3] font-medium text-xs">IVFFlat WITH Params</label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={activeIdx.withLists ?? '100'}
+                                  onChange={(e) => handleUpdateIndex(activeIdx.id, { withLists: e.target.value })}
+                                  placeholder="lists (100)"
+                                  className="w-28 h-8 px-2 rounded bg-[#2b2d30] border border-[#393b40] text-xs font-mono text-[#dfe1e5]"
+                                />
+                                <span className="text-[11px] text-[#80858f]">lists (rule of thumb: rows/1000 or sqrt(rows))</span>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                            <label className="text-[#999ca3] font-medium text-xs">Partial WHERE</label>
+                            <input
+                              type="text"
+                              value={activeIdx.whereClause || ''}
+                              onChange={(e) => handleUpdateIndex(activeIdx.id, { whereClause: e.target.value })}
+                              placeholder="e.g. status = 'active' AND deleted_at IS NULL"
+                              className="h-8 px-2.5 rounded bg-[#2b2d30] border border-[#393b40] text-xs font-mono text-[#dfe1e5]"
+                            />
+                          </div>
+
+                          {mode === 'edit' && (
+                            <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                              <label className="text-[#999ca3] font-medium text-xs">Build Mode</label>
+                              <label className="inline-flex items-center gap-2 text-xs text-[#dfe1e5] cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(activeIdx.concurrently)}
+                                  onChange={(e) => handleUpdateIndex(activeIdx.id, { concurrently: e.target.checked })}
+                                  className="rounded border-[#393b40] bg-[#2b2d30] accent-emerald-500"
+                                />
+                                <span>CREATE INDEX CONCURRENTLY (non-blocking)</span>
+                              </label>
+                            </div>
+                          )}
+
+                          {dims > 0 && dims > maxDims && (
+                            <div className="rounded bg-amber-500/15 border border-amber-500/40 px-2.5 py-1.5 text-[11px] text-amber-200">
+                              Column has {dims} dimensions, exceeding the {maxDims}-dim limit for {effectiveKind}. Switch Quantization to <strong>halfvec</strong> (up to 4,000 dims) or <strong>binary</strong> (up to 64,000 bits).
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     <div className="grid grid-cols-[140px_1fr] items-start gap-4">
                       <label className="text-[#999ca3] font-medium pt-1">Indexed Columns</label>

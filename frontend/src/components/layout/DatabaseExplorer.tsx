@@ -23,6 +23,7 @@ import { MongoCloneCollectionModal } from '../modals/MongoCloneCollectionModal';
 import { MongoInfoModal } from '../modals/MongoInfoModal';
 import { MongoGridFSModal } from '../modals/MongoGridFSModal';
 import { MongoChangeStreamModal } from '../modals/MongoChangeStreamModal';
+import { PgVectorIndexModal } from '../modals/PgVectorIndexModal';
 
 const ExportModal = lazy(() =>
   import('../modals/ExportModal').then((m) => ({ default: m.ExportModal }))
@@ -285,6 +286,13 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     connectionId: string;
     connectionName: string;
   }>({ isOpen: false, connectionId: '', connectionName: '' });
+  const [pgVectorIndexModal, setPgVectorIndexModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    schema: string;
+    tableName: string;
+  }>({ isOpen: false, connectionId: '', database: '', schema: '', tableName: '' });
   const [qdrantInfoModal, setQdrantInfoModal] = useState<{
     isOpen: boolean;
     connectionId: string;
@@ -6994,6 +7002,30 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                     </button>
                   </>
 
+                  {contextMenu.connection!.driver === 'postgres' && contextMenu.table!.type !== 'view' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const conn = contextMenu.connection!;
+                        const db = contextMenu.database || conn.databaseName || 'postgres';
+                        const sch = contextMenu.schema || 'public';
+                        const tbl = contextMenu.table!.name;
+                        closeContextMenu();
+                        setPgVectorIndexModal({
+                          isOpen: true,
+                          connectionId: conn.id,
+                          database: db,
+                          schema: sch,
+                          tableName: tbl,
+                        });
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-blue-600 hover:text-white text-zinc-300 transition-colors text-left cursor-pointer group"
+                    >
+                      <Layers className="h-3.5 w-3.5 text-emerald-400 group-hover:text-white" />
+                      <span>Manage Vector Indexes (pgvector)...</span>
+                    </button>
+                  )}
+
                   {(contextMenu.connection!.driver === 'postgres' || contextMenu.connection!.driver === 'mysql' || contextMenu.connection!.driver === 'mariadb') && !contextMenu.connection!.isReadOnly && (
                     <button
                       type="button"
@@ -8231,6 +8263,27 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
         connectionId={mongoTailModal.connectionId}
         database={mongoTailModal.database}
         collectionName={mongoTailModal.collectionName}
+      />
+
+      <PgVectorIndexModal
+        isOpen={pgVectorIndexModal.isOpen}
+        onClose={() => setPgVectorIndexModal((prev) => ({ ...prev, isOpen: false }))}
+        connectionId={pgVectorIndexModal.connectionId}
+        database={pgVectorIndexModal.database}
+        schema={pgVectorIndexModal.schema}
+        tableName={pgVectorIndexModal.tableName}
+        onOpenInConsole={(sql) => {
+          openTab({
+            id: `console-pgvec-${Date.now()}`,
+            type: 'worksheet',
+            title: `${pgVectorIndexModal.tableName} (pgvector Index)`,
+            connectionId: pgVectorIndexModal.connectionId,
+            driver: 'postgres',
+            database: pgVectorIndexModal.database,
+            schema: pgVectorIndexModal.schema,
+            content: sql,
+          });
+        }}
       />
     </div>
   );

@@ -4,6 +4,7 @@ import { useWorkbenchStore } from './stores/useWorkbenchStore';
 import { useConnectionStore } from './stores/useConnectionStore';
 import { useGridEditStore } from './stores/useGridEditStore';
 import { QueryService, SchemaService, ConnectionService, WorkspaceService } from '../bindings/dhub/internal/services';
+import { Call } from '@wailsio/runtime';
 import { LeftSidebar, LeftSidebarTab } from './components/layout/LeftSidebar';
 import { DatabaseExplorer } from './components/layout/DatabaseExplorer';
 import { RightSidebar } from './components/layout/RightSidebar';
@@ -83,6 +84,9 @@ const SnippetsModal = lazy(() =>
 );
 const MockDataModal = lazy(() =>
   import('./components/modals/MockDataModal').then((m) => ({ default: m.MockDataModal }))
+);
+const PgVectorIndexModal = lazy(() =>
+  import('./components/modals/PgVectorIndexModal').then((m) => ({ default: m.PgVectorIndexModal }))
 );
 const UserManager = lazy(() =>
   import('./components/users/UserManager').then((m) => ({ default: m.UserManager }))
@@ -427,6 +431,14 @@ export function App() {
     >
   >({});
 
+  const [pgVectorIndexModal, setPgVectorIndexModal] = useState<{
+    isOpen: boolean;
+    connectionId: string;
+    database: string;
+    schema: string;
+    tableName: string;
+  }>({ isOpen: false, connectionId: '', database: '', schema: '', tableName: '' });
+
   // Query Result pagination & lazy load state per tab
   const [queryPaginationByTab, setQueryPaginationByTab] = useState<
     Record<
@@ -457,7 +469,7 @@ export function App() {
   const [vectorVizByTab, setVectorVizByTab] = useState<Record<string, boolean>>({});
   const [excludeVectorsByTab, setExcludeVectorsByTab] = useState<Record<string, boolean>>({});
 
-  const handleExecuteVectorSearch = async (tab: WorkbenchTab, sql: string) => {
+  const handleExecuteVectorSearch = async (tab: WorkbenchTab, sql: string, sessionParams?: Record<string, string>) => {
     if (!tab.connectionId || !tab.table) return;
     const { targetDb, targetSchema } = resolveTableTabMeta(tab);
     setVectorSearchByTab((prev) => ({
@@ -473,15 +485,26 @@ export function App() {
     try {
       const limitMatch = sql.match(/\bLIMIT\s+(\d+)\b/i);
       const requestedLimit = limitMatch ? Math.max(100, Number(limitMatch[1]) || 100) : 100;
-      const res = await QueryService.ExecuteQuery({
-        executionId: 'vec-search-' + Date.now(),
-        connectionId: tab.connectionId,
-        database: targetDb,
-        schema: targetSchema,
-        sql,
-        limit: requestedLimit,
-        offset: 0,
-      } as any);
+      const res: any =
+        sessionParams && Object.keys(sessionParams).length > 0
+          ? await Call.ByName('dhub/internal/services.QueryService.ExecutePgVectorSearch', {
+              executionId: 'vec-search-' + Date.now(),
+              connectionId: tab.connectionId,
+              database: targetDb,
+              schema: targetSchema,
+              sql,
+              limit: requestedLimit,
+              sessionParams,
+            })
+          : await QueryService.ExecuteQuery({
+              executionId: 'vec-search-' + Date.now(),
+              connectionId: tab.connectionId,
+              database: targetDb,
+              schema: targetSchema,
+              sql,
+              limit: requestedLimit,
+              offset: 0,
+            } as any);
 
       if (res?.error) {
         throw new Error(res.error);
@@ -3492,18 +3515,29 @@ export function App() {
                     return (
                     <div className="flex flex-col h-full min-h-0">
                       <VectorSearchPanel
+                        connectionId={activeTab.connectionId}
                         driver={effectiveDriver}
                         database={activeTab.database || ''}
                         schema={activeTab.schema || ''}
                         tableName={activeTab.table || ''}
                         columns={finalColumns}
                         rows={finalRows}
+                        primaryKeys={tableDataByTab[activeTab.id]?.primaryKeys || []}
                         isSearching={Boolean(vecState?.loading)}
                         isVectorSearchActive={Boolean(vecState?.active)}
                         searchStats={vecState?.stats || null}
                         error={vecState?.error || null}
-                        onExecuteVectorSearch={(sql) => handleExecuteVectorSearch(activeTab, sql)}
+                        onExecuteVectorSearch={(sql, sessionParams) => handleExecuteVectorSearch(activeTab, sql, sessionParams)}
                         onResetSearch={() => handleResetVectorSearch(activeTab)}
+                        onOpenVectorIndexModal={() =>
+                          setPgVectorIndexModal({
+                            isOpen: true,
+                            connectionId: activeTab.connectionId || '',
+                            database: activeTab.database || 'postgres',
+                            schema: activeTab.schema || 'public',
+                            tableName: activeTab.table || '',
+                          })
+                        }
                         showVisualization={isVectorViz}
                         onToggleVisualization={() =>
                           setVectorVizByTab((prev) => ({
@@ -4783,6 +4817,31 @@ export function App() {
           }
         }}
       />
+
+      {/* pgvector Index Manager & Advisor Modal */}
+      <Suspense fallback={null}>
+        <PgVectorIndexModal
+          isOpen={pgVectorIndexModal.isOpen}
+          onClose={() => setPgVectorIndexModal((prev) => ({ ...prev, isOpen: false }))}
+          connectionId={pgVectorIndexModal.connectionId}
+          database={pgVectorIndexModal.database}
+          schema={pgVectorIndexModal.schema}
+          tableName={pgVectorIndexModal.tableName}
+          onOpenInConsole={(sql) => {
+            const conn = connections.find((c) => c.id === pgVectorIndexModal.connectionId);
+            openTab({
+              id: `console-pgvec-${Date.now()}`,
+              type: 'worksheet',
+              title: `${pgVectorIndexModal.tableName} (pgvector Index)`,
+              connectionId: pgVectorIndexModal.connectionId,
+              driver: conn?.driver || 'postgres',
+              database: pgVectorIndexModal.database,
+              schema: pgVectorIndexModal.schema,
+              content: sql,
+            });
+          }}
+        />
+      </Suspense>
 
       {/* Resizing Backdrop Overlays */}
       {isDraggingBottomResizer && (
