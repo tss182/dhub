@@ -155,9 +155,11 @@ type StatementResult struct {
 	Columns      []ColumnMeta `json:"columns"`
 	Rows         [][]any      `json:"rows"`
 	RowsAffected int64        `json:"rowsAffected"`
+	LastInsertID int64        `json:"lastInsertId,omitempty"`
 	ElapsedMs    int64        `json:"elapsedMs"`
 	HasMore      bool         `json:"hasMore"`
 	Error        string       `json:"error,omitempty"`
+	Warnings     []string     `json:"warnings,omitempty"`
 }
 
 type QueryExecutionStats struct {
@@ -180,14 +182,54 @@ type QueryResult struct {
 	SourceTable  string               `json:"sourceTable"`
 	PrimaryKeys  []string             `json:"primaryKeys"`
 	Error        string               `json:"error,omitempty"`
-	Results      []StatementResult    `json:"results,omitempty"`
-	Stats        *QueryExecutionStats `json:"stats,omitempty"`
+	Results        []StatementResult    `json:"results,omitempty"`
+	Stats          *QueryExecutionStats `json:"stats,omitempty"`
+	ActiveDatabase string               `json:"activeDatabase,omitempty"`
+	SessionReset   bool                 `json:"sessionReset,omitempty"`
+	TxClosed       bool                 `json:"txClosed,omitempty"`
 }
 
 type RowChange struct {
 	Type       string         `json:"type"` // "insert" | "update" | "delete"
 	PrimaryKey map[string]any `json:"primaryKey"`
 	Changes    map[string]any `json:"changes"`
+}
+
+// ServerInfo describes the connected database server's flavor, version, and runtime capabilities.
+type ServerInfo struct {
+	Flavor                    string `json:"flavor"`
+	Version                   string `json:"version"`
+	Major                     int    `json:"major"`
+	Minor                     int    `json:"minor"`
+	Patch                     int    `json:"patch"`
+	VersionComment            string `json:"versionComment,omitempty"`
+	SQLMode                   string `json:"sqlMode,omitempty"`
+	TimeZone                  string `json:"timeZone,omitempty"`
+	SystemTimeZone            string `json:"systemTimeZone,omitempty"`
+	CharacterSetServer        string `json:"characterSetServer,omitempty"`
+	CollationServer           string `json:"collationServer,omitempty"`
+	LowerCaseTableNames       int    `json:"lowerCaseTableNames,omitempty"`
+	ExplicitDefaultsTimestamp bool   `json:"explicitDefaultsForTimestamp,omitempty"`
+	PerformanceSchema         bool   `json:"performanceSchema,omitempty"`
+	SupportsExplainTree       bool   `json:"supportsExplainTree,omitempty"`
+	SupportsExplainAnalyze    bool   `json:"supportsExplainAnalyze,omitempty"`
+	SupportsCheckConstraints  bool   `json:"supportsCheckConstraints,omitempty"`
+	SupportsFunctionalIndexes bool   `json:"supportsFunctionalIndexes,omitempty"`
+	SupportsInvisibleColumns  bool   `json:"supportsInvisibleColumns,omitempty"`
+	SupportsRoles             bool   `json:"supportsRoles,omitempty"`
+	SupportsSequences         bool   `json:"supportsSequences,omitempty"`
+	SupportsReturning         bool   `json:"supportsReturning,omitempty"`
+	SupportsIgnoredIndexes    bool   `json:"supportsIgnoredIndexes,omitempty"`
+}
+
+// ServerInfoProvider is optionally implemented by drivers that detect server version and flavor.
+type ServerInfoProvider interface {
+	ServerInfo(ctx context.Context) (*ServerInfo, error)
+}
+
+// RowStreamer is optionally implemented by drivers that stream query rows without OFFSET paging.
+type RowStreamer interface {
+	StreamQuery(ctx context.Context, req QueryRequest, onRow func(cols []ColumnMeta, row []any) error) error
 }
 
 type DatabaseDriver interface {

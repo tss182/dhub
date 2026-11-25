@@ -87,6 +87,16 @@ func (m *SessionManager) GetOrConnect(ctx context.Context, connectionID string) 
 	return m.connect(ctx, *cfg)
 }
 
+// GetExisting returns the active driver for connectionID without opening a new connection.
+func (m *SessionManager) GetExisting(connectionID string) driver.DatabaseDriver {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s, ok := m.sessions[connectionID]; ok && s != nil {
+		return s.Driver
+	}
+	return nil
+}
+
 func (m *SessionManager) TestConnection(ctx context.Context, cfg store.ConnectionConfig) error {
 	var tun *tunnel.Tunnel
 	var err error

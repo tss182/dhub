@@ -68,6 +68,9 @@ const DmlPreviewModal = lazy(() =>
 const RenameTabModal = lazy(() =>
   import('./components/modals/RenameTabModal').then((m) => ({ default: m.RenameTabModal }))
 );
+const RenameTableModal = lazy(() =>
+  import('./components/modals/RenameTableModal').then((m) => ({ default: m.RenameTableModal }))
+);
 const SchemaDiffModal = lazy(() =>
   import('./components/modals/SchemaDiffModal').then((m) => ({ default: m.SchemaDiffModal }))
 );
@@ -378,6 +381,26 @@ export function App() {
     id: '',
     title: '',
   });
+
+  // Rename Table Modal state
+  const [renameTableModal, setRenameTableModal] = useState<{
+    isOpen: boolean;
+    tabId: string;
+    connection: ConnectionConfig | null;
+    database: string;
+    schema: string;
+    tableName: string;
+    objectType?: string;
+  }>({
+    isOpen: false,
+    tabId: '',
+    connection: null,
+    database: '',
+    schema: '',
+    tableName: '',
+  });
+  const [copiedTableNameTabId, setCopiedTableNameTabId] = useState<string | null>(null);
+  const tableNameClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Tab-specific table data store
   const [tableDataByTab, setTableDataByTab] = useState<
@@ -1991,6 +2014,19 @@ export function App() {
         ...res,
         sql: (res as any)?.sql || sql,
       } as any);
+      if (currentTab && res?.activeDatabase && res.activeDatabase !== currentTab.database) {
+        updateTabDatabase(currentTab.id, res.activeDatabase, currentTab.schema || '');
+      }
+      if (currentTab && res?.txClosed) {
+        setTxStatusByTab((prev) => ({
+          ...prev,
+          [currentTab.id]: { mode: 'manual', isOpen: false, count: 0 },
+        }));
+        alertWarning('A statement implicitly committed and closed the active transaction.', 'Transaction Committed');
+      }
+      if (res?.sessionReset) {
+        alertWarning('The server session was reconnected; session variables and temporary tables were reset.', 'Session Reset');
+      }
       const lastResultIdx = Math.max(0, ((res as any)?.results?.length || 1) - 1);
       setActiveResultIndex(lastResultIdx);
       setQueryPagination({
@@ -3088,13 +3124,70 @@ export function App() {
                 {/* Table Tab Bar with Table Name, Database, and Refresh Button */}
                 <div className={`flex h-9 items-center justify-between border-b px-3 transition-colors ${tableHeaderBgClass}`}>
                   <div className="flex items-center gap-2 min-w-0">
-                    <Table className={`h-3.5 w-3.5 shrink-0 ${tableEnv === 'prod' ? 'text-rose-400' : 'text-emerald-400'}`} />
-                    <span
-                      className="font-semibold text-xs text-white truncate max-w-[320px]"
-                      title={activeTab.table}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        if (tableNameClickTimerRef.current) {
+                          clearTimeout(tableNameClickTimerRef.current);
+                          tableNameClickTimerRef.current = null;
+                        }
+                        if (e.detail > 1) return;
+                        const tableNameToCopy = activeTab.table || '';
+                        const targetTabId = activeTab.id;
+                        if (!tableNameToCopy) return;
+                        tableNameClickTimerRef.current = setTimeout(async () => {
+                          tableNameClickTimerRef.current = null;
+                          try {
+                            if (navigator?.clipboard?.writeText) {
+                              await navigator.clipboard.writeText(tableNameToCopy);
+                            } else {
+                              const textarea = document.createElement('textarea');
+                              textarea.value = tableNameToCopy;
+                              textarea.style.position = 'fixed';
+                              textarea.style.opacity = '0';
+                              document.body.appendChild(textarea);
+                              textarea.select();
+                              document.execCommand('copy');
+                              document.body.removeChild(textarea);
+                            }
+                            setCopiedTableNameTabId(targetTabId);
+                            setTimeout(() => {
+                              setCopiedTableNameTabId((prev) => (prev === targetTabId ? null : prev));
+                            }, 1500);
+                            alertSuccess(`Copied "${tableNameToCopy}" to clipboard`, 'Copied');
+                          } catch {
+                            alertError('Failed to copy table name to clipboard');
+                          }
+                        }, 220);
+                      }}
+                      onDoubleClick={() => {
+                        if (tableNameClickTimerRef.current) {
+                          clearTimeout(tableNameClickTimerRef.current);
+                          tableNameClickTimerRef.current = null;
+                        }
+                        if (!activeTab.table) return;
+                        const { targetDb, targetSchema, objectType } = resolveTableTabMeta(activeTab);
+                        setRenameTableModal({
+                          isOpen: true,
+                          tabId: activeTab.id,
+                          connection: tableConn || null,
+                          database: targetDb,
+                          schema: targetSchema,
+                          tableName: activeTab.table,
+                          objectType,
+                        });
+                      }}
+                      className="flex items-center gap-2 min-w-0 px-1.5 py-0.5 -ml-1.5 rounded hover:bg-[#22242c]/80 transition-colors cursor-pointer select-none"
+                      title={`${activeTab.table} — Click to copy, double-click to rename`}
                     >
-                      {activeTab.table}
-                    </span>
+                      <Table className={`h-3.5 w-3.5 shrink-0 ${tableEnv === 'prod' ? 'text-rose-400' : 'text-emerald-400'}`} />
+                      <span className="font-semibold text-xs text-white truncate max-w-[320px]">
+                        {activeTab.table}
+                      </span>
+                      {copiedTableNameTabId === activeTab.id && (
+                        <Check className="h-3 w-3 text-emerald-400 shrink-0" />
+                      )}
+                    </button>
                     {tableEnv !== 'local' && (
                       <span
                         className={`text-[9px] font-bold px-1.5 py-0.2 rounded border uppercase shrink-0 ${
@@ -3986,7 +4079,7 @@ export function App() {
                 {/* Bottom Panel Content */}
                 <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                   {activeBottomTab === 'result' ? (
-                    queryResult?.error ? (
+                    queryResult?.error && !(queryResult?.results && queryResult.results.length > 1) ? (
                       <div className="p-4 m-2 text-xs font-mono text-rose-400 bg-rose-950/20 rounded border border-rose-900/40 whitespace-pre-wrap overflow-auto">
                         {queryResult.error}
                       </div>
@@ -4053,8 +4146,20 @@ export function App() {
                               <CheckCircle className="h-6 w-6 text-emerald-400 mb-2" />
                               <span className="font-semibold text-zinc-200">Statement executed successfully</span>
                               <span className="text-zinc-500 mt-1">
-                                {currentRes?.rowsAffected ?? 0} rows affected ({currentRes?.elapsedMs ?? 0}ms)
+                                {currentRes?.rowsAffected ?? 0} rows affected
+                                {(currentRes as any)?.lastInsertId > 0 ? ` • last insert id: ${(currentRes as any).lastInsertId}` : ''}
+                                {` (${currentRes?.elapsedMs ?? 0}ms)`}
                               </span>
+                              {(currentRes as any)?.warnings && (currentRes as any).warnings.length > 0 && (
+                                <div className="mt-3 px-3 py-2 rounded bg-amber-950/30 border border-amber-800/40 text-amber-300 text-[11px] max-w-xl w-full space-y-1">
+                                  <div className="font-semibold text-amber-200">
+                                    Warnings ({(currentRes as any).warnings.length})
+                                  </div>
+                                  {(currentRes as any).warnings.map((w: string, wIdx: number) => (
+                                    <div key={wIdx} className="break-words">{w}</div>
+                                  ))}
+                                </div>
+                              )}
                               {(currentRes as any)?.sql && (
                                 <div className="mt-3 px-3 py-1.5 rounded bg-[#121317] border border-[#272932] text-zinc-400 text-[11px] max-w-xl truncate">
                                   {(currentRes as any).sql}
@@ -4689,6 +4794,29 @@ export function App() {
         database={tableStructureModal.database}
         schema={tableStructureModal.schema}
         onClose={closeTableStructureModal}
+      />
+      <RenameTableModal
+        isOpen={renameTableModal.isOpen}
+        onClose={() => setRenameTableModal((prev) => ({ ...prev, isOpen: false }))}
+        connection={renameTableModal.connection}
+        database={renameTableModal.database}
+        schema={renameTableModal.schema}
+        tableName={renameTableModal.tableName}
+        objectType={renameTableModal.objectType}
+        onSuccess={(newTableName) => {
+          if (renameTableModal.connection) {
+            useWorkbenchStore.getState().renameTableTab(
+              renameTableModal.connection.id,
+              renameTableModal.database,
+              renameTableModal.schema,
+              renameTableModal.tableName,
+              newTableName
+            );
+          }
+          if (renameTableModal.tabId) {
+            useWorkbenchStore.getState().refreshTab(renameTableModal.tabId);
+          }
+        }}
       />
       <ViewDdlModal
         isOpen={ddlModal.isOpen}

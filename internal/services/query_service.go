@@ -22,9 +22,15 @@ type TxSession struct {
 	Database     string
 	Driver       string
 	Tx           *sql.Tx
+	TabDriver    driver.TabSessionDriver
 	StartedAt    time.Time
 	Count        int
 	IsAborted    bool
+}
+
+type runningOp struct {
+	cancel       context.CancelFunc
+	connectionID string
 }
 
 type TxStatus struct {
@@ -41,7 +47,7 @@ type QueryService struct {
 	sessions   *manager.SessionManager
 	appGetter  func() *application.App
 	mu         sync.Mutex
-	runningOps map[string]context.CancelFunc
+	runningOps map[string]runningOp
 	activeTx   map[string]*TxSession
 }
 
@@ -50,7 +56,7 @@ func NewQueryService(s *store.LocalStore, sm *manager.SessionManager, appGetter 
 		store:      s,
 		sessions:   sm,
 		appGetter:  appGetter,
-		runningOps: make(map[string]context.CancelFunc),
+		runningOps: make(map[string]runningOp),
 		activeTx:   make(map[string]*TxSession),
 	}
 }
@@ -131,7 +137,7 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	q.mu.Lock()
-	q.runningOps[req.ExecutionID] = cancel
+	q.runningOps[req.ExecutionID] = runningOp{cancel: cancel, connectionID: req.ConnectionID}
 	q.mu.Unlock()
 
 	defer func() {
@@ -151,16 +157,66 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 	if cfg != nil {
 		drvDialect = strings.ToLower(strings.TrimSpace(cfg.Driver))
 	}
+	isMySQLFamily := drvDialect == "mysql" || drvDialect == "mariadb"
 
 	if activeTxSession != nil {
-		res, execErr = driver.ExecuteStatementsWithDialect(ctx, activeTxSession.Tx, req, drvDialect)
-		q.mu.Lock()
-		if execErr == nil {
-			activeTxSession.Count++
-		} else if drvDialect == "postgres" {
-			activeTxSession.IsAborted = true
+		if isMySQLFamily {
+			for _, stmt := range driver.SplitStatementsForDialect(req.SQL, drvDialect) {
+				switch driver.ClassifyMySQLStatement(stmt) {
+				case driver.StmtCommit, driver.StmtRollback, driver.StmtBegin:
+					errMsg := "manual transaction is active: use the Commit / Rollback controls instead of SQL COMMIT, ROLLBACK, or BEGIN"
+					q.emitStatus(req.ExecutionID, "error", errMsg)
+					return nil, fmt.Errorf("%s", errMsg)
+				}
+			}
 		}
-		q.mu.Unlock()
+
+		var untrack func()
+		if activeTxSession.TabDriver != nil && req.TabID != "" {
+			if canceller, ok := activeTxSession.TabDriver.(driver.QueryCanceller); ok {
+				untrack = canceller.TrackExecution(req.ExecutionID, req.TabID)
+			}
+		}
+		res, execErr = driver.ExecuteStatementsWithDialect(ctx, activeTxSession.Tx, req, drvDialect)
+		if untrack != nil {
+			untrack()
+		}
+
+		if execErr != nil && isMySQLFamily && driver.IsConnectionLost(execErr) {
+			q.mu.Lock()
+			if cur, ok := q.activeTx[req.TabID]; ok && cur == activeTxSession {
+				delete(q.activeTx, req.TabID)
+			}
+			q.mu.Unlock()
+			if activeTxSession.TabDriver != nil {
+				activeTxSession.TabDriver.TxEnded(req.TabID)
+			}
+			execErr = fmt.Errorf("connection lost: server rolled back the active transaction: %w", execErr)
+		} else {
+			implicitCommitted := false
+			if isMySQLFamily && res != nil {
+				for _, r := range res.Results {
+					if r.Error == "" && driver.ClassifyMySQLStatement(r.SQL) == driver.StmtImplicitCommit {
+						implicitCommitted = true
+					}
+				}
+			}
+			q.mu.Lock()
+			if implicitCommitted {
+				if cur, ok := q.activeTx[req.TabID]; ok && cur == activeTxSession {
+					delete(q.activeTx, req.TabID)
+				}
+				res.TxClosed = true
+			} else if execErr == nil && (res == nil || res.Error == "") {
+				activeTxSession.Count++
+			} else if drvDialect == "postgres" {
+				activeTxSession.IsAborted = true
+			}
+			q.mu.Unlock()
+			if implicitCommitted && activeTxSession.TabDriver != nil {
+				activeTxSession.TabDriver.TxEnded(req.TabID)
+			}
+		}
 	} else {
 		if drvDialect == "postgres" {
 			cleanUpper := strings.ToUpper(strings.TrimSpace(driver.StripLeadingComments(req.SQL)))
@@ -225,10 +281,17 @@ func (q *QueryService) ExecuteQuery(req driver.QueryRequest) (*driver.QueryResul
 
 func (q *QueryService) CancelQuery(executionID string) bool {
 	q.mu.Lock()
-	cancel, exists := q.runningOps[executionID]
+	op, exists := q.runningOps[executionID]
 	q.mu.Unlock()
 	if exists {
-		cancel()
+		if op.connectionID != "" {
+			if drv := q.sessions.GetExisting(op.connectionID); drv != nil {
+				if canceller, ok := drv.(driver.QueryCanceller); ok {
+					_, _ = canceller.CancelExecution(executionID)
+				}
+			}
+		}
+		op.cancel()
 		q.emitStatus(executionID, "cancelled", "Query cancelled by user")
 		return true
 	}
@@ -265,7 +328,13 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 		return nil, err
 	}
 
-	tx, err := drv.BeginTx(context.Background(), database)
+	var tx *sql.Tx
+	tabDrv, isTabDrv := drv.(driver.TabSessionDriver)
+	if isTabDrv {
+		tx, err = tabDrv.BeginTxForTab(context.Background(), tabID, database)
+	} else {
+		tx, err = drv.BeginTx(context.Background(), database)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -279,6 +348,7 @@ func (q *QueryService) BeginTransaction(tabID, connectionID, database string) (*
 		Database:     database,
 		Driver:       drvName,
 		Tx:           tx,
+		TabDriver:    tabDrv,
 		StartedAt:    time.Now(),
 		Count:        0,
 	}
@@ -311,7 +381,11 @@ func (q *QueryService) CommitTransaction(tabID string) error {
 	delete(q.activeTx, tabID)
 	q.mu.Unlock()
 
-	if err := session.Tx.Commit(); err != nil {
+	err := session.Tx.Commit()
+	if session.TabDriver != nil {
+		session.TabDriver.TxEnded(tabID)
+	}
+	if err != nil {
 		return fmt.Errorf("commit failed: %w", err)
 	}
 	return nil
@@ -327,7 +401,11 @@ func (q *QueryService) RollbackTransaction(tabID string) error {
 	delete(q.activeTx, tabID)
 	q.mu.Unlock()
 
-	if err := session.Tx.Rollback(); err != nil {
+	err := session.Tx.Rollback()
+	if session.TabDriver != nil {
+		session.TabDriver.TxEnded(tabID)
+	}
+	if err != nil {
 		return fmt.Errorf("rollback failed: %w", err)
 	}
 	return nil
@@ -397,6 +475,25 @@ func (q *QueryService) CleanupConnectionTransactions(connectionID string) {
 
 	for _, session := range toRollback {
 		_ = session.Tx.Rollback()
+		if session.TabDriver != nil {
+			session.TabDriver.TxEnded(session.TabID)
+		}
+	}
+}
+
+// CloseTabSession rolls back any open transaction and releases the tab's pinned server session.
+func (q *QueryService) CloseTabSession(connectionID, tabID string) {
+	if tabID == "" {
+		return
+	}
+	_ = q.RollbackTransaction(tabID)
+	if connectionID == "" {
+		return
+	}
+	if drv := q.sessions.GetExisting(connectionID); drv != nil {
+		if tsDrv, ok := drv.(driver.TabSessionDriver); ok {
+			tsDrv.CloseSession(tabID)
+		}
 	}
 }
 

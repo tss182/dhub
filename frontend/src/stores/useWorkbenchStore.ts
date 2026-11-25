@@ -215,6 +215,13 @@ interface WorkbenchState {
     schema?: string
   ) => void;
   renameTab: (tabId: string, newTitle: string) => void;
+  renameTableTab: (
+    connectionId: string,
+    database: string,
+    schema: string,
+    oldTable: string,
+    newTable: string
+  ) => void;
   duplicateTab: (tabId: string) => void;
   createConsole: (
     connectionId?: string,
@@ -572,6 +579,31 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
         ),
         consoles: updatedConsoles,
       };
+    });
+  },
+
+  renameTableTab: (connectionId, database, schema, oldTable, newTable) => {
+    const cleanNew = newTable.trim();
+    if (!cleanNew) return;
+    set((state) => {
+      const nextTabs = state.tabs.map((t) => {
+        if (
+          t.type === 'table_data' &&
+          t.connectionId === connectionId &&
+          t.table === oldTable &&
+          (t.database || '') === (database || '') &&
+          (t.schema || '') === (schema || '')
+        ) {
+          return {
+            ...t,
+            table: cleanNew,
+            title: cleanNew,
+          };
+        }
+        return t;
+      });
+      saveTabsToStorage(nextTabs, state.activeTabId);
+      return { tabs: nextTabs };
     });
   },
 

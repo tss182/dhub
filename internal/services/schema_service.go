@@ -90,6 +90,18 @@ func (s *SchemaService) GetSchemas(connectionID, database string) ([]string, err
 	return drv.ListSchemas(context.Background(), database)
 }
 
+// GetServerInfo returns detected version, flavor, and runtime capabilities for supported drivers.
+func (s *SchemaService) GetServerInfo(connectionID string) (*driver.ServerInfo, error) {
+	drv, err := s.sessions.GetOrConnect(context.Background(), connectionID)
+	if err != nil {
+		return nil, err
+	}
+	if provider, ok := drv.(driver.ServerInfoProvider); ok {
+		return provider.ServerInfo(context.Background())
+	}
+	return nil, nil
+}
+
 func (s *SchemaService) GetObjects(connectionID, database, schema string) ([]driver.ObjectSummary, error) {
 	drv, err := s.sessions.GetOrConnect(context.Background(), connectionID)
 	if err != nil {

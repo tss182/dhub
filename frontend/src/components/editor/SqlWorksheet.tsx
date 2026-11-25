@@ -1790,10 +1790,23 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
       prefix = isAnalyze
         ? 'EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) '
         : 'EXPLAIN (COSTS, VERBOSE, FORMAT JSON) ';
-    } else if (drv === 'mysql') {
-      prefix = isAnalyze ? 'EXPLAIN ANALYZE ' : 'EXPLAIN ';
-    } else if (drv === 'mariadb') {
-      prefix = isAnalyze ? 'ANALYZE ' : 'EXPLAIN ';
+    } else if (drv === 'mysql' || drv === 'mariadb') {
+      if (isAnalyze) {
+        const cleanStmt = stmt.replace(/^(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)+/g, '').trim();
+        const isSafeReadSelect =
+          /^(?:SELECT|TABLE)\b/i.test(cleanStmt) ||
+          (/^WITH\b/i.test(cleanStmt) && !/\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(cleanStmt));
+        if (!isSafeReadSelect) {
+          alertError(
+            `${drv === 'mariadb' ? 'ANALYZE' : 'EXPLAIN ANALYZE'} executes the statement and is restricted to SELECT, TABLE, or WITH ... SELECT queries.`,
+            'Analyze Blocked'
+          );
+          return;
+        }
+        prefix = drv === 'mariadb' ? 'ANALYZE FORMAT=JSON ' : 'EXPLAIN ANALYZE ';
+      } else {
+        prefix = 'EXPLAIN FORMAT=JSON ';
+      }
     } else if (drv === 'mssql') {
       prefix = 'SET SHOWPLAN_ALL ON; ';
     } else if (drv === 'sqlite') {
@@ -2300,9 +2313,16 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
               <div className="relative" ref={dbDropdownRef}>
                 <button
                   type="button"
-                  onClick={() => setIsDbOpen(!isDbOpen)}
-                  className="flex items-center gap-2 px-2.5 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-amber-300 font-mono text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-                  title={database ? `${database} (Click to switch database)` : 'Click to select database'}
+                  disabled={isTxOpen}
+                  onClick={() => !isTxOpen && setIsDbOpen(!isDbOpen)}
+                  className="flex items-center gap-2 px-2.5 py-1 rounded bg-[#22242c] hover:bg-[#2b2e3b] border border-[#3b3e4f] text-amber-300 font-mono text-xs font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={
+                    isTxOpen
+                      ? 'Commit or rollback the active transaction before switching databases'
+                      : database
+                      ? `${database} (Click to switch database)`
+                      : 'Click to select database'
+                  }
                 >
                   <Database className="h-3.5 w-3.5 text-blue-400 shrink-0" />
                   <span className="truncate max-w-[160px]">{database || 'Select Database'}</span>

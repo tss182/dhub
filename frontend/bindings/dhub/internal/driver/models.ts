@@ -140,6 +140,9 @@ export interface QueryResult {
     "primaryKeys": string[] | null;
     "error"?: string;
     "results"?: StatementResult[] | null;
+    "activeDatabase"?: string;
+    "sessionReset"?: boolean;
+    "txClosed"?: boolean;
 }
 
 export interface RowChange {
@@ -156,9 +159,11 @@ export interface StatementResult {
     "columns": ColumnMeta[] | null;
     "rows": (any[] | null)[] | null;
     "rowsAffected": number;
+    "lastInsertId"?: number;
     "elapsedMs": number;
     "hasMore": boolean;
     "error"?: string;
+    "warnings"?: string[] | null;
 }
 
 export interface TableStructure {

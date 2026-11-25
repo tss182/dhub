@@ -206,20 +206,27 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
     return () => clearInterval(timer);
   }, [autoRefresh, loadProcesses]);
 
-  const handleKillProcess = async (proc: ProcessRow) => {
+  const handleKillProcess = async (proc: ProcessRow, queryOnly = false) => {
     if (!connection || connection.isReadOnly) return;
+    const drv = connection.driver;
+    if ((drv === 'mysql' || drv === 'mariadb') && !/^\d+$/.test(String(proc.id).trim())) {
+      alertError(`Invalid process ID "${proc.id}".`);
+      return;
+    }
+    const actionLabel = queryOnly ? 'Cancel Query' : 'Kill Process';
     const ok = await confirmDialog({
-      title: 'Terminate Process / Query',
-      message: `Are you sure you want to kill session/query "${proc.id}" (${proc.user || 'unknown'})?`,
-      confirmLabel: 'Kill Process',
+      title: queryOnly ? 'Cancel Running Query' : 'Terminate Process / Query',
+      message: queryOnly
+        ? `Are you sure you want to cancel the running query on session "${proc.id}" (${proc.user || 'unknown'})? The connection will remain open.`
+        : `Are you sure you want to kill session "${proc.id}" (${proc.user || 'unknown'})?`,
+      confirmLabel: actionLabel,
       isDanger: true,
     });
     if (!ok) return;
 
-    const drv = connection.driver;
     let killSql = '';
     if (drv === 'mysql' || drv === 'mariadb') {
-      killSql = `KILL ${proc.id};`;
+      killSql = queryOnly ? `KILL QUERY ${String(proc.id).trim()};` : `KILL ${String(proc.id).trim()};`;
     } else if (drv === 'postgres') {
       killSql = `SELECT pg_terminate_backend(${proc.id});`;
     } else if (drv === 'mssql') {
@@ -463,6 +470,16 @@ export const ActivityMonitor: React.FC<ActivityMonitorProps> = ({ connection }) 
                               title="Cancel active query (pg_cancel_backend)"
                             >
                               <span>Cancel</span>
+                            </button>
+                          )}
+                          {(connection.driver === 'mysql' || connection.driver === 'mariadb') && (
+                            <button
+                              type="button"
+                              onClick={() => handleKillProcess(p, true)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 text-[11px] font-sans transition-colors cursor-pointer"
+                              title="Cancel active query without closing the connection (KILL QUERY)"
+                            >
+                              <span>Kill Query</span>
                             </button>
                           )}
                           <button

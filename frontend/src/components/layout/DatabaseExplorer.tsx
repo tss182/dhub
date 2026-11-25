@@ -2134,7 +2134,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     }
   };
 
-  const handleEditDatabase = (conn: ConnectionConfig, dbName: string) => {
+  const handleEditDatabase = async (conn: ConnectionConfig, dbName: string) => {
     if (conn.driver === 'postgres') {
       openTab({
         id: `console-alter-${Date.now()}`,
@@ -2146,6 +2146,24 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         content: `-- Rename or Modify Database: ${dbName}\n-- Note: You must be connected to an administrative database (e.g. postgres) to rename.\nALTER DATABASE "${dbName}" RENAME TO "${dbName}_renamed";\n`,
       });
     } else if (conn.driver === 'mysql' || conn.driver === 'mariadb') {
+      let charset = 'utf8mb4';
+      let collation = conn.driver === 'mariadb' ? 'utf8mb4_general_ci' : 'utf8mb4_0900_ai_ci';
+      try {
+        const res = await QueryService.ExecuteQuery({
+          executionId: `db-coll-${Date.now()}`,
+          connectionId: conn.id,
+          database: dbName,
+          schema: dbName,
+          sql: `SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.schemata WHERE SCHEMA_NAME = '${dbName.replace(/'/g, "''")}' LIMIT 1`,
+          limit: 1,
+          offset: 0,
+          skipHistory: true,
+        } as any);
+        if (res?.rows?.[0]?.[0]) charset = String(res.rows[0][0]);
+        if (res?.rows?.[0]?.[1]) collation = String(res.rows[0][1]);
+      } catch {
+        // Keep safe defaults if information_schema is inaccessible.
+      }
       // Open a query console pre-populated with ALTER DATABASE statement
       openTab({
         id: `console-alter-${Date.now()}`,
@@ -2154,7 +2172,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         connectionId: conn.id,
         database: dbName,
         schema: dbName,
-        content: `-- Modify Character Set / Collation for Database: ${dbName}\nALTER DATABASE ${qMy(dbName)} CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;\n`,
+        content: `-- Modify Character Set / Collation for Database: ${dbName}\nALTER DATABASE ${qMy(dbName)} CHARACTER SET = ${charset} COLLATE = ${collation};\n`,
       });
     } else if (conn.driver === 'mssql') {
       openTab({

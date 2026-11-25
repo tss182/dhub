@@ -500,13 +500,43 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			user = "root"
 		}
 
-		baseArgs := []string{
+		binName := filepath.Base(binPath)
+		isMariaDBDump := strings.Contains(strings.ToLower(binName), "mariadb")
+
+		var defaultsFile string
+		if conn.Password != "" {
+			tmpFile, tmpErr := os.CreateTemp("", "dhub-my-*.cnf")
+			if tmpErr != nil {
+				return "", emitErr(fmt.Errorf("failed to create credentials file: %w", tmpErr))
+			}
+			defaultsFile = tmpFile.Name()
+			defer os.Remove(defaultsFile)
+			escapedPass := strings.ReplaceAll(strings.ReplaceAll(conn.Password, `\`, `\\`), `"`, `\"`)
+			_, writeErr := tmpFile.WriteString(fmt.Sprintf("[client]\npassword=\"%s\"\n", escapedPass))
+			_ = tmpFile.Chmod(0600)
+			_ = tmpFile.Close()
+			if writeErr != nil {
+				return "", emitErr(fmt.Errorf("failed to write credentials file: %w", writeErr))
+			}
+		}
+
+		baseArgs := make([]string, 0, 16)
+		if defaultsFile != "" {
+			// --defaults-extra-file must be the very first argument for mysqldump/mariadb-dump.
+			baseArgs = append(baseArgs, "--defaults-extra-file="+defaultsFile)
+		}
+		baseArgs = append(baseArgs,
 			"--protocol=TCP",
 			"-h", host,
 			"-P", strconv.Itoa(port),
 			"-u", user,
 			"--default-character-set=utf8mb4",
+			"--hex-blob",
+		)
+		if !isMariaDBDump {
+			baseArgs = append(baseArgs, "--no-tablespaces", "--set-gtid-purged=OFF")
 		}
+		baseArgs = append(baseArgs, mysqlBackupSSLArgs(conn, isMariaDBDump)...)
 
 		if opts.SingleTransaction {
 			baseArgs = append(baseArgs, "--single-transaction")
@@ -566,9 +596,6 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 
 			cmd := exec.CommandContext(ctx, binPath, args...)
 			cmd.Env = os.Environ()
-			if conn.Password != "" {
-				cmd.Env = append(cmd.Env, "MYSQL_PWD="+conn.Password)
-			}
 
 			var stderrBuf bytes.Buffer
 			pw := newBackupProgressWriter(outFile, func(bytesWritten int64, seenTables int, currentTable string) {
@@ -601,17 +628,11 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			return stderrBuf.String(), runErr
 		}
 
-		binName := filepath.Base(binPath)
-		isMariaDBDump := strings.Contains(strings.ToLower(binName), "mariadb")
-
 		errText, dumpErr := runDump()
 		if dumpErr != nil {
 			var retryFlags []string
 			if strings.Contains(errText, "COLUMN_STATISTICS") || strings.Contains(errText, "column-statistics") {
 				retryFlags = append(retryFlags, "--column-statistics=0")
-			}
-			if !isMariaDBDump && (strings.Contains(errText, "GTID_PURGED") || strings.Contains(errText, "gtid-purged")) {
-				retryFlags = append(retryFlags, "--set-gtid-purged=OFF")
 			}
 			if len(retryFlags) > 0 {
 				errText, dumpErr = runDump(retryFlags...)
@@ -1423,6 +1444,49 @@ func buildMongoToolsCommonArgs(conn *store.ConnectionConfig, database string) []
 		}
 		if strings.TrimSpace(conn.SSLCertPath) != "" {
 			args = append(args, "--sslPEMKeyFile", conn.SSLCertPath)
+		}
+	}
+	return args
+}
+
+func mysqlBackupSSLArgs(conn *store.ConnectionConfig, isMariaDBDump bool) []string {
+	if conn == nil {
+		return nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(conn.SSLMode))
+	var args []string
+	if isMariaDBDump {
+		switch mode {
+		case "", "disable":
+			args = append(args, "--skip-ssl")
+		case "verify-identity", "verify-full":
+			args = append(args, "--ssl", "--ssl-verify-server-cert")
+		default:
+			args = append(args, "--ssl")
+		}
+	} else {
+		switch mode {
+		case "disable":
+			args = append(args, "--ssl-mode=DISABLED")
+		case "preferred":
+			args = append(args, "--ssl-mode=PREFERRED")
+		case "require", "required":
+			args = append(args, "--ssl-mode=REQUIRED")
+		case "verify-ca":
+			args = append(args, "--ssl-mode=VERIFY_CA")
+		case "verify-identity", "verify-full":
+			args = append(args, "--ssl-mode=VERIFY_IDENTITY")
+		}
+	}
+	if mode != "" && mode != "disable" {
+		if p := strings.TrimSpace(conn.SSLCAPath); p != "" {
+			args = append(args, "--ssl-ca="+p)
+		}
+		if p := strings.TrimSpace(conn.SSLCertPath); p != "" {
+			args = append(args, "--ssl-cert="+p)
+		}
+		if p := strings.TrimSpace(conn.SSLKeyPath); p != "" {
+			args = append(args, "--ssl-key="+p)
 		}
 	}
 	return args

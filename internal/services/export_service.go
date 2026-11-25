@@ -420,6 +420,64 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 	headerWritten := false
 	explicitLimit := hasTopLevelSQLKeyword(querySQL, "LIMIT")
 
+	type streamChunk struct {
+		res *driver.QueryResult
+		err error
+	}
+	var chunkCh chan streamChunk
+	if streamer, ok := drv.(driver.RowStreamer); ok {
+		chunkCh = make(chan streamChunk, 2)
+		streamCtx, streamCancel := context.WithCancel(ctx)
+		defer streamCancel()
+		go func() {
+			defer close(chunkCh)
+			var streamCols []driver.ColumnMeta
+			batch := make([][]any, 0, chunkSize)
+			var total int64
+			qReq := driver.QueryRequest{
+				ExecutionID:  "export-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+				ConnectionID: req.ConnectionID,
+				Database:     req.Database,
+				Schema:       req.Schema,
+				SQL:          querySQL,
+			}
+			err := streamer.StreamQuery(streamCtx, qReq, func(cols []driver.ColumnMeta, row []any) error {
+				if total >= int64(maxExportRows) {
+					return context.Canceled
+				}
+				if streamCols == nil {
+					streamCols = cols
+				}
+				batch = append(batch, row)
+				total++
+				if len(batch) >= chunkSize {
+					out := make([][]any, len(batch))
+					copy(out, batch)
+					batch = batch[:0]
+					select {
+					case chunkCh <- streamChunk{res: &driver.QueryResult{Columns: streamCols, Rows: out, HasMore: true}}:
+					case <-streamCtx.Done():
+						return streamCtx.Err()
+					}
+				}
+				return nil
+			})
+			if err != nil && !(err == context.Canceled && total >= int64(maxExportRows)) {
+				select {
+				case chunkCh <- streamChunk{err: err}:
+				case <-streamCtx.Done():
+				}
+				return
+			}
+			if len(batch) > 0 || streamCols != nil {
+				select {
+				case chunkCh <- streamChunk{res: &driver.QueryResult{Columns: streamCols, Rows: batch}}:
+				case <-streamCtx.Done():
+				}
+			}
+		}()
+	}
+
 	offset := 0
 	for exportedRows < maxExportRows {
 		remaining := maxExportRows - int(exportedRows)
@@ -428,17 +486,26 @@ func (e *ExportService) ExportToFile(req ExportRequest) (*ExportResult, error) {
 			limit = remaining
 		}
 
-		qReq := driver.QueryRequest{
-			ExecutionID:  "export-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-			ConnectionID: req.ConnectionID,
-			Database:     req.Database,
-			Schema:       req.Schema,
-			SQL:          querySQL,
-			Limit:        limit,
-			Offset:       offset,
+		var res *driver.QueryResult
+		var err error
+		if chunkCh != nil {
+			sc, ok := <-chunkCh
+			if !ok {
+				break
+			}
+			res, err = sc.res, sc.err
+		} else {
+			qReq := driver.QueryRequest{
+				ExecutionID:  "export-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+				ConnectionID: req.ConnectionID,
+				Database:     req.Database,
+				Schema:       req.Schema,
+				SQL:          querySQL,
+				Limit:        limit,
+				Offset:       offset,
+			}
+			res, err = drv.Execute(ctx, qReq)
 		}
-
-		res, err := drv.Execute(ctx, qReq)
 		if err != nil {
 			if ctx.Err() == context.Canceled {
 				e.emitProgress(opID, "export", "cancelled", exportedRows, "Export cancelled")

@@ -248,9 +248,51 @@ func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req Q
 		offset = 0
 	}
 
+	isMySQLFamily, _ := dialectFlags(dialect)
 	var allResults []StatementResult
 	var lastResultWithRows *StatementResult
 	var totalRowsAffected int64
+
+	finishResult := func(errMsg string) *QueryResult {
+		totalElapsed := time.Since(start).Milliseconds()
+		var defCols []ColumnMeta
+		var defRows [][]any
+		var defHasMore bool
+		if lastResultWithRows != nil {
+			defCols = lastResultWithRows.Columns
+			defRows = lastResultWithRows.Rows
+			defHasMore = lastResultWithRows.HasMore
+		} else if len(allResults) > 0 {
+			last := allResults[len(allResults)-1]
+			defCols = last.Columns
+			defRows = last.Rows
+			defHasMore = last.HasMore
+		}
+		return &QueryResult{
+			ExecutionID:  req.ExecutionID,
+			Columns:      defCols,
+			Rows:         defRows,
+			RowsAffected: totalRowsAffected,
+			ElapsedMs:    totalElapsed,
+			HasMore:      defHasMore,
+			Error:        errMsg,
+			Results:      allResults,
+		}
+	}
+
+	failMidScript := func(stmtIdx int, stmtSQL string, stmtElapsed int64, err error) (*QueryResult, error) {
+		if len(allResults) == 0 {
+			return nil, fmt.Errorf("error in statement %d: %w\nSQL: %s", stmtIdx+1, err, TruncateSQL(stmtSQL, 100))
+		}
+		allResults = append(allResults, StatementResult{
+			SQL:       stmtSQL,
+			Columns:   []ColumnMeta{},
+			Rows:      [][]any{},
+			ElapsedMs: stmtElapsed,
+			Error:     err.Error(),
+		})
+		return finishResult(fmt.Sprintf("error in statement %d: %v", stmtIdx+1, err)), nil
+	}
 
 	for i, stmt := range statements {
 		stmtStart := time.Now()
@@ -273,127 +315,224 @@ func ExecuteStatementsWithDialect(ctx context.Context, execer QueryExecer, req Q
 				rows, err = execer.QueryContext(ctx, stmt)
 			}
 			if err != nil {
-				return nil, fmt.Errorf("error in statement %d: %w\nSQL: %s", i+1, err, TruncateSQL(stmt, 100))
+				return failMidScript(i, stmt, time.Since(stmtStart).Milliseconds(), err)
 			}
 
-			colTypes, err := rows.ColumnTypes()
+			firstSet, err := scanRowsResultSet(rows, limit, stmtOffset, dialect)
 			if err != nil {
 				rows.Close()
-				return nil, err
+				return failMidScript(i, stmt, time.Since(stmtStart).Milliseconds(), err)
 			}
 
-			columns := make([]ColumnMeta, len(colTypes))
-			for cIdx, ct := range colTypes {
-				columns[cIdx] = ColumnMeta{
-					Name:     ct.Name(),
-					DataType: ct.DatabaseTypeName(),
-					RawType:  strings.ToLower(ct.DatabaseTypeName()),
-				}
-			}
-
-			values := make([]any, len(columns))
-			valuePtrs := make([]any, len(columns))
-			for vIdx := range values {
-				valuePtrs[vIdx] = &values[vIdx]
-			}
-
-			capHint := limit
-			if capHint > 256 {
-				capHint = 256
-			}
-			resultRows := make([][]any, 0, capHint)
-			skipped := 0
-			hasMore := false
-
-			for rows.Next() {
-				if skipped < stmtOffset {
-					if err := rows.Scan(valuePtrs...); err == nil {
-						skipped++
+			var extraSets []scannedResultSet
+			if isMySQLFamily {
+				for rows.NextResultSet() {
+					nextSet, nextErr := scanRowsResultSet(rows, limit, 0, dialect)
+					if nextErr != nil {
+						rows.Close()
+						return failMidScript(i, stmt, time.Since(stmtStart).Milliseconds(), nextErr)
 					}
-					continue
+					extraSets = append(extraSets, nextSet)
 				}
-
-				if len(resultRows) >= limit {
-					hasMore = true
-					break
-				}
-
-				if err := rows.Scan(valuePtrs...); err != nil {
-					continue
-				}
-
-				rowValues := make([]any, len(columns))
-				for vIdx, v := range values {
-					rowValues[vIdx] = normalizeScannedValue(v, columns[vIdx].DataType, dialect)
-				}
-				resultRows = append(resultRows, rowValues)
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
-				return nil, fmt.Errorf("error in statement %d: %w\nSQL: %s", i+1, err, TruncateSQL(stmt, 100))
+				return failMidScript(i, stmt, time.Since(stmtStart).Milliseconds(), err)
 			}
 			rows.Close()
 
 			stmtElapsed := time.Since(stmtStart).Milliseconds()
 			stmtRes := StatementResult{
 				SQL:          stmt,
-				Columns:      columns,
-				Rows:         resultRows,
-				RowsAffected: int64(len(resultRows)),
+				Columns:      firstSet.columns,
+				Rows:         firstSet.rows,
+				RowsAffected: int64(len(firstSet.rows)),
 				ElapsedMs:    stmtElapsed,
-				HasMore:      hasMore,
+				HasMore:      firstSet.hasMore,
 			}
 			allResults = append(allResults, stmtRes)
-			lastResultWithRows = &stmtRes
+			if len(firstSet.columns) > 0 || len(extraSets) == 0 {
+				lastResultWithRows = &allResults[len(allResults)-1]
+			}
+			for _, extra := range extraSets {
+				extraRes := StatementResult{
+					SQL:          stmt,
+					Columns:      extra.columns,
+					Rows:         extra.rows,
+					RowsAffected: int64(len(extra.rows)),
+					ElapsedMs:    stmtElapsed,
+					HasMore:      extra.hasMore,
+				}
+				allResults = append(allResults, extraRes)
+				if len(extra.columns) > 0 {
+					lastResultWithRows = &allResults[len(allResults)-1]
+				}
+			}
 		} else {
 			res, err := execer.ExecContext(ctx, stmt)
 			if err != nil {
-				return nil, fmt.Errorf("error in statement %d: %w\nSQL: %s", i+1, err, TruncateSQL(stmt, 100))
+				return failMidScript(i, stmt, time.Since(stmtStart).Milliseconds(), err)
 			}
 
 			var ra int64
+			var lastInsertID int64
 			if res != nil {
 				ra, _ = res.RowsAffected()
+				if isMySQLFamily {
+					lastInsertID, _ = res.LastInsertId()
+				}
 			}
 			totalRowsAffected += ra
 			stmtElapsed := time.Since(stmtStart).Milliseconds()
+
+			var warnings []string
+			if isMySQLFamily {
+				warnings = fetchMySQLWarnings(ctx, execer)
+			}
 
 			stmtRes := StatementResult{
 				SQL:          stmt,
 				Columns:      []ColumnMeta{},
 				Rows:         [][]any{},
 				RowsAffected: ra,
+				LastInsertID: lastInsertID,
 				ElapsedMs:    stmtElapsed,
+				Warnings:     warnings,
 			}
 			allResults = append(allResults, stmtRes)
 		}
 	}
 
-	totalElapsed := time.Since(start).Milliseconds()
+	return finishResult(""), nil
+}
 
-	// Default main view to the last SELECT statement with data, or the last executed statement
-	var defCols []ColumnMeta
-	var defRows [][]any
-	var defHasMore bool
+type scannedResultSet struct {
+	columns []ColumnMeta
+	rows    [][]any
+	hasMore bool
+}
 
-	if lastResultWithRows != nil {
-		defCols = lastResultWithRows.Columns
-		defRows = lastResultWithRows.Rows
-		defHasMore = lastResultWithRows.HasMore
-	} else if len(allResults) > 0 {
-		last := allResults[len(allResults)-1]
-		defCols = last.Columns
-		defRows = last.Rows
-		defHasMore = last.HasMore
+func scanRowsResultSet(rows *sql.Rows, limit, stmtOffset int, dialect string) (scannedResultSet, error) {
+	colTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return scannedResultSet{}, err
 	}
 
-	return &QueryResult{
-		ExecutionID:  req.ExecutionID,
-		Columns:      defCols,
-		Rows:         defRows,
-		RowsAffected: totalRowsAffected,
-		ElapsedMs:    totalElapsed,
-		HasMore:      defHasMore,
-		Results:      allResults,
+	columns := make([]ColumnMeta, len(colTypes))
+	for cIdx, ct := range colTypes {
+		columns[cIdx] = ColumnMeta{
+			Name:     ct.Name(),
+			DataType: ct.DatabaseTypeName(),
+			RawType:  strings.ToLower(ct.DatabaseTypeName()),
+		}
+	}
+
+	values := make([]any, len(columns))
+	valuePtrs := make([]any, len(columns))
+	for vIdx := range values {
+		valuePtrs[vIdx] = &values[vIdx]
+	}
+
+	capHint := limit
+	if capHint > 256 {
+		capHint = 256
+	}
+	resultRows := make([][]any, 0, capHint)
+	skipped := 0
+	hasMore := false
+
+	for rows.Next() {
+		if skipped < stmtOffset {
+			if err := rows.Scan(valuePtrs...); err == nil {
+				skipped++
+			}
+			continue
+		}
+
+		if len(resultRows) >= limit {
+			hasMore = true
+			break
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			continue
+		}
+
+		rowValues := make([]any, len(columns))
+		for vIdx, v := range values {
+			rowValues[vIdx] = normalizeScannedValue(v, columns[vIdx].DataType, dialect)
+		}
+		resultRows = append(resultRows, rowValues)
+	}
+	if err := rows.Err(); err != nil {
+		return scannedResultSet{}, err
+	}
+
+	return scannedResultSet{
+		columns: columns,
+		rows:    resultRows,
+		hasMore: hasMore,
 	}, nil
+}
+
+func fetchMySQLWarnings(ctx context.Context, execer QueryExecer) []string {
+	rows, err := execer.QueryContext(ctx, "SHOW WARNINGS LIMIT 50")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var warnings []string
+	for rows.Next() {
+		var level string
+		var code int
+		var msg string
+		if scanErr := rows.Scan(&level, &code, &msg); scanErr == nil {
+			warnings = append(warnings, fmt.Sprintf("%s (%d): %s", level, code, msg))
+		}
+	}
+	return warnings
+}
+
+// StreamQueryWithDialect executes req.SQL and streams every row to onRow without buffering the
+// entire result set in memory or issuing OFFSET paging queries.
+func StreamQueryWithDialect(ctx context.Context, execer QueryExecer, req QueryRequest, dialect string, onRow func(cols []ColumnMeta, row []any) error) error {
+	rows, err := execer.QueryContext(ctx, req.SQL)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	colTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return err
+	}
+	columns := make([]ColumnMeta, len(colTypes))
+	for i, ct := range colTypes {
+		columns[i] = ColumnMeta{
+			Name:     ct.Name(),
+			DataType: ct.DatabaseTypeName(),
+			RawType:  strings.ToLower(ct.DatabaseTypeName()),
+		}
+	}
+
+	values := make([]any, len(columns))
+	valuePtrs := make([]any, len(columns))
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
+
+	for rows.Next() {
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return err
+		}
+		rowValues := make([]any, len(columns))
+		for i, v := range values {
+			rowValues[i] = normalizeScannedValue(v, columns[i].DataType, dialect)
+		}
+		if err := onRow(columns, rowValues); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }

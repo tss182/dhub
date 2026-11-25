@@ -375,17 +375,23 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 								nullStr = "NOT NULL"
 							}
 							defClause := ""
-							if dstDriverType == "postgres" {
-								if defVal := normalizePGDefault(sc); defVal != "" {
-									defClause = " DEFAULT " + defVal
+							if dstDriverType == "mysql" || dstDriverType == "mariadb" {
+								alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s;", qTable, buildMySQLColumnDefinition(dstDriverType, sc)))
+							} else {
+								if dstDriverType == "postgres" {
+									if defVal := normalizePGDefault(sc); defVal != "" {
+										defClause = " DEFAULT " + defVal
+									}
 								}
+								alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s%s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr, defClause))
 							}
-							alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s%s;", qTable, quoteIdentifier(dstDriverType, sc.Name), sc.DataType, nullStr, defClause))
 						}
-					} else if !strings.EqualFold(sc.DataType, dc.DataType) || sc.IsNullable != dc.IsNullable || (dstDriverType == "postgres" && normalizePGDefault(sc) != normalizePGDefault(dc)) {
+					} else if columnsDiffer(dstDriverType, sc, dc) {
 						detail := fmt.Sprintf("Type: %s -> %s, Nullable: %v -> %v", dc.DataType, sc.DataType, dc.IsNullable, sc.IsNullable)
 						if dstDriverType == "postgres" && normalizePGDefault(sc) != normalizePGDefault(dc) {
 							detail += fmt.Sprintf(", Default: %q -> %q", normalizePGDefault(dc), normalizePGDefault(sc))
+						} else if (dstDriverType == "mysql" || dstDriverType == "mariadb") && buildMySQLColumnDefinition(dstDriverType, sc) != buildMySQLColumnDefinition(dstDriverType, dc) {
+							detail = fmt.Sprintf("%s -> %s", buildMySQLColumnDefinition(dstDriverType, dc), buildMySQLColumnDefinition(dstDriverType, sc))
 						}
 						colDiffs = append(colDiffs, ColumnDiff{
 							ColumnName: sc.Name,
@@ -436,7 +442,14 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 					})
 					qIdxCols := make([]string, len(sIdx.Columns))
 					for k, col := range sIdx.Columns {
-						qIdxCols[k] = quoteIdentifier(dstDriverType, col)
+						part := quoteIdentifier(dstDriverType, col)
+						if (dstDriverType == "mysql" || dstDriverType == "mariadb") && k < len(sIdx.SubParts) && sIdx.SubParts[k] > 0 {
+							part = fmt.Sprintf("%s(%d)", part, sIdx.SubParts[k])
+						}
+						if (dstDriverType == "mysql" || dstDriverType == "mariadb") && k < len(sIdx.Descending) && sIdx.Descending[k] {
+							part += " DESC"
+						}
+						qIdxCols[k] = part
 					}
 					uniqueKw := ""
 					if sIdx.IsUnique {
@@ -514,6 +527,8 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra payload index in target: DELETE /collections/%s/index/%s?wait=true", url.PathEscape(tblName), url.PathEscape(dIdx.Columns[0])))
 					} else if dstDriverType == "mongodb" || dstDriverType == "mongo" {
 						alterStmts = append(alterStmts, fmt.Sprintf("// Extra index in target:\n// db.getCollection(%q).dropIndex(%q);", tblName, dIdx.Name))
+					} else if dstDriverType == "mysql" || dstDriverType == "mariadb" {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: ALTER TABLE %s DROP INDEX %s;", qTable, quoteIdentifier(dstDriverType, dIdx.Name)))
 					} else {
 						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra index in target: DROP INDEX %s;", qualifyDiffTable(dstDriverType, dstSchema, dIdx.Name)))
 					}
@@ -546,7 +561,11 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						TargetType: dCC.Clause,
 						Detail:     fmt.Sprintf("Check clause differs: %s -> %s", dCC.Clause, sCC.Clause),
 					})
-					alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+					if dstDriverType == "mysql" {
+						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s DROP CHECK %s;\nALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+					} else {
+						alterStmts = append(alterStmts, fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nALTER TABLE %s ADD CONSTRAINT %s CHECK (%s);", qTable, quoteIdentifier(dstDriverType, sCC.Name), qTable, quoteIdentifier(dstDriverType, sCC.Name), sCC.Clause))
+					}
 				}
 			}
 			for key, dCC := range dstChecks {
@@ -557,35 +576,63 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 						TargetType: dCC.Clause,
 						Detail:     fmt.Sprintf("Extra check constraint in target (%s)", dCC.Clause),
 					})
-					alterStmts = append(alterStmts, fmt.Sprintf("-- Extra check constraint in target: ALTER TABLE %s DROP CONSTRAINT %s;", qTable, quoteIdentifier(dstDriverType, dCC.Name)))
+					if dstDriverType == "mysql" {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra check constraint in target: ALTER TABLE %s DROP CHECK %s;", qTable, quoteIdentifier(dstDriverType, dCC.Name)))
+					} else {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra check constraint in target: ALTER TABLE %s DROP CONSTRAINT %s;", qTable, quoteIdentifier(dstDriverType, dCC.Name)))
+					}
 				}
 			}
 
-			// Compare Foreign Keys
+			// Compare Foreign Keys (supporting composite keys via Columns/RefColumns)
+			fkColsOf := func(fk driver.ForeignKeyMeta) ([]string, []string) {
+				cols := fk.Columns
+				if len(cols) == 0 && fk.ColumnName != "" {
+					cols = []string{fk.ColumnName}
+				}
+				refs := fk.RefColumns
+				if len(refs) == 0 && fk.RefColumn != "" {
+					refs = []string{fk.RefColumn}
+				}
+				return cols, refs
+			}
 			srcFKs := make(map[string]driver.ForeignKeyMeta)
 			for _, fk := range srcStruct.ForeignKeys {
-				fkKey := strings.ToLower(fk.ColumnName + "->" + fk.RefTable + "." + fk.RefColumn)
+				cols, refs := fkColsOf(fk)
+				fkKey := strings.ToLower(strings.Join(cols, ",") + "->" + fk.RefTable + "." + strings.Join(refs, ","))
 				srcFKs[fkKey] = fk
 			}
 			dstFKs := make(map[string]driver.ForeignKeyMeta)
 			for _, fk := range dstStruct.ForeignKeys {
-				fkKey := strings.ToLower(fk.ColumnName + "->" + fk.RefTable + "." + fk.RefColumn)
+				cols, refs := fkColsOf(fk)
+				fkKey := strings.ToLower(strings.Join(cols, ",") + "->" + fk.RefTable + "." + strings.Join(refs, ","))
 				dstFKs[fkKey] = fk
 			}
 			for key, sFk := range srcFKs {
 				if _, exists := dstFKs[key]; !exists {
+					cols, refs := fkColsOf(sFk)
 					fkName := sFk.ConstraintName
 					if fkName == "" {
-						fkName = fmt.Sprintf("fk_%s_%s", tblName, sFk.ColumnName)
+						fkName = fmt.Sprintf("fk_%s_%s", tblName, strings.Join(cols, "_"))
 					}
+					colList := strings.Join(cols, ", ")
+					refList := strings.Join(refs, ", ")
 					colDiffs = append(colDiffs, ColumnDiff{
 						ColumnName: "FK " + fkName,
 						Status:     "added",
-						SourceType: fmt.Sprintf("%s -> %s.%s", sFk.ColumnName, sFk.RefTable, sFk.RefColumn),
-						Detail:     fmt.Sprintf("Missing FK in target (%s -> %s.%s)", sFk.ColumnName, sFk.RefTable, sFk.RefColumn),
+						SourceType: fmt.Sprintf("(%s) -> %s(%s)", colList, sFk.RefTable, refList),
+						Detail:     fmt.Sprintf("Missing FK in target ((%s) -> %s(%s))", colList, sFk.RefTable, refList),
 					})
+					qCols := make([]string, len(cols))
+					for k, c := range cols {
+						qCols[k] = quoteIdentifier(dstDriverType, c)
+					}
+					qRefs := make([]string, len(refs))
+					for k, c := range refs {
+						qRefs[k] = quoteIdentifier(dstDriverType, c)
+					}
 					fkStmt := fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
-						qTable, quoteIdentifier(dstDriverType, fkName), quoteIdentifier(dstDriverType, sFk.ColumnName), quoteIdentifier(dstDriverType, sFk.RefTable), quoteIdentifier(dstDriverType, sFk.RefColumn))
+						qTable, quoteIdentifier(dstDriverType, fkName), strings.Join(qCols, ", "), quoteIdentifier(dstDriverType, sFk.RefTable), strings.Join(qRefs, ", "))
 					if sFk.OnDelete != "" && !strings.EqualFold(sFk.OnDelete, "NO ACTION") {
 						fkStmt += " ON DELETE " + sFk.OnDelete
 					}
@@ -597,17 +644,22 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 			}
 			for key, dFk := range dstFKs {
 				if _, exists := srcFKs[key]; !exists {
+					cols, refs := fkColsOf(dFk)
 					fkName := dFk.ConstraintName
 					if fkName == "" {
-						fkName = fmt.Sprintf("fk_%s_%s", tblName, dFk.ColumnName)
+						fkName = fmt.Sprintf("fk_%s_%s", tblName, strings.Join(cols, "_"))
 					}
 					colDiffs = append(colDiffs, ColumnDiff{
 						ColumnName: "FK " + fkName,
 						Status:     "removed",
-						TargetType: fmt.Sprintf("%s -> %s.%s", dFk.ColumnName, dFk.RefTable, dFk.RefColumn),
-						Detail:     fmt.Sprintf("Extra FK in target (%s -> %s.%s)", dFk.ColumnName, dFk.RefTable, dFk.RefColumn),
+						TargetType: fmt.Sprintf("(%s) -> %s(%s)", strings.Join(cols, ", "), dFk.RefTable, strings.Join(refs, ", ")),
+						Detail:     fmt.Sprintf("Extra FK in target ((%s) -> %s(%s))", strings.Join(cols, ", "), dFk.RefTable, strings.Join(refs, ", ")),
 					})
-					alterStmts = append(alterStmts, fmt.Sprintf("-- Extra FK in target: ALTER TABLE %s DROP CONSTRAINT %s;", qTable, quoteIdentifier(dstDriverType, fkName)))
+					if dstDriverType == "mysql" || dstDriverType == "mariadb" {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra FK in target: ALTER TABLE %s DROP FOREIGN KEY %s;", qTable, quoteIdentifier(dstDriverType, fkName)))
+					} else {
+						alterStmts = append(alterStmts, fmt.Sprintf("-- Extra FK in target: ALTER TABLE %s DROP CONSTRAINT %s;", qTable, quoteIdentifier(dstDriverType, fkName)))
+					}
 				}
 			}
 
@@ -660,6 +712,68 @@ func (s *SchemaService) CompareSchemas(srcConnID, srcDB, srcSchema, dstConnID, d
 	return res, nil
 }
 
+func columnsDiffer(driverType string, sc, dc driver.ColumnMeta) bool {
+	drv := strings.ToLower(strings.TrimSpace(driverType))
+	if !strings.EqualFold(sc.DataType, dc.DataType) || sc.IsNullable != dc.IsNullable {
+		return true
+	}
+	if drv == "postgres" {
+		return normalizePGDefault(sc) != normalizePGDefault(dc)
+	}
+	if drv == "mysql" || drv == "mariadb" {
+		return buildMySQLColumnDefinition(drv, sc) != buildMySQLColumnDefinition(drv, dc)
+	}
+	return false
+}
+
+func buildMySQLColumnDefinition(driverType string, c driver.ColumnMeta) string {
+	var parts []string
+	parts = append(parts, quoteIdentifier(driverType, c.Name), c.DataType)
+	if c.CharacterSet != "" {
+		parts = append(parts, "CHARACTER SET "+c.CharacterSet)
+	}
+	if c.Collation != "" {
+		parts = append(parts, "COLLATE "+c.Collation)
+	}
+	if (c.IsGenerated || c.ColumnKind == "VIRTUAL" || c.ColumnKind == "STORED" || c.ColumnKind == "PERSISTENT") && c.GenerationExpression != "" {
+		kind := c.ColumnKind
+		if kind == "" {
+			kind = "VIRTUAL"
+		}
+		parts = append(parts, fmt.Sprintf("GENERATED ALWAYS AS (%s) %s", c.GenerationExpression, kind))
+	}
+	if !c.IsNullable {
+		parts = append(parts, "NOT NULL")
+	} else {
+		parts = append(parts, "NULL")
+	}
+	if !c.IsGenerated {
+		switch c.DefaultKind {
+		case "null":
+			parts = append(parts, "DEFAULT NULL")
+		case "expression":
+			if c.DefaultValue != "" {
+				parts = append(parts, "DEFAULT "+c.DefaultValue)
+			}
+		case "literal":
+			parts = append(parts, fmt.Sprintf("DEFAULT '%s'", strings.ReplaceAll(strings.ReplaceAll(c.DefaultValue, `\`, `\\`), `'`, `''`)))
+		}
+		if c.OnUpdate != "" {
+			parts = append(parts, "ON UPDATE "+c.OnUpdate)
+		}
+		if c.IsAutoIncr {
+			parts = append(parts, "AUTO_INCREMENT")
+		}
+	}
+	if c.IsInvisible {
+		parts = append(parts, "INVISIBLE")
+	}
+	if c.Comment != "" {
+		parts = append(parts, fmt.Sprintf("COMMENT '%s'", strings.ReplaceAll(strings.ReplaceAll(c.Comment, `\`, `\\`), `'`, `''`)))
+	}
+	return strings.Join(parts, " ")
+}
+
 func buildModifyColumnSQL(driverType, qTable string, sc, dc driver.ColumnMeta) string {
 	drv := strings.ToLower(strings.TrimSpace(driverType))
 	qCol := quoteIdentifier(drv, sc.Name)
@@ -670,7 +784,7 @@ func buildModifyColumnSQL(driverType, qTable string, sc, dc driver.ColumnMeta) s
 
 	switch drv {
 	case "mysql", "mariadb":
-		return fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s %s %s;", qTable, qCol, sc.DataType, nullStr)
+		return fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s;", qTable, buildMySQLColumnDefinition(drv, sc))
 	case "postgres":
 		var parts []string
 		if !strings.EqualFold(sc.DataType, dc.DataType) {

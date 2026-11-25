@@ -6,22 +6,29 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"dhub/internal/driver"
 	"dhub/internal/driver/mysqlapply"
-	"dhub/internal/driver/mysqlconn"
 	"dhub/internal/driver/mysqlmeta"
 	"dhub/internal/driver/mysqlschema"
+	"dhub/internal/driver/mysqlsession"
 	"dhub/internal/driver/sqlfmt"
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
 type MySQLDriver struct {
 	db        *sql.DB
+	sess      *mysqlsession.Manager
 	dsn       string
 	defaultDB string
 }
+
+var (
+	_ driver.TabSessionDriver   = (*MySQLDriver)(nil)
+	_ driver.QueryCanceller     = (*MySQLDriver)(nil)
+	_ driver.ServerInfoProvider = (*MySQLDriver)(nil)
+	_ driver.RowStreamer        = (*MySQLDriver)(nil)
+)
 
 func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
 	return NewMySQLDriverWithOptions(dsn, false)
@@ -30,21 +37,17 @@ func NewMySQLDriver(dsn string) (*MySQLDriver, error) {
 // NewMySQLDriverWithOptions opens the driver. With readOnly set, the server itself rejects writes on every
 // pooled connection, as a second line of defence behind the client-side read-only check.
 func NewMySQLDriverWithOptions(dsn string, readOnly bool) (*MySQLDriver, error) {
-	db, err := mysqlconn.Open(dsn, readOnly)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxIdleTime(2 * time.Minute)
-	db.SetConnMaxLifetime(30 * time.Minute)
-
 	var defaultDB string
 	if cfg, parseErr := mysqldriver.ParseDSN(dsn); parseErr == nil {
 		defaultDB = cfg.DBName
 	}
 
-	return &MySQLDriver{db: db, dsn: dsn, defaultDB: defaultDB}, nil
+	sess, err := mysqlsession.New(dsn, defaultDB, "mysql", readOnly)
+	if err != nil {
+		return nil, err
+	}
+
+	return &MySQLDriver{db: sess.MetaDB(), sess: sess, dsn: dsn, defaultDB: defaultDB}, nil
 }
 
 // quoteIdent quotes a MySQL identifier, escaping embedded backticks.
@@ -65,12 +68,12 @@ func (m *MySQLDriver) resolveDatabase(database, schema string) string {
 }
 
 func (m *MySQLDriver) Ping(ctx context.Context) error {
-	return m.db.PingContext(ctx)
+	return m.sess.Ping(ctx)
 }
 
 func (m *MySQLDriver) Close() error {
-	if m.db != nil {
-		return m.db.Close()
+	if m.sess != nil {
+		return m.sess.Close()
 	}
 	return nil
 }
@@ -455,25 +458,35 @@ func (m *MySQLDriver) GetTableStructure(ctx context.Context, database, schema, t
 }
 
 func (m *MySQLDriver) Execute(ctx context.Context, req driver.QueryRequest) (*driver.QueryResult, error) {
-	conn, err := m.db.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
+	return m.sess.Execute(ctx, req, m.resolveDatabase(req.Database, req.Schema))
+}
 
-	targetDB := m.resolveDatabase(req.Database, req.Schema)
-	if targetDB != "" {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE %s", quoteIdent(targetDB))); err != nil {
-			return nil, fmt.Errorf("error switching to database '%s': %w", targetDB, err)
-		}
-		if m.defaultDB != "" && targetDB != m.defaultDB {
-			defer func() {
-				_, _ = conn.ExecContext(context.Background(), fmt.Sprintf("USE %s", quoteIdent(m.defaultDB)))
-			}()
-		}
-	}
+func (m *MySQLDriver) BeginTxForTab(ctx context.Context, tabID, database string) (*sql.Tx, error) {
+	return m.sess.BeginTxForTab(ctx, tabID, m.resolveDatabase(database, ""))
+}
 
-	return driver.ExecuteStatementsWithDialect(ctx, conn, req, "mysql")
+func (m *MySQLDriver) TxEnded(tabID string) {
+	m.sess.TxEnded(tabID)
+}
+
+func (m *MySQLDriver) CloseSession(tabID string) {
+	m.sess.CloseSession(tabID)
+}
+
+func (m *MySQLDriver) CancelExecution(executionID string) (bool, error) {
+	return m.sess.CancelExecution(executionID)
+}
+
+func (m *MySQLDriver) TrackExecution(executionID, tabID string) func() {
+	return m.sess.TrackExecution(executionID, tabID)
+}
+
+func (m *MySQLDriver) ServerInfo(ctx context.Context) (*driver.ServerInfo, error) {
+	return m.sess.ServerInfo(ctx)
+}
+
+func (m *MySQLDriver) StreamQuery(ctx context.Context, req driver.QueryRequest, onRow func(cols []driver.ColumnMeta, row []any) error) error {
+	return m.sess.StreamQuery(ctx, req, m.resolveDatabase(req.Database, req.Schema), onRow)
 }
 
 func (m *MySQLDriver) BeginTx(ctx context.Context, database string) (*sql.Tx, error) {
