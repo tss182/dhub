@@ -296,17 +296,24 @@ func getAllToolsForDriver(drv string) []string {
 	}
 }
 
+// execCommandContext creates an exec.Cmd with OS console window hidden (e.g. on Windows).
+func execCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	hideCommandWindow(cmd)
+	return cmd
+}
+
 func verifyBinaryRunnable(binPath string) bool {
 	if isDHubPortableTool(binPath) {
 		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binPath, "--version")
+	cmd := execCommandContext(ctx, binPath, "--version")
 	if err := cmd.Run(); err == nil {
 		return true
 	}
-	cmd2 := exec.CommandContext(ctx, binPath, "-V")
+	cmd2 := execCommandContext(ctx, binPath, "-V")
 	return cmd2.Run() == nil
 }
 

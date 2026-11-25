@@ -946,6 +946,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     tableSearch: string;
     isLoadingTables: boolean;
     toolPath: string;
+    consoleLogs: string[];
     backupProgress: {
       percent: number;
       currentTable?: string;
@@ -973,6 +974,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     tableSearch: '',
     isLoadingTables: false,
     toolPath: '',
+    consoleLogs: [],
     backupProgress: null,
   });
 
@@ -1087,18 +1089,38 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         payload.connectionId === backupRestoreModal.connection?.id &&
         payload.database === backupRestoreModal.database
       ) {
-        setBackupRestoreModal((prev) => ({
-          ...prev,
-          backupProgress: {
-            percent: typeof payload.percent === 'number' ? payload.percent : 0,
-            currentTable: payload.currentTable || '',
-            tablesDone: payload.tablesDone || 0,
-            totalTables: payload.totalTables || 0,
-            bytesWritten: payload.bytesWritten || 0,
-            totalBytes: payload.totalBytes || 0,
-            message: payload.message || '',
-          },
-        }));
+        setBackupRestoreModal((prev) => {
+          const nextLogs = [...prev.consoleLogs];
+          if (payload.logLine) {
+            nextLogs.push(payload.logLine);
+          } else if (
+            payload.message &&
+            nextLogs[nextLogs.length - 1] !== `[status] ${payload.message}`
+          ) {
+            nextLogs.push(`[status] ${payload.message}`);
+          }
+          const trimmedLogs = nextLogs.length > 500 ? nextLogs.slice(nextLogs.length - 500) : nextLogs;
+
+          const hasProgressUpdate =
+            typeof payload.percent === 'number' &&
+            (payload.percent > 0 || Boolean(payload.message) || Boolean(payload.bytesWritten));
+
+          return {
+            ...prev,
+            consoleLogs: trimmedLogs,
+            backupProgress: hasProgressUpdate
+              ? {
+                  percent: payload.percent,
+                  currentTable: payload.currentTable || '',
+                  tablesDone: payload.tablesDone || 0,
+                  totalTables: payload.totalTables || 0,
+                  bytesWritten: payload.bytesWritten || 0,
+                  totalBytes: payload.totalBytes || 0,
+                  message: payload.message || '',
+                }
+              : prev.backupProgress,
+          };
+        });
       }
     });
     return () => {
@@ -1145,6 +1167,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       tableSearch: '',
       isLoadingTables: true,
       toolPath: savedToolPath,
+      consoleLogs: [],
       backupProgress: null,
     });
 
@@ -1286,6 +1309,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
       filePath: '',
       isProcessing: false,
       toolPath: savedToolPath,
+      consoleLogs: [],
       backupProgress: null,
     }));
 
@@ -1355,6 +1379,7 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
     setBackupRestoreModal((prev) => ({
       ...prev,
       isProcessing: true,
+      consoleLogs: [],
       backupProgress: {
         percent: 0,
         tablesDone: 0,
@@ -1417,9 +1442,21 @@ export const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ onCollapse }
         alertSuccess(String(msg || ''), 'Database Restore Completed');
       }
     } catch (err: any) {
-      setBackupRestoreModal((prev) => ({ ...prev, isProcessing: false, backupProgress: null }));
+      const errText = err?.message || String(err);
+      setBackupRestoreModal((prev) => {
+        const errLine = `Error: ${errText}`;
+        const logs = prev.consoleLogs[prev.consoleLogs.length - 1] === errLine
+          ? prev.consoleLogs
+          : [...prev.consoleLogs, errLine];
+        return {
+          ...prev,
+          isProcessing: false,
+          backupProgress: null,
+          consoleLogs: logs,
+        };
+      });
       alertError(
-        err?.message || String(err),
+        errText,
         mode === 'backup' ? 'Database Backup Failed' : 'Database Restore Failed'
       );
     }

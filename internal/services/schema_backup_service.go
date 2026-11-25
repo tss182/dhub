@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dhub/internal/app"
@@ -101,6 +102,94 @@ func (s *SchemaService) emitRestoreProgress(ev app.BackupProgressEvent) {
 	if a := s.appGetter(); a != nil {
 		a.Event.Emit("restore:progress", ev)
 	}
+}
+
+type consoleLogWriter struct {
+	mu     sync.Mutex
+	buf    []byte
+	onLine func(line string)
+}
+
+func newConsoleLogWriter(onLine func(line string)) *consoleLogWriter {
+	return &consoleLogWriter{onLine: onLine}
+}
+
+func (w *consoleLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, b := range p {
+		if b == '\n' || b == '\r' {
+			w.flushLocked()
+		} else if len(w.buf) < 2048 {
+			w.buf = append(w.buf, b)
+		}
+	}
+	return len(p), nil
+}
+
+func (w *consoleLogWriter) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.flushLocked()
+}
+
+func (w *consoleLogWriter) flushLocked() {
+	if len(w.buf) == 0 {
+		return
+	}
+	line := strings.TrimSpace(string(w.buf))
+	w.buf = w.buf[:0]
+	if line != "" && w.onLine != nil {
+		w.onLine(line)
+	}
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buf.Bytes()...)
+}
+
+func runCommandWithConsole(cmd *exec.Cmd, logWriter io.Writer) ([]byte, error) {
+	var out syncBuffer
+	mw := io.MultiWriter(&out, logWriter)
+	cmd.Stdout = mw
+	cmd.Stderr = mw
+	err := cmd.Run()
+	return out.Bytes(), err
+}
+
+func (s *SchemaService) newBackupLogWriter(connectionID, database string) *consoleLogWriter {
+	return newConsoleLogWriter(func(line string) {
+		s.emitBackupProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "running",
+			LogLine:      line,
+		})
+	})
+}
+
+func (s *SchemaService) newRestoreLogWriter(connectionID, database string) *consoleLogWriter {
+	return newConsoleLogWriter(func(line string) {
+		s.emitRestoreProgress(app.BackupProgressEvent{
+			ConnectionID: connectionID,
+			Database:     database,
+			Status:       "running",
+			LogLine:      line,
+		})
+	})
 }
 
 type RestoreOptions struct {
@@ -445,6 +534,9 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		Message:      "Preparing backup...",
 	})
 
+	logWriter := s.newBackupLogWriter(connectionID, database)
+	defer logWriter.Flush()
+
 	emitErr := func(err error) error {
 		s.emitBackupProgress(app.BackupProgressEvent{
 			ConnectionID: connectionID,
@@ -452,6 +544,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			Status:       "error",
 			Percent:      0,
 			Message:      err.Error(),
+			LogLine:      "Error: " + err.Error(),
 		})
 		return err
 	}
@@ -594,7 +687,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 				args = append(args, opts.Tables...)
 			}
 
-			cmd := exec.CommandContext(ctx, binPath, args...)
+			cmd := execCommandContext(ctx, binPath, args...)
 			cmd.Env = os.Environ()
 
 			var stderrBuf bytes.Buffer
@@ -621,7 +714,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 				})
 			})
 			cmd.Stdout = pw
-			cmd.Stderr = &stderrBuf
+			cmd.Stderr = io.MultiWriter(&stderrBuf, logWriter)
 
 			runErr := cmd.Run()
 			_ = outFile.Close()
@@ -725,7 +818,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 
 		args = append(args, database)
 
-		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd := execCommandContext(ctx, binPath, args...)
 		cmd.Env = os.Environ()
 		cmd.Env = append(cmd.Env, "PGCONNECT_TIMEOUT=10")
 		if conn.Password != "" {
@@ -751,7 +844,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			gz := gzip.NewWriter(outFile)
 			var stderrBuf bytes.Buffer
 			cmd.Stdout = gz
-			cmd.Stderr = &stderrBuf
+			cmd.Stderr = io.MultiWriter(&stderrBuf, logWriter)
 			runErr := cmd.Run()
 			_ = gz.Close()
 			_ = outFile.Close()
@@ -764,7 +857,7 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 				return "", emitErr(fmt.Errorf("pg_dump failed: %s", msg))
 			}
 		} else {
-			if out, err := cmd.CombinedOutput(); err != nil {
+			if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 				msg := strings.TrimSpace(string(out))
 				if msg == "" {
 					msg = err.Error()
@@ -795,10 +888,10 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			if opts.TableSelection == "include" {
 				cmdArgs = append(cmdArgs, opts.Tables...)
 			}
-			cmd := exec.CommandContext(ctx, binPath, cmdArgs...)
+			cmd := execCommandContext(ctx, binPath, cmdArgs...)
 			var stderr bytes.Buffer
 			cmd.Stdout = outFile
-			cmd.Stderr = &stderr
+			cmd.Stderr = io.MultiWriter(&stderr, logWriter)
 			runErr := cmd.Run()
 			_ = outFile.Close()
 			if runErr != nil {
@@ -844,8 +937,8 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 				}
 			}
 		}
-		cmd := exec.CommandContext(ctx, binPath, args...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmd := execCommandContext(ctx, binPath, args...)
+		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
 				msg = err.Error()
@@ -867,12 +960,12 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 			port = 6379
 		}
 		args := []string{"-h", host, "-p", strconv.Itoa(port), "--rdb", filePath}
-		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd := execCommandContext(ctx, binPath, args...)
 		cmd.Env = os.Environ()
 		if conn.Password != "" {
 			cmd.Env = append(cmd.Env, "REDISCLI_AUTH="+conn.Password)
 		}
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
 				msg = err.Error()
@@ -913,8 +1006,8 @@ func (s *SchemaService) BackupDatabase(connectionID, database, filePath, options
 		} else {
 			args = append(args, "-E")
 		}
-		cmd := exec.CommandContext(ctx, binPath, args...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmd := execCommandContext(ctx, binPath, args...)
+		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
 				msg = err.Error()
@@ -1027,6 +1120,9 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		Message:      "Preparing restore...",
 	})
 
+	logWriter := s.newRestoreLogWriter(connectionID, database)
+	defer logWriter.Flush()
+
 	emitErr := func(err error) error {
 		s.emitRestoreProgress(app.BackupProgressEvent{
 			ConnectionID: connectionID,
@@ -1035,6 +1131,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			Percent:      0,
 			TotalBytes:   totalBytes,
 			Message:      err.Error(),
+			LogLine:      "Error: " + err.Error(),
 		})
 		return err
 	}
@@ -1096,7 +1193,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			database,
 		}
 
-		cmd := exec.CommandContext(ctx, binPath, args...)
+		cmd := execCommandContext(ctx, binPath, args...)
 		cmd.Stdin = newRestoreProgressReader(sqlInput, func(bytesRead int64, currentTable string) {
 			pct := 5.0
 			if totalBytes > 0 {
@@ -1128,7 +1225,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			cmd.Env = append(cmd.Env, "MYSQL_PWD="+conn.Password)
 		}
 
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
 				msg = err.Error()
@@ -1189,7 +1286,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 				"--no-acl",
 				filePath,
 			}
-			cmd := exec.CommandContext(ctx, binPath, args...)
+			cmd := execCommandContext(ctx, binPath, args...)
 			cmd.Env = os.Environ()
 			cmd.Env = append(cmd.Env, "PGCONNECT_TIMEOUT=10")
 			if conn.Password != "" {
@@ -1207,7 +1304,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			if strings.TrimSpace(conn.SSLKeyPath) != "" {
 				cmd.Env = append(cmd.Env, "PGSSLKEY="+conn.SSLKeyPath)
 			}
-			if out, err := cmd.CombinedOutput(); err != nil {
+			if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 				msg := strings.TrimSpace(string(out))
 				if msg == "" {
 					msg = err.Error()
@@ -1244,7 +1341,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			if !isGz {
 				args = append(args, "-f", filePath)
 			}
-			cmd := exec.CommandContext(ctx, binPath, args...)
+			cmd := execCommandContext(ctx, binPath, args...)
 			if isGz {
 				sqlFile, openErr := os.Open(filePath)
 				if openErr != nil {
@@ -1275,7 +1372,7 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 			if strings.TrimSpace(conn.SSLKeyPath) != "" {
 				cmd.Env = append(cmd.Env, "PGSSLKEY="+conn.SSLKeyPath)
 			}
-			if out, err := cmd.CombinedOutput(); err != nil {
+			if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 				msg := strings.TrimSpace(string(out))
 				if msg == "" {
 					msg = err.Error()
@@ -1307,8 +1404,8 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		if strings.HasSuffix(strings.ToLower(filePath), ".gz") {
 			args = append(args, "--gzip")
 		}
-		cmd := exec.CommandContext(ctx, binPath, args...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmd := execCommandContext(ctx, binPath, args...)
+		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
 				msg = err.Error()
@@ -1361,8 +1458,8 @@ func (s *SchemaService) RestoreDatabaseWithOptions(connectionID, database, fileP
 		} else {
 			args = append(args, "-E")
 		}
-		cmd := exec.CommandContext(ctx, binPath, args...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmd := execCommandContext(ctx, binPath, args...)
+		if out, err := runCommandWithConsole(cmd, logWriter); err != nil {
 			msg := strings.TrimSpace(string(out))
 			if msg == "" {
 				msg = err.Error()

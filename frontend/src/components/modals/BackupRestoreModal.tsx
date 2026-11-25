@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { CheckCircle2, AlertTriangle, Download, Upload, RefreshCw, Search, Table, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { CheckCircle2, AlertTriangle, Download, Upload, RefreshCw, Search, Table, X, Terminal, Copy, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { Events } from '@wailsio/runtime';
 import { ConnectionConfig, resolveConnectionEnv } from '../../types/domain';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -27,6 +27,7 @@ export interface BackupRestoreModalState {
   tableSearch: string;
   isLoadingTables: boolean;
   toolPath: string;
+  consoleLogs: string[];
   backupProgress: {
     percent: number;
     currentTable?: string;
@@ -67,6 +68,20 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
     percent: number;
     message: string;
   } | null>(null);
+  const [isConsoleExpanded, setIsConsoleExpanded] = useState<boolean>(true);
+  const consoleEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (backupRestoreModal.isProcessing) {
+      setIsConsoleExpanded(true);
+    }
+  }, [backupRestoreModal.isProcessing]);
+
+  useEffect(() => {
+    if (isConsoleExpanded && consoleEndRef.current) {
+      consoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [backupRestoreModal.consoleLogs.length, isConsoleExpanded]);
 
   const isBackup = backupRestoreModal.mode === 'backup';
   const drv = backupRestoreModal.connection?.driver || 'mysql';
@@ -855,6 +870,93 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
               </div>
             );
           })()}
+
+          {(backupRestoreModal.isProcessing || backupRestoreModal.consoleLogs.length > 0) && (
+            <div className="rounded-xl bg-[#0b0c10] border border-[#232634] overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-1.5 bg-[#12141c] border-b border-[#232634]">
+                <button
+                  type="button"
+                  onClick={() => setIsConsoleExpanded((v) => !v)}
+                  className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-300 hover:text-white cursor-pointer"
+                >
+                  {isConsoleExpanded ? (
+                    <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
+                  )}
+                  <Terminal className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Console Output</span>
+                  <span className="ml-1 px-1.5 py-0.5 rounded bg-[#1d202b] text-[10px] font-mono text-zinc-400">
+                    {backupRestoreModal.consoleLogs.length}
+                  </span>
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = backupRestoreModal.consoleLogs.join('\n');
+                      if (text) {
+                        navigator.clipboard?.writeText(text).then(() => {
+                          alertSuccess('Console output copied to clipboard.', 'Copied');
+                        }).catch(() => {});
+                      }
+                    }}
+                    disabled={backupRestoreModal.consoleLogs.length === 0}
+                    title="Copy console output"
+                    className="p-1 rounded hover:bg-[#1f222e] text-zinc-400 hover:text-zinc-200 disabled:opacity-30 cursor-pointer transition-colors"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
+                  {!backupRestoreModal.isProcessing && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBackupRestoreModal((prev) => ({ ...prev, consoleLogs: [] }))
+                      }
+                      title="Clear console"
+                      className="p-1 rounded hover:bg-[#1f222e] text-zinc-400 hover:text-rose-300 cursor-pointer transition-colors"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              {isConsoleExpanded && (
+                <div className="max-h-40 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed space-y-0.5 custom-scrollbar select-text">
+                  {backupRestoreModal.consoleLogs.length === 0 ? (
+                    <div className="text-zinc-500 italic">Waiting for output...</div>
+                  ) : (
+                    backupRestoreModal.consoleLogs.map((line, idx) => {
+                      const lower = line.toLowerCase();
+                      const isErr =
+                        lower.startsWith('error:') ||
+                        lower.includes('failed') ||
+                        lower.includes('fatal');
+                      const isStatus =
+                        line.startsWith('[') ||
+                        line.startsWith('Running ') ||
+                        line.startsWith('Preparing ');
+                      return (
+                        <div
+                          key={idx}
+                          className={`break-all whitespace-pre-wrap ${
+                            isErr
+                              ? 'text-rose-400'
+                              : isStatus
+                              ? 'text-sky-300'
+                              : 'text-zinc-300'
+                          }`}
+                        >
+                          {line}
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={consoleEndRef} />
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#232530] shrink-0">
             <button

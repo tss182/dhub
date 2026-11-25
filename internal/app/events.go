@@ -40,6 +40,7 @@ type BackupProgressEvent struct {
 	BytesWritten int64   `json:"bytesWritten"`
 	TotalBytes   int64   `json:"totalBytes,omitempty"`
 	Message      string  `json:"message,omitempty"`
+	LogLine      string  `json:"logLine,omitempty"`
 }
 
 type ToolDownloadProgressEvent struct {
