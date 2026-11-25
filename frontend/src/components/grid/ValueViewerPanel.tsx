@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import '../../utils/monacoSetup';
+import { parsePgSparseVec, parsePgBitVec, formatPgSparseVec } from '../../utils/pgvector';
 import {
   X,
   Copy,
@@ -310,13 +311,32 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
   }, [parsedVector]);
 
   const [copiedNormVec, setCopiedNormVec] = useState(false);
+  const [clipboardCompare, setClipboardCompare] = useState<{
+    cosineSim: number;
+    l2Dist: number;
+    innerProd: number;
+    l1Dist: number;
+  } | null>(null);
+  const [clipboardCompareErr, setClipboardCompareErr] = useState<string | null>(null);
+
+  const parsedSparseVec = useMemo(() => {
+    if (typeof rawValue !== 'string') return null;
+    return parsePgSparseVec(rawValue);
+  }, [rawValue]);
+
+  const parsedBitVec = useMemo(() => {
+    if (typeof rawValue !== 'string') return null;
+    const isBitCol = (columnType || '').toLowerCase().includes('bit');
+    if (!isBitCol && rawValue.trim().length < 8) return null;
+    return parsePgBitVec(rawValue);
+  }, [rawValue, columnType]);
 
   // Detected format
   const autoDetectedFormat = useMemo<'html' | 'json' | 'xml' | 'text' | 'vector'>(() => {
-    if (parsedVector) return 'vector';
+    if (parsedVector || parsedSparseVec || parsedBitVec) return 'vector';
     if (stringValue === null) return 'text';
     return detectFormat(stringValue);
-  }, [stringValue, parsedVector]);
+  }, [stringValue, parsedVector, parsedSparseVec, parsedBitVec]);
 
   // Active format: either manually selected or detected
   const activeFormat = selectedFormat === 'auto' ? autoDetectedFormat : selectedFormat;
@@ -702,7 +722,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
       <div className="flex items-center justify-between border-b border-[#22242c] px-2.5 py-1.5 bg-[#121317] shrink-0 text-xs">
         {/* Left: Format switcher tabs */}
         <div className="flex items-center gap-1 bg-[#1a1b22] p-0.5 rounded-md border border-[#272932]">
-          {(['auto', ...(parsedVector ? (['vector'] as const) : []), 'html', 'json', 'xml', 'text'] as const).map((fmt) => {
+          {(['auto', ...(parsedVector || parsedSparseVec || parsedBitVec ? (['vector'] as const) : []), 'html', 'json', 'xml', 'text'] as const).map((fmt) => {
             const isSelected = selectedFormat === fmt;
             const labels: Record<ValueFormat, { label: string; icon: any }> = {
               auto: { label: 'Auto', icon: Sparkles },
@@ -935,7 +955,7 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
               </svg>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -950,7 +970,72 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
                 {copiedNormVec ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
                 <span>{copiedNormVec ? 'Copied Normalized!' : 'Copy L2-Normalized Vector'}</span>
               </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setClipboardCompareErr(null);
+                  try {
+                    const txt = await navigator.clipboard.readText();
+                    const parsed = JSON.parse(txt.trim().startsWith('[') ? txt.trim() : `[${txt.trim()}]`);
+                    if (!Array.isArray(parsed) || parsed.length !== parsedVector.length) {
+                      setClipboardCompare(null);
+                      setClipboardCompareErr(`Clipboard vector must have ${parsedVector.length} dims (got ${Array.isArray(parsed) ? parsed.length : 'invalid'}).`);
+                      return;
+                    }
+                    let dot = 0, na = 0, nb = 0, sq = 0, l1 = 0;
+                    for (let i = 0; i < parsedVector.length; i++) {
+                      const a = parsedVector[i];
+                      const b = Number(parsed[i]) || 0;
+                      dot += a * b;
+                      na += a * a;
+                      nb += b * b;
+                      sq += (a - b) * (a - b);
+                      l1 += Math.abs(a - b);
+                    }
+                    const denom = Math.sqrt(na) * Math.sqrt(nb);
+                    setClipboardCompare({
+                      cosineSim: denom > 0 ? dot / denom : 0,
+                      l2Dist: Math.sqrt(sq),
+                      innerProd: dot,
+                      l1Dist: l1,
+                    });
+                  } catch {
+                    setClipboardCompare(null);
+                    setClipboardCompareErr('Clipboard does not contain a valid numeric vector array.');
+                  }
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-cyan-600/15 hover:bg-cyan-600/25 border border-cyan-500/35 text-cyan-200 text-[11px] font-medium cursor-pointer transition-colors"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Compare with Clipboard Vector</span>
+              </button>
             </div>
+
+            {clipboardCompareErr && (
+              <div className="text-[11px] text-rose-400">{clipboardCompareErr}</div>
+            )}
+
+            {clipboardCompare && (
+              <div className="grid grid-cols-4 gap-2 rounded bg-[#141720] border border-cyan-500/30 p-2.5">
+                <div>
+                  <div className="text-[10px] text-zinc-500">Cosine Sim</div>
+                  <div className="font-mono text-xs text-cyan-300 font-semibold">{clipboardCompare.cosineSim.toFixed(6)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-zinc-500">L2 Distance</div>
+                  <div className="font-mono text-xs text-zinc-200">{clipboardCompare.l2Dist.toFixed(6)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-zinc-500">Inner Product</div>
+                  <div className="font-mono text-xs text-zinc-200">{clipboardCompare.innerProd.toFixed(6)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-zinc-500">L1 Distance</div>
+                  <div className="font-mono text-xs text-zinc-200">{clipboardCompare.l1Dist.toFixed(6)}</div>
+                </div>
+              </div>
+            )}
 
             <div className="rounded bg-[#16171d] border border-[#272932] p-2.5">
               <div className="text-[10px] text-zinc-500 mb-1">First 32 Values</div>
@@ -959,6 +1044,138 @@ export const ValueViewerPanel: React.FC<ValueViewerPanelProps> = ({
                 {parsedVector.length > 32 ? `, … (+${parsedVector.length - 32} more)` : ''}]
               </div>
             </div>
+          </div>
+        ) : activeFormat === 'vector' && parsedSparseVec ? (
+          <div className="h-full overflow-y-auto p-3 space-y-3 text-xs">
+            {(() => {
+              const l2 = Math.sqrt(parsedSparseVec.entries.reduce((s, e) => s + e.value * e.value, 0));
+              const density = parsedSparseVec.dims > 0 ? (parsedSparseVec.nnz / parsedSparseVec.dims) * 100 : 0;
+              const top20 = [...parsedSparseVec.entries]
+                .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+                .slice(0, 20);
+              const maxAbs = Math.max(...top20.map((e) => Math.abs(e.value)), 1e-9);
+              return (
+                <>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">NNZ</div>
+                      <div className="font-mono text-sm font-semibold text-violet-300">{parsedSparseVec.nnz}</div>
+                    </div>
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">Total Dims</div>
+                      <div className="font-mono text-sm font-semibold text-zinc-200">{parsedSparseVec.dims}</div>
+                    </div>
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">Density</div>
+                      <div className="font-mono text-sm font-semibold text-cyan-300">{density.toFixed(2)}%</div>
+                    </div>
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">L2 Norm</div>
+                      <div className="font-mono text-sm font-semibold text-emerald-300">{l2.toFixed(4)}</div>
+                    </div>
+                  </div>
+                  <div className="rounded bg-[#16171d] border border-[#272932] p-2.5 space-y-1.5">
+                    <div className="text-[10px] text-zinc-400">Top {top20.length} Non-Zero Weights</div>
+                    {top20.map((e) => (
+                      <div key={e.index} className="flex items-center gap-2 font-mono text-[11px]">
+                        <span className="w-16 text-right text-zinc-400">#{e.index}</span>
+                        <div className="flex-1 h-2 rounded bg-[#101114] overflow-hidden">
+                          <div
+                            className={`h-full ${e.value >= 0 ? 'bg-violet-500' : 'bg-rose-500'}`}
+                            style={{ width: `${Math.min(100, (Math.abs(e.value) / maxAbs) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="w-20 text-right text-zinc-200">{e.value.toFixed(4)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(formatPgSparseVec(parsedSparseVec.entries, parsedSparseVec.dims))}
+                      className="px-2.5 py-1.5 rounded bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/40 text-violet-200 text-[11px] cursor-pointer"
+                    >
+                      Copy pgvector {'{i:v}/d'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigator.clipboard?.writeText(
+                          JSON.stringify({
+                            indices: parsedSparseVec.entries.map((e) => e.index),
+                            values: parsedSparseVec.entries.map((e) => e.value),
+                          })
+                        )
+                      }
+                      className="px-2.5 py-1.5 rounded bg-[#1e2028] hover:bg-[#272a35] border border-[#2d303c] text-zinc-200 text-[11px] cursor-pointer"
+                    >
+                      Copy JSON {'{indices, values}'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        ) : activeFormat === 'vector' && parsedBitVec && typeof rawValue === 'string' ? (
+          <div className="h-full overflow-y-auto p-3 space-y-3 text-xs">
+            {(() => {
+              const bits = rawValue.trim();
+              const sample = bits.slice(0, 256);
+              const hexChunks: string[] = [];
+              for (let i = 0; i < bits.length; i += 4) {
+                hexChunks.push(parseInt(bits.slice(i, i + 4).padEnd(4, '0'), 2).toString(16));
+              }
+              return (
+                <>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">Bit Length</div>
+                      <div className="font-mono text-sm font-semibold text-violet-300">{parsedBitVec.dims}</div>
+                    </div>
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">Popcount (1s)</div>
+                      <div className="font-mono text-sm font-semibold text-emerald-300">{parsedBitVec.ones}</div>
+                    </div>
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">0s</div>
+                      <div className="font-mono text-sm font-semibold text-zinc-300">{parsedBitVec.zeros}</div>
+                    </div>
+                    <div className="rounded bg-[#16171d] border border-[#272932] p-2">
+                      <div className="text-[10px] text-zinc-500">Density</div>
+                      <div className="font-mono text-sm font-semibold text-cyan-300">{(parsedBitVec.density * 100).toFixed(1)}%</div>
+                    </div>
+                  </div>
+                  <div className="rounded bg-[#16171d] border border-[#272932] p-2.5 space-y-1.5">
+                    <div className="text-[10px] text-zinc-400">Binary Strip (first {sample.length} bits)</div>
+                    <div className="grid grid-cols-32 gap-0.5">
+                      {Array.from(sample).map((b, idx) => (
+                        <div
+                          key={idx}
+                          className={`h-2 rounded-[1px] ${b === '1' ? 'bg-emerald-400' : 'bg-zinc-800'}`}
+                          title={`bit ${idx}: ${b}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(bits)}
+                      className="px-2.5 py-1.5 rounded bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/40 text-violet-200 text-[11px] cursor-pointer"
+                    >
+                      Copy Bitstring
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText('0x' + hexChunks.join(''))}
+                      className="px-2.5 py-1.5 rounded bg-[#1e2028] hover:bg-[#272a35] border border-[#2d303c] text-zinc-200 text-[11px] cursor-pointer"
+                    >
+                      Copy Hex
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         ) : activeFormat === 'html' && htmlViewMode === 'preview' ? (
           <div className="w-full h-full relative">

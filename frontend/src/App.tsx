@@ -438,6 +438,7 @@ export function App() {
     schema: string;
     tableName: string;
   }>({ isOpen: false, connectionId: '', database: '', schema: '', tableName: '' });
+  const [queryVectorByTab, setQueryVectorByTab] = useState<Record<string, number[] | null>>({});
 
   // Query Result pagination & lazy load state per tab
   const [queryPaginationByTab, setQueryPaginationByTab] = useState<
@@ -3528,7 +3529,13 @@ export function App() {
                         searchStats={vecState?.stats || null}
                         error={vecState?.error || null}
                         onExecuteVectorSearch={(sql, sessionParams) => handleExecuteVectorSearch(activeTab, sql, sessionParams)}
-                        onResetSearch={() => handleResetVectorSearch(activeTab)}
+                        onResetSearch={() => {
+                          setQueryVectorByTab((prev) => ({ ...prev, [activeTab.id]: null }));
+                          handleResetVectorSearch(activeTab);
+                        }}
+                        onQueryVectorChange={(vec) =>
+                          setQueryVectorByTab((prev) => ({ ...prev, [activeTab.id]: vec }))
+                        }
                         onOpenVectorIndexModal={() =>
                           setPgVectorIndexModal({
                             isOpen: true,
@@ -3561,6 +3568,7 @@ export function App() {
                             columns={finalColumns}
                             rows={finalRows}
                             title={activeTab.table}
+                            queryVector={queryVectorByTab[activeTab.id] ?? null}
                           />
                         ) : (
                         <DataGrid

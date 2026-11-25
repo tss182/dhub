@@ -2,11 +2,13 @@ import React, { useEffect, useId, useMemo, useState } from 'react';
 import { Download, AlertCircle, Sparkles } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
+import { parsePgBitVec, parsePgSparseVec } from '../../utils/pgvector';
 
 export interface VectorPcaChartProps {
   columns: ColumnMeta[];
   rows: any[][];
   title?: string;
+  queryVector?: number[] | null;
 }
 
 const PALETTE = [
@@ -150,7 +152,7 @@ function computePca3D(vectors: number[][]): Array<[number, number, number]> {
   return coords;
 }
 
-export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, title }) => {
+export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, title, queryVector }) => {
   const svgDomId = useId();
   const vectorCols = useMemo(
     () =>
@@ -212,14 +214,53 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
       label: string;
       colorGroup: string;
       score?: number;
+      isQuery?: boolean;
     }> = [];
 
     const scoreColIdx = columns.findIndex((c) => c.name === 'score' || c.name === '_score' || c.name === 'distance');
     let expectedDim = -1;
 
+    // Collect sparsevec top-64 active indices if column is sparsevec
+    const rawCol = columns[activeVecIdx];
+    const rawColType = ((rawCol?.dataType || rawCol?.rawType || '') as string).toLowerCase();
+    const isSparseCol = rawColType.includes('sparsevec');
+    const isBitCol = rawColType.includes('bit');
+
+    let topSparseIndices: number[] = [];
+    if (isSparseCol) {
+      const freq = new Map<number, number>();
+      for (let i = 0; i < limit; i++) {
+        const sp = parsePgSparseVec(String(rows[i]?.[activeVecIdx] ?? ''));
+        if (!sp) continue;
+        for (const e of sp.entries) {
+          freq.set(e.index, (freq.get(e.index) || 0) + 1);
+        }
+      }
+      topSparseIndices = Array.from(freq.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 64)
+        .map(([idx]) => idx);
+    }
+
     for (let i = 0; i < limit; i++) {
       const r = rows[i];
-      const vec = parseNumericVector(r?.[activeVecIdx]);
+      const cell = r?.[activeVecIdx];
+      let vec: number[] | null = null;
+      if (isSparseCol && topSparseIndices.length > 0) {
+        const sp = parsePgSparseVec(String(cell ?? ''));
+        if (sp) {
+          const valMap = new Map(sp.entries.map((e) => [e.index, e.value]));
+          vec = topSparseIndices.map((idx) => valMap.get(idx) ?? 0);
+        }
+      } else if (isBitCol || (typeof cell === 'string' && /^[01]{8,}$/.test(cell.trim()))) {
+        const bv = parsePgBitVec(String(cell ?? ''));
+        if (bv) {
+          const s = String(cell).trim();
+          vec = Array.from(s, (ch) => (ch === '1' ? 1 : -1));
+        }
+      } else {
+        vec = parseNumericVector(cell);
+      }
       if (!vec) continue;
       if (expectedDim === -1) expectedDim = vec.length;
       if (vec.length !== expectedDim) continue;
@@ -234,16 +275,37 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
     }
 
     if (validItems.length === 0) return [];
-    const coords = computePca3D(validItems.map((it) => it.vec));
+    const pcaInputs = validItems.map((it) => it.vec);
+    const hasQueryVec = Boolean(queryVector && queryVector.length === expectedDim);
+    if (hasQueryVec && queryVector) {
+      pcaInputs.push(queryVector);
+    }
+    const coords = computePca3D(pcaInputs);
 
-    return validItems.map((it, idx) => ({
+    const out = validItems.map((it, idx) => ({
       ...it,
       x: coords[idx][0],
       y: coords[idx][1],
       z: coords[idx][2],
       dims: it.vec.length,
     }));
-  }, [activeVecIdx, rows, maxPoints, columns, labelColIdx, colorColIdx]);
+    if (hasQueryVec && coords.length > validItems.length) {
+      const qCoord = coords[validItems.length];
+      out.push({
+        rowIdx: -1,
+        vec: queryVector!,
+        label: '★ Query Vector',
+        colorGroup: '__query__',
+        score: undefined,
+        isQuery: true,
+        x: qCoord[0],
+        y: qCoord[1],
+        z: qCoord[2],
+        dims: queryVector!.length,
+      });
+    }
+    return out;
+  }, [activeVecIdx, rows, maxPoints, columns, labelColIdx, colorColIdx, queryVector]);
 
   const { groupColors, numericColorStats } = useMemo(() => {
     const map = new Map<string, string>();
@@ -499,8 +561,51 @@ export const VectorPcaChart: React.FC<VectorPcaChartProps> = ({ columns, rows, t
               PC2
             </text>
 
+            {/* Query Vector Lines to Top-3 Neighbors & Star Marker */}
+            {(() => {
+              const qPt = displayPoints.find((p: any) => p.isQuery);
+              if (!qPt) return null;
+              const neighbors = displayPoints
+                .filter((p: any) => !p.isQuery)
+                .map((p) => ({
+                  p,
+                  d2: (p.sx - qPt.sx) ** 2 + (p.sy - qPt.sy) ** 2,
+                }))
+                .sort((a, b) => a.d2 - b.d2)
+                .slice(0, 3);
+              return (
+                <g>
+                  {neighbors.map(({ p }) => (
+                    <line
+                      key={`qline-${p.rowIdx}`}
+                      x1={qPt.sx}
+                      y1={qPt.sy}
+                      x2={p.sx}
+                      y2={p.sy}
+                      stroke="#fbbf24"
+                      strokeOpacity={0.5}
+                      strokeWidth={1.2}
+                      strokeDasharray="3 3"
+                    />
+                  ))}
+                  <text
+                    x={qPt.sx}
+                    y={qPt.sy + 4}
+                    textAnchor="middle"
+                    fill="#fbbf24"
+                    stroke="#111216"
+                    strokeWidth={0.6}
+                    fontSize="16"
+                    className="pointer-events-none select-none"
+                  >
+                    ★
+                  </text>
+                </g>
+              );
+            })()}
+
             {/* Points */}
-            {displayPoints.map((pt) => {
+            {displayPoints.filter((p: any) => !p.isQuery).map((pt) => {
               const isHovered = hoveredPointIdx === pt.origIdx;
               const isSelected = selectedIndices.includes(pt.origIdx);
               const fill = groupColors.get(pt.colorGroup) || '#8b5cf6';

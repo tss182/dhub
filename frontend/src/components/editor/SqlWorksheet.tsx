@@ -1259,8 +1259,34 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
             });
           });
 
-          // 5. pgvector snippets for PostgreSQL
+          // 5. pgvector functions & snippets for PostgreSQL (0.7 / 0.8+)
           if (driver === 'postgres') {
+            const pgvectorFunctions = [
+              { label: 'vector_dims', detail: 'Return dimensions of vector/halfvec', insertText: 'vector_dims(${1:embedding})' },
+              { label: 'vector_norm', detail: 'Return Euclidean L2 norm of vector', insertText: 'vector_norm(${1:embedding})' },
+              { label: 'l2_normalize', detail: 'Normalize vector to unit L2 length', insertText: 'l2_normalize(${1:embedding})' },
+              { label: 'binary_quantize', detail: 'Quantize vector to bit string (pgvector 0.7+)', insertText: 'binary_quantize(${1:embedding})::bit(${2:1536})' },
+              { label: 'subvector', detail: 'Slice subvector (Matryoshka truncation, pgvector 0.7+)', insertText: 'subvector(${1:embedding}, ${2:1}, ${3:256})' },
+              { label: 'l1_distance', detail: 'Manhattan L1 distance (<+>)', insertText: 'l1_distance(${1:a}, ${2:b})' },
+              { label: 'l2_distance', detail: 'Euclidean L2 distance (<->)', insertText: 'l2_distance(${1:a}, ${2:b})' },
+              { label: 'cosine_distance', detail: 'Cosine distance (<=>)', insertText: 'cosine_distance(${1:a}, ${2:b})' },
+              { label: 'inner_product', detail: 'Inner product', insertText: 'inner_product(${1:a}, ${2:b})' },
+              { label: 'hamming_distance', detail: 'Hamming distance (<~>)', insertText: 'hamming_distance(${1:a}, ${2:b})' },
+              { label: 'jaccard_distance', detail: 'Jaccard distance (<%>)', insertText: 'jaccard_distance(${1:a}, ${2:b})' },
+            ];
+            pgvectorFunctions.forEach((fn) => {
+              suggestions.push({
+                label: fn.label,
+                kind: monaco.languages.CompletionItemKind.Function,
+                detail: fn.detail,
+                filterText: `${fn.label} pgvector vector`,
+                insertText: fn.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                sortText: `3_v_${fn.label}`,
+                range,
+              });
+            });
+
             const pgvectorSnippets = [
               {
                 label: 'PGVECTOR COSINE SEARCH',
@@ -1278,9 +1304,39 @@ export const SqlWorksheet: React.FC<SqlWorksheetProps> = ({
                 insertText: "SELECT *, (${1:embedding} <#> '${2:[0.1, 0.2, ...]}') AS neg_inner_product\nFROM ${3:table_name}\nORDER BY ${1:embedding} <#> '${2:[0.1, 0.2, ...]}'\nLIMIT ${4:10};",
               },
               {
+                label: 'PGVECTOR HYBRID RRF',
+                detail: 'Hybrid full-text (tsvector) + vector search via Reciprocal Rank Fusion',
+                insertText: "WITH vec AS (\n  SELECT ${1:id}, ROW_NUMBER() OVER (ORDER BY ${2:embedding} <=> '${3:[...]}') AS r\n  FROM ${4:table_name}\n  ORDER BY ${2:embedding} <=> '${3:[...]}'\n  LIMIT 40\n),\nfts AS (\n  SELECT ${1:id}, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(to_tsvector('english', ${5:content}), plainto_tsquery('english', '${6:query}')) DESC) AS r\n  FROM ${4:table_name}\n  WHERE to_tsvector('english', ${5:content}) @@ plainto_tsquery('english', '${6:query}')\n  LIMIT 40\n)\nSELECT t.*, COALESCE(1.0 / (60 + vec.r), 0) + COALESCE(1.0 / (60 + fts.r), 0) AS rrf_score\nFROM ${4:table_name} t\nLEFT JOIN vec ON vec.${1:id} = t.${1:id}\nLEFT JOIN fts ON fts.${1:id} = t.${1:id}\nWHERE vec.${1:id} IS NOT NULL OR fts.${1:id} IS NOT NULL\nORDER BY rrf_score DESC\nLIMIT ${7:10};",
+              },
+              {
+                label: 'PGVECTOR BINARY QUANTIZE 2-STAGE',
+                detail: '2-stage oversample via binary_quantize + exact vector rerank',
+                insertText: "SELECT * FROM (\n  SELECT *, (${1:embedding} <=> '${2:[...]}') AS exact_dist\n  FROM ${3:table_name}\n  ORDER BY binary_quantize(${1:embedding})::bit(${4:1536}) <~> binary_quantize('${2:[...]}'::vector)::bit(${4:1536})\n  LIMIT ${5:100}\n) sub\nORDER BY exact_dist\nLIMIT ${6:10};",
+              },
+              {
+                label: 'PGVECTOR ITERATIVE SCAN (0.8+)',
+                detail: 'Enable HNSW iterative scan for filtered vector search (pgvector 0.8+)',
+                insertText: "BEGIN;\nSET LOCAL hnsw.iterative_scan = relaxed_order;\nSET LOCAL hnsw.ef_search = ${1:100};\nSELECT *, (${2:embedding} <=> '${3:[...]}') AS distance\nFROM ${4:table_name}\nWHERE ${5:is_active = true}\nORDER BY ${2:embedding} <=> '${3:[...]}'\nLIMIT ${6:10};\nCOMMIT;",
+              },
+              {
                 label: 'CREATE HNSW INDEX (pgvector)',
                 detail: 'Create HNSW vector index on embedding column',
-                insertText: 'CREATE INDEX ${1:idx_embedding_hnsw} ON ${2:table_name} USING hnsw (${3:embedding} ${4|vector_cosine_ops,vector_l2_ops,vector_ip_ops|});',
+                insertText: 'CREATE INDEX ${1:idx_embedding_hnsw} ON ${2:table_name} USING hnsw (${3:embedding} ${4|vector_cosine_ops,vector_l2_ops,vector_ip_ops,vector_l1_ops|}) WITH (m = 16, ef_construction = 64);',
+              },
+              {
+                label: 'CREATE HALFVEC HNSW INDEX',
+                detail: 'Create expression HNSW halfvec index (>2000 dims or 50% RAM)',
+                insertText: 'CREATE INDEX ${1:idx_embedding_halfvec_hnsw} ON ${2:table_name} USING hnsw ((${3:embedding}::halfvec(${4:3072})) ${5|halfvec_cosine_ops,halfvec_l2_ops,halfvec_ip_ops|});',
+              },
+              {
+                label: 'CREATE BINARY QUANTIZE HNSW INDEX',
+                detail: 'Create expression HNSW binary_quantize index for 2-stage search',
+                insertText: 'CREATE INDEX ${1:idx_embedding_bin_hnsw} ON ${2:table_name} USING hnsw ((binary_quantize(${3:embedding})::bit(${4:1536})) bit_hamming_ops);',
+              },
+              {
+                label: 'CREATE SPARSEVEC HNSW INDEX',
+                detail: 'Create HNSW index on sparsevec column',
+                insertText: 'CREATE INDEX ${1:idx_sparse_hnsw} ON ${2:table_name} USING hnsw (${3:sparse_emb} ${4|sparsevec_ip_ops,sparsevec_cosine_ops,sparsevec_l2_ops|});',
               },
               {
                 label: 'CREATE IVFFLAT INDEX (pgvector)',

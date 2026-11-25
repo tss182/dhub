@@ -12,6 +12,8 @@ import {
   ScatterChart,
   Terminal,
   Check,
+  Gauge,
+  X,
 } from 'lucide-react';
 import { ColumnMeta } from '../../types/domain';
 import { isVectorColumn } from './gridFormatters';
@@ -25,6 +27,7 @@ import {
   parsePgSparseVec,
 } from '../../utils/pgvector';
 import { QueryService } from '../../../bindings/dhub/internal/services';
+import { EmbeddingBackfillModal } from '../modals/EmbeddingBackfillModal';
 
 export type VectorDistanceMetric = 'cosine' | 'l2' | 'ip' | 'l1' | 'hamming' | 'jaccard';
 
@@ -37,10 +40,11 @@ export interface VectorSearchStats {
 }
 
 interface EmbeddingConfig {
-  provider: 'openai' | 'gemini';
+  provider: 'openai' | 'gemini' | 'ollama';
   endpoint: string;
   model: string;
   apiKey: string;
+  dimensions?: number;
 }
 
 const EMBEDDING_CFG_KEY = 'dhub_vector_embedding_cfg';
@@ -51,16 +55,14 @@ function loadEmbeddingConfig(): EmbeddingConfig {
     if (raw) {
       const parsed = JSON.parse(raw);
       const provider: EmbeddingConfig['provider'] =
-        parsed.provider === 'gemini' ? 'gemini' : 'openai';
+        parsed.provider === 'gemini' ? 'gemini' : parsed.provider === 'ollama' ? 'ollama' : 'openai';
       let endpoint = parsed.endpoint || 'https://api.openai.com/v1/embeddings';
-      if (parsed.provider === 'ollama' && typeof endpoint === 'string' && endpoint.endsWith('/api/embeddings')) {
-        endpoint = endpoint.replace(/\/api\/embeddings$/, '/v1/embeddings');
-      }
       return {
         provider,
         endpoint,
-        model: parsed.model || (parsed.provider === 'ollama' ? 'nomic-embed-text' : 'text-embedding-3-small'),
+        model: parsed.model || (provider === 'ollama' ? 'nomic-embed-text' : 'text-embedding-3-small'),
         apiKey: parsed.apiKey || '',
+        dimensions: typeof parsed.dimensions === 'number' && parsed.dimensions > 0 ? parsed.dimensions : undefined,
       };
     }
   } catch {}
@@ -88,6 +90,7 @@ export interface VectorSearchPanelProps {
   onExecuteVectorSearch: (sql: string, sessionParams?: Record<string, string>) => void;
   onResetSearch: () => void;
   onOpenVectorIndexModal?: () => void;
+  onQueryVectorChange?: (vec: number[] | null) => void;
   showVisualization?: boolean;
   onToggleVisualization?: () => void;
   excludeVectors?: boolean;
@@ -324,6 +327,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   onExecuteVectorSearch,
   onResetSearch,
   onOpenVectorIndexModal,
+  onQueryVectorChange,
   showVisualization = false,
   onToggleVisualization,
   excludeVectors = false,
@@ -474,6 +478,19 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const [pgBitLiteral, setPgBitLiteral] = useState<string>('');
   const [pgOverview, setPgOverview] = useState<any>(null);
   const [pgVecStatus, setPgVecStatus] = useState<any>(null);
+  const [showBackfillModal, setShowBackfillModal] = useState(false);
+  const [isBenchmarking, setIsBenchmarking] = useState(false);
+  const [benchmarkResult, setBenchmarkResult] = useState<{
+    recallPct: number;
+    matched: number;
+    total: number;
+    annMs: number;
+    exactMs: number;
+    accessPath: string;
+    buffersHit: number;
+    buffersRead: number;
+    isSeqScan: boolean;
+  } | null>(null);
 
   const activeVectorCol = useMemo(() => {
     if (selectedCol && vectorColumns.some((c) => c.name === selectedCol)) {
@@ -592,6 +609,7 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
   const generateEmbedding = async (text: string): Promise<number[]> => {
     const endpoint = embedCfg.endpoint.trim();
     if (!endpoint) throw new Error('Embedding endpoint URL is required.');
+    const dims = embedCfg.dimensions && embedCfg.dimensions > 0 ? Math.floor(embedCfg.dimensions) : undefined;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (embedCfg.apiKey.trim()) {
@@ -607,13 +625,15 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       const finalUrl = embedCfg.apiKey.trim()
         ? `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(embedCfg.apiKey.trim())}`
         : url;
+      const body: Record<string, any> = {
+        model: `models/${modelName}`,
+        content: { parts: [{ text }] },
+      };
+      if (dims) body.outputDimensionality = dims;
       const res = await fetch(finalUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: `models/${modelName}`,
-          content: { parts: [{ text }] },
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         throw new Error(`Gemini embedding failed (${res.status}): ${await res.text()}`);
@@ -626,11 +646,38 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       return vec;
     }
 
+    if (embedCfg.provider === 'ollama' || endpoint.includes('/api/embed')) {
+      const body: Record<string, any> = {
+        model: embedCfg.model.trim() || 'nomic-embed-text',
+        input: text,
+      };
+      if (dims) body.dimensions = dims;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        throw new Error(`Ollama embedding failed (${res.status}): ${await res.text()}`);
+      }
+      const data = await res.json();
+      const vec = data?.embeddings?.[0] || data?.embedding || data?.data?.[0]?.embedding;
+      if (!Array.isArray(vec)) {
+        throw new Error('Unexpected Ollama embedding response format.');
+      }
+      return vec;
+    }
+
     // OpenAI-compatible /v1/embeddings
+    const body: Record<string, any> = {
+      model: embedCfg.model.trim() || 'text-embedding-3-small',
+      input: text,
+    };
+    if (dims) body.dimensions = dims;
     const res = await fetch(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model: embedCfg.model.trim() || 'text-embedding-3-small', input: text }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       throw new Error(`Embedding API failed (${res.status}): ${await res.text()}`);
@@ -1284,6 +1331,9 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
     }
 
     const sql = buildSearchQuery(vec);
+    if (onQueryVectorChange) {
+      onQueryVectorChange(Array.isArray(vec) && typeof vec[0] === 'number' ? (vec as number[]) : null);
+    }
     if (driver === 'postgres') {
       const sessionParams: Record<string, string> = {};
       if (pgEfSearch.trim() && Number.isFinite(Number(pgEfSearch))) {
@@ -1304,6 +1354,136 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
       return;
     }
     onExecuteVectorSearch(sql);
+  };
+
+  const handleBenchmarkRecall = async () => {
+    if (driver !== 'postgres' || !connectionId || !searchStats?.querySql) return;
+    setIsBenchmarking(true);
+    setEmbedError(null);
+    try {
+      const cleanSql = searchStats.querySql.trim().replace(/;+\s*$/, '');
+      const explainSql = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${cleanSql}`;
+      const annParams: Record<string, string> = {};
+      if (pgEfSearch.trim() && Number.isFinite(Number(pgEfSearch))) {
+        annParams['hnsw.ef_search'] = String(Math.max(1, Math.floor(Number(pgEfSearch))));
+      }
+      if (pgProbes.trim() && Number.isFinite(Number(pgProbes))) {
+        annParams['ivfflat.probes'] = String(Math.max(1, Math.floor(Number(pgProbes))));
+      }
+      if (pgIterativeScan !== 'off') {
+        annParams['hnsw.iterative_scan'] = pgIterativeScan;
+        annParams['ivfflat.iterative_scan'] = pgIterativeScan;
+      }
+      const exactParams: Record<string, string> = {
+        enable_indexscan: 'off',
+        enable_bitmapscan: 'off',
+      };
+
+      const [annExplainRes, exactExplainRes, annRowsRes, exactRowsRes]: any[] = await Promise.all([
+        Call.ByName('dhub/internal/services.QueryService.ExecutePgVectorSearch', {
+          executionId: `pgvec-bench-ann-exp-${Date.now()}`,
+          connectionId,
+          database: database || 'postgres',
+          schema: schema || 'public',
+          sql: explainSql,
+          limit: 10,
+          sessionParams: annParams,
+        }),
+        Call.ByName('dhub/internal/services.QueryService.ExecutePgVectorSearch', {
+          executionId: `pgvec-bench-ex-exp-${Date.now()}`,
+          connectionId,
+          database: database || 'postgres',
+          schema: schema || 'public',
+          sql: explainSql,
+          limit: 10,
+          sessionParams: exactParams,
+        }),
+        Call.ByName('dhub/internal/services.QueryService.ExecutePgVectorSearch', {
+          executionId: `pgvec-bench-ann-row-${Date.now()}`,
+          connectionId,
+          database: database || 'postgres',
+          schema: schema || 'public',
+          sql: cleanSql,
+          limit: Math.max(1, topK),
+          sessionParams: annParams,
+        }),
+        Call.ByName('dhub/internal/services.QueryService.ExecutePgVectorSearch', {
+          executionId: `pgvec-bench-ex-row-${Date.now()}`,
+          connectionId,
+          database: database || 'postgres',
+          schema: schema || 'public',
+          sql: cleanSql,
+          limit: Math.max(1, topK),
+          sessionParams: exactParams,
+        }),
+      ]);
+
+      const parseExplain = (res: any) => {
+        const raw = res?.rows?.[0]?.[0];
+        const json = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const top = Array.isArray(json) ? json[0] : json;
+        const execTime = Number(top?.['Execution Time'] ?? 0);
+        const plan = top?.Plan || {};
+        let scanNode = String(plan['Node Type'] || 'Unknown');
+        let indexName = String(plan['Index Name'] || '');
+        const walk = (node: any) => {
+          if (!node || typeof node !== 'object') return;
+          const nt = String(node['Node Type'] || '');
+          if (nt.includes('Index') || nt.includes('Seq Scan')) {
+            scanNode = nt;
+            if (node['Index Name']) indexName = String(node['Index Name']);
+          }
+          if (Array.isArray(node.Plans)) {
+            node.Plans.forEach(walk);
+          }
+        };
+        walk(plan);
+        return {
+          execTime,
+          accessPath: indexName ? `${scanNode} (${indexName})` : scanNode,
+          isSeqScan: scanNode.toLowerCase().includes('seq scan'),
+          buffersHit: Number(plan['Shared Hit Blocks'] ?? 0),
+          buffersRead: Number(plan['Shared Read Blocks'] ?? 0),
+        };
+      };
+
+      const annPlan = parseExplain(annExplainRes);
+      const exactPlan = parseExplain(exactExplainRes);
+      const pkName = primaryKeys[0] || columns[0]?.name || 'id';
+      const extractPkSet = (res: any) => {
+        const cols: any[] = res?.columns || [];
+        const pkIdx = Math.max(0, cols.findIndex((c) => c.name === pkName));
+        const s = new Set<string>();
+        for (const r of res?.rows || []) {
+          if (r && r[pkIdx] !== undefined && r[pkIdx] !== null) {
+            s.add(String(r[pkIdx]));
+          }
+        }
+        return s;
+      };
+      const annSet = extractPkSet(annRowsRes);
+      const exactSet = extractPkSet(exactRowsRes);
+      let matched = 0;
+      exactSet.forEach((id) => {
+        if (annSet.has(id)) matched++;
+      });
+      const total = exactSet.size || 1;
+      setBenchmarkResult({
+        recallPct: (matched / total) * 100,
+        matched,
+        total: exactSet.size,
+        annMs: annPlan.execTime,
+        exactMs: exactPlan.execTime,
+        accessPath: annPlan.accessPath,
+        buffersHit: annPlan.buffersHit,
+        buffersRead: annPlan.buffersRead,
+        isSeqScan: annPlan.isSeqScan,
+      });
+    } catch (err: any) {
+      setEmbedError(`Benchmark failed: ${err?.message || String(err)}`);
+    } finally {
+      setIsBenchmarking(false);
+    }
   };
 
   const busy = isSearching || isEmbedding;
@@ -1405,6 +1585,18 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
                 <Terminal className="h-3 w-3 text-blue-400" />
                 <span>Open in Console</span>
               </button>
+              {driver === 'postgres' && connectionId && (
+                <button
+                  type="button"
+                  disabled={isBenchmarking}
+                  onClick={handleBenchmarkRecall}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-300 border border-emerald-500/30 text-[11px] cursor-pointer disabled:opacity-50"
+                  title="Run EXPLAIN (ANALYZE, BUFFERS) ANN vs Exact Scan to measure Recall@K"
+                >
+                  {isBenchmarking ? <Loader2 className="h-3 w-3 animate-spin" /> : <Gauge className="h-3 w-3" />}
+                  <span>{isBenchmarking ? 'Benchmarking...' : 'Benchmark Recall'}</span>
+                </button>
+              )}
             </>
           )}
           {onToggleVisualization && (
@@ -2218,93 +2410,131 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
 
           {/* Embedding Provider Settings (when Text mode & toggled) */}
           {inputMode === 'text' && showEmbedSettings && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 p-2 rounded bg-[#101115] border border-[#272932]">
-              <div>
-                <label className="block text-[10px] text-zinc-500 mb-0.5">Provider</label>
-                <select
-                  value={embedCfg.provider}
-                  onChange={(e) => {
-                    const p: EmbeddingConfig['provider'] =
-                      e.target.value === 'gemini' ? 'gemini' : 'openai';
-                    setEmbedTestMsg(null);
-                    saveEmbedCfg({
-                      ...embedCfg,
-                      provider: p,
-                      endpoint:
-                        p === 'gemini'
-                          ? 'https://generativelanguage.googleapis.com/v1beta'
-                          : 'https://api.openai.com/v1/embeddings',
-                      model:
-                        p === 'gemini'
-                          ? 'gemini-embedding-001'
-                          : 'text-embedding-3-small',
-                    });
-                  }}
-                  className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200"
-                >
-                  <option value="openai">OpenAI / Compatible (Ollama, etc.)</option>
-                  <option value="gemini">Google Gemini</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-zinc-500 mb-0.5">Endpoint URL</label>
-                <input
-                  type="text"
-                  value={embedCfg.endpoint}
-                  placeholder={
-                    embedCfg.provider === 'gemini'
-                      ? 'https://generativelanguage.googleapis.com/v1beta'
-                      : 'https://api.openai.com/v1/embeddings or http://localhost:11434/v1/embeddings'
-                  }
-                  onChange={(e) => saveEmbedCfg({ ...embedCfg, endpoint: e.target.value })}
-                  className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-zinc-500 mb-0.5">Model</label>
-                <input
-                  type="text"
-                  value={embedCfg.model}
-                  onChange={(e) => saveEmbedCfg({ ...embedCfg, model: e.target.value })}
-                  className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] text-zinc-500 mb-0.5">API Key (if required)</label>
-                <div className="flex items-center gap-1.5">
+            <div className="space-y-2 p-2 rounded bg-[#101115] border border-[#272932]">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                <div>
+                  <label className="block text-[10px] text-zinc-500 mb-0.5">Provider</label>
+                  <select
+                    value={embedCfg.provider}
+                    onChange={(e) => {
+                      const p = e.target.value as EmbeddingConfig['provider'];
+                      setEmbedTestMsg(null);
+                      saveEmbedCfg({
+                        ...embedCfg,
+                        provider: p,
+                        endpoint:
+                          p === 'gemini'
+                            ? 'https://generativelanguage.googleapis.com/v1beta'
+                            : p === 'ollama'
+                            ? 'http://localhost:11434/api/embed'
+                            : 'https://api.openai.com/v1/embeddings',
+                        model:
+                          p === 'gemini'
+                            ? 'gemini-embedding-001'
+                            : p === 'ollama'
+                            ? 'nomic-embed-text'
+                            : 'text-embedding-3-small',
+                      });
+                    }}
+                    className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200"
+                  >
+                    <option value="openai">OpenAI / Compatible</option>
+                    <option value="ollama">Ollama (/api/embed)</option>
+                    <option value="gemini">Google Gemini</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-zinc-500 mb-0.5">Endpoint URL</label>
                   <input
-                    type="password"
-                    placeholder="sk-... / AIza..."
-                    value={embedCfg.apiKey}
-                    onChange={(e) => saveEmbedCfg({ ...embedCfg, apiKey: e.target.value })}
-                    className="flex-1 min-w-0 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
+                    type="text"
+                    value={embedCfg.endpoint}
+                    placeholder={
+                      embedCfg.provider === 'gemini'
+                        ? 'https://generativelanguage.googleapis.com/v1beta'
+                        : embedCfg.provider === 'ollama'
+                        ? 'http://localhost:11434/api/embed'
+                        : 'https://api.openai.com/v1/embeddings'
+                    }
+                    onChange={(e) => saveEmbedCfg({ ...embedCfg, endpoint: e.target.value })}
+                    className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
                   />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-zinc-500 mb-0.5">Model</label>
+                  <input
+                    type="text"
+                    value={embedCfg.model}
+                    onChange={(e) => saveEmbedCfg({ ...embedCfg, model: e.target.value })}
+                    className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-zinc-500 mb-0.5">
+                    Dimensions {activePgVecInfo.dims ? `(col: ${activePgVecInfo.dims})` : '(Matryoshka)'}
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder={activePgVecInfo.dims ? String(activePgVecInfo.dims) : 'auto'}
+                    value={embedCfg.dimensions || ''}
+                    onChange={(e) =>
+                      saveEmbedCfg({
+                        ...embedCfg,
+                        dimensions: e.target.value ? Math.max(1, Number(e.target.value)) : undefined,
+                      })
+                    }
+                    className="w-full rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-zinc-500 mb-0.5">API Key (if required)</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="password"
+                      placeholder="sk-... / AIza..."
+                      value={embedCfg.apiKey}
+                      onChange={(e) => saveEmbedCfg({ ...embedCfg, apiKey: e.target.value })}
+                      className="flex-1 min-w-0 rounded bg-[#161820] border border-[#272932] px-2 py-1 text-[11px] text-zinc-200 font-mono"
+                    />
+                    <button
+                      type="button"
+                      disabled={isEmbedding}
+                      onClick={async () => {
+                        setEmbedError(null);
+                        setEmbedTestMsg(null);
+                        setIsEmbedding(true);
+                        try {
+                          const vec = await generateEmbedding('hello');
+                          setEmbedTestMsg(`OK (${vec.length}d)`);
+                        } catch (err: any) {
+                          setEmbedError(err?.message || String(err));
+                        } finally {
+                          setIsEmbedding(false);
+                        }
+                      }}
+                      className="px-2 py-1 rounded bg-[#1e2028] hover:bg-[#272a35] text-zinc-300 border border-[#2d303c] text-[10px] cursor-pointer shrink-0"
+                      title="Test embedding endpoint"
+                    >
+                      Test
+                    </button>
+                  </div>
+                  {embedTestMsg && (
+                    <div className="text-[10px] text-emerald-400 mt-0.5">{embedTestMsg}</div>
+                  )}
+                </div>
+              </div>
+              {driver === 'postgres' && connectionId && (
+                <div className="flex items-center justify-end">
                   <button
                     type="button"
-                    disabled={isEmbedding}
-                    onClick={async () => {
-                      setEmbedError(null);
-                      setEmbedTestMsg(null);
-                      setIsEmbedding(true);
-                      try {
-                        const vec = await generateEmbedding('hello');
-                        setEmbedTestMsg(`OK (${vec.length}d)`);
-                      } catch (err: any) {
-                        setEmbedError(err?.message || String(err));
-                      } finally {
-                        setIsEmbedding(false);
-                      }
-                    }}
-                    className="px-2 py-1 rounded bg-[#1e2028] hover:bg-[#272a35] text-zinc-300 border border-[#2d303c] text-[10px] cursor-pointer shrink-0"
-                    title="Test embedding endpoint"
+                    onClick={() => setShowBackfillModal(true)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/40 text-violet-200 text-[11px] cursor-pointer"
                   >
-                    Test
+                    <Sparkles className="h-3 w-3" />
+                    <span>Batch Backfill Null Embeddings...</span>
                   </button>
                 </div>
-                {embedTestMsg && (
-                  <div className="text-[10px] text-emerald-400 mt-0.5">{embedTestMsg}</div>
-                )}
-              </div>
+              )}
             </div>
           )}
 
@@ -2442,7 +2672,51 @@ export const VectorSearchPanel: React.FC<VectorSearchPanelProps> = ({
               <span>{embedError || error}</span>
             </div>
           )}
+
+          {benchmarkResult && (
+            <div className="rounded-lg border border-emerald-500/30 bg-[#101218] p-2.5 flex items-center justify-between gap-3 text-[11px]">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-semibold text-emerald-300">
+                  Recall@{benchmarkResult.total}: {benchmarkResult.recallPct.toFixed(1)}% ({benchmarkResult.matched}/{benchmarkResult.total})
+                </span>
+                <span className="text-zinc-300 font-mono">
+                  Speedup:{' '}
+                  {benchmarkResult.annMs > 0
+                    ? `${(benchmarkResult.exactMs / benchmarkResult.annMs).toFixed(1)}×`
+                    : '—'}{' '}
+                  ({benchmarkResult.annMs.toFixed(2)}ms vs {benchmarkResult.exactMs.toFixed(2)}ms)
+                </span>
+                <span className={benchmarkResult.isSeqScan ? 'text-rose-300 font-mono' : 'text-cyan-300 font-mono'}>
+                  Plan: {benchmarkResult.accessPath}
+                </span>
+                <span className="text-zinc-400 font-mono">
+                  Buffers: hit={benchmarkResult.buffersHit}, read={benchmarkResult.buffersRead}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBenchmarkResult(null)}
+                className="p-0.5 rounded text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
         </form>
+      )}
+
+      {showBackfillModal && connectionId && (
+        <EmbeddingBackfillModal
+          isOpen={showBackfillModal}
+          onClose={() => setShowBackfillModal(false)}
+          connectionId={connectionId}
+          database={database}
+          schema={schema}
+          tableName={tableName}
+          columns={columns}
+          primaryKeys={primaryKeys}
+          embedCfg={embedCfg}
+        />
       )}
     </div>
   );
