@@ -560,6 +560,34 @@ func (r *RedisDriver) executeTableQuery(ctx context.Context, conn *redis.Conn, r
 			}
 		}
 
+	case "stream":
+		cols = []driver.ColumnMeta{
+			{Name: "id", DataType: "string", RawType: "string", IsPrimaryKey: true},
+			{Name: "fields", DataType: "json", RawType: "json"},
+		}
+		pks = []string{"id"}
+		msgs, err := conn.XRangeN(ctx, key, "-", "+", int64(offset+limit)).Result()
+		if err == nil && offset < len(msgs) {
+			for _, msg := range msgs[offset:] {
+				fieldsBytes, _ := json.Marshal(msg.Values)
+				rows = append(rows, []any{msg.ID, string(fieldsBytes)})
+			}
+		}
+
+	case "ReJSON-RL", "json":
+		cols = []driver.ColumnMeta{
+			{Name: "path", DataType: "string", RawType: "string", IsPrimaryKey: true},
+			{Name: "value", DataType: "json", RawType: "json"},
+		}
+		pks = []string{"path"}
+		jsonVal, err := conn.Do(ctx, "JSON.GET", key, "$").Text()
+		if err != nil {
+			jsonVal, err = conn.Do(ctx, "JSON.GET", key).Text()
+		}
+		if err == nil {
+			rows = append(rows, []any{"$", jsonVal})
+		}
+
 	default: // string or single key view
 		cols = []driver.ColumnMeta{
 			{Name: "key", DataType: "string", RawType: "string", IsPrimaryKey: true},

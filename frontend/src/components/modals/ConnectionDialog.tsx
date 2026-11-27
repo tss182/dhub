@@ -802,7 +802,7 @@ export const ConnectionDialog: React.FC = () => {
                               } else if (parsed.protocol === 'https:') {
                                 setPort(443);
                               } else if (parsed.protocol === 'http:') {
-                                setPort(driver === 'elasticsearch' ? 9200 : 6333);
+                                setPort(getDriverCapabilities(driver).defaultPort);
                               }
                               if (parsed.protocol === 'https:' && sslMode === 'disable') {
                                 setSslMode('verify-full');

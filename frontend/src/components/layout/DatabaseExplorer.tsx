@@ -3752,7 +3752,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                           >
                             <RefreshCw className="h-3 w-3" />
                           </button>
-                          {c.driver === 'postgres' && (
+                          {dbCaps.hasSeparateSchemas && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -3765,7 +3765,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                               <Layers className="h-3 w-3 text-cyan-400" />
                             </button>
                           )}
-                          {c.driver !== 'redis' && !c.isReadOnly && (
+                          {!isRedis && !c.isReadOnly && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -3984,7 +3984,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                         return (
                                           <div
                                             key={obj.name}
-                                            draggable={(c.driver === 'postgres' || c.driver === 'mssql') && !c.isReadOnly}
+                                            draggable={dbCaps.hasSeparateSchemas && dbCaps.supportsMoveTable && !c.isReadOnly}
                                             onDragStart={(e) => {
                                               e.stopPropagation();
                                               setDraggedItem({
@@ -4060,7 +4060,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             return (
                                               <div
                                                 key={obj.name}
-                                                draggable={(c.driver === 'postgres' || c.driver === 'mssql') && !c.isReadOnly}
+                                                draggable={dbCaps.hasSeparateSchemas && dbCaps.supportsMoveTable && !c.isReadOnly}
                                                 onDragStart={(e) => {
                                                   e.stopPropagation();
                                                   setDraggedItem({
@@ -4138,7 +4138,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                             return (
                                               <div
                                                 key={obj.name}
-                                                draggable={(c.driver === 'postgres' || c.driver === 'mssql') && !c.isReadOnly}
+                                                draggable={dbCaps.hasSeparateSchemas && dbCaps.supportsMoveTable && !c.isReadOnly}
                                                 onDragStart={(e) => {
                                                   e.stopPropagation();
                                                   setDraggedItem({
@@ -4382,7 +4382,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                         </>
                                       )}
 
-                                      {c.driver === 'postgres' && sTypes.length > 0 && (
+                                      {dbCaps.supportsCustomTypes && sTypes.length > 0 && (
                                         <>
                                           <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
                                             <Folder className="h-2.5 w-2.5" />
@@ -4418,7 +4418,7 @@ function withConnTimeout<T>(promise: Promise<T>, ms = 12000, msg = 'Connection t
                                         </>
                                       )}
 
-                                      {c.driver === 'postgres' && sExtensions.length > 0 && (
+                                      {dbCaps.supportsExtensions && sExtensions.length > 0 && (
                                         <>
                                           <div className="text-[10px] text-zinc-500 flex items-center gap-1 pt-1 py-0.5">
                                             <Folder className="h-2.5 w-2.5" />

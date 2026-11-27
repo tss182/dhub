@@ -304,10 +304,12 @@ func (e *ElasticsearchDriver) ListObjects(ctx context.Context, database, schema 
 	})
 
 	objects := make([]driver.ObjectSummary, 0, len(entries))
+	seenNames := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Index, ".") {
 			continue
 		}
+		seenNames[entry.Index] = true
 		rowEst := int64(-1)
 		if entry.DocsCount != "" {
 			if n, perr := strconv.ParseInt(entry.DocsCount, 10, 64); perr == nil {
@@ -331,6 +333,62 @@ func (e *ElasticsearchDriver) ListObjects(ctx context.Context, database, schema 
 			SizePretty:  entry.StoreSize,
 			Comment:     comment,
 		})
+	}
+
+	// Best-effort: include aliases (as views) and data streams (as tables)
+	if aliasRaw, _, aErr := e.doRequest(ctx, http.MethodGet, "/_cat/aliases?format=json&h=alias,index", nil); aErr == nil {
+		var aliases []struct {
+			Alias string `json:"alias"`
+			Index string `json:"index"`
+		}
+		if json.Unmarshal(aliasRaw, &aliases) == nil {
+			aliasTargets := make(map[string][]string)
+			for _, a := range aliases {
+				if a.Alias == "" || strings.HasPrefix(a.Alias, ".") || seenNames[a.Alias] {
+					continue
+				}
+				aliasTargets[a.Alias] = append(aliasTargets[a.Alias], a.Index)
+			}
+			aliasNames := make([]string, 0, len(aliasTargets))
+			for name := range aliasTargets {
+				aliasNames = append(aliasNames, name)
+			}
+			sort.Strings(aliasNames)
+			for _, name := range aliasNames {
+				seenNames[name] = true
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      "default",
+					Name:        name,
+					Type:        "view",
+					RowEstimate: -1,
+					Comment:     "Alias -> " + strings.Join(aliasTargets[name], ", "),
+				})
+			}
+		}
+	}
+
+	if dsRaw, _, dsErr := e.doRequest(ctx, http.MethodGet, "/_data_stream", nil); dsErr == nil {
+		var dsResp struct {
+			DataStreams []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			} `json:"data_streams"`
+		}
+		if json.Unmarshal(dsRaw, &dsResp) == nil {
+			for _, ds := range dsResp.DataStreams {
+				if ds.Name == "" || strings.HasPrefix(ds.Name, ".") || seenNames[ds.Name] {
+					continue
+				}
+				seenNames[ds.Name] = true
+				objects = append(objects, driver.ObjectSummary{
+					Schema:      "default",
+					Name:        ds.Name,
+					Type:        "table",
+					RowEstimate: -1,
+					Comment:     "Data stream (" + ds.Status + ")",
+				})
+			}
+		}
 	}
 
 	return objects, nil
